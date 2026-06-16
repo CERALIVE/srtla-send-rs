@@ -106,9 +106,10 @@ jobs:
               echo "OK: ${matches[*]} matches '*${ARCH}*.deb'"
             fi
           done
-          exit "$rc"
+           exit "$rc"
 
       - name: Create release and attach .debs
+        id: create-release
         uses: softprops/action-gh-release@v2
         with:
           files: |
@@ -118,3 +119,11 @@ jobs:
           fail_on_unmatched_files: true
           generate_release_notes: true
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trigger APT reindex
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.CERALIVE_DISPATCH_TOKEN }}
+          repository: CERALIVE/apt-worker
+          event-type: apt-reindex
+          client-payload: '{"component":"srtla-send-rs","repo":"srtla-send-rs","channel":"stable","tag":"${{ github.ref_name }}","version":"${{ github.ref_name }}"}'
