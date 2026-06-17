@@ -230,6 +230,25 @@ workflows. It pins the contract the device image depends on:
   the first **receiver-only** srtla release (ADR-003 accepted): srtla `<< 2026.6.2`
   conflicts (C sender present); `2026.6.2` and later coexist (receiver only).
 
+**Package versioning — upstream semver, NOT CalVer (approved exception):**
+`srtla-send-rs` is the one first-party component that does NOT follow the CeraLive
+CalVer (`YYYY.MINOR.PATCH`) scheme. Its `.deb` version comes directly from
+`Cargo.toml` `[workspace.package] version`, which tracks upstream irlserver semver.
+Current package version: `3.0.0`. `versions.yaml` pins it at `v3.0.0`.
+
+Rationale: this repo is a fork of `irlserver/srtla_send`; keeping the upstream semver
+line in `Cargo.toml` preserves direct traceability to upstream releases.
+
+The GitHub release **tag** namespace (`v1.0.0+`, e.g. `v1.0.0`) is **decoupled** from
+the package version. The tag triggers the `.deb` build workflow; the package version is
+whatever `Cargo.toml` carries at that point. Do not conflate the two.
+
+The `@ceralive/srtla-send` npm binding ships on its own `bindings-vYYYY.M.P` tag
+namespace and uses CalVer independently of the Rust crate version.
+
+See `CeraUI/docs/APT_VERSION_CONTROL.md` → "Exception: srtla-send-rs (upstream semver)"
+for the full rationale and Debian version-ordering notes.
+
 aarch64 cross-build env (mirrors the PINNED TOOLCHAIN note): linker
 `CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc`, apt
 `gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross binutils-aarch64-linux-gnu pkg-config`,

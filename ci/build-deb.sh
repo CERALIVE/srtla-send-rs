@@ -94,6 +94,7 @@ Installed-Size: ${INSTALLED_KB}
 Depends: libc6
 Conflicts: srtla (<< ${CUTOVER})
 Replaces: srtla (<< ${CUTOVER})
+Provides: srtla
 Section: net
 Priority: optional
 Homepage: https://github.com/CERALIVE/srtla-send-rs
@@ -137,6 +138,7 @@ if command -v dpkg-deb >/dev/null 2>&1; then
   dpkg-deb -f "${OUT}" Package      | grep -qx 'srtla-send-rs'   || die "Package field != srtla-send-rs"
   dpkg-deb -f "${OUT}" Architecture | grep -qx "${ARCH}"         || die "Architecture field != ${ARCH}"
   dpkg-deb -f "${OUT}" Conflicts    | grep -q  'srtla (<< '      || die "Conflicts: srtla (<< …) missing"
+  dpkg-deb -f "${OUT}" Provides     | grep -q  'srtla'           || die "Provides: srtla missing"
   dpkg-deb --contents "${OUT}" | grep -q ' \./usr/bin/srtla_send$' \
     || die "/usr/bin/srtla_send missing from package contents"
 
