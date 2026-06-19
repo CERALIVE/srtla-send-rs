@@ -199,10 +199,16 @@ mod unix_impl {
             ptr
         }
 
-        /// Reset the buffer for the next recvmmsg call.
+        /// Reset every header before the next recvmmsg call.
+        ///
+        /// recvmmsg only writes the headers it fills; trailing ones keep their
+        /// prior values. Zeroing msg_flags/msg_len here stops stale data from a
+        /// previous larger batch leaking into a later smaller one.
         fn init(&mut self) {
             self.mmsghdr.iter_mut().for_each(|h| {
                 h.msg_hdr.msg_namelen = SOCKADDR_STORAGE_LENGTH;
+                h.msg_hdr.msg_flags = 0;
+                h.msg_len = 0;
             });
         }
 
@@ -251,6 +257,16 @@ mod unix_impl {
         pub fn is_empty(&self) -> bool {
             self.nrecv == 0
         }
+
+        /// Test seam: forge `nrecv` "received" packets and set message `idx`'s
+        /// reported `msg_len`. Lets a test feed an out-of-range length without a
+        /// live socket to prove the iterator clamps the exposed slice to MTU.
+        #[cfg(test)]
+        pub fn test_forge_packet(&mut self, idx: usize, msg_len: u32, nrecv: u32) {
+            self.mmsghdr[idx].msg_hdr.msg_namelen = SOCKADDR_STORAGE_LENGTH;
+            self.mmsghdr[idx].msg_len = msg_len;
+            self.nrecv = nrecv;
+        }
     }
 
     /// Iterator over received packets in a RecvMmsgBuffer.
@@ -277,7 +293,11 @@ mod unix_impl {
             // Convert sockaddr_storage to SocketAddr
             let addr = sockaddr_storage_to_socket_addr(storage);
 
-            let data = &self.buffer.buffers[idx][..msg.msg_len as usize];
+            // The per-message buffer is exactly MTU bytes. No MSG_TRUNC is
+            // requested so msg_len is capped at MTU in practice, but clamp
+            // defensively so a mis-reported length can never index past it.
+            let len = (msg.msg_len as usize).min(MTU);
+            let data = &self.buffer.buffers[idx][..len];
             Some((addr, data))
         }
     }
@@ -305,6 +325,23 @@ mod unix_impl {
                 }
                 _ => None,
             }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::RecvMmsgBuffer;
+        use crate::protocol::MTU;
+
+        #[test]
+        fn iter_clamps_oversized_msg_len_to_mtu() {
+            let mut buffer = RecvMmsgBuffer::new();
+            buffer.test_forge_packet(0, (MTU as u32) * 4, 1);
+
+            let mut iter = buffer.iter();
+            let (_addr, data) = iter.next().expect("one forged packet");
+            assert_eq!(data.len(), MTU, "oversized msg_len must clamp to MTU");
+            assert!(iter.next().is_none(), "only one packet was forged");
         }
     }
 }
