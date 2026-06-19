@@ -141,19 +141,37 @@ mod unix_impl {
     /// Buffer for batch receiving multiple UDP packets via `recvmmsg`.
     pub struct RecvMmsgBuffer {
         /// Storage for source addresses
+        #[cfg(feature = "test-internals")]
+        pub addr_storage: [libc::sockaddr_storage; BATCH_RECV_SIZE],
+        #[cfg(not(feature = "test-internals"))]
         addr_storage: [libc::sockaddr_storage; BATCH_RECV_SIZE],
         /// IO vectors pointing to packet buffers
+        #[cfg(feature = "test-internals")]
+        pub iov: [libc::iovec; BATCH_RECV_SIZE],
+        #[cfg(not(feature = "test-internals"))]
         iov: [libc::iovec; BATCH_RECV_SIZE],
         /// Message headers for recvmmsg
+        #[cfg(feature = "test-internals")]
+        pub mmsghdr: [libc::mmsghdr; BATCH_RECV_SIZE],
+        #[cfg(not(feature = "test-internals"))]
         mmsghdr: [libc::mmsghdr; BATCH_RECV_SIZE],
         /// Packet data buffers
+        #[cfg(feature = "test-internals")]
+        pub buffers: [[u8; MTU]; BATCH_RECV_SIZE],
+        #[cfg(not(feature = "test-internals"))]
         buffers: [[u8; MTU]; BATCH_RECV_SIZE],
         /// Number of packets received in last call
         nrecv: u32,
     }
 
-    // Safety: All fields are either Copy types or raw pointers that point
-    // to data within this struct. The struct is self-contained.
+    // Safety: every raw pointer in `iov`/`mmsghdr` points into this struct's own
+    // `buffers`/`addr_storage`, never outside it. `init()` rebuilds all of those
+    // pointers from the *current* field addresses before every `recvmmsg`
+    // (via `rebuild_pointers`), so even a safe move of the value — which
+    // relocates the fields (e.g. `*RecvMmsgBuffer::new()`, `mem::swap`) — cannot
+    // leave them dangling: the next receive re-derives them. The struct is
+    // otherwise self-contained (all fields are `Copy` or owned arrays), so it is
+    // sound to send across threads.
     unsafe impl Send for RecvMmsgBuffer {}
 
     impl RecvMmsgBuffer {
@@ -162,13 +180,22 @@ mod unix_impl {
         /// This allocates the buffer on the heap due to its large size (~50KB).
         pub fn new() -> Box<Self> {
             // Safety: We're zeroing memory that will be properly initialized
-            // before use. The iov and mmsghdr pointers are set up below.
+            // before use. The iov and mmsghdr pointers are set up by
+            // rebuild_pointers below.
             let mut ptr: Box<Self> = Box::new(unsafe { std::mem::zeroed() });
+            ptr.rebuild_pointers();
+            ptr.nrecv = 0;
+            ptr
+        }
 
-            let buffers = ptr.buffers.as_mut_ptr();
+        /// (Re)point the `iov`/`mmsghdr` self-pointers at the *current* field
+        /// addresses. Run from both `new()` and `init()` (before every
+        /// `recvmmsg`) so a safe move of the value can never leave them
+        /// dangling — after a move the next receive simply re-derives them.
+        fn rebuild_pointers(&mut self) {
+            let buffers = self.buffers.as_mut_ptr();
 
-            // Set up IO vectors to point to packet buffers
-            ptr.iov.iter_mut().enumerate().for_each(|(index, iov)| {
+            self.iov.iter_mut().enumerate().for_each(|(index, iov)| {
                 let buffer = unsafe { &mut *buffers.add(index) };
                 *iov = libc::iovec {
                     iov_base: buffer.as_mut_ptr() as *mut libc::c_void,
@@ -176,34 +203,30 @@ mod unix_impl {
                 }
             });
 
-            let addrs = ptr.addr_storage.as_mut_ptr();
-            let iov = ptr.iov.as_mut_ptr();
+            let addrs = self.addr_storage.as_mut_ptr();
+            let iov = self.iov.as_mut_ptr();
 
-            // Set up message headers
-            ptr.mmsghdr.iter_mut().enumerate().for_each(|(index, h)| {
-                *h = libc::mmsghdr {
-                    msg_hdr: libc::msghdr {
-                        msg_name: unsafe { addrs.add(index) as *mut libc::c_void },
-                        msg_namelen: SOCKADDR_STORAGE_LENGTH,
-                        msg_iov: unsafe { iov.add(index) },
-                        msg_iovlen: 1,
-                        msg_control: std::ptr::null_mut(),
-                        msg_controllen: 0,
-                        msg_flags: 0,
-                    },
-                    msg_len: 0,
-                }
+            self.mmsghdr.iter_mut().enumerate().for_each(|(index, h)| {
+                h.msg_hdr.msg_name = unsafe { addrs.add(index) as *mut libc::c_void };
+                h.msg_hdr.msg_namelen = SOCKADDR_STORAGE_LENGTH;
+                h.msg_hdr.msg_iov = unsafe { iov.add(index) };
+                h.msg_hdr.msg_iovlen = 1;
+                h.msg_hdr.msg_control = std::ptr::null_mut();
+                h.msg_hdr.msg_controllen = 0;
+                h.msg_hdr.msg_flags = 0;
             });
-
-            ptr.nrecv = 0;
-            ptr
         }
 
         /// Reset the buffer for the next recvmmsg call.
+        #[cfg(feature = "test-internals")]
+        pub fn init(&mut self) {
+            self.rebuild_pointers();
+        }
+
+        /// Reset the buffer for the next recvmmsg call.
+        #[cfg(not(feature = "test-internals"))]
         fn init(&mut self) {
-            self.mmsghdr.iter_mut().for_each(|h| {
-                h.msg_hdr.msg_namelen = SOCKADDR_STORAGE_LENGTH;
-            });
+            self.rebuild_pointers();
         }
 
         /// Receive multiple packets using recvmmsg.
@@ -475,5 +498,58 @@ mod tests {
         // Should be roughly 32 * 1500 + overhead ≈ 48KB + headers
         assert!(size > 32 * 1400);
         assert!(size < 100_000);
+    }
+}
+
+#[cfg(all(target_os = "linux", test, feature = "test-internals"))]
+mod soundness_tests {
+    use super::{BATCH_RECV_SIZE, RecvMmsgBuffer};
+    use crate::protocol::MTU;
+
+    /// Moving a `RecvMmsgBuffer` relocates its `iov`/`mmsghdr`/`buffers`/
+    /// `addr_storage` fields, so the raw self-pointers `recvmmsg` hands the
+    /// kernel must be rebuilt by `init()` from the current addresses — else they
+    /// point at the freed/other allocation. Pre-fix (pointers cached once in
+    /// `new()`) every assertion below fails after the move; this is the RED
+    /// proof for the fix.
+    #[test]
+    fn init_rebuilds_self_pointers_after_move() {
+        let mut a = *RecvMmsgBuffer::new();
+        let mut b = *RecvMmsgBuffer::new();
+
+        // Relocate: `a` now holds bytes whose cached pointers reference `b`'s
+        // (now-dropped) allocation, and vice versa.
+        std::mem::swap(&mut a, &mut b);
+
+        a.init();
+
+        for i in 0..BATCH_RECV_SIZE {
+            let msg_iov = a.mmsghdr[i].msg_hdr.msg_iov.cast_const();
+            let iov_addr = std::ptr::addr_of!(a.iov[i]);
+            assert_eq!(
+                msg_iov, iov_addr,
+                "mmsghdr[{i}].msg_iov must point at iov[{i}]"
+            );
+
+            let iov_base = a.iov[i].iov_base.cast_const().cast::<u8>();
+            let buf_addr = a.buffers[i].as_ptr();
+            assert_eq!(
+                iov_base, buf_addr,
+                "iov[{i}].iov_base must point at buffers[{i}]"
+            );
+
+            let msg_name = a.mmsghdr[i]
+                .msg_hdr
+                .msg_name
+                .cast_const()
+                .cast::<libc::sockaddr_storage>();
+            let addr_addr = std::ptr::addr_of!(a.addr_storage[i]);
+            assert_eq!(
+                msg_name, addr_addr,
+                "mmsghdr[{i}].msg_name must point at addr_storage[{i}]"
+            );
+
+            assert_eq!(a.iov[i].iov_len, MTU, "iov[{i}].iov_len must equal MTU");
+        }
     }
 }
