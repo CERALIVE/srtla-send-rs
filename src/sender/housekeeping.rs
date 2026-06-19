@@ -100,6 +100,18 @@ pub async fn handle_housekeeping(
         }
         // Update bitrate calculation (from Android C implementation)
         conn.calculate_bitrate();
+
+        // The reader task self-heals via CONN_TIMEOUT (15s), but a task death
+        // (panic / early return) would otherwise go undetected until that window.
+        // Poll its handle cheaply each tick and respawn it for a still-active link
+        // so inbound ACK/NAK/keepalive traffic resumes immediately, not 15s later.
+        let reader_dead = reader_handles
+            .get(&conn.conn_id)
+            .is_some_and(|reader| reader.handle.is_finished());
+        if reader_dead {
+            warn!("{}: uplink reader task ended; restarting", conn.label);
+            restart_reader_for(conn, reader_handles, packet_tx);
+        }
     }
 
     // Update active connections count (matches C implementation behavior)
@@ -148,4 +160,55 @@ pub async fn handle_housekeeping(
     // Old entries are naturally overwritten when the buffer wraps around.
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sender::uplink::{create_uplink_channel, sync_readers};
+    use crate::test_helpers::create_test_connection;
+
+    #[tokio::test]
+    async fn dead_reader_is_restarted_for_active_connection() {
+        let mut connections = vec![create_test_connection().await];
+        let conn_id = connections[0].conn_id;
+        let mut reg = SrtlaRegistrationManager::new();
+        let mut all_failed_at: Option<Instant> = None;
+
+        let (packet_tx, _packet_rx) = create_uplink_channel();
+        let mut reader_handles: HashMap<ConnectionId, ReaderHandle> = HashMap::new();
+        sync_readers(&connections, &mut reader_handles, &packet_tx);
+
+        // Abort the reader and let the runtime drive the cancellation to completion,
+        // reproducing the latent task-death S5 targets (a handle that is_finished()).
+        reader_handles.get(&conn_id).unwrap().handle.abort();
+        for _ in 0..1000 {
+            if reader_handles.get(&conn_id).unwrap().handle.is_finished() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            reader_handles.get(&conn_id).unwrap().handle.is_finished(),
+            "reader task should be dead after abort"
+        );
+
+        handle_housekeeping(
+            &mut connections,
+            &mut reg,
+            false,
+            &mut all_failed_at,
+            &mut reader_handles,
+            &packet_tx,
+        )
+        .await
+        .expect("housekeeping on an active connection must not fail");
+
+        // A finished handle can never un-finish itself; a live handle proves
+        // housekeeping spawned a fresh reader in its place.
+        assert!(
+            !reader_handles.get(&conn_id).unwrap().handle.is_finished(),
+            "housekeeping must respawn the dead reader for the still-active connection"
+        );
+    }
 }
