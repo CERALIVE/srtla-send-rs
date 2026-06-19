@@ -95,37 +95,37 @@ impl DynamicConfig {
     #[inline]
     pub fn snapshot(&self) -> ConfigSnapshot {
         ConfigSnapshot {
-            mode: SchedulingMode::from_u8(self.mode.load(Ordering::Relaxed)),
-            quality_enabled: self.quality_enabled.load(Ordering::Relaxed),
-            exploration_enabled: self.exploration_enabled.load(Ordering::Relaxed),
-            rtt_delta_ms: self.rtt_delta_ms.load(Ordering::Relaxed),
+            mode: SchedulingMode::from_u8(self.mode.load(Ordering::Acquire)),
+            quality_enabled: self.quality_enabled.load(Ordering::Acquire),
+            exploration_enabled: self.exploration_enabled.load(Ordering::Acquire),
+            rtt_delta_ms: self.rtt_delta_ms.load(Ordering::Acquire),
         }
     }
 
     /// Get the current scheduling mode.
     #[inline]
     pub fn mode(&self) -> SchedulingMode {
-        SchedulingMode::from_u8(self.mode.load(Ordering::Relaxed))
+        SchedulingMode::from_u8(self.mode.load(Ordering::Acquire))
     }
 
     /// Set the scheduling mode.
     pub fn set_mode(&self, mode: SchedulingMode) {
-        self.mode.store(mode.as_u8(), Ordering::Relaxed);
+        self.mode.store(mode.as_u8(), Ordering::Release);
     }
 
     /// Set whether quality scoring is enabled.
     pub fn set_quality_enabled(&self, enabled: bool) {
-        self.quality_enabled.store(enabled, Ordering::Relaxed);
+        self.quality_enabled.store(enabled, Ordering::Release);
     }
 
     /// Set whether exploration is enabled.
     pub fn set_exploration_enabled(&self, enabled: bool) {
-        self.exploration_enabled.store(enabled, Ordering::Relaxed);
+        self.exploration_enabled.store(enabled, Ordering::Release);
     }
 
     /// Set the RTT delta threshold in milliseconds.
     pub fn set_rtt_delta_ms(&self, delta: u32) {
-        self.rtt_delta_ms.store(delta, Ordering::Relaxed);
+        self.rtt_delta_ms.store(delta, Ordering::Release);
     }
 }
 
