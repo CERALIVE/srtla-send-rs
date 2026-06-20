@@ -166,10 +166,13 @@ pub async fn handle_housekeeping(
 
 #[cfg(test)]
 mod tests {
+    use tokio::time::Duration;
+
     use super::*;
     use crate::sender::uplink::{create_uplink_channel, sync_readers};
-    use crate::test_helpers::{advance_test_clock, create_test_connection, create_test_connections};
-    use tokio::time::Duration;
+    use crate::test_helpers::{
+        advance_test_clock, create_test_connection, create_test_connections,
+    };
 
     #[tokio::test]
     async fn dead_reader_is_restarted_for_active_connection() {
