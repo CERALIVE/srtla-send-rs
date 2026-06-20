@@ -100,6 +100,18 @@ pub async fn handle_housekeeping(
         }
         // Update bitrate calculation (from Android C implementation)
         conn.calculate_bitrate();
+
+        // The reader task self-heals via CONN_TIMEOUT (15s), but a task death
+        // (panic / early return) would otherwise go undetected until that window.
+        // Poll its handle cheaply each tick and respawn it for a still-active link
+        // so inbound ACK/NAK/keepalive traffic resumes immediately, not 15s later.
+        let reader_dead = reader_handles
+            .get(&conn.conn_id)
+            .is_some_and(|reader| reader.handle.is_finished());
+        if reader_dead {
+            warn!("{}: uplink reader task ended; restarting", conn.label);
+            restart_reader_for(conn, reader_handles, packet_tx);
+        }
     }
 
     // Update active connections count (matches C implementation behavior)
@@ -128,9 +140,11 @@ pub async fn handle_housekeeping(
             error!("warning: no available connections");
         }
 
-        // Timeout when all connections have failed
+        // Timeout when all connections have failed. Measure elapsed-time-since-failure
+        // (`failed_at.elapsed()`) so a transient all-down blip only trips after a full
+        // GLOBAL_TIMEOUT_MS of sustained failure, not the instant uptime exceeds it.
         if let Some(failed_at) = all_failed_at
-            && crate::utils::instant_to_elapsed_ms(*failed_at) > GLOBAL_TIMEOUT_MS
+            && failed_at.elapsed().as_millis() as u64 > GLOBAL_TIMEOUT_MS
         {
             if reg.has_connected {
                 error!("Failed to re-establish any connections");
@@ -148,4 +162,135 @@ pub async fn handle_housekeeping(
     // Old entries are naturally overwritten when the buffer wraps around.
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::time::Duration;
+
+    use super::*;
+    use crate::sender::uplink::{create_uplink_channel, sync_readers};
+    use crate::test_helpers::{
+        advance_test_clock, create_test_connection, create_test_connections,
+    };
+
+    #[tokio::test]
+    async fn dead_reader_is_restarted_for_active_connection() {
+        let mut connections = vec![create_test_connection().await];
+        let conn_id = connections[0].conn_id;
+        let mut reg = SrtlaRegistrationManager::new();
+        let mut all_failed_at: Option<Instant> = None;
+
+        let (packet_tx, _packet_rx) = create_uplink_channel();
+        let mut reader_handles: HashMap<ConnectionId, ReaderHandle> = HashMap::new();
+        sync_readers(&connections, &mut reader_handles, &packet_tx);
+
+        // Abort the reader and let the runtime drive the cancellation to completion,
+        // reproducing the latent task-death S5 targets (a handle that is_finished()).
+        reader_handles.get(&conn_id).unwrap().handle.abort();
+        for _ in 0..1000 {
+            if reader_handles.get(&conn_id).unwrap().handle.is_finished() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            reader_handles.get(&conn_id).unwrap().handle.is_finished(),
+            "reader task should be dead after abort"
+        );
+
+        handle_housekeeping(
+            &mut connections,
+            &mut reg,
+            false,
+            &mut all_failed_at,
+            &mut reader_handles,
+            &packet_tx,
+        )
+        .await
+        .expect("housekeeping on an active connection must not fail");
+
+        // A finished handle can never un-finish itself; a live handle proves
+        // housekeeping spawned a fresh reader in its place.
+        assert!(
+            !reader_handles.get(&conn_id).unwrap().handle.is_finished(),
+            "housekeeping must respawn the dead reader for the still-active connection"
+        );
+    }
+
+    /// Regression for S9: the all-uplinks-failed timeout must measure time *since failure*
+    /// (`failed_at.elapsed()`), not the uptime captured at failure. The pre-fix call site
+    /// compared `STARTUP.elapsed() - failed_at.elapsed()` (= `failed_at - STARTUP`), so it
+    /// tripped on the first all-down pass once uptime alone exceeded `GLOBAL_TIMEOUT_MS`,
+    /// erroring on a transient blip — making the `armed.is_ok()` assertion below fail.
+    #[tokio::test(start_paused = true)]
+    async fn all_failed_timeout_measures_elapsed_since_failure() {
+        // Force STARTUP_INSTANT to init at the paused-clock base before simulating uptime,
+        // so the pre-fix misfire reproduces (the fixed path never reads it).
+        let _ = crate::utils::elapsed_ms();
+
+        let mut connections = create_test_connections(2).await;
+        let mut reg = SrtlaRegistrationManager::new();
+        // Models a stream that was established and then lost every link.
+        reg.has_connected = true;
+        let mut reader_handles: HashMap<ConnectionId, ReaderHandle> = HashMap::new();
+        let (packet_tx, _packet_rx) = tokio::sync::mpsc::unbounded_channel::<UplinkPacket>();
+        let mut all_failed_at: Option<Instant> = None;
+
+        advance_test_clock(Duration::from_millis(GLOBAL_TIMEOUT_MS + 1000)).await;
+
+        // Drop all uplinks; pin the reconnect backoff so housekeeping reaches the timeout
+        // branch instead of attempting socket reconnection.
+        for conn in connections.iter_mut() {
+            conn.mark_for_recovery();
+            conn.reconnection.last_reconnect_attempt_ms = now_ms();
+        }
+
+        let armed = handle_housekeeping(
+            &mut connections,
+            &mut reg,
+            false,
+            &mut all_failed_at,
+            &mut reader_handles,
+            &packet_tx,
+        )
+        .await;
+        assert!(
+            armed.is_ok(),
+            "arming the all-failed timer must not error on a transient blip (uptime already \
+             exceeds {GLOBAL_TIMEOUT_MS}ms)"
+        );
+        assert!(all_failed_at.is_some(), "the failure timer should be armed");
+
+        advance_test_clock(Duration::from_millis(GLOBAL_TIMEOUT_MS - 1000)).await;
+        let within = handle_housekeeping(
+            &mut connections,
+            &mut reg,
+            false,
+            &mut all_failed_at,
+            &mut reader_handles,
+            &packet_tx,
+        )
+        .await;
+        assert!(
+            within.is_ok(),
+            "no error until a full {GLOBAL_TIMEOUT_MS}ms has elapsed since the links failed"
+        );
+
+        advance_test_clock(Duration::from_millis(2000)).await;
+        let fired = handle_housekeeping(
+            &mut connections,
+            &mut reg,
+            false,
+            &mut all_failed_at,
+            &mut reader_handles,
+            &packet_tx,
+        )
+        .await;
+        assert!(
+            fired.is_err(),
+            "the all-failed timeout must fire once a full {GLOBAL_TIMEOUT_MS}ms has elapsed since \
+             failure"
+        );
+    }
 }

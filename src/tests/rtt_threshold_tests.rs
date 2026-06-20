@@ -275,4 +275,54 @@ mod tests {
             "With quality disabled, should pick based on capacity only"
         );
     }
+
+    #[test]
+    fn test_recovering_link_not_classified_fast_on_kalman_overshoot() {
+        // Regression for S6: a 2-state Kalman RTT can overshoot NEGATIVE on a
+        // sharp high->low transition (5x 10000ms then 50ms drives x ~= -466ms).
+        // The exposed RTT must clamp to >= 0, and the recovering link must NOT be
+        // auto-promoted to the "fast" group off that artifact — the stable fast
+        // link must win even though the recovering link has higher capacity.
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut connections = rt.block_on(create_test_connections(2));
+
+        let current_time = now_ms();
+
+        // Connection 0: genuinely fast, stable low RTT, but lower capacity.
+        for _ in 0..20 {
+            connections[0].rtt.update_estimate(50);
+        }
+        connections[0].in_flight_packets = 5;
+
+        // Connection 1: recovering link. Sustained very-high RTT then a sharp
+        // drop drives the Kalman estimate negative (the overshoot under test).
+        for _ in 0..5 {
+            connections[1].rtt.update_estimate(10_000);
+        }
+        for _ in 0..3 {
+            connections[1].rtt.update_estimate(50);
+        }
+        connections[1].in_flight_packets = 0; // higher capacity — would win if "fast"
+
+        // Internal Kalman value is negative here; the exposed getter must clamp.
+        assert!(
+            connections[1].rtt.kalman_rtt.value() < 0.0,
+            "precondition: Kalman should overshoot negative, got {}",
+            connections[1].rtt.kalman_rtt.value()
+        );
+        assert!(
+            connections[1].get_smooth_rtt_ms() >= 0.0,
+            "exposed RTT must be clamped to >= 0 during overshoot, got {}",
+            connections[1].get_smooth_rtt_ms()
+        );
+
+        let selected = select_connection(&mut connections, None, 0, current_time, 30, true);
+
+        assert_eq!(
+            selected,
+            Some(0),
+            "stable fast link must be preferred over a recovering link whose Kalman estimate \
+             overshot negative (must not be classified fast)"
+        );
+    }
 }
