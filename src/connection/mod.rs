@@ -272,7 +272,19 @@ impl SrtlaConnection {
     }
 
     pub fn get_smooth_rtt_ms(&self) -> f64 {
-        self.rtt.kalman_rtt.value()
+        // The 2-state Kalman filter can overshoot negative on a sharp high->low
+        // RTT transition; a negative RTT is meaningless, so clamp it here. EDPF
+        // reads kalman_rtt.value() directly (own guard), so it is not affected.
+        self.rtt.kalman_rtt.value().max(0.0)
+    }
+
+    /// Whether this link has at least one real RTT measurement.
+    ///
+    /// After the clamp above, a never-measured link and a measured-but-clamped-0
+    /// link both report `get_smooth_rtt_ms() == 0`; callers must use this to tell
+    /// them apart rather than testing the value.
+    pub fn has_rtt_sample(&self) -> bool {
+        self.rtt.kalman_rtt.is_initialized()
     }
 
     /// RTT velocity (trend) in ms/sample from the Kalman filter.

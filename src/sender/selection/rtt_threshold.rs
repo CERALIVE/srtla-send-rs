@@ -73,10 +73,12 @@ pub fn select_connection(
         }
 
         let rtt = c.get_smooth_rtt_ms();
-        // A link is "fast" if:
-        // - No RTT data (rtt <= 0), or
-        // - RTT is within threshold of minimum
-        let is_fast = rtt <= 0.0 || rtt <= rtt_threshold;
+        // "Fast" means either no RTT sample yet (give unmeasured links a chance)
+        // or a trustworthy positive estimate within the threshold. A measured
+        // link whose Kalman estimate momentarily clamped to 0 (negative overshoot
+        // on a high->low transition) is NOT promoted off that artifact — it falls
+        // through to the capacity-based fallback until its estimate stabilizes.
+        let is_fast = !c.has_rtt_sample() || (rtt > 0.0 && rtt <= rtt_threshold);
 
         if is_fast {
             let score = if enable_quality {
