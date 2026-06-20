@@ -21,7 +21,9 @@ RTT). On the device it is driven by CeraUI and feeds the bonded path into
 > aarch64 + x86_64 cross-build producing pipeline-compatible `.deb`s -- see CI / PACKAGING),
 > telemetry test hardening (Task 7: `tests/telemetry_edge_cases.rs` + `tests/telemetry_fixture_parity.rs`),
 > TS binding test hardening (Task 8: `bindings/typescript/tests/telemetry-reader.test.ts`, 52 tests total),
-> and sendmmsg triage (Task 25: TODO converted to tracked DEFERRED note).
+> sendmmsg triage (Task 25: TODO converted to tracked DEFERRED note), and robustness
+> pass (2026-06-19: S9 all-links-failed timeout fix, S5 dead-reader restart, S6 RTT
+> clamp + classifier fix, S7 zero-RTT keepalive rejection — see ROBUSTNESS FIXES).
 > CeraUI integration lands in follow-up tasks.
 
 **Relationship to `srtla/`:** this is the **sender** engine (Rust). The existing
@@ -364,6 +366,70 @@ Full rationale in `openspec/changes/rust-sender-adoption/sendmmsg-deferred.md`.
 The `bindings/typescript/` package uses Biome 2.5 via `@ceralive/biome-config` as its first linter/formatter. The `biome.json` in `bindings/typescript/` extends `@ceralive/biome-config` (`"extends": ["@ceralive/biome-config"]`). ESLint and Prettier are not used. Run `biome check .` from `bindings/typescript/` (check) or `biome check --write .` (apply fixes). The binding gate includes `bun tsc --noEmit && bun test` — Biome is not a separate gate step but is expected clean before PR.
 
 **Golden fixtures are excluded from Biome** — `biome.json` sets `files.includes` to `["**", "!**/tests/fixtures/**"]`. `tests/fixtures/telemetry-golden.json` is a deliberately byte-identical copy of the Rust producer golden (`tests/fixtures/telemetry-golden.json` at the crate root): the single-line, newline-free atomic-publish telemetry shape (ADR-001). If Biome pretty-prints it (multi-line + trailing newline), the cross-language parity test (`tests/telemetry_fixture_parity.rs` — `rust_and_ts_goldens_are_byte_identical` plus the newline-free assertion) fails every Rust test job in CI. **Do not remove this exclude, and never `biome check --write` the fixtures** — re-sync the two goldens by editing both byte-for-byte instead.
+
+## ROBUSTNESS FIXES (robustness-pass, 2026-06-19)
+
+Four behavior changes landed in the robustness pass. None alter the parity contract.
+
+### S9 — all-links-failed timeout now measures elapsed-since-failure
+
+`housekeeping.rs` armed the all-uplinks-failed global timeout with a helper
+`instant_to_elapsed_ms(failed_at)` that computed `STARTUP.elapsed() -
+failed_at.elapsed()` — effectively the uptime at the moment of failure, not the
+time elapsed since it. On any session that had been running for more than 10 s, the
+very first all-down tick tripped the timeout immediately, returning `Err` on what
+could be a transient radio blip.
+
+Fix: replaced the call with `failed_at.elapsed().as_millis() as u64` directly.
+The helper `instant_to_elapsed_ms` was removed (it had no other callers). The
+sender now correctly waits 10 s of continuous all-down before declaring a fatal
+failure. Pinned by `all_failed_timeout_measures_elapsed_since_failure`
+(`src/tests/integration_tests.rs`).
+
+### S5 — dead uplink reader tasks are detected and restarted proactively
+
+Previously, if a per-uplink reader `JoinHandle` exited unexpectedly (e.g. due to
+a socket error), the connection stayed in the active pool but received no inbound
+traffic. The 15 s `CONN_TIMEOUT` would eventually evict it, but in the meantime
+the link appeared live to the scheduler.
+
+The housekeeping per-tick loop now polls each active connection's reader
+`JoinHandle.is_finished()` and calls `restart_reader_for()` on any that have
+exited. Dead readers are detected and respawned within one housekeeping tick
+rather than waiting for the liveness timeout. The hot path and `CONN_TIMEOUT`
+value are unchanged.
+
+### S6 — Kalman RTT clamped to ≥0; RTT-threshold classifier uses has_rtt_sample()
+
+`get_smooth_rtt_ms()` (`connection/mod.rs`) now clamps the Kalman filter output
+to `0.0_f64.max(value)` before returning. A negative Kalman estimate (possible
+during filter warm-up on a link with high jitter) can no longer propagate to
+callers.
+
+The RTT-threshold mode classifier previously used `rtt <= 0.0` to detect links
+with no measurement yet. That check is wrong after clamping: a link with a
+clamped-zero RTT would satisfy `rtt <= threshold` and be auto-classified as fast.
+The classifier now uses `has_rtt_sample()` (= `kalman_rtt.is_initialized()`) to
+distinguish "no sample yet" from "measured but low". A recovering link whose
+clamped RTT reads 0 is NOT auto-classified as fast; it routes via the capacity
+fallback until a real sample arrives.
+
+The clamp is placed at `get_smooth_rtt_ms()`, not inside `kalman.rs::value()`,
+so the raw Kalman value remains available to the telemetry path (which already
+saturates negative `f64 as u32` to 0) and to EDPF (which reads `value()` directly
+and has its own floor).
+
+### S7 — zero-RTT keepalive samples rejected (parity with ACK path)
+
+The keepalive RTT guard in `rtt.rs` was `if rtt <= 10_000`. The ACK path in
+`ack_nak.rs` already required `rtt > 0 && rtt <= 10_000`. A keepalive that
+measured an RTT of exactly 0 (possible when the reply arrives within the same
+scheduler tick) would previously feed a zero sample into the Kalman filter,
+biasing it downward.
+
+The guard is now `if rtt > 0 && rtt <= 10_000`, matching the ACK path. Zero-RTT
+keepalive samples are silently discarded. Pinned by
+`test_keepalive_zero_rtt_rejected` (`src/tests/`).
 
 ## DOCS DISCIPLINE (Rule A)
 
