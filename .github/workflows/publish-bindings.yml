@@ -36,6 +36,11 @@ permissions:
   contents: read
   id-token: write # OIDC identity for npm trusted publishing (+ provenance when public)
 
+# Never cancel a publish mid-run — a half-published npm release is unrecoverable.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   publish:
     name: Build, test, publish
@@ -44,16 +49,16 @@ jobs:
       run:
         working-directory: bindings/typescript
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
       # npm (not bun) performs the publish: it speaks OIDC trusted publishing.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: 22 # trusted publishing needs Node >= 22.14
+          node-version: 24 # Node 24 baseline; trusted publishing needs >= 22.14
           registry-url: https://registry.npmjs.org/
 
       - name: Upgrade npm to a trusted-publishing-capable version
