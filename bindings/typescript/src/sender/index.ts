@@ -11,10 +11,29 @@ const DEFAULT_BINARY = 'srtla_send';
 const DEFAULT_SYSTEM_PATH = '/usr/bin/srtla_send';
 
 export const srtlaSendOptionsSchema = z.object({
-	listenPort: z.number().int().min(1).max(65535).default(5000),
-	srtlaHost: z.string().min(1),
-	srtlaPort: z.number().int().min(1).max(65535).default(5001),
-	ipsFile: z.string().min(1).default('/tmp/srtla_ips'),
+	listenPort: z
+		.number()
+		.int()
+		.min(1)
+		.max(65535)
+		.default(5000)
+		.describe('Local UDP port the sender listens on for SRT packets (positional arg 1).'),
+	srtlaHost: z
+		.string()
+		.min(1)
+		.describe('Hostname or IP of the SRTLA receiver / srtla_rec (positional arg 2).'),
+	srtlaPort: z
+		.number()
+		.int()
+		.min(1)
+		.max(65535)
+		.default(5001)
+		.describe('UDP port of the SRTLA receiver (positional arg 3).'),
+	ipsFile: z
+		.string()
+		.min(1)
+		.default('/tmp/srtla_ips')
+		.describe('Path to the newline-separated local source-IP (uplink) list (positional arg 4).'),
 	verbose: z.boolean().optional(),
 	statsFile: z.string().min(1).optional(),
 	statsFileInterval: z.number().int().min(1).optional(),
@@ -69,6 +88,17 @@ export function getSrtlaSendExec(execPath?: string): string {
 	return DEFAULT_BINARY;
 }
 
+/**
+ * Validate `options`, resolve the `srtla_send` binary, and spawn it with the
+ * parity-locked positional argument vector.
+ *
+ * Throws a `ZodError` if `options` fails validation (e.g. an out-of-range port)
+ * before any process is spawned. The binary is resolved via
+ * {@link getSrtlaSendExec} (`options.execPath` → `PATH` → `/usr/bin/srtla_send`).
+ *
+ * @param options Sender options; the four positionals plus optional control-plane flags.
+ * @returns The spawned `Bun.Subprocess`. The caller owns its lifecycle.
+ */
 export function spawnSrtlaSend(options: SrtlaSendOptionsInput): Bun.Subprocess {
 	const parsed = srtlaSendOptionsSchema.parse(options);
 	const exec = getSrtlaSendExec(parsed.execPath);
@@ -76,6 +106,14 @@ export function spawnSrtlaSend(options: SrtlaSendOptionsInput): Bun.Subprocess {
 	return Bun.spawn([exec, ...args]);
 }
 
+/**
+ * Signal every running `srtla_send` to reload its IP list (Unix `SIGHUP`).
+ *
+ * Mirrors the sender's live IP-list reload contract: surviving uplinks keep their
+ * sockets, the pool is rebuilt in ips-file order. `killall` exits non-zero when no
+ * process matches; that is treated as an acceptable no-op, so this never throws on
+ * "nothing running".
+ */
 export function sendSrtlaSendHup(): void {
 	// killall exits non-zero when no process matches; that is an acceptable no-op.
 	Bun.spawnSync(['killall', '-HUP', DEFAULT_BINARY]);

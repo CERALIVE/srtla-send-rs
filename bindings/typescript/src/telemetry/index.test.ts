@@ -108,6 +108,29 @@ describe('readTelemetry', () => {
 		expect(await readTelemetry(p)).toBeNull();
 	});
 
+	test('readTelemetry_schema_version_2_rejected_even_with_valid_connections', async () => {
+		// The version gate dominates: a structurally-valid connections array must
+		// still be rejected when schema_version != 1 (fail-loud on a producer bump).
+		const p = await writeSnapshot(
+			JSON.stringify({
+				schema_version: 2,
+				last_updated_ms: Date.now(),
+				connections: [
+					{
+						conn_id: '0',
+						rtt_ms: 42,
+						nak_count: 3,
+						weight_percent: 85,
+						window: 8192,
+						in_flight: 100,
+						bitrate_bps: 2500000,
+					},
+				],
+			}),
+		);
+		expect(await readTelemetry(p)).toBeNull();
+	});
+
 	test('missing schema_version is rejected (no silent strip)', async () => {
 		const p = await writeSnapshot(JSON.stringify({ last_updated_ms: Date.now(), connections: [] }));
 		expect(await readTelemetry(p)).toBeNull();
