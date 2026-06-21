@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
+import { ZodError } from 'zod';
 
-import { buildSrtlaSendArgs } from './index.js';
+import { buildSrtlaSendArgs, getSrtlaSendExec, spawnSrtlaSend } from './index.js';
 
 describe('buildSrtlaSendArgs', () => {
 	test('buildSrtlaSendArgs_positional_order', () => {
@@ -71,5 +72,33 @@ describe('buildSrtlaSendArgs', () => {
 		const idx = args.indexOf('--stats-file-interval');
 		expect(idx).toBeGreaterThanOrEqual(0);
 		expect(args[idx + 1]).toBe('2000');
+	});
+
+	test('buildSrtlaSendArgs_stats_file_interval_stringified_after_stats_file', () => {
+		const args = buildSrtlaSendArgs({ srtlaHost: 'host', statsFile: '/s', statsFileInterval: 500 });
+		const intervalIdx = args.indexOf('--stats-file-interval');
+		expect(intervalIdx).toBeGreaterThanOrEqual(0);
+		expect(args[intervalIdx + 1]).toBe('500');
+		expect(args.indexOf('--stats-file')).toBeLessThan(intervalIdx);
+	});
+});
+
+describe('getSrtlaSendExec', () => {
+	test('getSrtlaSendExec_appends_binary_for_absent_directory_path', () => {
+		expect(getSrtlaSendExec('/nonexistent/srtla/dir')).toBe('/nonexistent/srtla/dir/srtla_send');
+	});
+
+	test('getSrtlaSendExec_returns_absent_path_already_ending_in_binary', () => {
+		expect(getSrtlaSendExec('/nonexistent/srtla_send')).toBe('/nonexistent/srtla_send');
+	});
+});
+
+describe('spawnSrtlaSend', () => {
+	test('spawnSrtlaSend_rejects_out_of_range_listen_port', () => {
+		expect(() => spawnSrtlaSend({ srtlaHost: 'host', listenPort: 70000 })).toThrow(ZodError);
+	});
+
+	test('spawnSrtlaSend_rejects_zero_srtla_port', () => {
+		expect(() => spawnSrtlaSend({ srtlaHost: 'host', srtlaPort: 0 })).toThrow(ZodError);
 	});
 });
