@@ -1,0 +1,28 @@
+version: 2
+# Dependabot updates DECLARED dependencies + GitHub Actions pins only.
+# It NEVER touches the `upstream` (irlserver/srtla_send) fork remote — upstream
+# merges here are MANUAL and compat-gated (see AGENTS.md → Upstream-merge policy).
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      cargo:
+        patterns: ["*"]
+
+  - package-ecosystem: "npm"
+    directory: "/bindings/typescript"
+    schedule:
+      interval: "weekly"
+    groups:
+      npm-bindings:
+        patterns: ["*"]
