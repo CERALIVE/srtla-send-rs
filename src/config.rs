@@ -16,6 +16,7 @@ use tracing::{info, warn};
 
 use crate::mode::SchedulingMode;
 use crate::stats::SharedStats;
+use crate::subscription::SubscriptionManager;
 
 /// Default RTT delta threshold in milliseconds.
 /// Links within min_rtt + delta are considered "fast" and preferred.
@@ -133,6 +134,7 @@ pub fn spawn_config_listener(
     config: DynamicConfig,
     socket_path: Option<String>,
     stats: SharedStats,
+    subscriptions: SubscriptionManager,
 ) {
     if let Some(sock_path) = socket_path {
         // Socket path specified: use Unix socket on Unix, fallback to stdin on other platforms
@@ -140,8 +142,14 @@ pub fn spawn_config_listener(
         {
             let config_clone = config.clone();
             let stats_clone = stats.clone();
+            let subscriptions_clone = subscriptions.clone();
             std::thread::spawn(move || {
-                unix_socket_loop(&config_clone, &sock_path, &stats_clone);
+                unix_socket_loop(
+                    &config_clone,
+                    &sock_path,
+                    &stats_clone,
+                    &subscriptions_clone,
+                );
             });
         }
         #[cfg(not(unix))]
@@ -149,6 +157,7 @@ pub fn spawn_config_listener(
             // Unix sockets not available; fall back to stdin listener
             let _ = sock_path; // suppress unused warning
             let _ = stats; // suppress unused warning
+            let _ = subscriptions; // event subscription is Unix-socket only
             let config_clone = config.clone();
             std::thread::spawn(move || {
                 let stdin = std::io::stdin();
@@ -159,6 +168,7 @@ pub fn spawn_config_listener(
             });
         }
     } else {
+        let _ = &subscriptions; // stdin control path has no event subscribers
         // No socket path: use stdin listener (backward compatibility)
         let config_clone = config.clone();
         std::thread::spawn(move || {
@@ -324,10 +334,53 @@ pub fn apply_cmd(config: &DynamicConfig, cmd: &str, stats: Option<&SharedStats>)
     CmdResponse::None
 }
 
+/// Prepare the control-socket path before binding, refusing to clobber anything
+/// we must not delete.
+///
+/// Returns `true` when the path is clear to bind — it did not exist, or held a
+/// *stale* socket (no live server answered a connect probe) that was safely
+/// unlinked. Returns `false`, **without deleting anything**, when the path holds
+/// a **live** socket (a server is already listening) or a **non-socket** entry
+/// (regular file, directory, …). The caller must not bind when this is `false`.
 #[cfg(unix)]
-fn unix_socket_loop(config: &DynamicConfig, socket_path: &str, stats: &SharedStats) {
-    // Remove existing socket file if it exists
+pub(crate) fn prepare_control_socket_path(socket_path: &str) -> bool {
+    use std::os::unix::fs::FileTypeExt;
+
+    let Ok(meta) = std::fs::metadata(socket_path) else {
+        // Path does not exist (or is unreadable): nothing to unlink — bind will
+        // create it, or fail loudly with its own error.
+        return true;
+    };
+
+    if !meta.file_type().is_socket() {
+        warn!("control socket path {socket_path} exists but is not a socket; refusing to unlink");
+        return false;
+    }
+
+    // It is a socket. Probe it: a successful connect means a live server owns it.
+    if UnixStream::connect(socket_path).is_ok() {
+        warn!(
+            "control socket {socket_path} is already in use by a live server; refusing to unlink"
+        );
+        return false;
+    }
+
+    // Stale socket (connect failed) — safe to unlink so we can rebind.
     let _ = std::fs::remove_file(socket_path);
+    true
+}
+
+#[cfg(unix)]
+fn unix_socket_loop(
+    config: &DynamicConfig,
+    socket_path: &str,
+    stats: &SharedStats,
+    subscriptions: &SubscriptionManager,
+) {
+    // Only unlink a stale socket; never clobber a live server or a non-socket.
+    if !prepare_control_socket_path(socket_path) {
+        return;
+    }
 
     let listener = match UnixListener::bind(socket_path) {
         Ok(l) => l,
@@ -344,8 +397,9 @@ fn unix_socket_loop(config: &DynamicConfig, socket_path: &str, stats: &SharedSta
             Ok(stream) => {
                 let config_clone = config.clone();
                 let stats_clone = stats.clone();
+                let subscriptions_clone = subscriptions.clone();
                 std::thread::spawn(move || {
-                    handle_unix_client(config_clone, stream, stats_clone);
+                    handle_unix_client(config_clone, stream, stats_clone, subscriptions_clone);
                 });
             }
             Err(e) => {
@@ -356,7 +410,12 @@ fn unix_socket_loop(config: &DynamicConfig, socket_path: &str, stats: &SharedSta
 }
 
 #[cfg(unix)]
-fn handle_unix_client(config: DynamicConfig, mut stream: UnixStream, stats: SharedStats) {
+fn handle_unix_client(
+    config: DynamicConfig,
+    mut stream: UnixStream,
+    stats: SharedStats,
+    subscriptions: SubscriptionManager,
+) {
     // Clone stream for reading (we need separate read/write handles)
     let read_stream = match stream.try_clone() {
         Ok(s) => s,
@@ -365,22 +424,67 @@ fn handle_unix_client(config: DynamicConfig, mut stream: UnixStream, stats: Shar
     let reader = BufReader::new(read_stream);
 
     for line in reader.lines() {
-        match line {
-            Ok(cmd) => {
-                let response = apply_cmd(&config, cmd.trim(), Some(&stats));
-                if let CmdResponse::Json(json) = response {
-                    // Write JSON response followed by newline
-                    if let Err(e) = writeln!(stream, "{}", json) {
-                        debug!("failed to write response: {}", e);
-                        break;
-                    }
-                    if let Err(e) = stream.flush() {
-                        debug!("failed to flush response: {}", e);
-                        break;
-                    }
-                }
+        let Ok(cmd) = line else { break };
+        let trimmed = cmd.trim();
+
+        // Frame discriminator (ADR-001): a line beginning with `{` is a JSON-RPC
+        // frame; anything else is the legacy text protocol. A malformed JSON-RPC
+        // frame returns a structured error — it never falls through to text.
+        let response = if trimmed.starts_with('{') {
+            // `subscribe-events` turns the connection into a one-way event
+            // stream: it has no single response, so it is handled before the
+            // request/response dispatch and consumes the connection until EOF.
+            if is_subscribe_events(trimmed) {
+                run_subscription_loop(&subscriptions, &mut stream);
+                return;
             }
-            Err(_) => break,
+            Some(crate::jsonrpc::dispatch_jsonrpc(trimmed, &config))
+        } else {
+            match apply_cmd(&config, trimmed, Some(&stats)) {
+                CmdResponse::Json(json) => Some(json),
+                CmdResponse::None => None,
+            }
+        };
+
+        if let Some(body) = response {
+            if let Err(e) = writeln!(stream, "{body}") {
+                debug!("failed to write response: {e}");
+                break;
+            }
+            if let Err(e) = stream.flush() {
+                debug!("failed to flush response: {e}");
+                break;
+            }
+        }
+    }
+}
+
+/// True only when `frame` is a JSON-RPC request whose `method` is exactly
+/// `subscribe-events`. A malformed frame returns `false` and falls through to
+/// `dispatch_jsonrpc`, which emits the proper structured parse error.
+#[cfg(unix)]
+fn is_subscribe_events(frame: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(frame)
+        .ok()
+        .and_then(|v| {
+            v.get("method")
+                .and_then(serde_json::Value::as_str)
+                .map(|m| m == "subscribe-events")
+        })
+        .unwrap_or(false)
+}
+
+/// Stream telemetry `"event"` notifications to a subscribed client until the
+/// peer hangs up. Each frame from the per-subscriber channel is written as one
+/// newline-delimited line; a write/flush error or a closed channel ends the
+/// loop, dropping the receiver so the manager prunes this subscriber on its
+/// next broadcast.
+#[cfg(unix)]
+fn run_subscription_loop(subscriptions: &SubscriptionManager, stream: &mut UnixStream) {
+    let rx = subscriptions.subscribe();
+    while let Ok(frame) = rx.recv() {
+        if writeln!(stream, "{frame}").is_err() || stream.flush().is_err() {
+            break;
         }
     }
 }

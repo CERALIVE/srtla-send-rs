@@ -14,12 +14,15 @@ static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 mod config;
 mod connection;
 mod ewma;
+#[cfg(unix)]
+mod jsonrpc;
 mod kalman;
 mod mode;
 mod protocol;
 mod registration;
 mod sender;
 mod stats;
+mod subscription;
 mod telemetry_file;
 mod utils;
 
@@ -240,8 +243,17 @@ async fn main() -> Result<()> {
     // Create shared stats for telemetry export
     let shared_stats = stats::SharedStats::new();
 
+    // Telemetry-event fan-out for `subscribe-events`; broadcast on the same tick
+    // as the stats file (dual-publish), populated by the control-socket handler.
+    let subscriptions = subscription::SubscriptionManager::new();
+
     // Start config listener (stdin or Unix socket)
-    config::spawn_config_listener(config.clone(), args.control_socket, shared_stats.clone());
+    config::spawn_config_listener(
+        config.clone(),
+        args.control_socket,
+        shared_stats.clone(),
+        subscriptions.clone(),
+    );
 
     let telemetry = args.stats_file.as_deref().map(|path| {
         telemetry_file::TelemetryWriter::new(path.to_string(), args.stats_file_interval)
@@ -254,7 +266,10 @@ async fn main() -> Result<()> {
         ips_file,
         config,
         shared_stats,
-        telemetry,
+        sender::TelemetrySinks {
+            file: telemetry,
+            subscriptions,
+        },
     )
     .await;
 

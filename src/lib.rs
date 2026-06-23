@@ -13,12 +13,15 @@ static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 pub mod config;
 pub mod connection;
 pub mod ewma;
+#[cfg(unix)]
+pub mod jsonrpc;
 pub mod kalman;
 pub mod mode;
 pub mod protocol;
 pub mod registration;
 pub mod sender;
 pub mod stats;
+pub mod subscription;
 pub mod telemetry_file;
 pub mod utils;
 
