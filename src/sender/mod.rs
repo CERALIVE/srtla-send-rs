@@ -46,10 +46,19 @@ use uplink::{ConnectionId, ReaderHandle, create_uplink_channel, sync_readers};
 use crate::config::DynamicConfig;
 use crate::registration::SrtlaRegistrationManager;
 use crate::stats::SharedStats;
-use crate::telemetry_file::TelemetryWriter;
+use crate::subscription::SubscriptionManager;
+use crate::telemetry_file::{TelemetryWriter, build_telemetry_json, conns_from_stats};
+use crate::utils::now_ms;
 
 pub const HOUSEKEEPING_INTERVAL_MS: u64 = 1000;
 const STATUS_LOG_INTERVAL_MS: u64 = 30_000;
+
+/// The telemetry output sinks the cadence tick publishes one snapshot to: the
+/// opt-in `--stats-file` writer and the `subscribe-events` event broadcaster.
+pub struct TelemetrySinks {
+    pub file: Option<TelemetryWriter>,
+    pub subscriptions: SubscriptionManager,
+}
 
 pub async fn run_sender_with_config(
     local_srt_port: u16,
@@ -58,8 +67,12 @@ pub async fn run_sender_with_config(
     ips_file: &str,
     config: DynamicConfig,
     shared_stats: SharedStats,
-    telemetry: Option<TelemetryWriter>,
+    sinks: TelemetrySinks,
 ) -> Result<()> {
+    let TelemetrySinks {
+        file: telemetry,
+        subscriptions,
+    } = sinks;
     info!(
         "starting srtla_send: local_srt_port={}, receiver={}:{}, ips_file={}, mode={}",
         local_srt_port,
@@ -197,11 +210,16 @@ pub async fn run_sender_with_config(
         }
     }
 
-    // Emit an initial snapshot immediately so a consumer sees a fresh file well
-    // before the first cadence tick, rather than waiting a full interval.
-    if let Some(writer) = telemetry.as_ref() {
+    // Emit an initial snapshot immediately so a consumer (stats file or event
+    // subscriber) sees fresh state well before the first cadence tick. Build it
+    // once and hand the identical bytes to both sinks.
+    {
         shared_stats.update(&connections, &config.snapshot());
-        writer.publish(&shared_stats.get());
+        let snapshot_json = build_telemetry_json(now_ms(), &conns_from_stats(&shared_stats.get()));
+        if let Some(writer) = telemetry.as_ref() {
+            writer.publish_prebuilt(&snapshot_json);
+        }
+        subscriptions.broadcast(&snapshot_json);
     }
 
     // Use a macro to avoid duplicating the event loop for Unix/non-Unix
@@ -322,9 +340,12 @@ pub async fn run_sender_with_config(
                         .await;
                     }
                     _ = telemetry_timer.tick() => {
+                        let snapshot_json =
+                            build_telemetry_json(now_ms(), &conns_from_stats(&shared_stats.get()));
                         if let Some(writer) = telemetry.as_ref() {
-                            writer.publish(&shared_stats.get());
+                            writer.publish_prebuilt(&snapshot_json);
                         }
+                        subscriptions.broadcast(&snapshot_json);
                     }
                     $($sighup_branch)*
                     _ = batch_flush_timer.tick() => {
