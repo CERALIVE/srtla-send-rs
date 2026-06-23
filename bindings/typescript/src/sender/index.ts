@@ -37,6 +37,13 @@ export const srtlaSendOptionsSchema = z.object({
 	verbose: z.boolean().optional(),
 	statsFile: z.string().min(1).optional(),
 	statsFileInterval: z.number().int().min(1).optional(),
+	controlSocket: z
+		.string()
+		.optional()
+		.describe(
+			'Unix socket path for the JSON-RPC control channel. ' +
+				'Defaults to /tmp/srtla-send-control-<listenPort>.sock when omitted.',
+		),
 	execPath: z.string().optional(),
 });
 
@@ -63,7 +70,15 @@ export function buildSrtlaSendArgs(input: SrtlaSendOptionsInput): Array<string> 
 	if (options.statsFileInterval !== undefined) {
 		args.push('--stats-file-interval', String(options.statsFileInterval));
 	}
+	if (options.controlSocket) {
+		args.push('--control-socket', options.controlSocket);
+	}
 	return args;
+}
+
+/** Default control socket path for a given listen port. */
+export function controlSocketPath(listenPort: number): string {
+	return `/tmp/srtla-send-control-${listenPort}.sock`;
 }
 
 export function getSrtlaSendExec(execPath?: string): string {

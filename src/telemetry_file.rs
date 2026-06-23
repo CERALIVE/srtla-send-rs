@@ -39,7 +39,6 @@ use serde::Serialize;
 use tracing::warn;
 
 use crate::stats::StatsSnapshot;
-use crate::utils::now_ms;
 
 /// JSON schema version. Additive over the C producer; the Zod reader strips it.
 pub const TELEMETRY_SCHEMA_VERSION: u32 = 1;
@@ -243,12 +242,12 @@ impl TelemetryWriter {
         self.period
     }
 
-    /// Serialize the current snapshot and atomically publish it. Best-effort: an
-    /// I/O error is logged at WARN and otherwise ignored (telemetry never stalls
-    /// or fails the stream).
-    pub fn publish(&self, stats: &StatsSnapshot) {
-        let json = build_telemetry_json(now_ms(), &conns_from_stats(stats));
-        if let Err(e) = write_atomic(&self.path, &json) {
+    /// Atomically publish an already-serialized ADR-001 snapshot document. Lets
+    /// the telemetry tick build the snapshot once and hand identical bytes to
+    /// both sinks (stats file + event broadcast). Best-effort: an I/O error is
+    /// logged at WARN and otherwise ignored (telemetry never stalls the stream).
+    pub fn publish_prebuilt(&self, json: &str) {
+        if let Err(e) = write_atomic(&self.path, json) {
             let path = self.path.display();
             warn!("telemetry stats-file write failed: {path}: {e}");
         }
@@ -550,7 +549,7 @@ mod tests {
         let path = dir.path().join("stats.json");
         {
             let writer = TelemetryWriter::new(&path, 1000);
-            writer.publish(&StatsSnapshot::default());
+            writer.publish_prebuilt(&build_telemetry_json(0, &[]));
             assert!(path.exists(), "publish should create the live file");
         } // writer dropped here
         assert!(!path.exists(), "the live file must be unlinked on drop");

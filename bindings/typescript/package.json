@@ -1,6 +1,6 @@
 {
 	"name": "@ceralive/srtla-send",
-	"version": "2026.6.1",
+	"version": "2026.6.2",
 	"description": "Type-safe helpers for the srtla-send-rs sender (args, validation, telemetry reader).",
 	"type": "module",
 	"main": "dist/index.js",
@@ -17,6 +17,10 @@
 		"./telemetry": {
 			"import": "./dist/telemetry/index.js",
 			"types": "./dist/telemetry/index.d.ts"
+		},
+		"./control": {
+			"import": "./dist/control/index.js",
+			"types": "./dist/control/index.d.ts"
 		}
 	},
 	"files": [
