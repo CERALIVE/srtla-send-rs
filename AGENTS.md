@@ -41,12 +41,37 @@ The `@ceralive/srtla-send` sender/telemetry exports mirror `@ceralive/srtla`'s
 
 ## UPSTREAM RELATIONSHIP
 
-Two remotes — keep both:
+One permanent remote: `origin` (`https://github.com/CERALIVE/srtla-send-rs.git`). The
+irlserver upstream remote is **TRANSIENT** — added only for the duration of a merge PR,
+then removed before any push or PR is opened.
 
 ```
-origin    https://github.com/CERALIVE/srtla-send-rs.git   (our fork; push here)
-upstream  https://github.com/irlserver/srtla_send.git     (read-only; merge source)
+origin    https://github.com/CERALIVE/srtla-send-rs.git   (our fork; push here; always present)
+irlserver https://github.com/irlserver/srtla_send.git     (merge source; TRANSIENT — add, fetch, merge, remove)
 ```
+
+**Transient-remote recipe** (use [`scripts/upstream-merge.sh`](../scripts/upstream-merge.sh)):
+
+```bash
+# 1. Add the upstream remote under the name 'irlserver' (NEVER 'upstream')
+git remote add irlserver https://github.com/irlserver/srtla_send.git
+
+# 2. Fetch with an explicit destination refspec
+git fetch irlserver main:refs/remotes/irlserver/main
+
+# 3. Pin-verify the fetched SHA before merging
+git rev-parse refs/remotes/irlserver/main   # confirm expected SHA
+
+# 4. Merge (true-merge commit — never squash an upstream-sync PR)
+git merge refs/remotes/irlserver/main --no-ff -m "chore: merge upstream irlserver/srtla_send <SHA>"
+
+# 5. Remove the remote BEFORE any push or PR
+git remote remove irlserver
+```
+
+The working clone is back to `origin`-only at PR time. Never leave a remote pointing at
+the fork parent attached when opening a PR. Verify: `git remote -v` must show only
+`origin` before `git push`.
 
 - **License:** upstream is **MIT**; CERALIVE ships under **AGPLv3**. MIT → AGPLv3
   incorporation is compatible. Keep upstream's `LICENSE` and credits intact; add CERALIVE
