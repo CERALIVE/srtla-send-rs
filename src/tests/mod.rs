@@ -22,6 +22,9 @@ pub mod end_to_end_tests;
 #[cfg(test)]
 pub mod rtt_threshold_tests;
 
+#[cfg(test)]
+pub mod edpf_tests;
+
 #[cfg(all(test, unix))]
 pub mod jsonrpc_control_tests;
 
