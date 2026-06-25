@@ -196,6 +196,31 @@ cargo test --features test-internals # upstream's full-coverage suite
 The whole sender test corpus runs in-process over loopback UDP — **no root / netns /
 CAP_NET_ADMIN required** (0 tests are gated/ignored).
 
+**Miri lane (BLOCKING CI job, NOT part of the default gate).** The only `unsafe`
+FFI in the tree is the `recvmmsg` batch-receive path
+(`src/connection/batch_recv.rs`). A dedicated BLOCKING `miri` job in `ci.yml`
+runs miri over its **pure pointer logic** — three single-filter invocations (miri
+takes one substring filter per run):
+
+```bash
+cargo miri test --lib --no-default-features --features test-internals init_rebuilds_self_pointers_after_move
+cargo miri test --lib --no-default-features --features test-internals iter_clamps_oversized_msg_len_to_mtu
+cargo miri test --lib --no-default-features --features test-internals sockaddr_storage_roundtrip
+```
+
+These vet, with no UB: the self-referential `iovec`/`mmsghdr` pointer rebuild
+after a value move (`rebuild_pointers`/`init`), the `msg_len`→`MTU` clamp in the
+iterator, and the `sockaddr_storage`→`SocketAddr` cast + big-endian decode.
+**HARD LIMIT — miri CANNOT execute the real `recvmmsg` syscall/FFI.** It validates
+only the Rust-side pointer arithmetic and decode *around* the syscall, never the
+live kernel transition; any test that binds a socket, issues `recvmmsg`, or spawns
+tokio must NOT run under miri (carry `#[cfg_attr(miri, ignore)]` if added — the
+current `batch_recv.rs` tests are all syscall-free, so none need it). Two flags
+are load-bearing: `--no-default-features` drops the mimalloc `#[global_allocator]`
+(C FFI miri cannot run — it aborts on `mi_malloc_aligned`), and `--lib` scopes to
+the unit-test binary holding the three pure tests. Install with
+`rustup component add miri` on the pinned nightly.
+
 The `@ceralive/srtla-send` TS binding (`bindings/typescript/`) has its own gate:
 
 ```bash
