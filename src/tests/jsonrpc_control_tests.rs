@@ -290,3 +290,82 @@ fn legacy_text_protocol_still_works() {
     client.send_no_reply("mode classic");
     wait_for(|| config.mode() == SchedulingMode::Classic);
 }
+
+// ---- 10. hello matches ADR-001 §Methods (additive superset) ----------------
+
+#[test]
+fn hello_matches_adr() {
+    let config = DynamicConfig::new();
+    let resp_str = dispatch_jsonrpc(r#"{"jsonrpc":"2.0","method":"hello","id":1}"#, &config);
+    let resp: Value = serde_json::from_str(&resp_str).expect("valid JSON");
+    let result = &resp["result"];
+
+    // ADR-001 mandates the protocol/engine_version/schema_version triple.
+    assert!(
+        result.get("protocol").is_some(),
+        "missing protocol: {result}"
+    );
+    assert!(
+        result.get("engine_version").is_some(),
+        "missing engine_version: {result}"
+    );
+    assert!(
+        result.get("schema_version").is_some(),
+        "missing schema_version: {result}"
+    );
+
+    // The additive superset (engine + capabilities) must remain present.
+    assert!(result.get("engine").is_some(), "missing engine: {result}");
+    assert!(
+        result.get("capabilities").is_some(),
+        "missing capabilities: {result}"
+    );
+}
+
+// ---- 11. set-rtt-delta accepts the ADR canonical `delta_ms` -----------------
+
+#[test]
+fn set_rtt_delta_accepts_delta_ms() {
+    let config = DynamicConfig::new();
+    let set_str = dispatch_jsonrpc(
+        r#"{"jsonrpc":"2.0","method":"set-rtt-delta","params":{"delta_ms":50},"id":1}"#,
+        &config,
+    );
+    let set: Value = serde_json::from_str(&set_str).expect("valid JSON");
+    assert_eq!(set["result"]["ok"], Value::Bool(true));
+
+    let status_str = dispatch_jsonrpc(r#"{"jsonrpc":"2.0","method":"get-status","id":2}"#, &config);
+    let status: Value = serde_json::from_str(&status_str).expect("valid JSON");
+    assert_eq!(status["result"]["rtt_delta_ms"], Value::from(50));
+}
+
+// ---- 12. set-rtt-delta accepts the `ms` back-compat alias -------------------
+
+#[test]
+fn set_rtt_delta_accepts_ms_alias() {
+    let config = DynamicConfig::new();
+    let set_str = dispatch_jsonrpc(
+        r#"{"jsonrpc":"2.0","method":"set-rtt-delta","params":{"ms":50},"id":1}"#,
+        &config,
+    );
+    let set: Value = serde_json::from_str(&set_str).expect("valid JSON");
+    assert_eq!(set["result"]["ok"], Value::Bool(true));
+
+    let status_str = dispatch_jsonrpc(r#"{"jsonrpc":"2.0","method":"get-status","id":2}"#, &config);
+    let status: Value = serde_json::from_str(&status_str).expect("valid JSON");
+    assert_eq!(status["result"]["rtt_delta_ms"], Value::from(50));
+}
+
+// ---- 13. set-rtt-delta with no usable param -> -32602 invalid params --------
+
+#[test]
+fn set_rtt_delta_missing_param_is_invalid_params() {
+    let config = DynamicConfig::new();
+    let resp_str = dispatch_jsonrpc(
+        r#"{"jsonrpc":"2.0","method":"set-rtt-delta","params":{},"id":1}"#,
+        &config,
+    );
+    let resp: Value = serde_json::from_str(&resp_str).expect("valid JSON");
+    assert_eq!(resp["error"]["code"], Value::from(-32602));
+    assert_eq!(resp["id"], Value::from(1));
+}
