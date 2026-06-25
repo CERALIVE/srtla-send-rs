@@ -7,7 +7,7 @@
 #[derive(Debug)]
 pub struct IodsFilter {
     /// Last scheduled predicted arrival time.
-    last_arrival: f64,
+    pub(crate) last_arrival: f64,
 }
 
 impl IodsFilter {

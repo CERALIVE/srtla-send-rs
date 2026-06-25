@@ -35,7 +35,14 @@ mod tests {
             rtt_delta_ms: 30,
         };
 
-        let selected = select_connection_idx(&mut connections, None, 0, 0, &config);
+        let selected = select_connection_idx(
+            &mut connections,
+            None,
+            0,
+            0,
+            &config,
+            &mut EdpfSchedulerState::default(),
+        );
         assert_eq!(selected, Some(1));
     }
 
@@ -63,7 +70,14 @@ mod tests {
             rtt_delta_ms: 30,
         };
 
-        let selected = select_connection_idx(&mut connections, None, 0, current_time, &config);
+        let selected = select_connection_idx(
+            &mut connections,
+            None,
+            0,
+            current_time,
+            &config,
+            &mut EdpfSchedulerState::default(),
+        );
 
         // Should prefer connection 1 (no NAKs)
         assert_eq!(selected, Some(1));
@@ -92,7 +106,14 @@ mod tests {
             rtt_delta_ms: 30,
         };
 
-        let selected = select_connection_idx(&mut connections, None, 0, current_time, &config);
+        let selected = select_connection_idx(
+            &mut connections,
+            None,
+            0,
+            current_time,
+            &config,
+            &mut EdpfSchedulerState::default(),
+        );
 
         // Should prefer connection 2 (never had NAKs, best quality)
         assert_eq!(selected, Some(2));
@@ -126,6 +147,7 @@ mod tests {
             last_switch_time_ms,
             current_time_ms,
             &config,
+            &mut EdpfSchedulerState::default(),
         );
         assert_eq!(
             selected,
@@ -162,6 +184,7 @@ mod tests {
             last_switch_time_ms,
             current_time_ms,
             &config,
+            &mut EdpfSchedulerState::default(),
         );
         assert_eq!(
             selected,
@@ -202,6 +225,7 @@ mod tests {
             last_switch_time_ms,
             current_time_ms,
             &config,
+            &mut EdpfSchedulerState::default(),
         );
         assert_eq!(
             selected,
@@ -239,6 +263,7 @@ mod tests {
             last_switch_time_ms,
             current_time_ms,
             &config,
+            &mut EdpfSchedulerState::default(),
         );
 
         // Should continue routing packets via connection 0, not explore during cooldown
@@ -277,6 +302,7 @@ mod tests {
             last_switch_time_ms,
             current_time_ms,
             &config,
+            &mut EdpfSchedulerState::default(),
         );
 
         // Per-packet routing immediately uses connection 1 (best score)
@@ -611,7 +637,14 @@ mod tests {
             rtt_delta_ms: 30,
         };
 
-        let selected = select_connection_idx(&mut connections, None, 0, 0, &config);
+        let selected = select_connection_idx(
+            &mut connections,
+            None,
+            0,
+            0,
+            &config,
+            &mut EdpfSchedulerState::default(),
+        );
 
         // Should return None when all connections have score -1
         assert_eq!(selected, None);
@@ -630,7 +663,14 @@ mod tests {
         };
 
         // Test exploration - this is time-dependent so we just test that it doesn't panic
-        let _selected = select_connection_idx(&mut connections, None, 0, 0, &config);
+        let _selected = select_connection_idx(
+            &mut connections,
+            None,
+            0,
+            0,
+            &config,
+            &mut EdpfSchedulerState::default(),
+        );
 
         // The result depends on timing, but should not panic
     }
