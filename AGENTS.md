@@ -164,6 +164,22 @@ CeraUI and the device integration depend on these staying stable:
   frames are already ≥32 B (extended keepalive 38 B, REG1/REG2 258 B) so this is
   a passthrough today, but the floor is now enforced. Pinned by
   `control_packet_padded_to_32b` + `data_not_padded` (`src/tests/connection_tests.rs`).
+- **Keepalive divergence (BELABOX 2-byte vs our timestamped 10/38 B):** BELABOX
+  (`BELABOX/srtla` `srtla_send.c` L589-593) sends a **bare 2-byte** keepalive
+  (type only, no timestamp); this fork inherited irlserver's **timestamped**
+  keepalive — standard 10 B (`type + u64 ms`) and the backwards-compatible
+  **extended 38 B** (`+ 0xC01F`-tagged `ConnectionInfo` telemetry) — and always
+  emits the extended form. The timestamp is what powers RTT-from-keepalive
+  (`RttTracker::handle_keepalive_response`); a bare echo carries none. Interop
+  rests on the **receiver-echo ASSUMPTION**: receivers echo keepalives and
+  tolerate trailing bytes (proven for irlserver/CeraLive; **assumed, not proven,
+  for BELABOX** — needs a live BELABOX receiver). The sender defensively accepts
+  a bare 2-byte echo (no RTT, no panic). A BELABOX-compatible 2-byte *send* mode
+  is a **deferred follow-up** — do not add it without live-interop evidence, and
+  never change the keepalive wire format or the 32 B NAT-padding floor to do it.
+  Full write-up: `docs/KEEPALIVE_INTEROP.md`. Pinned by
+  `keepalive_extended_round_trip` / `keepalive_bare_2byte_accepted` /
+  `keepalive_truncated_graceful` (`src/tests/keepalive_interop_tests.rs`).
 - **Link-liveness timeout (`CONN_TIMEOUT = 15`, `src/protocol/constants.rs`):**
   seconds of inbound silence before an established uplink is declared failed and
   re-registered. It is deliberately set to **15**, matching the bonding receiver's
