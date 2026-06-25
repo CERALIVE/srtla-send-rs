@@ -3,7 +3,10 @@
 
 use std::time::Duration;
 
-use network_sim::{SrtlaTestStack, check_impairment_deps, check_integration_deps};
+use network_sim::{
+    SrtlaTestStack, check_impairment_deps, check_integration_deps, wait_for_connected_uplinks,
+    wait_for_udp_listener,
+};
 
 /// Check all integration test dependencies. Returns `true` if tests should
 /// be skipped (prints the reason to stderr). Use at the top of every test.
@@ -36,6 +39,26 @@ pub fn build_srtla_send() {
         .status()
         .expect("failed to run cargo build");
     assert!(status.success(), "cargo build failed");
+}
+
+/// Bounded readiness gate replacing a fixed "sleep N seconds for registration".
+/// Returns once srtla_send's local SRT listener is up and its uplink sockets are
+/// connected to the receiver, so callers wait on observed state, not a timer.
+pub fn wait_until_ready(stack: &SrtlaTestStack) {
+    wait_for_udp_listener(
+        &stack.topo.sender_ns,
+        stack.sender_srt_port(),
+        Duration::from_secs(15),
+    )
+    .expect("srtla_send local SRT listener up");
+    wait_for_connected_uplinks(
+        &stack.topo.sender_ns,
+        &stack.topo.receiver_ip,
+        stack.receiver_srtla_port(),
+        stack.topo.sender_ips.len(),
+        Duration::from_secs(15),
+    )
+    .expect("srtla_send uplink sockets connected to receiver");
 }
 
 /// Inject `count` UDP packets to srtla_send's local SRT port from within

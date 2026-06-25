@@ -5,7 +5,7 @@
 
 mod common;
 
-use std::thread;
+use std::thread::sleep;
 use std::time::Duration;
 
 use network_sim::{ImpairmentConfig, SrtlaTestStack};
@@ -40,12 +40,12 @@ fn test_asymmetric_delay() {
         )
         .expect("impair link 1");
 
-    // Wait for registration + RTT measurement
-    thread::sleep(Duration::from_secs(5));
+    common::wait_until_ready(&stack);
 
     // Inject some data so RTT tracking kicks in
     common::inject_packets(&stack, 200).expect("inject packets");
-    thread::sleep(Duration::from_secs(5));
+    // Steady-state window: let RTT tracking observe the asymmetric delay.
+    sleep(Duration::from_secs(5));
 
     let output = stack.stop();
     common::dump_output(&output);
@@ -66,8 +66,7 @@ fn test_loss_triggers_window_reduction() {
 
     let mut stack = SrtlaTestStack::start("loss", 2, &[]).expect("start stack");
 
-    // Wait for clean registration first
-    thread::sleep(Duration::from_secs(5));
+    common::wait_until_ready(&stack);
 
     // Apply 10% loss on link 0
     stack
@@ -82,7 +81,8 @@ fn test_loss_triggers_window_reduction() {
 
     // Inject data to trigger NAK detection
     common::inject_packets(&stack, 500).expect("inject packets");
-    thread::sleep(Duration::from_secs(5));
+    // Steady-state window: let NAK detection / window reduction react to loss.
+    sleep(Duration::from_secs(5));
 
     let output = stack.stop();
     common::dump_output(&output);
@@ -126,11 +126,12 @@ fn test_tbf_bandwidth_limit() {
         )
         .expect("impair link 1");
 
-    thread::sleep(Duration::from_secs(5));
+    common::wait_until_ready(&stack);
 
     // Inject a burst of data
     common::inject_packets(&stack, 500).expect("inject packets");
-    thread::sleep(Duration::from_secs(5));
+    // Steady-state window: let the rate-limited links drain the burst.
+    sleep(Duration::from_secs(5));
 
     let output = stack.stop();
     common::dump_output(&output);
