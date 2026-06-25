@@ -1178,4 +1178,375 @@ mod tests {
             "the duplicate never leaks onto another uplink"
         );
     }
+
+    // ====================================================================
+    // T13 — Selection-scoring gap tests
+    //
+    // These pin the under-covered scoring logic that the wider suite only
+    // exercised indirectly: the enhanced 10% switch hysteresis, the quality
+    // RTT bonus (cap + MIN_RTT floor), the startup grace period (light vs full
+    // penalty), classic tie-breaking, and the exploration cooldown gate.
+    //
+    // Scoring math notes (mirrors src/sender/selection/):
+    //   * capacity score  = window / (in_flight + 1)               (classic.rs / get_score)
+    //   * hysteresis stay  iff best_score < current * 1.10          (enhanced.rs SWITCH_THRESHOLD)
+    //   * grace (<30s) NAK → 0.98 light penalty                     (quality.rs STARTUP_NAK_PENALTY)
+    //   * post-grace NAK   → 1.0 - 0.5*e^(-age/2000)               (quality.rs exponential decay)
+    //   * rtt bonus        = min(200 / max(rtt, 50), 1.03), >= 1.0  (quality.rs RTT bonus)
+    //   * perfect (no NAK) → 1.1 quality multiplier                (quality.rs PERFECT_CONNECTION_BONUS)
+    //
+    // Quality is disabled in the hysteresis/exploration tests so the capacity
+    // score alone drives the ranking and a NAK changes only the exploration
+    // signal, never the score order. Time-dependent grace tests run on the
+    // paused Tokio virtual clock and drive it via `advance_test_clock` (the
+    // same seam `nak_dedup_within_window` uses).
+    // ====================================================================
+
+    /// Mirrors the private `quality::PERFECT_CONNECTION_BONUS`: a never-NAKed,
+    /// post-grace link has quality multiplier 1.1, so dividing the result by it
+    /// isolates the RTT bonus factor.
+    const PERFECT_BONUS_FOR_TEST: f64 = 1.1;
+
+    /// Enhanced hysteresis: a candidate only 9% better than the current link
+    /// (1.09 < SWITCH_THRESHOLD = 1.10) must NOT trigger a switch — the sender
+    /// stays on the current connection to avoid noise-driven flip-flopping.
+    #[test]
+    fn hysteresis_stays_below_threshold() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut connections = rt.block_on(create_test_connections(3));
+
+        connections[0].window = 100; // current link → score 100
+        connections[0].in_flight_packets = 0;
+        connections[1].window = 109; // 109 / 100 = 1.09 < 1.10 threshold
+        connections[1].in_flight_packets = 0;
+        connections[2].window = 50;
+        connections[2].in_flight_packets = 0;
+
+        let config = ConfigSnapshot {
+            mode: SchedulingMode::Enhanced,
+            quality_enabled: false,
+            exploration_enabled: false,
+            rtt_delta_ms: 30,
+        };
+
+        let last_switch = now_ms();
+        let current = last_switch + 1000; // well past the 15ms switch cooldown
+
+        let selected = select_connection_idx(
+            &mut connections,
+            Some(0),
+            last_switch,
+            current,
+            &config,
+            &mut EdpfSchedulerState::default(),
+        );
+
+        assert_eq!(
+            selected,
+            Some(0),
+            "a 9% improvement is below the 10% hysteresis threshold; must stay on the current link"
+        );
+    }
+
+    /// Enhanced hysteresis: a candidate 11% better than the current link
+    /// (1.11 > SWITCH_THRESHOLD = 1.10) is meaningfully better and MUST trigger
+    /// a switch once the switch cooldown has elapsed.
+    #[test]
+    fn hysteresis_switches_above_threshold() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut connections = rt.block_on(create_test_connections(3));
+
+        connections[0].window = 100; // current link → score 100
+        connections[0].in_flight_packets = 0;
+        connections[1].window = 111; // 111 / 100 = 1.11 > 1.10 threshold
+        connections[1].in_flight_packets = 0;
+        connections[2].window = 50;
+        connections[2].in_flight_packets = 0;
+
+        let config = ConfigSnapshot {
+            mode: SchedulingMode::Enhanced,
+            quality_enabled: false,
+            exploration_enabled: false,
+            rtt_delta_ms: 30,
+        };
+
+        let last_switch = now_ms();
+        let current = last_switch + 1000;
+
+        let selected = select_connection_idx(
+            &mut connections,
+            Some(0),
+            last_switch,
+            current,
+            &config,
+            &mut EdpfSchedulerState::default(),
+        );
+
+        assert_eq!(
+            selected,
+            Some(1),
+            "an 11% improvement exceeds the 10% hysteresis threshold; must switch to the better \
+             link"
+        );
+    }
+
+    /// RTT bonus is capped at MAX_RTT_BONUS (1.03). An extremely low RTT (10ms)
+    /// would otherwise yield 200/50 = 4x; the cap keeps the bonus at 1.03 so RTT
+    /// can never dominate the quality score. Verified via the perfect-connection
+    /// path where the quality multiplier is the constant 1.1, so the residual
+    /// (mult / 1.1) is exactly the RTT bonus.
+    #[tokio::test]
+    async fn rtt_bonus_capped_at_max() {
+        let mut conn = create_test_connections(1).await.into_iter().next().unwrap();
+        let base = now_ms();
+
+        // Past the startup grace period, never NAKed → quality multiplier = 1.1.
+        conn.reconnection.connection_established_ms = base - 35_000;
+        conn.congestion.nak_count = 0;
+        conn.congestion.last_nak_time_ms = 0;
+
+        // First Kalman sample sets the smoothed RTT exactly; 10ms is below the
+        // MIN_RTT_MS floor so the raw factor would be 200/50 = 4 before the cap.
+        conn.rtt.update_estimate(10);
+
+        let mult = calculate_quality_multiplier(&conn, base);
+        let rtt_bonus = mult / PERFECT_BONUS_FOR_TEST;
+
+        assert!(
+            rtt_bonus <= 1.03 + 1e-9,
+            "RTT bonus must never exceed the 1.03 cap, got {rtt_bonus}"
+        );
+        assert!(
+            (rtt_bonus - 1.03).abs() < 1e-6,
+            "at 10ms the bonus saturates exactly at the 1.03 cap, got {rtt_bonus}"
+        );
+    }
+
+    /// RTT bonus applies the MIN_RTT_MS (50ms) floor: any RTT below 50ms is
+    /// clamped up to 50ms, so a 1ms link and a 50ms link receive the identical
+    /// bonus (both saturate at the 1.03 cap), while a 200ms link earns no bonus
+    /// (200/200 = 1.0). This pins both the floor and the no-bonus region.
+    #[tokio::test]
+    async fn rtt_bonus_uses_min_rtt_floor() {
+        let mut connections = create_test_connections(3).await;
+        let base = now_ms();
+
+        for c in connections.iter_mut() {
+            c.reconnection.connection_established_ms = base - 35_000; // past grace
+            c.congestion.nak_count = 0;
+            c.congestion.last_nak_time_ms = 0;
+        }
+
+        connections[0].rtt.update_estimate(1); // below the 50ms floor → clamped to 50
+        connections[1].rtt.update_estimate(50); // exactly the floor
+        connections[2].rtt.update_estimate(200); // at the bonus threshold → no bonus
+
+        let bonus_1ms =
+            calculate_quality_multiplier(&connections[0], base) / PERFECT_BONUS_FOR_TEST;
+        let bonus_50ms =
+            calculate_quality_multiplier(&connections[1], base) / PERFECT_BONUS_FOR_TEST;
+        let bonus_200ms =
+            calculate_quality_multiplier(&connections[2], base) / PERFECT_BONUS_FOR_TEST;
+
+        assert!(
+            (bonus_1ms - bonus_50ms).abs() < 1e-9,
+            "a sub-floor RTT (1ms) must be clamped to MIN_RTT_MS (50ms): {bonus_1ms} vs \
+             {bonus_50ms}"
+        );
+        assert!(
+            (bonus_50ms - 1.03).abs() < 1e-6,
+            "at/below the floor the bonus saturates at 1.03, got {bonus_50ms}"
+        );
+        assert!(
+            (bonus_200ms - 1.0).abs() < 1e-6,
+            "at the 200ms bonus threshold there is no bonus (factor 1.0), got {bonus_200ms}"
+        );
+    }
+
+    /// Startup grace period: within the first 30s of a connection's life a NAK
+    /// applies only the light STARTUP_NAK_PENALTY (0.98), not the full
+    /// exponential penalty — so an early loss cannot permanently demote a link.
+    /// Driven on the paused virtual clock to show the link is still in grace 5s in.
+    #[tokio::test(start_paused = true)]
+    async fn quality_startup_grace_light_penalty() {
+        let mut conn = create_test_connections(1).await.into_iter().next().unwrap();
+        let base = now_ms();
+
+        conn.reconnection.connection_established_ms = base;
+        conn.congestion.nak_count = 1; // a NAK occurred during the grace window
+
+        // Advance the virtual clock 5s — still well inside the 30s grace period.
+        advance_test_clock(Duration::from_secs(5)).await;
+        let current = base + 5_000; // age 5s < 30s grace
+
+        let mult = calculate_quality_multiplier(&conn, current);
+
+        assert!(
+            (mult - 0.98).abs() < 1e-9,
+            "during the grace period a NAK yields only the 0.98 light penalty, got {mult}"
+        );
+    }
+
+    /// Startup grace period: once the connection is older than 30s, the same NAK
+    /// state no longer gets the light penalty — the full exponential decay
+    /// applies (a fresh NAK → ~0.5), which is materially heavier than the 0.98
+    /// grace penalty. Driven on the paused virtual clock to age past the window.
+    #[tokio::test(start_paused = true)]
+    async fn quality_startup_grace_full_penalty_after() {
+        let mut conn = create_test_connections(1).await.into_iter().next().unwrap();
+        let base = now_ms();
+
+        conn.reconnection.connection_established_ms = base;
+        conn.congestion.nak_count = 1;
+
+        // Age the link past the 30s grace window via the virtual clock.
+        advance_test_clock(Duration::from_secs(31)).await;
+        let current = base + 31_000; // age 31s >= 30s grace
+
+        // A just-now NAK (age ~0) → exponential penalty 1.0 - 0.5*e^0 = 0.5.
+        conn.congestion.last_nak_time_ms = now_ms();
+
+        let mult = calculate_quality_multiplier(&conn, current);
+
+        assert!(
+            (mult - 0.5).abs() < 0.02,
+            "after grace a fresh NAK applies the full ~0.5 exponential penalty, got {mult}"
+        );
+        assert!(
+            mult < 0.98,
+            "the post-grace penalty must be heavier than the 0.98 grace light penalty, got {mult}"
+        );
+    }
+
+    /// Classic mode tie-break: when two links have identical capacity scores the
+    /// FIRST (lowest index) wins, because `select_connection` only replaces the
+    /// best on a strictly greater score. This matches the original C behavior.
+    #[test]
+    fn classic_tie_break_first_wins() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut connections = rt.block_on(create_test_connections(3));
+
+        // conns 0 and 1 tie on score (100); conn 2 is worse.
+        connections[0].window = 100;
+        connections[0].in_flight_packets = 0;
+        connections[1].window = 100;
+        connections[1].in_flight_packets = 0;
+        connections[2].window = 50;
+        connections[2].in_flight_packets = 0;
+
+        let config = ConfigSnapshot {
+            mode: SchedulingMode::Classic,
+            quality_enabled: false,
+            exploration_enabled: false,
+            rtt_delta_ms: 30,
+        };
+
+        let selected = select_connection_idx(
+            &mut connections,
+            None,
+            0,
+            0,
+            &config,
+            &mut EdpfSchedulerState::default(),
+        );
+
+        assert_eq!(
+            selected,
+            Some(0),
+            "equal scores must resolve to the first (lowest-index) connection"
+        );
+    }
+
+    /// Exploration fallback: with exploration enabled and the switch cooldown
+    /// elapsed, when the capacity-best link is degrading (recent NAK) and the
+    /// second-best has recovered, the sender explores the second-best link
+    /// instead of sticking to the best. Quality is disabled so the NAK changes
+    /// only the exploration signal, not the capacity ranking.
+    #[test]
+    fn exploration_periodic_fallback() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut connections = rt.block_on(create_test_connections(3));
+
+        // Capacity ranking: conn0 best, conn1 second, conn2 worst (and current).
+        connections[0].window = 100;
+        connections[0].in_flight_packets = 0;
+        connections[1].window = 80;
+        connections[1].in_flight_packets = 0;
+        connections[2].window = 10;
+        connections[2].in_flight_packets = 0;
+
+        // Best link is degrading (NAK ~now); second-best has no NAKs (recovered).
+        connections[0].congestion.nak_count = 1;
+        connections[0].congestion.last_nak_time_ms = now_ms();
+
+        let config = ConfigSnapshot {
+            mode: SchedulingMode::Enhanced,
+            quality_enabled: false,
+            exploration_enabled: true,
+            rtt_delta_ms: 30,
+        };
+
+        let last_switch = now_ms();
+        let current = last_switch + 1000; // past the 15ms switch cooldown
+
+        let selected = select_connection_idx(
+            &mut connections,
+            Some(2),
+            last_switch,
+            current,
+            &config,
+            &mut EdpfSchedulerState::default(),
+        );
+
+        assert_eq!(
+            selected,
+            Some(1),
+            "exploration must route to the recovered second-best link when the best is degrading"
+        );
+    }
+
+    /// Exploration is gated by the switch cooldown: with the identical degrading
+    /// best / recovered second-best setup, but still inside the 15ms switch
+    /// cooldown, exploration is suppressed and the sender stays on the current
+    /// link (no immediate exploratory retry).
+    #[test]
+    fn exploration_cooldown_prevents_immediate_retry() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut connections = rt.block_on(create_test_connections(3));
+
+        connections[0].window = 100;
+        connections[0].in_flight_packets = 0;
+        connections[1].window = 80;
+        connections[1].in_flight_packets = 0;
+        connections[2].window = 10;
+        connections[2].in_flight_packets = 0;
+
+        connections[0].congestion.nak_count = 1;
+        connections[0].congestion.last_nak_time_ms = now_ms();
+
+        let config = ConfigSnapshot {
+            mode: SchedulingMode::Enhanced,
+            quality_enabled: false,
+            exploration_enabled: true,
+            rtt_delta_ms: 30,
+        };
+
+        let last_switch = now_ms();
+        let current = last_switch + 5; // within the 15ms switch cooldown
+
+        let selected = select_connection_idx(
+            &mut connections,
+            Some(2),
+            last_switch,
+            current,
+            &config,
+            &mut EdpfSchedulerState::default(),
+        );
+
+        assert_eq!(
+            selected,
+            Some(2),
+            "the switch cooldown must suppress exploration; stay on the current link"
+        );
+    }
 }
