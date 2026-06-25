@@ -65,6 +65,26 @@ jobs:
       - name: Run supply-chain checks (advisories + sources)
         run: cargo deny check advisories sources
 
+  # Dedicated BLOCKING loom model-check of the subscription manager. Gated
+  # `#![cfg(loom)]`, so it is invisible to the `test` job above; it only compiles
+  # and runs under `RUSTFLAGS="--cfg loom"`. Exhaustively explores the broadcast
+  # vs subscribe/drop interleavings (no deadlock, no lost last frame, dead
+  # subscriber pruned). A required gate: a regression here fails the PR.
+  loom:
+    name: Loom model (subscription manager)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Run loom model test
+        env:
+          RUSTFLAGS: --cfg loom
+        run: cargo test --features test-internals --test subscription_loom
+
   # Dedicated BLOCKING miri lane over the ONLY unsafe FFI in the tree: the
   # `recvmmsg` batch-receive path in src/connection/batch_recv.rs. miri vets the
   # PURE POINTER LOGIC — self-referential iovec/mmsghdr rebuild after a move

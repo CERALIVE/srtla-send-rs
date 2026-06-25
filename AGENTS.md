@@ -196,6 +196,23 @@ cargo test --features test-internals # upstream's full-coverage suite
 The whole sender test corpus runs in-process over loopback UDP — **no root / netns /
 CAP_NET_ADMIN required** (0 tests are gated/ignored).
 
+**Loom model test (NOT part of the default gate).** `tests/subscription_loom.rs`
+exhaustively model-checks the `SubscriptionManager` (`src/subscription.rs`)
+`broadcast` (telemetry tick) vs `subscribe`/drop (control thread) interleavings
+over its `Mutex<Inner>` + capacity-1 `sync_channel`. It is gated `#![cfg(loom)]`,
+so it compiles to nothing — and the `loom` dev-dep stays unused — unless the
+`loom` cfg is set. Run it deliberately (it is a dedicated BLOCKING CI job, not
+part of `cargo test`):
+
+```bash
+RUSTFLAGS="--cfg loom" cargo test --features test-internals --test subscription_loom
+```
+
+It asserts four invariants under all schedules: no deadlock; `last_frame` equals
+the broadcast frame; a non-full subscriber registered before a broadcast never
+loses that frame (no lost wakeup); and a disconnected subscriber is pruned on the
+next broadcast (no panic, no unbounded growth).
+
 **Miri lane (BLOCKING CI job, NOT part of the default gate).** The only `unsafe`
 FFI in the tree is the `recvmmsg` batch-receive path
 (`src/connection/batch_recv.rs`). A dedicated BLOCKING `miri` job in `ci.yml`

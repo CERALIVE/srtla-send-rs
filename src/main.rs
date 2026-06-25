@@ -13,30 +13,52 @@ use tracing_subscriber::EnvFilter;
 #[global_allocator]
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+// `--cfg loom` (the subscription-manager model test) forces tokio to drop its
+// `net`/`time` modules, which this binary uses pervasively, so under loom the
+// whole real program is compiled out and replaced by a stub `main`. `cargo test
+// --test subscription_loom` still builds every bin to expose `CARGO_BIN_EXE_*`,
+// hence the stub rather than removing the target. No real build sets `loom`.
+#[cfg(loom)]
+fn main() {}
+
+#[cfg(not(loom))]
 mod config;
+#[cfg(not(loom))]
 mod connection;
+#[cfg(not(loom))]
 mod ewma;
-#[cfg(unix)]
+#[cfg(all(unix, not(loom)))]
 mod jsonrpc;
+#[cfg(not(loom))]
 mod kalman;
+#[cfg(not(loom))]
 mod mode;
+#[cfg(not(loom))]
 mod protocol;
+#[cfg(not(loom))]
 mod registration;
+#[cfg(not(loom))]
 mod sender;
+#[cfg(not(loom))]
 mod stats;
+#[cfg(not(loom))]
 mod subscription;
+#[cfg(not(loom))]
 mod telemetry_file;
+#[cfg(not(loom))]
 mod utils;
 
 // Test helpers for binary tests
-#[cfg(any(test, feature = "test-internals"))]
+#[cfg(all(any(test, feature = "test-internals"), not(loom)))]
 mod test_helpers;
 
+#[cfg(not(loom))]
 use mode::SchedulingMode;
 
 /// Default telemetry write cadence in milliseconds (`--stats-file-interval`).
 const DEFAULT_STATS_FILE_INTERVAL_MS: u64 = 1000;
 
+#[cfg(not(loom))]
 #[derive(Parser, Debug)]
 #[command(
     name = "srtla_send",
@@ -105,6 +127,7 @@ struct Cli {
 
 /// Result of a `--dry-run` resolution: the parsed source IPs, any invalid
 /// lines that were skipped, and the receiver addresses the host resolved to.
+#[cfg(not(loom))]
 #[derive(Debug)]
 struct DryRunReport {
     source_ips: Vec<IpAddr>,
@@ -119,6 +142,7 @@ struct DryRunReport {
 /// unusable (missing/unreadable, empty, or zero valid IPs) or when the
 /// receiver address cannot be resolved. On success no sockets are bound — the
 /// caller is expected to print the report and exit 0.
+#[cfg(not(loom))]
 async fn dry_run_resolve(
     ips_file: &str,
     receiver_host: &str,
@@ -170,6 +194,7 @@ async fn dry_run_resolve(
     })
 }
 
+#[cfg(not(loom))]
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
     let args = Cli::parse();
@@ -289,7 +314,7 @@ async fn main() -> Result<()> {
     outcome.context("srtla_send failed")
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(loom)))]
 mod tests {
     use std::io::Write;
 
