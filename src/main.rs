@@ -6,8 +6,10 @@ use clap::Parser;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
-// Use mimalloc as the global allocator for the binary (non-Windows only)
-#[cfg(not(windows))]
+// Use mimalloc as the global allocator for the binary (non-Windows only).
+// Gated default-on via the `mimalloc-allocator` feature; --no-default-features
+// builds fall back to the system allocator (docs/notes/mimalloc-decision.md).
+#[cfg(all(not(windows), feature = "mimalloc-allocator"))]
 #[global_allocator]
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 

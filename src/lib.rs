@@ -4,9 +4,10 @@
 //! aggregation) sender implementation. It includes protocol handling,
 //! connection management, and dynamic configuration.
 
-// Use mimalloc as the global allocator for tests (non-Windows only)
-#[cfg(not(windows))]
-#[cfg(test)]
+// Use mimalloc as the global allocator for tests (non-Windows only).
+// Gated on the `mimalloc-allocator` feature so --no-default-features builds the
+// test binary against the system allocator (docs/notes/mimalloc-decision.md).
+#[cfg(all(not(windows), test, feature = "mimalloc-allocator"))]
 #[global_allocator]
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 

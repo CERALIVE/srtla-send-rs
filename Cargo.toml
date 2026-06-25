@@ -40,12 +40,16 @@ smallvec = "=2.0.0-alpha.12"
 mimalloc = { version = "0.1", default-features = false, features = [
 	"secure",
 	"v3",
-] }
+], optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [features]
+default = ["mimalloc-allocator"]
+# Default-on preserves the shipped binary byte-for-byte; --no-default-features
+# falls back to the system allocator. See docs/notes/mimalloc-decision.md.
+mimalloc-allocator = ["dep:mimalloc"]
 test-internals = []
 
 [lib]
@@ -61,6 +65,11 @@ tokio-test = "0.4"
 tempfile = "3"
 assert_matches = "1"
 network-sim = { path = "crates/network-sim" }
+criterion = "0.5"
+
+[[bench]]
+name = "alloc"
+harness = false
 
 [profile.dev]
 opt-level = 1
