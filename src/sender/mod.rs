@@ -344,6 +344,8 @@ pub async fn run_sender_with_config(
                     _ = telemetry_timer.tick() => {
                         let snapshot_json =
                             build_telemetry_json(now_ms(), &conns_from_stats(&shared_stats.get()));
+                        // The file write is handed to the writer thread's slot
+                        // (non-blocking); the event broadcast stays inline on the loop.
                         if let Some(writer) = telemetry.as_ref() {
                             writer.publish_prebuilt(&snapshot_json);
                         }

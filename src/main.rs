@@ -275,9 +275,12 @@ async fn main() -> Result<()> {
     )
     .await;
 
-    // On shutdown (clean signal exit or fatal error) remove the telemetry stats
-    // file so a stale snapshot never outlives the process: CeraUI respawns
-    // srtla_send on every network change and would read a leftover file as live.
+    // On shutdown the telemetry writer thread is joined (via the writer's Drop as
+    // `run_sender_with_config` returns): it drains its final snapshot, then
+    // unlinks the live file + `.tmp` sibling. This backstop removal covers the
+    // no-`--stats-file` and any-residue case so a stale snapshot never outlives
+    // the process — CeraUI respawns srtla_send on every network change and would
+    // read a leftover file as live.
     if let Some(stats_file) = args.stats_file.as_deref() {
         let _ = std::fs::remove_file(stats_file);
         let _ = std::fs::remove_file(format!("{stats_file}.tmp"));

@@ -33,6 +33,9 @@
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::thread::JoinHandle;
 use std::time::Duration;
 
 use serde::Serialize;
@@ -217,22 +220,113 @@ pub fn remove(path: &Path) {
     let _ = fs::remove_file(tmp_path(path));
 }
 
+/// The shared "latest snapshot" slot between the packet-forwarding event loop
+/// and the dedicated writer thread: a mutex-guarded single value plus a condvar
+/// the loop signals on each publish. `None` means "nothing pending".
+type Slot = Arc<(Mutex<Option<String>>, Condvar)>;
+
+/// The function the writer thread runs to actually persist a drained snapshot.
+/// Production uses [`write_atomic`]; tests inject a fault-injecting variant to
+/// prove the publish call never blocks the event loop on I/O.
+type WriteFn = dyn Fn(&Path, &str) -> io::Result<()> + Send + 'static;
+
+/// Body of the dedicated OS writer thread.
+///
+/// It owns the only filesystem access on the telemetry path: it blocks on the
+/// condvar until the loop publishes a snapshot (or shutdown is signalled), takes
+/// the latest value, and runs `write_fn` (temp -> fsync -> `rename(2)`) outside
+/// the event-loop task. On shutdown it drains a final snapshot for durability,
+/// then unlinks the live file + `.tmp` sibling and exits — the unlink-on-exit
+/// cleanup lives here, not in `Drop`, so an abrupt last write is never orphaned.
+fn writer_loop(
+    path: &Path,
+    slot: &(Mutex<Option<String>>, Condvar),
+    shutdown: &AtomicBool,
+    write_fn: &WriteFn,
+) {
+    let (lock, cvar) = slot;
+    loop {
+        let taken = {
+            let guard = lock.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut guard = cvar
+                .wait_while(guard, |pending| {
+                    pending.is_none() && !shutdown.load(Ordering::SeqCst)
+                })
+                .unwrap_or_else(PoisonError::into_inner);
+            guard.take()
+        };
+        if let Some(json) = taken
+            && let Err(e) = write_fn(path, &json)
+        {
+            warn!("telemetry stats-file write failed: {}: {e}", path.display());
+        }
+        if shutdown.load(Ordering::SeqCst) {
+            // Drain a final snapshot that raced in after the take (publish it for
+            // durability), then unlink the live file + temp sibling and exit.
+            let final_slot = {
+                let mut guard = lock.lock().unwrap_or_else(PoisonError::into_inner);
+                guard.take()
+            };
+            if let Some(json) = final_slot {
+                let _ = write_fn(path, &json);
+            }
+            remove(path);
+            return;
+        }
+    }
+}
+
 /// Opt-in telemetry sink bound to a single stats-file path.
 ///
-/// Constructed only when `--stats-file` is supplied. Publishing is best-effort:
-/// an I/O failure is logged and dropped, never fatal to the stream. The live
-/// file is removed when the writer is dropped (clean shutdown), so any graceful
-/// exit — the SIGTERM/SIGINT handler, the channel closing, or a fatal stream
-/// error — unlinks it via RAII.
+/// Constructed only when `--stats-file` is supplied. The expensive part of a
+/// publish — the temp-write + `fsync` + `rename(2)` — runs on a dedicated OS
+/// thread, never on the packet-forwarding event-loop task. [`publish_prebuilt`]
+/// only overwrites a shared latest-snapshot slot and signals a condvar (all
+/// O(microseconds)), so an eMMC stall can never stall the stream.
+///
+/// Publishing is best-effort: an I/O failure is logged on the writer thread and
+/// dropped, never fatal to the stream. On drop the writer signals shutdown and
+/// joins the thread; the thread drains any final snapshot, then unlinks the live
+/// file + `.tmp` sibling, so any graceful exit — the SIGTERM/SIGINT handler, the
+/// channel closing, or a fatal stream error — cleans up.
+///
+/// [`publish_prebuilt`]: TelemetryWriter::publish_prebuilt
 pub struct TelemetryWriter {
-    path: PathBuf,
+    slot: Slot,
+    shutdown: Arc<AtomicBool>,
+    handle: Option<JoinHandle<()>>,
     period: Duration,
 }
 
 impl TelemetryWriter {
     pub fn new(path: impl Into<PathBuf>, interval_ms: u64) -> Self {
+        Self::with_write_fn(path, interval_ms, write_atomic)
+    }
+
+    /// Construct a writer whose persistence step is `write_fn`, spawning the
+    /// dedicated writer thread. Production passes [`write_atomic`]; tests inject
+    /// a fault-injecting closure to assert the publish path is non-blocking.
+    fn with_write_fn(
+        path: impl Into<PathBuf>,
+        interval_ms: u64,
+        write_fn: impl Fn(&Path, &str) -> io::Result<()> + Send + 'static,
+    ) -> Self {
+        let path = path.into();
+        let slot: Slot = Arc::new((Mutex::new(None), Condvar::new()));
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let handle = {
+            let slot = slot.clone();
+            let shutdown = shutdown.clone();
+            let write_fn: Box<WriteFn> = Box::new(write_fn);
+            std::thread::Builder::new()
+                .name("telemetry-writer".to_string())
+                .spawn(move || writer_loop(&path, &slot, &shutdown, write_fn.as_ref()))
+                .expect("spawn telemetry writer thread")
+        };
         Self {
-            path: path.into(),
+            slot,
+            shutdown,
+            handle: Some(handle),
             period: Duration::from_millis(interval_ms.max(1)),
         }
     }
@@ -242,26 +336,38 @@ impl TelemetryWriter {
         self.period
     }
 
-    /// Atomically publish an already-serialized ADR-001 snapshot document. Lets
-    /// the telemetry tick build the snapshot once and hand identical bytes to
-    /// both sinks (stats file + event broadcast). Best-effort: an I/O error is
-    /// logged at WARN and otherwise ignored (telemetry never stalls the stream).
+    /// Hand an already-serialized ADR-001 snapshot document to the writer thread.
+    ///
+    /// Non-blocking by construction: it overwrites the shared latest-snapshot
+    /// slot (drop-OLDER coalesce — an undrained prior snapshot is replaced, so
+    /// the consumer only ever sees the freshest state) and signals the writer
+    /// thread. It never touches the filesystem, so the packet-forwarding loop is
+    /// never stalled by telemetry I/O. The actual temp -> fsync -> rename happens
+    /// on the writer thread.
     pub fn publish_prebuilt(&self, json: &str) {
-        if let Err(e) = write_atomic(&self.path, json) {
-            let path = self.path.display();
-            warn!("telemetry stats-file write failed: {path}: {e}");
+        let (lock, cvar) = &*self.slot;
+        {
+            let mut guard = lock.lock().unwrap_or_else(PoisonError::into_inner);
+            *guard = Some(json.to_string());
         }
-    }
-
-    /// Remove the live file and temp sibling now (idempotent).
-    pub fn remove(&self) {
-        remove(&self.path);
+        cvar.notify_one();
     }
 }
 
 impl Drop for TelemetryWriter {
     fn drop(&mut self) {
-        self.remove();
+        // Signal shutdown under the mutex so the writer thread can never miss the
+        // wakeup (it re-checks the flag inside the same critical section it waits
+        // in), then join: the thread drains a final snapshot and unlinks the file.
+        let (lock, cvar) = &*self.slot;
+        {
+            let _guard = lock.lock().unwrap_or_else(PoisonError::into_inner);
+            self.shutdown.store(true, Ordering::SeqCst);
+        }
+        cvar.notify_one();
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
     }
 }
 
@@ -269,8 +375,9 @@ impl Drop for TelemetryWriter {
 mod tests {
     use std::net::{IpAddr, Ipv4Addr};
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
     use std::thread;
+    use std::time::Instant;
 
     use super::*;
     use crate::stats::{LinkStats, StatsSnapshot};
@@ -543,6 +650,19 @@ mod tests {
         );
     }
 
+    /// Spin (bounded) until `cond` holds; the writer thread persists snapshots
+    /// asynchronously, so disk assertions must await the thread, not the publish.
+    fn wait_until(mut cond: impl FnMut() -> bool, within: Duration) -> bool {
+        let deadline = Instant::now() + within;
+        while Instant::now() < deadline {
+            if cond() {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+        cond()
+    }
+
     #[test]
     fn drop_unlinks_live_file() {
         let dir = tempfile::tempdir().unwrap();
@@ -550,9 +670,131 @@ mod tests {
         {
             let writer = TelemetryWriter::new(&path, 1000);
             writer.publish_prebuilt(&build_telemetry_json(0, &[]));
-            assert!(path.exists(), "publish should create the live file");
-        } // writer dropped here
+            assert!(
+                wait_until(|| path.exists(), Duration::from_secs(2)),
+                "publish should create the live file (on the writer thread)"
+            );
+        } // writer dropped here: shutdown + join, then the thread has unlinked
         assert!(!path.exists(), "the live file must be unlinked on drop");
+    }
+
+    // ---- T8: writer-thread design (off-loop publish, coalesce, shutdown) --
+
+    #[test]
+    fn telemetry_writer_thread_does_not_block_loop() {
+        // Fault-inject a writer whose FIRST persist blocks 200 ms (a stalled
+        // eMMC). A publish issued while the thread is mid-stall must still return
+        // in well under 20 ms — it only touches the mutex + condvar, never the
+        // (blocked) filesystem — so the packet-forwarding loop is never stalled.
+        let calls = Arc::new(AtomicUsize::new(0));
+        let writer = {
+            let calls = calls.clone();
+            TelemetryWriter::with_write_fn("unused", 1000, move |_path, _json| {
+                if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                    thread::sleep(Duration::from_millis(200));
+                }
+                Ok(())
+            })
+        };
+
+        writer.publish_prebuilt("first");
+        // Wait until the writer thread has actually entered the blocking persist.
+        assert!(
+            wait_until(|| calls.load(Ordering::SeqCst) >= 1, Duration::from_secs(2)),
+            "writer never started the stalled write"
+        );
+
+        let started = Instant::now();
+        writer.publish_prebuilt("during-stall");
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < Duration::from_millis(20),
+            "publish blocked on writer I/O ({elapsed:?}); it must be off the loop"
+        );
+    }
+
+    #[test]
+    fn telemetry_slot_keeps_latest() {
+        // While the writer is busy persisting snapshot A, three more publishes
+        // (B, C, D) land in the single slot, each overwriting the last. When the
+        // writer drains, it must take only the FRESHEST (D) — B and C are dropped
+        // (drop-OLDER coalesce), never written.
+        let writes: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let entered_first: Slot = Arc::new((Mutex::new(None), Condvar::new()));
+        let release_first: Slot = Arc::new((Mutex::new(None), Condvar::new()));
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        let writer = {
+            let writes = writes.clone();
+            let entered_first = entered_first.clone();
+            let release_first = release_first.clone();
+            let calls = calls.clone();
+            TelemetryWriter::with_write_fn("unused", 1000, move |_path, json| {
+                let n = calls.fetch_add(1, Ordering::SeqCst);
+                writes.lock().unwrap().push(json.to_string());
+                if n == 0 {
+                    signal(&entered_first);
+                    wait_signalled(&release_first);
+                }
+                Ok(())
+            })
+        };
+
+        writer.publish_prebuilt("A");
+        wait_signalled(&entered_first);
+        // The writer is now blocked inside A's persist; coalesce B, C, D.
+        writer.publish_prebuilt("B");
+        writer.publish_prebuilt("C");
+        writer.publish_prebuilt("D");
+        signal(&release_first);
+
+        drop(writer); // shutdown + join: D is drained and persisted before exit
+
+        let w = writes.lock().unwrap();
+        assert_eq!(w.first().map(String::as_str), Some("A"));
+        assert_eq!(w.last().map(String::as_str), Some("D"));
+        assert!(
+            !w.iter().any(|s| s == "B" || s == "C"),
+            "older undrained snapshots must be dropped, got {w:?}"
+        );
+    }
+
+    #[test]
+    fn telemetry_unlinked_on_shutdown() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("stats.json");
+        let tmp = tmp_path(&path);
+
+        let writer = TelemetryWriter::new(&path, 1000);
+        writer.publish_prebuilt(&build_telemetry_json(1, &[sample_conn()]));
+        assert!(
+            wait_until(|| path.exists(), Duration::from_secs(2)),
+            "writer thread should have published the live file"
+        );
+
+        // A final snapshot is pending when shutdown is signalled: the writer must
+        // drain it (durability) then unlink both the live file and the temp sibling.
+        writer.publish_prebuilt(&build_telemetry_json(2, &[sample_conn()]));
+        drop(writer); // shutdown + join: drain final slot, then unlink
+
+        assert!(!path.exists(), "live file must be unlinked on shutdown");
+        assert!(!tmp.exists(), "temp sibling must be unlinked on shutdown");
+    }
+
+    /// Mark a [`Slot`] as signalled and wake any waiter (test rendezvous).
+    fn signal(slot: &Slot) {
+        let (lock, cvar) = &**slot;
+        *lock.lock().unwrap() = Some(String::new());
+        cvar.notify_all();
+    }
+
+    /// Block until [`signal`] has marked `slot` (test rendezvous).
+    fn wait_signalled(slot: &Slot) {
+        let (lock, cvar) = &**slot;
+        let mut guard = lock.lock().unwrap();
+        while guard.is_none() {
+            guard = cvar.wait(guard).unwrap();
+        }
     }
 
     #[test]
