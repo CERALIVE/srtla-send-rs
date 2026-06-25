@@ -1,7 +1,7 @@
 mod probing;
 
 use probing::{ProbeResult, ProbingState, default_probing_state, new_probe_id, new_probe_results};
-use rand::RngCore;
+use rand::Rng;
 use smallvec::SmallVec;
 use tracing::{debug, info, warn};
 

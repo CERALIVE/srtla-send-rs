@@ -114,6 +114,28 @@ the fork parent attached when opening a PR. Verify: `git remote -v` must show on
   - apt: `gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross binutils-aarch64-linux-gnu pkg-config`
   - `PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig`
 
+## DEPENDENCY PINS
+
+Most deps use caret floors (`tokio = "1.52"`, `clap = "4.6"`, `rand = "0.10"`,
+`libc = "0.2"`). Two deliberate exceptions, both load-bearing — do not "modernize"
+them in an upstream merge or a `cargo upgrade` sweep without a deliberate PR:
+
+- **`smallvec = "=2.0.0-alpha.12"` (EXACT pin).** smallvec 2.x is still a pre-release
+  line; each `2.0.0-alpha.*` can ship breaking API/layout changes, so we pin one
+  known-good alpha rather than float across the alpha range. Mirrored by a comment on
+  the dep in `Cargo.toml`. **Revisit and unpin to `"2"` once smallvec 2.0 is stable.**
+  Do not migrate off smallvec 2.x while the pin stands.
+- **`libc = "0.2"`.** Stay on the 0.2 line — do **not** bump to a `1.0` alpha/pre-release.
+
+**`rand` is 0.10 (workspace + `crates/network-sim`), single version in the shipped
+binary (0.10.1).** rand 0.9→0.10 was an API break: `rand_core::RngCore` was renamed to
+`rand_core::Rng` (re-exported as `rand::Rng`) and the old `rand::Rng` ext trait became
+`rand::RngExt`. Call sites use `use rand::Rng;` for `fill_bytes`/`next_u64`
+(`src/registration/`, `src/connection/`) and `rand::RngExt` for `.random()`
+(`crates/network-sim/src/scenario.rs`). A `rand 0.9.2` duplicate persists **only** via
+the `proptest` dev-dependency (latest 1.11.0 has no rand-0.10 release); it is dev/test
+-only and absent from the release binary — see the `deny.toml` RUSTSEC-2026-0097 note.
+
 ## PARITY CONTRACT (do not break without a versioned change)
 
 CeraUI and the device integration depend on these staying stable:
