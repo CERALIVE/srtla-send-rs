@@ -66,6 +66,12 @@ tempfile = "3"
 assert_matches = "1"
 network-sim = { path = "crates/network-sim" }
 criterion = "0.5"
+# Concurrency model checker for the subscription manager interleavings. Only
+# compiled into `tests/subscription_loom.rs` (gated `#![cfg(loom)]`), so it never
+# touches the default `cargo test` gate; run it via
+# `RUSTFLAGS="--cfg loom" cargo test --features test-internals --test subscription_loom`.
+loom = "0.7.2"
+proptest = "1.11"
 
 [[bench]]
 name = "alloc"
