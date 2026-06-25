@@ -318,8 +318,8 @@ workflows. It pins the contract the device image depends on:
 **Package versioning — upstream semver, NOT CalVer (approved exception):**
 `srtla-send-rs` is the one first-party component that does NOT follow the CeraLive
 CalVer (`YYYY.MINOR.PATCH`) scheme. Its `.deb` version comes directly from
-`Cargo.toml` `[workspace.package] version`, which tracks upstream irlserver semver.
-Current package version: `3.0.0`. `versions.yaml` pins it at `v3.0.0`.
+`Cargo.toml` `[package] version`, which tracks upstream irlserver semver.
+Current package version: `3.1.0`. `versions.yaml` pins it at `v3.1.0`.
 
 Rationale: this repo is a fork of `irlserver/srtla_send`; keeping the upstream semver
 line in `Cargo.toml` preserves direct traceability to upstream releases.
@@ -346,7 +346,7 @@ src/
   main.rs            CLI entry point (clap)
   lib.rs             library exports
   config.rs / config/    runtime config (DynamicConfig, ConfigSnapshot); stdin + Unix-socket control
-  mode.rs            SchedulingMode (Classic | Enhanced | RttThreshold)
+  mode.rs            SchedulingMode (Classic | Enhanced | RttThreshold | Edpf)
   connection/        SrtlaConnection, bind/resolve, incoming packet handling, RTT (Kalman)
   protocol.rs        SRTLA protocol constants/structures
   registration.rs    REG1/REG2/REG3 flow + ID propagation
@@ -361,9 +361,12 @@ ci/build-deb.sh      single-source .deb packager (control + filename + glob self
 
 Conventions (enforced by the gate): edition 2024, `anyhow::Result`, `tracing` macros,
 Tokio async, imports grouped std → external → crate (module granularity), constants
-`SCREAMING_SNAKE_CASE`. Three scheduling modes; enhanced (default) adds NAK-decay
-quality scoring + optional exploration. See `README.md` for the full operator/runtime
-reference (modes, runtime commands, tuning constants).
+`SCREAMING_SNAKE_CASE`. Four scheduling modes (classic, enhanced, rtt-threshold,
+edpf); enhanced (default) adds NAK-decay quality scoring + optional exploration.
+EDPF (`--mode edpf`) is Earliest Delivery Path First — a BLEST (static-OWD HoL
+guard) → IoDS (bounded in-order constraint) → EDPF (lowest predicted arrival)
+pipeline with per-loop owned scheduler state (no thread-local). See `README.md`
+for the full operator/runtime reference (modes, runtime commands, tuning constants).
 
 ## ANTI-PATTERNS
 
@@ -441,7 +444,7 @@ The `// TODO: On Linux, could use sendmmsg ...` in `src/connection/batch_send.rs
   complexity not justified without profiling evidence on the Jetson Nano target
 - When to revisit: profiling shows syscall overhead, or Tokio adds native support
 
-Full rationale in `openspec/changes/rust-sender-adoption/sendmmsg-deferred.md`.
+Full rationale in `docs/notes/sendmmsg-deferred.md`.
 **Do not implement sendmmsg** without profiling evidence and a deliberate PR.
 
 ## TS BINDING TOOLING

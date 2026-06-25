@@ -29,7 +29,7 @@ This Rust implementation builds upon several open source projects and ideas:
 
 ### Scheduling Modes
 
-The sender supports three mutually exclusive scheduling modes:
+The sender supports four mutually exclusive scheduling modes:
 
 #### Enhanced Mode (Default)
 
@@ -54,6 +54,20 @@ The sender supports three mutually exclusive scheduling modes:
 - **Enable via**: `--mode rtt-threshold`
 - **Configure delta**: `--rtt-delta-ms N` (default 30ms) or runtime `rtt-delta N`
 - **Use Case**: Heterogeneous networks where some links have significantly higher latency (e.g., satellite + cellular)
+
+#### EDPF Mode
+
+Earliest Delivery Path First. Instead of scoring links by capacity or RTT group, EDPF predicts when a packet would actually *arrive* over each link and picks the lowest. Selection runs through a three-stage pipeline:
+
+- **BLEST head-of-line-blocking guard**: a static one-way-delay (OWD) filter (50ms threshold, no penalty term) drops links whose OWD would stall the in-order SRT byte stream behind a slower link.
+- **IoDS in-order-delivery constraint**: bounds the candidate set to links that keep delivery monotonic. When the admitted set is empty it resets, so no link is permanently starved.
+- **EDPF argmin**: among admitted links, selects the lowest predicted arrival `(in_flight_bytes + packet) / effective_capacity + owd`.
+
+The scheduler state (BLEST + IoDS) is owned per send-loop (no thread-local), so selection is deterministic and allocation-free on the hot path.
+
+- **Enable via**: `--mode edpf`
+- **Tradeoffs**: minimizes end-to-end reordering and latency on heterogeneous links by modeling delivery time directly, at the cost of more per-packet computation than capacity-only Classic mode. Quality scoring and exploration do not apply.
+- **Use Case**: Bonding links with differing bandwidth *and* latency where keeping the SRT stream in order with minimal added delay matters more than raw capacity packing.
 
 ### Optional Smart Exploration (Enhanced Mode Only)
 
@@ -180,7 +194,7 @@ srtla_send [OPTIONS] SRT_LISTEN_PORT SRTLA_HOST SRTLA_PORT BIND_IPS_FILE
 
 - `--verbose`: Enable verbose (debug-level) logging
 - `--dry-run`: Validate the IP list and resolve the receiver, print them, then exit without binding any socket (non-zero exit if the IP list is unusable)
-- `--mode <MODE>`: Scheduling mode: `classic`, `enhanced` (default), `rtt-threshold`
+- `--mode <MODE>`: Scheduling mode: `classic`, `enhanced` (default), `rtt-threshold`, `edpf`
 - `--no-quality`: Disable quality scoring (enhanced/rtt-threshold only)
 - `--exploration`: Enable connection exploration (enhanced only)
 - `--rtt-delta-ms <N>`: RTT delta threshold in ms (default: 30, rtt-threshold only)
@@ -284,6 +298,7 @@ echo 'status' | socat - UNIX-CONNECT:/tmp/srtla.sock
 - `mode classic` - Switch to classic mode
 - `mode enhanced` - Switch to enhanced mode (default)
 - `mode rtt-threshold` - Switch to RTT-threshold mode
+- `mode edpf` - Switch to EDPF (Earliest Delivery Path First) mode
 - `quality on|off` - Enable/disable quality scoring
 - `explore on|off` - Enable/disable connection exploration
 - `rtt-delta <ms>` - Set RTT delta threshold in milliseconds
@@ -296,6 +311,8 @@ echo 'status' | socat - UNIX-CONNECT:/tmp/srtla.sock
 **Enhanced Mode** (default): Quality-based scoring that punishes connections with recent NAKs. More recent NAKs = more punishment. Additional 30% penalty (0.7x multiplier) for NAK bursts (≥5 NAKs in short time). Optional connection exploration for testing alternative connections.
 
 **RTT-Threshold Mode**: Groups links into "fast" and "slow" based on RTT measurements. Links within `min_rtt + delta` (default 30ms) are "fast" and strongly preferred. When quality scoring is also enabled, NAK penalties are applied within the fast link group. Falls back to slow links only when all fast links are saturated. Useful for reducing packet reordering in networks with heterogeneous latencies.
+
+**EDPF Mode**: Earliest Delivery Path First. Runs a BLEST → IoDS → EDPF pipeline: a static-OWD head-of-line-blocking guard (50ms) excludes links that would stall the in-order stream, an in-order-delivery constraint bounds the candidate set (resetting when empty so no link starves), and the link with the lowest predicted arrival time `(in_flight_bytes + packet) / effective_capacity + owd` is selected. Scheduler state is owned per send-loop (no thread-local). Quality scoring and exploration do not apply.
 
 ## IP List Reload (Unix only)
 

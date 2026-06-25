@@ -111,7 +111,7 @@ struct Cli {
     #[arg(long = "control-socket")]
     control_socket: Option<String>,
 
-    /// Scheduling mode: classic, enhanced (default), rtt-threshold
+    /// Scheduling mode: classic, enhanced (default), rtt-threshold, edpf
     #[arg(long = "mode", value_enum, default_value = "enhanced")]
     mode: SchedulingMode,
     /// Disable quality scoring (enhanced/rtt-threshold only)

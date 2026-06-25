@@ -1,6 +1,6 @@
 //! Connection selection strategies for SRTLA bonding
 //!
-//! This module provides three connection selection strategies:
+//! This module provides four connection selection strategies:
 //!
 //! ## Classic Mode
 //! Matches the original C implementation exactly:
@@ -23,6 +23,20 @@
 //! - Strongly prefers fast links over slow ones
 //! - Quality scoring applied within fast link group
 //! - Falls back to slow links only when fast links saturated
+//!
+//! ## EDPF Mode
+//! Earliest Delivery Path First — picks the link with the lowest predicted
+//! packet-arrival time, run through a BLEST → IoDS → EDPF pipeline:
+//! - BLEST head-of-line-blocking guard: a static one-way-delay (OWD) filter
+//!   (50ms threshold, no penalty term) excludes links whose OWD would stall
+//!   the in-order byte stream
+//! - IoDS in-order-delivery constraint: bounds candidates to those that keep
+//!   delivery monotonic, resetting when the admitted set is empty so no link
+//!   is permanently starved
+//! - EDPF argmin: among admitted links, selects the lowest predicted arrival
+//!   `(in_flight_bytes + pkt) / effective_capacity + owd`
+//! - Per-loop owned scheduler state (no thread-local), threaded through the
+//!   send path so selection is deterministic and allocation-free on the hot path
 
 pub mod blest;
 mod classic;
