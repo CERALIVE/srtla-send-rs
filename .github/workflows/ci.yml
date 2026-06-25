@@ -44,16 +44,14 @@ jobs:
       - name: Check compilation without test features
         run: cargo check --release
 
-      - name: Run unit tests
-        run: cargo test --lib --verbose
-
-      - name: Run unit tests with test-internals (verify encapsulation)
-        run: cargo test --lib --features test-internals --verbose
-
-      - name: Run all tests
-        run: cargo test --features test-internals --verbose
-
-      - name: Run tests with all features
+      # test-internals is the crate's ONLY feature, so --all-features ==
+      # --features test-internals and runs the whole corpus (lib+bin+integration
+      # +doctests, 348 tests). This single run is a strict superset of the four it
+      # replaced (--lib 284, --lib+test-internals 296, +test-internals 348): the
+      # cfg(not(feature="test-internals")) arms are visibility toggles, never gated
+      # tests, so the feature drops nothing. No-feature shipping paths stay checked
+      # by cargo check / check --release / clippy / build --release in this job.
+      - name: Run all tests (--all-features = full corpus)
         run: cargo test --all-features --verbose
 
       - name: Install cargo-audit + cargo-deny (prebuilt)
