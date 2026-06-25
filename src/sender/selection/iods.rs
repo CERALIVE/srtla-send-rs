@@ -44,7 +44,6 @@ impl IodsFilter {
     }
 
     /// Reset the ordering state (e.g., after a long gap).
-    #[allow(dead_code)]
     pub fn reset(&mut self) {
         self.last_arrival = 0.0;
     }
@@ -104,5 +103,30 @@ mod tests {
         let iods = IodsFilter::new();
         let valid = iods.filter_valid(&[0, 1, 2], |i| if i == 1 { None } else { Some(1.0) });
         assert_eq!(valid, vec![0, 2]);
+    }
+
+    #[test]
+    fn iods_does_not_permanently_starve() {
+        let mut iods = IodsFilter::new();
+
+        for i in 0..1000 {
+            iods.record_scheduled(f64::from(i));
+        }
+        assert!(iods.last_arrival >= 999.0);
+
+        let fresh_arrival = 5.0;
+        let starved = iods.filter_valid(&[0], |_| Some(fresh_arrival));
+        assert!(
+            starved.is_empty(),
+            "ratcheted last_arrival starves a fresh lower-arrival candidate"
+        );
+
+        iods.reset();
+        let recovered = iods.filter_valid(&[0], |_| Some(fresh_arrival));
+        assert_eq!(
+            recovered,
+            vec![0],
+            "after reset, a fresh valid candidate passes again (no permanent starvation)"
+        );
     }
 }

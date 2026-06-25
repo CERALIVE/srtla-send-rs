@@ -126,11 +126,9 @@ fn edpf_pipeline_select(
     _config: &ConfigSnapshot,
     edpf_state: &mut EdpfSchedulerState,
 ) -> Option<usize> {
-    const SRT_PKT_SIZE: usize = 1316;
+    use edpf::SRT_PKT_SIZE;
 
     let EdpfSchedulerState { blest, iods } = edpf_state;
-
-    blest.tick();
 
     // 1. BLEST filters out HoL-blocking links
     let candidates = blest.filter(conns);
@@ -140,19 +138,26 @@ fn edpf_pipeline_select(
         edpf::arrival_time(&conns[idx], SRT_PKT_SIZE)
     });
 
-    // 3. EDPF selects argmin from remaining, with fallbacks
-    let selected = edpf::select_from_indices(conns, &ordered, SRT_PKT_SIZE)
-        .or_else(|| edpf::select_from_indices(conns, &candidates, SRT_PKT_SIZE))
-        .or_else(|| edpf::select_from(conns, SRT_PKT_SIZE));
-
-    // Record the scheduled arrival for IoDS
-    if let Some(idx) = selected
-        && let Some(arrival) = edpf::arrival_time(&conns[idx], SRT_PKT_SIZE)
-    {
-        iods.record_scheduled(arrival);
+    // IoDS filtered every candidate: select via fallback for this tick and reset
+    // the ordering state so the next tick starts unconstrained (no permanent
+    // self-starvation from a monotonically-ratcheting last_arrival).
+    if ordered.is_empty() {
+        iods.reset();
+        return edpf::select_from_indices(conns, &candidates, SRT_PKT_SIZE)
+            .or_else(|| edpf::select_from(conns, SRT_PKT_SIZE));
     }
 
-    selected
+    // 3. EDPF selects argmin from the IoDS-ordered set. Only an IoDS-path
+    // selection may ratchet last_arrival; a fallback selection must not.
+    if let Some(idx) = edpf::select_from_indices(conns, &ordered, SRT_PKT_SIZE) {
+        if let Some(arrival) = edpf::arrival_time(&conns[idx], SRT_PKT_SIZE) {
+            iods.record_scheduled(arrival);
+        }
+        return Some(idx);
+    }
+
+    edpf::select_from_indices(conns, &candidates, SRT_PKT_SIZE)
+        .or_else(|| edpf::select_from(conns, SRT_PKT_SIZE))
 }
 
 #[cfg(test)]

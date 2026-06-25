@@ -9,39 +9,21 @@ use crate::connection::SrtlaConnection;
 const DEFAULT_BLOCK_THRESHOLD_MS: f64 = 50.0;
 
 /// BLEST filter state.
+///
+/// A static one-way-delay head-of-line guard: a link is admitted while its OWD
+/// stays within `threshold_ms` of the fastest link's OWD. The threshold is fixed
+/// (no dynamic penalty machinery).
 #[derive(Debug)]
 pub struct BlestFilter {
     /// Maximum acceptable block time in ms.
     threshold_ms: f64,
-    /// Dynamic penalty factor that grows on blocking events and decays per tick.
-    penalty: f64,
 }
 
 impl BlestFilter {
     pub fn new() -> Self {
         Self {
             threshold_ms: DEFAULT_BLOCK_THRESHOLD_MS,
-            penalty: 0.0,
         }
-    }
-
-    /// Decay the penalty factor. Call once per scheduling tick.
-    pub fn tick(&mut self) {
-        self.penalty *= 0.95;
-        if self.penalty < 0.01 {
-            self.penalty = 0.0;
-        }
-    }
-
-    /// Record a blocking event (when a link caused HoL blocking).
-    #[allow(dead_code)]
-    pub fn record_blocking(&mut self) {
-        self.penalty = (self.penalty + 1.0).min(10.0);
-    }
-
-    /// Get the effective threshold accounting for penalty.
-    fn effective_threshold(&self) -> f64 {
-        self.threshold_ms / (1.0 + self.penalty * 0.5)
     }
 
     /// Filter connections, returning indices of non-blocked links.
@@ -70,7 +52,7 @@ impl BlestFilter {
                 .collect();
         }
 
-        let threshold = self.effective_threshold();
+        let threshold = self.threshold_ms;
 
         conns
             .iter()
@@ -132,29 +114,19 @@ mod tests {
     }
 
     #[test]
-    fn test_penalty_shrinks_threshold() {
-        let mut filter = BlestFilter::new();
-        assert!((filter.effective_threshold() - 50.0).abs() < 0.01);
+    fn test_static_threshold_admits_within_50ms() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut conns = rt.block_on(create_test_connections(2));
 
-        filter.record_blocking();
-        // penalty=1.0, threshold = 50 / (1 + 0.5) = 33.3
-        assert!(filter.effective_threshold() < 50.0);
-        assert!(filter.effective_threshold() > 30.0);
-    }
+        conns[0].rtt.rtt_min_ms = 20.0; // OWD = 10
+        conns[1].rtt.rtt_min_ms = 120.0; // OWD = 60, block_time = 50 <= 50 → pass
 
-    #[test]
-    fn test_penalty_decays() {
-        let mut filter = BlestFilter::new();
-        filter.record_blocking();
-        assert!(filter.penalty > 0.0);
-
-        for _ in 0..200 {
-            filter.tick();
-        }
-        assert!(
-            filter.penalty < 0.01,
-            "Penalty should decay to near zero: {}",
-            filter.penalty
+        let filter = BlestFilter::new();
+        let result = filter.filter(&conns);
+        assert_eq!(
+            result,
+            vec![0, 1],
+            "Static 50ms threshold should admit a link exactly at the boundary"
         );
     }
 }
