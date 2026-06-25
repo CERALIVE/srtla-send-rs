@@ -6,7 +6,10 @@
 use crate::connection::SrtlaConnection;
 
 /// SRT payload packet size in bytes.
-const SRT_PKT_SIZE: usize = 1316;
+///
+/// Single shared home for the constant; `selection::mod` imports this rather than
+/// redeclaring it, so the EDPF pipeline and the predictor can never drift apart.
+pub(crate) const SRT_PKT_SIZE: usize = 1316;
 
 /// Compute predicted arrival time for a connection.
 ///
@@ -29,7 +32,8 @@ fn predicted_arrival(conn: &SrtlaConnection, pkt_size: usize) -> Option<f64> {
         return None;
     }
 
-    let in_flight_bytes = (conn.in_flight_packets.max(0) as usize * SRT_PKT_SIZE) as f64;
+    let in_flight_bytes =
+        (conn.in_flight_packets.max(0) as u64).saturating_mul(SRT_PKT_SIZE as u64) as f64;
 
     // Use Kalman-smoothed RTT as propagation delay estimate.
     // Falls back to rtt_min_ms if Kalman hasn't initialized yet.
@@ -40,7 +44,11 @@ fn predicted_arrival(conn: &SrtlaConnection, pkt_size: usize) -> Option<f64> {
         conn.rtt.rtt_min_ms / 1000.0
     };
 
-    Some((in_flight_bytes + pkt_size as f64) / effective_capacity + propagation_s)
+    let arrival = (in_flight_bytes + pkt_size as f64) / effective_capacity + propagation_s;
+    if !arrival.is_finite() {
+        return None;
+    }
+    Some(arrival)
 }
 
 /// Select the connection with lowest predicted arrival time from all connections.
@@ -162,5 +170,39 @@ mod tests {
         // Only consider indices 1 and 2 (exclude the best one, 0)
         let result = select_from_indices(&conns, &[1, 2], SRT_PKT_SIZE);
         assert_eq!(result, Some(2), "Should pick best from subset");
+    }
+
+    #[test]
+    fn predicted_arrival_saturates_huge_in_flight() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut conns = rt.block_on(create_test_connections(1));
+
+        conns[0].in_flight_packets = i32::MAX;
+        conns[0].bitrate.current_bitrate_bps = 1_000_000.0;
+        conns[0].rtt.rtt_min_ms = 50.0;
+
+        let arrival = predicted_arrival(&conns[0], SRT_PKT_SIZE)
+            .expect("huge in-flight must still yield a value");
+        assert!(
+            arrival.is_finite(),
+            "saturating widen must keep arrival finite, got {arrival}"
+        );
+    }
+
+    #[test]
+    fn predicted_arrival_never_nan() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut conns = rt.block_on(create_test_connections(2));
+
+        conns[0].bitrate.current_bitrate_bps = 0.0;
+        conns[1].bitrate.current_bitrate_bps = -1.0;
+
+        for conn in &conns {
+            let result = predicted_arrival(conn, SRT_PKT_SIZE);
+            assert_eq!(
+                result, None,
+                "non-positive bitrate must yield None, not NaN"
+            );
+        }
     }
 }
