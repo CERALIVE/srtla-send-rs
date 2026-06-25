@@ -24,6 +24,12 @@ RTT). On the device it is driven by CeraUI and feeds the bonded path into
 > sendmmsg triage (Task 25: TODO converted to tracked DEFERRED note), and robustness
 > pass (2026-06-19: S9 all-links-failed timeout fix, S5 dead-reader restart, S6 RTT
 > clamp + classifier fix, S7 zero-RTT keepalive rejection — see ROBUSTNESS FIXES).
+> Hardening pass (2026-06-25): EDPF scheduler state moved off thread-local + EDPF
+> pipeline tests, loom/miri/proptest model+fuzz lanes, telemetry fsync moved off the
+> packet-forwarding loop, keepalive interop (BELABOX 2-byte vs extended) + wire
+> conformance goldens, mimalloc gated behind a default-on feature, netns de-flake to
+> bounded readiness polling, and a final docs-consistency audit (T21: dangling-ref
+> sweep via `scripts/check-doc-refs.sh`, version-drift + Rule-A sync).
 > CeraUI integration lands in follow-up tasks.
 
 **Relationship to `srtla/`:** this is the **sender** engine (Rust). The existing

@@ -114,7 +114,7 @@ impl BatchSender {
         // significant complexity for marginal gain at current packet rates
         // (~60-67 batch flushes/s at 10 Mbps). Revisit if profiling shows
         // syscall overhead is a bottleneck on the Jetson Nano target.
-        // Tracked in openspec/changes/rust-sender-adoption/sendmmsg-deferred.md
+        // Tracked in docs/notes/sendmmsg-deferred.md
         for packet in &self.queue {
             match socket.send(packet).await {
                 Ok(_) => sent_count += 1,
