@@ -39,8 +39,9 @@ cargo bench --bench alloc                       # mimalloc (default)
 cargo bench --bench alloc --no-default-features  # system allocator
 ```
 
-Measured ops/s for both configurations are recorded in
-`.omo/evidence/task-9-srtla-send-rs-hardening.txt`.
+Measured ops/s for both configurations are captured by running
+`cargo bench --bench alloc` and `cargo bench --bench alloc --no-default-features`
+on the build host; results are not committed to the repo.
 
 ## Caveat — unmeasured on the device target
 
