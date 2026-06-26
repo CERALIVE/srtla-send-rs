@@ -44,16 +44,14 @@ jobs:
       - name: Check compilation without test features
         run: cargo check --release
 
-      - name: Run unit tests
-        run: cargo test --lib --verbose
-
-      - name: Run unit tests with test-internals (verify encapsulation)
-        run: cargo test --lib --features test-internals --verbose
-
-      - name: Run all tests
-        run: cargo test --features test-internals --verbose
-
-      - name: Run tests with all features
+      # test-internals is the crate's ONLY feature, so --all-features ==
+      # --features test-internals and runs the whole corpus (lib+bin+integration
+      # +doctests, 348 tests). This single run is a strict superset of the four it
+      # replaced (--lib 284, --lib+test-internals 296, +test-internals 348): the
+      # cfg(not(feature="test-internals")) arms are visibility toggles, never gated
+      # tests, so the feature drops nothing. No-feature shipping paths stay checked
+      # by cargo check / check --release / clippy / build --release in this job.
+      - name: Run all tests (--all-features = full corpus)
         run: cargo test --all-features --verbose
 
       - name: Install cargo-audit + cargo-deny (prebuilt)
@@ -66,6 +64,60 @@ jobs:
 
       - name: Run supply-chain checks (advisories + sources)
         run: cargo deny check advisories sources
+
+  # Dedicated BLOCKING loom model-check of the subscription manager. Gated
+  # `#![cfg(loom)]`, so it is invisible to the `test` job above; it only compiles
+  # and runs under `RUSTFLAGS="--cfg loom"`. Exhaustively explores the broadcast
+  # vs subscribe/drop interleavings (no deadlock, no lost last frame, dead
+  # subscriber pruned). A required gate: a regression here fails the PR.
+  loom:
+    name: Loom model (subscription manager)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Run loom model test
+        env:
+          RUSTFLAGS: --cfg loom
+        run: cargo test --features test-internals --test subscription_loom
+
+  # Dedicated BLOCKING miri lane over the ONLY unsafe FFI in the tree: the
+  # `recvmmsg` batch-receive path in src/connection/batch_recv.rs. miri vets the
+  # PURE POINTER LOGIC — self-referential iovec/mmsghdr rebuild after a move
+  # (init_rebuilds_self_pointers_after_move), the msg_len→MTU clamp
+  # (iter_clamps_oversized_msg_len_to_mtu), and the sockaddr_storage→SocketAddr
+  # cast + big-endian decode (sockaddr_storage_roundtrip). HARD LIMIT: miri
+  # CANNOT execute the real recvmmsg syscall/FFI, so the live-syscall path is
+  # NOT covered here — only the pointer logic around it. Each filter is its own
+  # invocation (miri takes a single substring filter per run). --no-default-features
+  # drops the mimalloc #[global_allocator] (C FFI miri cannot run); the system
+  # allocator miri provides is used instead. --lib scopes to the unit-test binary
+  # where all three pure tests live.
+  miri:
+    name: Miri (batch_recv pure pointer logic)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Install miri component
+        run: rustup component add miri
+
+      - name: Miri — self-pointer rebuild after move
+        run: cargo miri test --lib --no-default-features --features test-internals init_rebuilds_self_pointers_after_move
+
+      - name: Miri — oversized msg_len clamps to MTU
+        run: cargo miri test --lib --no-default-features --features test-internals iter_clamps_oversized_msg_len_to_mtu
+
+      - name: Miri — sockaddr_storage round-trip decode
+        run: cargo miri test --lib --no-default-features --features test-internals sockaddr_storage_roundtrip
 
   # Cross-build both device-relevant targets and package the pipeline-compatible
   # .deb on every push/PR, so a packaging break (name, binary path, Conflicts,

@@ -24,6 +24,12 @@ RTT). On the device it is driven by CeraUI and feeds the bonded path into
 > sendmmsg triage (Task 25: TODO converted to tracked DEFERRED note), and robustness
 > pass (2026-06-19: S9 all-links-failed timeout fix, S5 dead-reader restart, S6 RTT
 > clamp + classifier fix, S7 zero-RTT keepalive rejection — see ROBUSTNESS FIXES).
+> Hardening pass (2026-06-25): EDPF scheduler state moved off thread-local + EDPF
+> pipeline tests, loom/miri/proptest model+fuzz lanes, telemetry fsync moved off the
+> packet-forwarding loop, keepalive interop (BELABOX 2-byte vs extended) + wire
+> conformance goldens, mimalloc gated behind a default-on feature, netns de-flake to
+> bounded readiness polling, and a final docs-consistency audit (T21: dangling-ref
+> sweep via `scripts/check-doc-refs.sh`, version-drift + Rule-A sync).
 > CeraUI integration lands in follow-up tasks.
 
 **Relationship to `srtla/`:** this is the **sender** engine (Rust). The existing
@@ -108,6 +114,28 @@ the fork parent attached when opening a PR. Verify: `git remote -v` must show on
   - apt: `gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross binutils-aarch64-linux-gnu pkg-config`
   - `PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig`
 
+## DEPENDENCY PINS
+
+Most deps use caret floors (`tokio = "1.52"`, `clap = "4.6"`, `rand = "0.10"`,
+`libc = "0.2"`). Two deliberate exceptions, both load-bearing — do not "modernize"
+them in an upstream merge or a `cargo upgrade` sweep without a deliberate PR:
+
+- **`smallvec = "=2.0.0-alpha.12"` (EXACT pin).** smallvec 2.x is still a pre-release
+  line; each `2.0.0-alpha.*` can ship breaking API/layout changes, so we pin one
+  known-good alpha rather than float across the alpha range. Mirrored by a comment on
+  the dep in `Cargo.toml`. **Revisit and unpin to `"2"` once smallvec 2.0 is stable.**
+  Do not migrate off smallvec 2.x while the pin stands.
+- **`libc = "0.2"`.** Stay on the 0.2 line — do **not** bump to a `1.0` alpha/pre-release.
+
+**`rand` is 0.10 (workspace + `crates/network-sim`), single version in the shipped
+binary (0.10.1).** rand 0.9→0.10 was an API break: `rand_core::RngCore` was renamed to
+`rand_core::Rng` (re-exported as `rand::Rng`) and the old `rand::Rng` ext trait became
+`rand::RngExt`. Call sites use `use rand::Rng;` for `fill_bytes`/`next_u64`
+(`src/registration/`, `src/connection/`) and `rand::RngExt` for `.random()`
+(`crates/network-sim/src/scenario.rs`). A `rand 0.9.2` duplicate persists **only** via
+the `proptest` dev-dependency (latest 1.11.0 has no rand-0.10 release); it is dev/test
+-only and absent from the release binary — see the `deny.toml` RUSTSEC-2026-0097 note.
+
 ## PARITY CONTRACT (do not break without a versioned change)
 
 CeraUI and the device integration depend on these staying stable:
@@ -164,6 +192,22 @@ CeraUI and the device integration depend on these staying stable:
   frames are already ≥32 B (extended keepalive 38 B, REG1/REG2 258 B) so this is
   a passthrough today, but the floor is now enforced. Pinned by
   `control_packet_padded_to_32b` + `data_not_padded` (`src/tests/connection_tests.rs`).
+- **Keepalive divergence (BELABOX 2-byte vs our timestamped 10/38 B):** BELABOX
+  (`BELABOX/srtla` `srtla_send.c` L589-593) sends a **bare 2-byte** keepalive
+  (type only, no timestamp); this fork inherited irlserver's **timestamped**
+  keepalive — standard 10 B (`type + u64 ms`) and the backwards-compatible
+  **extended 38 B** (`+ 0xC01F`-tagged `ConnectionInfo` telemetry) — and always
+  emits the extended form. The timestamp is what powers RTT-from-keepalive
+  (`RttTracker::handle_keepalive_response`); a bare echo carries none. Interop
+  rests on the **receiver-echo ASSUMPTION**: receivers echo keepalives and
+  tolerate trailing bytes (proven for irlserver/CeraLive; **assumed, not proven,
+  for BELABOX** — needs a live BELABOX receiver). The sender defensively accepts
+  a bare 2-byte echo (no RTT, no panic). A BELABOX-compatible 2-byte *send* mode
+  is a **deferred follow-up** — do not add it without live-interop evidence, and
+  never change the keepalive wire format or the 32 B NAT-padding floor to do it.
+  Full write-up: `docs/KEEPALIVE_INTEROP.md`. Pinned by
+  `keepalive_extended_round_trip` / `keepalive_bare_2byte_accepted` /
+  `keepalive_truncated_graceful` (`src/tests/keepalive_interop_tests.rs`).
 - **Link-liveness timeout (`CONN_TIMEOUT = 15`, `src/protocol/constants.rs`):**
   seconds of inbound silence before an established uplink is declared failed and
   re-registered. It is deliberately set to **15**, matching the bonding receiver's
@@ -195,6 +239,48 @@ cargo test --features test-internals # upstream's full-coverage suite
 `test-internals` exposes internal fields for assertions; `--all-features` enables it.
 The whole sender test corpus runs in-process over loopback UDP — **no root / netns /
 CAP_NET_ADMIN required** (0 tests are gated/ignored).
+
+**Loom model test (NOT part of the default gate).** `tests/subscription_loom.rs`
+exhaustively model-checks the `SubscriptionManager` (`src/subscription.rs`)
+`broadcast` (telemetry tick) vs `subscribe`/drop (control thread) interleavings
+over its `Mutex<Inner>` + capacity-1 `sync_channel`. It is gated `#![cfg(loom)]`,
+so it compiles to nothing — and the `loom` dev-dep stays unused — unless the
+`loom` cfg is set. Run it deliberately (it is a dedicated BLOCKING CI job, not
+part of `cargo test`):
+
+```bash
+RUSTFLAGS="--cfg loom" cargo test --features test-internals --test subscription_loom
+```
+
+It asserts four invariants under all schedules: no deadlock; `last_frame` equals
+the broadcast frame; a non-full subscriber registered before a broadcast never
+loses that frame (no lost wakeup); and a disconnected subscriber is pruned on the
+next broadcast (no panic, no unbounded growth).
+
+**Miri lane (BLOCKING CI job, NOT part of the default gate).** The only `unsafe`
+FFI in the tree is the `recvmmsg` batch-receive path
+(`src/connection/batch_recv.rs`). A dedicated BLOCKING `miri` job in `ci.yml`
+runs miri over its **pure pointer logic** — three single-filter invocations (miri
+takes one substring filter per run):
+
+```bash
+cargo miri test --lib --no-default-features --features test-internals init_rebuilds_self_pointers_after_move
+cargo miri test --lib --no-default-features --features test-internals iter_clamps_oversized_msg_len_to_mtu
+cargo miri test --lib --no-default-features --features test-internals sockaddr_storage_roundtrip
+```
+
+These vet, with no UB: the self-referential `iovec`/`mmsghdr` pointer rebuild
+after a value move (`rebuild_pointers`/`init`), the `msg_len`→`MTU` clamp in the
+iterator, and the `sockaddr_storage`→`SocketAddr` cast + big-endian decode.
+**HARD LIMIT — miri CANNOT execute the real `recvmmsg` syscall/FFI.** It validates
+only the Rust-side pointer arithmetic and decode *around* the syscall, never the
+live kernel transition; any test that binds a socket, issues `recvmmsg`, or spawns
+tokio must NOT run under miri (carry `#[cfg_attr(miri, ignore)]` if added — the
+current `batch_recv.rs` tests are all syscall-free, so none need it). Two flags
+are load-bearing: `--no-default-features` drops the mimalloc `#[global_allocator]`
+(C FFI miri cannot run — it aborts on `mi_malloc_aligned`), and `--lib` scopes to
+the unit-test binary holding the three pure tests. Install with
+`rustup component add miri` on the pinned nightly.
 
 The `@ceralive/srtla-send` TS binding (`bindings/typescript/`) has its own gate:
 
@@ -260,8 +346,8 @@ workflows. It pins the contract the device image depends on:
 **Package versioning — upstream semver, NOT CalVer (approved exception):**
 `srtla-send-rs` is the one first-party component that does NOT follow the CeraLive
 CalVer (`YYYY.MINOR.PATCH`) scheme. Its `.deb` version comes directly from
-`Cargo.toml` `[workspace.package] version`, which tracks upstream irlserver semver.
-Current package version: `3.0.0`. `versions.yaml` pins it at `v3.0.0`.
+`Cargo.toml` `[package] version`, which tracks upstream irlserver semver.
+Current package version: `3.1.0`. `versions.yaml` pins it at `v3.1.0`.
 
 Rationale: this repo is a fork of `irlserver/srtla_send`; keeping the upstream semver
 line in `Cargo.toml` preserves direct traceability to upstream releases.
@@ -288,7 +374,7 @@ src/
   main.rs            CLI entry point (clap)
   lib.rs             library exports
   config.rs / config/    runtime config (DynamicConfig, ConfigSnapshot); stdin + Unix-socket control
-  mode.rs            SchedulingMode (Classic | Enhanced | RttThreshold)
+  mode.rs            SchedulingMode (Classic | Enhanced | RttThreshold | Edpf)
   connection/        SrtlaConnection, bind/resolve, incoming packet handling, RTT (Kalman)
   protocol.rs        SRTLA protocol constants/structures
   registration.rs    REG1/REG2/REG3 flow + ID propagation
@@ -303,9 +389,12 @@ ci/build-deb.sh      single-source .deb packager (control + filename + glob self
 
 Conventions (enforced by the gate): edition 2024, `anyhow::Result`, `tracing` macros,
 Tokio async, imports grouped std → external → crate (module granularity), constants
-`SCREAMING_SNAKE_CASE`. Three scheduling modes; enhanced (default) adds NAK-decay
-quality scoring + optional exploration. See `README.md` for the full operator/runtime
-reference (modes, runtime commands, tuning constants).
+`SCREAMING_SNAKE_CASE`. Four scheduling modes (classic, enhanced, rtt-threshold,
+edpf); enhanced (default) adds NAK-decay quality scoring + optional exploration.
+EDPF (`--mode edpf`) is Earliest Delivery Path First — a BLEST (static-OWD HoL
+guard) → IoDS (bounded in-order constraint) → EDPF (lowest predicted arrival)
+pipeline with per-loop owned scheduler state (no thread-local). See `README.md`
+for the full operator/runtime reference (modes, runtime commands, tuning constants).
 
 ## ANTI-PATTERNS
 
@@ -383,7 +472,7 @@ The `// TODO: On Linux, could use sendmmsg ...` in `src/connection/batch_send.rs
   complexity not justified without profiling evidence on the Jetson Nano target
 - When to revisit: profiling shows syscall overhead, or Tokio adds native support
 
-Full rationale in `openspec/changes/rust-sender-adoption/sendmmsg-deferred.md`.
+Full rationale in `docs/notes/sendmmsg-deferred.md`.
 **Do not implement sendmmsg** without profiling evidence and a deliberate PR.
 
 ## TS BINDING TOOLING

@@ -193,7 +193,7 @@ pub enum CmdResponse {
 /// Apply a runtime command to the configuration.
 ///
 /// Commands:
-/// - `mode classic|enhanced|rtt-threshold` - switch scheduling mode
+/// - `mode classic|enhanced|rtt-threshold|edpf` - switch scheduling mode
 /// - `quality on|off` - toggle quality scoring
 /// - `explore on|off` - toggle exploration
 /// - `rtt-delta <ms>` - set RTT delta threshold

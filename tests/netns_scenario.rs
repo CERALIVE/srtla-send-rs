@@ -6,6 +6,7 @@
 mod common;
 
 use std::thread;
+use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use network_sim::{ImpairmentConfig, LinkScenarioConfig, Scenario, ScenarioConfig, SrtlaTestStack};
@@ -19,8 +20,7 @@ fn test_random_walk_stability() {
 
     let mut stack = SrtlaTestStack::start("rw", 2, &[]).expect("start stack");
 
-    // Wait for registration
-    thread::sleep(Duration::from_secs(5));
+    common::wait_until_ready(&stack);
 
     let scenario_cfg = ScenarioConfig {
         seed: 42,
@@ -123,8 +123,7 @@ fn test_step_change_convergence() {
 
     let mut stack = SrtlaTestStack::start("step", 2, &[]).expect("start stack");
 
-    // Wait for registration
-    thread::sleep(Duration::from_secs(5));
+    common::wait_until_ready(&stack);
 
     // Phase 1: Stable, good conditions (5s)
     stack
@@ -149,7 +148,8 @@ fn test_step_change_convergence() {
         .expect("set good conditions link 1");
 
     common::inject_packets(&stack, 200).expect("inject data phase 1");
-    thread::sleep(Duration::from_secs(5));
+    // Steady-state window: let phase-1 traffic settle before the step change.
+    sleep(Duration::from_secs(5));
 
     // Phase 2: Sudden bandwidth drop on link 0 (5s)
     stack
@@ -165,7 +165,8 @@ fn test_step_change_convergence() {
         .expect("step-change link 0");
 
     common::inject_packets(&stack, 200).expect("inject data phase 2");
-    thread::sleep(Duration::from_secs(5));
+    // Steady-state window: let the scheduler converge after the bandwidth drop.
+    sleep(Duration::from_secs(5));
 
     // Phase 3: Recover (5s)
     stack
@@ -180,7 +181,8 @@ fn test_step_change_convergence() {
         .expect("recover link 0");
 
     common::inject_packets(&stack, 200).expect("inject data phase 3");
-    thread::sleep(Duration::from_secs(5));
+    // Steady-state window: let link 0 converge back after recovery.
+    sleep(Duration::from_secs(5));
 
     let output = stack.stop();
     common::dump_output(&output);

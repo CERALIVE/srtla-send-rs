@@ -93,7 +93,9 @@ same SRT listen port CeraUI already owns).
   - `set-mode` → `{mode: "classic"|"enhanced"|"rtt-threshold"}` (DynamicConfig mode)
   - `set-quality` → `{enabled: bool}` (quality scoring on/off)
   - `set-exploration` → `{enabled: bool}` (exploration on/off)
-  - `set-rtt-delta` → `{delta_ms: u32}` (`set_rtt_delta_ms`)
+  - `set-rtt-delta` → `{delta_ms: u32}` (`set_rtt_delta_ms`). The legacy key
+    `{ms: u32}` is accepted as a **back-compat alias**; when both are present,
+    `delta_ms` wins. A missing/non-`u32` value returns `-32602`.
   - `get-status` → current `ConfigSnapshot` (the JSON `status` the text protocol prints)
 
 ### Stats subscription (push)

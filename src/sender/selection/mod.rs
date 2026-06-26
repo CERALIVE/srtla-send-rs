@@ -1,6 +1,6 @@
 //! Connection selection strategies for SRTLA bonding
 //!
-//! This module provides three connection selection strategies:
+//! This module provides four connection selection strategies:
 //!
 //! ## Classic Mode
 //! Matches the original C implementation exactly:
@@ -23,6 +23,20 @@
 //! - Strongly prefers fast links over slow ones
 //! - Quality scoring applied within fast link group
 //! - Falls back to slow links only when fast links saturated
+//!
+//! ## EDPF Mode
+//! Earliest Delivery Path First — picks the link with the lowest predicted
+//! packet-arrival time, run through a BLEST → IoDS → EDPF pipeline:
+//! - BLEST head-of-line-blocking guard: a static one-way-delay (OWD) filter
+//!   (50ms threshold, no penalty term) excludes links whose OWD would stall
+//!   the in-order byte stream
+//! - IoDS in-order-delivery constraint: bounds candidates to those that keep
+//!   delivery monotonic, resetting when the admitted set is empty so no link
+//!   is permanently starved
+//! - EDPF argmin: among admitted links, selects the lowest predicted arrival
+//!   `(in_flight_bytes + pkt) / effective_capacity + owd`
+//! - Per-loop owned scheduler state (no thread-local), threaded through the
+//!   send path so selection is deterministic and allocation-free on the hot path
 
 pub mod blest;
 mod classic;
@@ -50,6 +64,17 @@ use crate::mode::SchedulingMode;
 /// while avoiding intra-batch flip-flopping.
 pub const MIN_SWITCH_INTERVAL_MS: u64 = 15;
 
+/// Loop-owned BLEST/IoDS scheduler state for the EDPF pipeline.
+///
+/// Owned by the run loop (single-threaded over the connection pool) instead of a
+/// `thread_local!`, which under the multi-thread tokio runtime gave each worker its
+/// own fragmented copy of the BLEST/IoDS history. Non-EDPF modes ignore it.
+#[derive(Debug, Default)]
+pub struct EdpfSchedulerState {
+    pub(crate) blest: blest::BlestFilter,
+    pub(crate) iods: iods::IodsFilter,
+}
+
 /// Select the best connection index based on mode and configuration
 ///
 /// # Arguments
@@ -68,6 +93,7 @@ pub fn select_connection_idx(
     last_switch_time_ms: u64,
     current_time_ms: u64,
     config: &ConfigSnapshot,
+    edpf_state: &mut EdpfSchedulerState,
 ) -> Option<usize> {
     match config.mode {
         SchedulingMode::Classic => {
@@ -98,7 +124,7 @@ pub fn select_connection_idx(
         }
         SchedulingMode::Edpf => {
             // EDPF mode: BLEST → IoDS → EDPF pipeline
-            edpf_pipeline_select(conns, config)
+            edpf_pipeline_select(conns, config, edpf_state)
         }
     }
 }
@@ -109,47 +135,43 @@ pub fn select_connection_idx(
 /// 1. BLEST filters out HoL-blocking links
 /// 2. IoDS filters for monotonic ordering
 /// 3. EDPF selects argmin(predicted_arrival) from remaining
-fn edpf_pipeline_select(conns: &[SrtlaConnection], _config: &ConfigSnapshot) -> Option<usize> {
-    const SRT_PKT_SIZE: usize = 1316;
+fn edpf_pipeline_select(
+    conns: &[SrtlaConnection],
+    _config: &ConfigSnapshot,
+    edpf_state: &mut EdpfSchedulerState,
+) -> Option<usize> {
+    use edpf::SRT_PKT_SIZE;
 
-    // Use thread-local BLEST and IoDS state
-    thread_local! {
-        static BLEST: std::cell::RefCell<blest::BlestFilter> =
-            std::cell::RefCell::new(blest::BlestFilter::new());
-        static IODS: std::cell::RefCell<iods::IodsFilter> =
-            std::cell::RefCell::new(iods::IodsFilter::new());
+    let EdpfSchedulerState { blest, iods } = edpf_state;
+
+    // 1. BLEST filters out HoL-blocking links
+    let candidates = blest.filter(conns);
+
+    // 2. IoDS filters for monotonic ordering
+    let ordered = iods.filter_valid(&candidates, |idx| {
+        edpf::arrival_time(&conns[idx], SRT_PKT_SIZE)
+    });
+
+    // IoDS filtered every candidate: select via fallback for this tick and reset
+    // the ordering state so the next tick starts unconstrained (no permanent
+    // self-starvation from a monotonically-ratcheting last_arrival).
+    if ordered.is_empty() {
+        iods.reset();
+        return edpf::select_from_indices(conns, &candidates, SRT_PKT_SIZE)
+            .or_else(|| edpf::select_from(conns, SRT_PKT_SIZE));
     }
 
-    BLEST.with(|blest_cell| {
-        IODS.with(|iods_cell| {
-            let mut blest_filter = blest_cell.borrow_mut();
-            let mut iods_filter = iods_cell.borrow_mut();
+    // 3. EDPF selects argmin from the IoDS-ordered set. Only an IoDS-path
+    // selection may ratchet last_arrival; a fallback selection must not.
+    if let Some(idx) = edpf::select_from_indices(conns, &ordered, SRT_PKT_SIZE) {
+        if let Some(arrival) = edpf::arrival_time(&conns[idx], SRT_PKT_SIZE) {
+            iods.record_scheduled(arrival);
+        }
+        return Some(idx);
+    }
 
-            blest_filter.tick();
-
-            // 1. BLEST filters out HoL-blocking links
-            let candidates = blest_filter.filter(conns);
-
-            // 2. IoDS filters for monotonic ordering
-            let ordered = iods_filter.filter_valid(&candidates, |idx| {
-                edpf::arrival_time(&conns[idx], SRT_PKT_SIZE)
-            });
-
-            // 3. EDPF selects argmin from remaining, with fallbacks
-            let selected = edpf::select_from_indices(conns, &ordered, SRT_PKT_SIZE)
-                .or_else(|| edpf::select_from_indices(conns, &candidates, SRT_PKT_SIZE))
-                .or_else(|| edpf::select_from(conns, SRT_PKT_SIZE));
-
-            // Record the scheduled arrival for IoDS
-            if let Some(idx) = selected
-                && let Some(arrival) = edpf::arrival_time(&conns[idx], SRT_PKT_SIZE)
-            {
-                iods_filter.record_scheduled(arrival);
-            }
-
-            selected
-        })
-    })
+    edpf::select_from_indices(conns, &candidates, SRT_PKT_SIZE)
+        .or_else(|| edpf::select_from(conns, SRT_PKT_SIZE))
 }
 
 #[cfg(test)]
@@ -185,6 +207,7 @@ mod tests {
             last_switch_time_ms,
             current_time_ms,
             &config,
+            &mut EdpfSchedulerState::default(),
         );
         assert_eq!(
             result,
@@ -220,6 +243,7 @@ mod tests {
             last_switch_time_ms,
             current_time_ms,
             &config,
+            &mut EdpfSchedulerState::default(),
         );
         assert_eq!(
             result,
@@ -235,6 +259,7 @@ mod tests {
             last_switch_time_ms,
             current_time_after_cooldown,
             &config,
+            &mut EdpfSchedulerState::default(),
         );
         assert_eq!(
             result_after,
@@ -252,7 +277,77 @@ mod tests {
             exploration_enabled: false,
             rtt_delta_ms: 30,
         };
-        let result = select_connection_idx(&mut conns, None, 0, 0, &config);
+        let result = select_connection_idx(
+            &mut conns,
+            None,
+            0,
+            0,
+            &config,
+            &mut EdpfSchedulerState::default(),
+        );
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn edpf_pipeline_mutates_caller_owned_state() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut connections = rt.block_on(create_test_connections(2));
+        for c in connections.iter_mut() {
+            c.bitrate.current_bitrate_bps = 1_000_000.0;
+            c.rtt.rtt_min_ms = 30.0;
+        }
+
+        let config = ConfigSnapshot {
+            mode: SchedulingMode::Edpf,
+            quality_enabled: false,
+            exploration_enabled: false,
+            rtt_delta_ms: 30,
+        };
+
+        let mut state = EdpfSchedulerState::default();
+        let selected = select_connection_idx(&mut connections, None, 0, 0, &config, &mut state);
+
+        assert!(selected.is_some(), "EDPF should select a connection");
+        assert!(
+            state.iods.last_arrival > 0.0,
+            "the caller-owned IoDS state must be mutated by the pipeline"
+        );
+    }
+
+    #[test]
+    fn edpf_two_states_are_independent() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut connections = rt.block_on(create_test_connections(2));
+        for c in connections.iter_mut() {
+            c.bitrate.current_bitrate_bps = 1_000_000.0;
+            c.rtt.rtt_min_ms = 30.0;
+        }
+
+        let config = ConfigSnapshot {
+            mode: SchedulingMode::Edpf,
+            quality_enabled: false,
+            exploration_enabled: false,
+            rtt_delta_ms: 30,
+        };
+
+        let mut state_a = EdpfSchedulerState::default();
+        let state_b = EdpfSchedulerState::default();
+
+        for _ in 0..3 {
+            let _ = select_connection_idx(&mut connections, None, 0, 0, &config, &mut state_a);
+        }
+
+        assert!(
+            state_a.iods.last_arrival > 0.0,
+            "state_a should accumulate scheduled arrival history"
+        );
+        assert_eq!(
+            state_b.iods.last_arrival, 0.0,
+            "state_b is untouched and must remain at its Default"
+        );
+        assert!(
+            state_a.iods.last_arrival != state_b.iods.last_arrival,
+            "two separate EdpfSchedulerState instances must diverge independently"
+        );
     }
 }

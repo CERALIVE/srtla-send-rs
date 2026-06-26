@@ -290,3 +290,278 @@ fn legacy_text_protocol_still_works() {
     client.send_no_reply("mode classic");
     wait_for(|| config.mode() == SchedulingMode::Classic);
 }
+
+// ---- 10. hello matches ADR-001 §Methods (additive superset) ----------------
+
+#[test]
+fn hello_matches_adr() {
+    let config = DynamicConfig::new();
+    let resp_str = dispatch_jsonrpc(r#"{"jsonrpc":"2.0","method":"hello","id":1}"#, &config);
+    let resp: Value = serde_json::from_str(&resp_str).expect("valid JSON");
+    let result = &resp["result"];
+
+    // ADR-001 mandates the protocol/engine_version/schema_version triple.
+    assert!(
+        result.get("protocol").is_some(),
+        "missing protocol: {result}"
+    );
+    assert!(
+        result.get("engine_version").is_some(),
+        "missing engine_version: {result}"
+    );
+    assert!(
+        result.get("schema_version").is_some(),
+        "missing schema_version: {result}"
+    );
+
+    // The additive superset (engine + capabilities) must remain present.
+    assert!(result.get("engine").is_some(), "missing engine: {result}");
+    assert!(
+        result.get("capabilities").is_some(),
+        "missing capabilities: {result}"
+    );
+}
+
+// ---- 11. set-rtt-delta accepts the ADR canonical `delta_ms` -----------------
+
+#[test]
+fn set_rtt_delta_accepts_delta_ms() {
+    let config = DynamicConfig::new();
+    let set_str = dispatch_jsonrpc(
+        r#"{"jsonrpc":"2.0","method":"set-rtt-delta","params":{"delta_ms":50},"id":1}"#,
+        &config,
+    );
+    let set: Value = serde_json::from_str(&set_str).expect("valid JSON");
+    assert_eq!(set["result"]["ok"], Value::Bool(true));
+
+    let status_str = dispatch_jsonrpc(r#"{"jsonrpc":"2.0","method":"get-status","id":2}"#, &config);
+    let status: Value = serde_json::from_str(&status_str).expect("valid JSON");
+    assert_eq!(status["result"]["rtt_delta_ms"], Value::from(50));
+}
+
+// ---- 12. set-rtt-delta accepts the `ms` back-compat alias -------------------
+
+#[test]
+fn set_rtt_delta_accepts_ms_alias() {
+    let config = DynamicConfig::new();
+    let set_str = dispatch_jsonrpc(
+        r#"{"jsonrpc":"2.0","method":"set-rtt-delta","params":{"ms":50},"id":1}"#,
+        &config,
+    );
+    let set: Value = serde_json::from_str(&set_str).expect("valid JSON");
+    assert_eq!(set["result"]["ok"], Value::Bool(true));
+
+    let status_str = dispatch_jsonrpc(r#"{"jsonrpc":"2.0","method":"get-status","id":2}"#, &config);
+    let status: Value = serde_json::from_str(&status_str).expect("valid JSON");
+    assert_eq!(status["result"]["rtt_delta_ms"], Value::from(50));
+}
+
+// ---- 13. set-rtt-delta with no usable param -> -32602 invalid params --------
+
+#[test]
+fn set_rtt_delta_missing_param_is_invalid_params() {
+    let config = DynamicConfig::new();
+    let resp_str = dispatch_jsonrpc(
+        r#"{"jsonrpc":"2.0","method":"set-rtt-delta","params":{},"id":1}"#,
+        &config,
+    );
+    let resp: Value = serde_json::from_str(&resp_str).expect("valid JSON");
+    assert_eq!(resp["error"]["code"], Value::from(-32602));
+    assert_eq!(resp["id"], Value::from(1));
+}
+
+// ---- 14. set-mode accepts `edpf` (parity with the 4-mode enum) --------------
+
+#[test]
+fn set_mode_accepts_edpf() {
+    let config = DynamicConfig::new();
+    let resp_str = dispatch_jsonrpc(
+        r#"{"jsonrpc":"2.0","method":"set-mode","params":{"mode":"edpf"},"id":1}"#,
+        &config,
+    );
+    let resp: Value = serde_json::from_str(&resp_str).expect("valid JSON");
+    assert_eq!(resp["result"]["ok"], Value::Bool(true));
+    assert_eq!(resp["id"], Value::from(1));
+    assert_eq!(config.mode(), SchedulingMode::Edpf);
+}
+
+// ---- 15. a valid-JSON array is an Invalid Request, NOT a panic --------------
+//
+// `dispatch_jsonrpc` parses any well-formed JSON value, including a top-level
+// array (a JSON-RPC 2.0 *batch*). Such a value has no string `method`, so it
+// routes to the `-32600 Invalid Request` arm rather than panicking — batch
+// dispatch is deliberately not implemented here.
+//
+// NOTE ON SOCKET ROUTING (existing behavior, NOT changed here): the Unix
+// control socket's frame discriminator (`config.rs:433`) routes a frame to
+// `dispatch_jsonrpc` ONLY when the trimmed line begins with `{`. A `[`-prefixed
+// frame (a batch array) therefore falls through to the legacy TEXT parser and
+// never reaches `dispatch_jsonrpc` over the socket today. This test exercises
+// the dispatcher directly to prove it degrades gracefully if a batch array ever
+// does reach it.
+#[test]
+fn batch_array_is_invalid_request() {
+    let config = DynamicConfig::new();
+    let resp_str = dispatch_jsonrpc("[1,2,3]", &config);
+    let resp: Value = serde_json::from_str(&resp_str).expect("valid JSON envelope");
+
+    assert_eq!(resp["jsonrpc"], Value::from("2.0"));
+    assert_eq!(resp["error"]["code"], Value::from(-32600));
+    // An array has no `id` member, so the echoed id is null.
+    assert_eq!(resp["id"], Value::Null);
+}
+
+// ---- 16. `id` is echoed verbatim for string / number / absent(null) ---------
+
+#[test]
+fn id_echoed_verbatim_for_each_type() {
+    let config = DynamicConfig::new();
+
+    // (frame, expected echoed id)
+    let cases: [(&str, Value); 4] = [
+        (
+            r#"{"jsonrpc":"2.0","method":"hello","id":7}"#,
+            Value::from(7),
+        ),
+        (
+            r#"{"jsonrpc":"2.0","method":"hello","id":"abc"}"#,
+            Value::from("abc"),
+        ),
+        (
+            // Absent id → echoed as null.
+            r#"{"jsonrpc":"2.0","method":"hello"}"#,
+            Value::Null,
+        ),
+        (
+            // Explicit null id → echoed as null.
+            r#"{"jsonrpc":"2.0","method":"hello","id":null}"#,
+            Value::Null,
+        ),
+    ];
+
+    for (frame, expected_id) in cases {
+        let resp_str = dispatch_jsonrpc(frame, &config);
+        let resp: Value = serde_json::from_str(&resp_str).expect("valid JSON");
+        assert_eq!(resp["id"], expected_id, "id mismatch for frame {frame}");
+        // The id echo holds even on an error envelope.
+        let unknown_str = dispatch_jsonrpc(&frame.replace("hello", "no-such-method"), &config);
+        let unknown: Value = serde_json::from_str(&unknown_str).expect("valid JSON");
+        assert_eq!(
+            unknown["id"], expected_id,
+            "id mismatch on error for frame {frame}"
+        );
+    }
+}
+
+// ---- 17. `method` present but not a string -> -32600 Invalid Request --------
+
+#[test]
+fn non_string_method_is_invalid_request() {
+    let config = DynamicConfig::new();
+
+    // method as a number, an array, and an object — all are Invalid Request.
+    for frame in [
+        r#"{"jsonrpc":"2.0","method":123,"id":1}"#,
+        r#"{"jsonrpc":"2.0","method":["hello"],"id":1}"#,
+        r#"{"jsonrpc":"2.0","method":{"name":"hello"},"id":1}"#,
+    ] {
+        let resp_str = dispatch_jsonrpc(frame, &config);
+        let resp: Value = serde_json::from_str(&resp_str).expect("valid JSON");
+        assert_eq!(
+            resp["error"]["code"],
+            Value::from(-32600),
+            "expected Invalid Request for {frame}"
+        );
+        assert_eq!(resp["id"], Value::from(1));
+    }
+}
+
+// ---- 18. malformed JSON variants all -> -32700 parse error, id null ---------
+
+#[test]
+fn malformed_json_variants_return_parse_error() {
+    let config = DynamicConfig::new();
+
+    for frame in [
+        "{not valid json",
+        "",
+        "   ",
+        r#"{"jsonrpc":"2.0","method":"hello""#, // truncated (unterminated object)
+        "}{",
+    ] {
+        let resp_str = dispatch_jsonrpc(frame, &config);
+        let resp: Value = serde_json::from_str(&resp_str).expect("error envelope is valid JSON");
+        assert_eq!(
+            resp["error"]["code"],
+            Value::from(-32700),
+            "expected parse error for {frame:?}"
+        );
+        assert_eq!(resp["id"], Value::Null, "parse-error id must be null");
+    }
+}
+
+// ---- 19. set-mode wrong/missing params -> -32602 invalid params -------------
+
+#[test]
+fn set_mode_bad_params_are_invalid_params() {
+    let config = DynamicConfig::new();
+
+    for frame in [
+        // missing params entirely
+        r#"{"jsonrpc":"2.0","method":"set-mode","id":1}"#,
+        // empty params object
+        r#"{"jsonrpc":"2.0","method":"set-mode","params":{},"id":1}"#,
+        // wrong-typed mode (number, not string)
+        r#"{"jsonrpc":"2.0","method":"set-mode","params":{"mode":42},"id":1}"#,
+        // unknown mode string
+        r#"{"jsonrpc":"2.0","method":"set-mode","params":{"mode":"bogus"},"id":1}"#,
+    ] {
+        let resp_str = dispatch_jsonrpc(frame, &config);
+        let resp: Value = serde_json::from_str(&resp_str).expect("valid JSON");
+        assert_eq!(
+            resp["error"]["code"],
+            Value::from(-32602),
+            "expected invalid params for {frame}"
+        );
+        assert_eq!(resp["id"], Value::from(1));
+    }
+}
+
+// ---- 20. set-quality wrong/missing params -> -32602 invalid params ----------
+
+#[test]
+fn set_quality_bad_params_are_invalid_params() {
+    let config = DynamicConfig::new();
+
+    for frame in [
+        // missing params entirely
+        r#"{"jsonrpc":"2.0","method":"set-quality","id":1}"#,
+        // empty params object
+        r#"{"jsonrpc":"2.0","method":"set-quality","params":{},"id":1}"#,
+        // wrong-typed enabled (string, not boolean)
+        r#"{"jsonrpc":"2.0","method":"set-quality","params":{"enabled":"yes"},"id":1}"#,
+    ] {
+        let resp_str = dispatch_jsonrpc(frame, &config);
+        let resp: Value = serde_json::from_str(&resp_str).expect("valid JSON");
+        assert_eq!(
+            resp["error"]["code"],
+            Value::from(-32602),
+            "expected invalid params for {frame}"
+        );
+        assert_eq!(resp["id"], Value::from(1));
+    }
+}
+
+// ---- 21. set-rtt-delta with a non-u32 (negative) value -> -32602 -----------
+
+#[test]
+fn set_rtt_delta_negative_is_invalid_params() {
+    let config = DynamicConfig::new();
+    let resp_str = dispatch_jsonrpc(
+        r#"{"jsonrpc":"2.0","method":"set-rtt-delta","params":{"delta_ms":-5},"id":1}"#,
+        &config,
+    );
+    let resp: Value = serde_json::from_str(&resp_str).expect("valid JSON");
+    assert_eq!(resp["error"]["code"], Value::from(-32602));
+    assert_eq!(resp["id"], Value::from(1));
+}

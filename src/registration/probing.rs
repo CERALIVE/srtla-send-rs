@@ -177,7 +177,7 @@ impl SrtlaRegistrationManager {
 
 /// Initialize probing fields for SrtlaRegistrationManager
 pub(super) fn new_probe_id() -> [u8; SRTLA_ID_LEN] {
-    use rand::RngCore;
+    use rand::Rng;
     let mut probe_id = [0u8; SRTLA_ID_LEN];
     rand::rng().fill_bytes(&mut probe_id);
     probe_id

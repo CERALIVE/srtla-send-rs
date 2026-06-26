@@ -171,4 +171,47 @@ mod tests {
         ewma.update(50.0);
         assert!((ewma.value() - 50.0).abs() < f64::EPSILON);
     }
+
+    #[test]
+    fn ewma_nan_input_handled() {
+        let mut ewma = Ewma::new(0.5);
+        ewma.update(20.0);
+
+        ewma.update(f64::NAN);
+        assert!(!ewma.value().is_nan(), "NaN must not propagate");
+        assert_eq!(ewma.value(), 20.0, "NaN sample is ignored");
+
+        ewma.update(f64::NAN);
+        assert_eq!(ewma.value(), 20.0, "repeated NaN stays ignored");
+    }
+
+    #[test]
+    fn ewma_inf_input_handled() {
+        let mut ewma = Ewma::new(0.5);
+        ewma.update(20.0);
+
+        ewma.update(f64::INFINITY);
+        assert!(ewma.value().is_finite(), "+Inf must not propagate");
+        assert_eq!(ewma.value(), 20.0);
+
+        ewma.update(f64::NEG_INFINITY);
+        assert!(ewma.value().is_finite(), "-Inf must not propagate");
+        assert_eq!(ewma.value(), 20.0);
+    }
+
+    #[test]
+    fn ewma_alpha_smoothing() {
+        let mut ewma = Ewma::new(0.5);
+
+        ewma.update(10.0);
+        assert!((ewma.value() - 10.0).abs() < f64::EPSILON);
+
+        // 10 * (1 - 0.5) + 30 * 0.5 = 20
+        ewma.update(30.0);
+        assert!(
+            (ewma.value() - 20.0).abs() < f64::EPSILON,
+            "alpha=0.5 smoothing: got {}",
+            ewma.value()
+        );
+    }
 }

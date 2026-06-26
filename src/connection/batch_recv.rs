@@ -388,9 +388,62 @@ mod unix_impl {
     #[cfg(test)]
     mod tests {
         use std::io::{Error, ErrorKind};
+        use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 
-        use super::{RecvAction, RecvMmsgBuffer, recv_retry_action};
+        use super::{
+            RecvAction, RecvMmsgBuffer, recv_retry_action, sockaddr_storage_to_socket_addr,
+        };
         use crate::protocol::MTU;
+
+        /// Syscall-free proof of the `sockaddr_storage` → `SocketAddr` cast and
+        /// big-endian decode: this is the pure pointer logic the miri lane vets
+        /// for UB (`cargo miri test … sockaddr_storage_roundtrip`), since miri
+        /// cannot run the real `recvmmsg` that normally fills the storage.
+        #[test]
+        fn sockaddr_storage_roundtrip() {
+            let mut storage: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+            let v4 = Ipv4Addr::new(192, 0, 2, 7);
+            let port_v4: u16 = 6000;
+            // Safety: `sockaddr_in` is smaller than `sockaddr_storage` and the
+            // storage is correctly aligned for it; we only write initialized
+            // fields the decoder reads back.
+            unsafe {
+                let sin = std::ptr::addr_of_mut!(storage).cast::<libc::sockaddr_in>();
+                (*sin).sin_family = libc::AF_INET as libc::sa_family_t;
+                (*sin).sin_port = port_v4.to_be();
+                (*sin).sin_addr.s_addr = u32::from(v4).to_be();
+            }
+            assert_eq!(
+                sockaddr_storage_to_socket_addr(&storage),
+                Some(SocketAddr::new(v4.into(), port_v4)),
+                "IPv4 sockaddr_storage must round-trip",
+            );
+
+            let mut storage6: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+            let v6 = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x1);
+            let port_v6: u16 = 7000;
+            // Safety: as above, for the IPv6 view.
+            unsafe {
+                let sin6 = std::ptr::addr_of_mut!(storage6).cast::<libc::sockaddr_in6>();
+                (*sin6).sin6_family = libc::AF_INET6 as libc::sa_family_t;
+                (*sin6).sin6_port = port_v6.to_be();
+                (*sin6).sin6_addr.s6_addr = v6.octets();
+            }
+            match sockaddr_storage_to_socket_addr(&storage6) {
+                Some(SocketAddr::V6(s)) => {
+                    assert_eq!(*s.ip(), v6, "IPv6 address must round-trip");
+                    assert_eq!(s.port(), port_v6, "IPv6 port must round-trip");
+                }
+                other => panic!("expected V6 SocketAddr, got {other:?}"),
+            }
+
+            let storage_unspec: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+            assert_eq!(
+                sockaddr_storage_to_socket_addr(&storage_unspec),
+                None,
+                "unknown ss_family must decode to None",
+            );
+        }
 
         #[test]
         fn iter_clamps_oversized_msg_len_to_mtu() {

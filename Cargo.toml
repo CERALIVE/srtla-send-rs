@@ -18,12 +18,12 @@ rust-version = "1.88"
 
 [dependencies]
 anyhow = "1.0"
-clap = { version = "4.5", features = ["derive"] }
-rand = "0.9"
+clap = { version = "4.6", features = ["derive"] }
+rand = "0.10"
 rustc-hash = "2.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-tokio = { version = "1.49", features = [
+tokio = { version = "1.52", features = [
 	"rt-multi-thread",
 	"macros",
 	"net",
@@ -35,18 +35,32 @@ tokio = { version = "1.49", features = [
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 socket2 = { version = "0.6", features = ["all"] }
-bytes = "1.11.0"
+# Deliberate exact pin: smallvec 2.x is pre-release; each `2.0.0-alpha.*` can ship
+# breaking changes, so pin one known-good alpha instead of floating. Unpin to "2"
+# once smallvec 2.0 is stable. See AGENTS.md → DEPENDENCY PINS.
 smallvec = "=2.0.0-alpha.12"
 mimalloc = { version = "0.1", default-features = false, features = [
 	"secure",
 	"v3",
-] }
+], optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [features]
+default = ["mimalloc-allocator"]
+# Default-on preserves the shipped binary byte-for-byte; --no-default-features
+# falls back to the system allocator. See docs/notes/mimalloc-decision.md.
+mimalloc-allocator = ["dep:mimalloc"]
 test-internals = []
+
+[lints.rust]
+# `loom` is a build-time cfg (not a Cargo feature): set via `RUSTFLAGS="--cfg
+# loom"` only for the subscription-manager model test. Declaring it here teaches
+# the `unexpected_cfgs` lint that `cfg(loom)` / `cfg(not(loom))` in lib.rs and
+# main.rs are intentional, so the default `clippy -- -D warnings` gate stays
+# green without `loom` ever being set.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
 
 [lib]
 name = "srtla_send"
@@ -61,6 +75,17 @@ tokio-test = "0.4"
 tempfile = "3"
 assert_matches = "1"
 network-sim = { path = "crates/network-sim" }
+criterion = "0.5"
+# Concurrency model checker for the subscription manager interleavings. Only
+# compiled into `tests/subscription_loom.rs` (gated `#![cfg(loom)]`), so it never
+# touches the default `cargo test` gate; run it via
+# `RUSTFLAGS="--cfg loom" cargo test --features test-internals --test subscription_loom`.
+loom = "0.7.2"
+proptest = "1.11"
+
+[[bench]]
+name = "alloc"
+harness = false
 
 [profile.dev]
 opt-level = 1

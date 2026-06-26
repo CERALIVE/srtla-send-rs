@@ -28,6 +28,12 @@ const SCHEMA_VERSION: u32 = 1;
 /// Engine identifier returned by `hello` (mirrors cerastream's `engine`).
 const ENGINE: &str = "srtla_send";
 
+/// Control-protocol tag returned by `hello` (ADR-001); the wire dialect spoken.
+const PROTOCOL: &str = "srtla-send-jsonrpc";
+
+/// Engine build version returned by `hello` (ADR-001), from the crate version.
+const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 // Standard JSON-RPC 2.0 error codes (the subset this dispatcher emits).
 const PARSE_ERROR: i64 = -32700;
 const INVALID_REQUEST: i64 = -32600;
@@ -84,9 +90,12 @@ pub(crate) fn dispatch_jsonrpc(frame: &str, config: &DynamicConfig) -> String {
     }
 }
 
-/// The `hello` handshake: schema version, engine id, and the capability set.
+/// The `hello` handshake. ADR-001 requires the `{protocol, engine_version,
+/// schema_version}` triple; `engine` + `capabilities` are an additive superset.
 fn hello_result() -> Value {
     json!({
+        "protocol": PROTOCOL,
+        "engine_version": ENGINE_VERSION,
         "schema_version": SCHEMA_VERSION,
         "engine": ENGINE,
         "capabilities": CAPABILITIES,
@@ -136,15 +145,17 @@ fn set_bool(id: Value, params: Option<&Value>, apply: impl FnOnce(bool)) -> Stri
 }
 
 fn set_rtt_delta(id: Value, params: Option<&Value>, config: &DynamicConfig) -> String {
+    // ADR-001 canonical key is `delta_ms`; `ms` is a back-compat alias.
+    // `delta_ms` wins when both are present.
     let Some(ms) = params
-        .and_then(|p| p.get("ms"))
+        .and_then(|p| p.get("delta_ms").or_else(|| p.get("ms")))
         .and_then(Value::as_u64)
         .and_then(|v| u32::try_from(v).ok())
     else {
         return error_response(
             id,
             INVALID_PARAMS,
-            "set-rtt-delta requires params.ms (u32 milliseconds)",
+            "set-rtt-delta requires params.delta_ms (u32 milliseconds; `ms` accepted as alias)",
         );
     };
     config.set_rtt_delta_ms(ms);

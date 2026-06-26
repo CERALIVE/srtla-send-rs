@@ -6,7 +6,7 @@ use tokio::net::UdpSocket;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tracing::{debug, warn};
 
-use super::selection::select_connection_idx;
+use super::selection::{EdpfSchedulerState, select_connection_idx};
 use super::sequence::SequenceTracker;
 use super::uplink::UplinkPacket;
 use crate::config::ConfigSnapshot;
@@ -231,6 +231,7 @@ pub async fn handle_srt_packet(
     last_client_addr: &mut Option<SocketAddr>,
     registration_complete: bool,
     config_snap: &ConfigSnapshot,
+    edpf_state: &mut EdpfSchedulerState,
 ) {
     match res {
         Ok((n, src)) => {
@@ -267,6 +268,7 @@ pub async fn handle_srt_packet(
                 *last_switch_time_ms,
                 packet_time_ms,
                 config_snap,
+                edpf_state,
             );
             if let Some(sel_idx) = sel_idx {
                 forward_via_connection(

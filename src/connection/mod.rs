@@ -130,7 +130,7 @@ pub struct SrtlaConnection {
 
 impl SrtlaConnection {
     pub async fn connect_from_ip(ip: IpAddr, host: &str, port: u16) -> Result<Self> {
-        use rand::RngCore;
+        use rand::Rng;
 
         let remote = resolve_remote(host, port).await?;
         let sock = bind_from_ip(ip, 0)?;

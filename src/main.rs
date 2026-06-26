@@ -6,35 +6,59 @@ use clap::Parser;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
-// Use mimalloc as the global allocator for the binary (non-Windows only)
-#[cfg(not(windows))]
+// Use mimalloc as the global allocator for the binary (non-Windows only).
+// Gated default-on via the `mimalloc-allocator` feature; --no-default-features
+// builds fall back to the system allocator (docs/notes/mimalloc-decision.md).
+#[cfg(all(not(windows), feature = "mimalloc-allocator"))]
 #[global_allocator]
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+// `--cfg loom` (the subscription-manager model test) forces tokio to drop its
+// `net`/`time` modules, which this binary uses pervasively, so under loom the
+// whole real program is compiled out and replaced by a stub `main`. `cargo test
+// --test subscription_loom` still builds every bin to expose `CARGO_BIN_EXE_*`,
+// hence the stub rather than removing the target. No real build sets `loom`.
+#[cfg(loom)]
+fn main() {}
+
+#[cfg(not(loom))]
 mod config;
+#[cfg(not(loom))]
 mod connection;
+#[cfg(not(loom))]
 mod ewma;
-#[cfg(unix)]
+#[cfg(all(unix, not(loom)))]
 mod jsonrpc;
+#[cfg(not(loom))]
 mod kalman;
+#[cfg(not(loom))]
 mod mode;
+#[cfg(not(loom))]
 mod protocol;
+#[cfg(not(loom))]
 mod registration;
+#[cfg(not(loom))]
 mod sender;
+#[cfg(not(loom))]
 mod stats;
+#[cfg(not(loom))]
 mod subscription;
+#[cfg(not(loom))]
 mod telemetry_file;
+#[cfg(not(loom))]
 mod utils;
 
 // Test helpers for binary tests
-#[cfg(any(test, feature = "test-internals"))]
+#[cfg(all(any(test, feature = "test-internals"), not(loom)))]
 mod test_helpers;
 
+#[cfg(not(loom))]
 use mode::SchedulingMode;
 
 /// Default telemetry write cadence in milliseconds (`--stats-file-interval`).
 const DEFAULT_STATS_FILE_INTERVAL_MS: u64 = 1000;
 
+#[cfg(not(loom))]
 #[derive(Parser, Debug)]
 #[command(
     name = "srtla_send",
@@ -87,7 +111,7 @@ struct Cli {
     #[arg(long = "control-socket")]
     control_socket: Option<String>,
 
-    /// Scheduling mode: classic, enhanced (default), rtt-threshold
+    /// Scheduling mode: classic, enhanced (default), rtt-threshold, edpf
     #[arg(long = "mode", value_enum, default_value = "enhanced")]
     mode: SchedulingMode,
     /// Disable quality scoring (enhanced/rtt-threshold only)
@@ -103,6 +127,7 @@ struct Cli {
 
 /// Result of a `--dry-run` resolution: the parsed source IPs, any invalid
 /// lines that were skipped, and the receiver addresses the host resolved to.
+#[cfg(not(loom))]
 #[derive(Debug)]
 struct DryRunReport {
     source_ips: Vec<IpAddr>,
@@ -117,6 +142,7 @@ struct DryRunReport {
 /// unusable (missing/unreadable, empty, or zero valid IPs) or when the
 /// receiver address cannot be resolved. On success no sockets are bound — the
 /// caller is expected to print the report and exit 0.
+#[cfg(not(loom))]
 async fn dry_run_resolve(
     ips_file: &str,
     receiver_host: &str,
@@ -168,6 +194,7 @@ async fn dry_run_resolve(
     })
 }
 
+#[cfg(not(loom))]
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
     let args = Cli::parse();
@@ -273,9 +300,12 @@ async fn main() -> Result<()> {
     )
     .await;
 
-    // On shutdown (clean signal exit or fatal error) remove the telemetry stats
-    // file so a stale snapshot never outlives the process: CeraUI respawns
-    // srtla_send on every network change and would read a leftover file as live.
+    // On shutdown the telemetry writer thread is joined (via the writer's Drop as
+    // `run_sender_with_config` returns): it drains its final snapshot, then
+    // unlinks the live file + `.tmp` sibling. This backstop removal covers the
+    // no-`--stats-file` and any-residue case so a stale snapshot never outlives
+    // the process — CeraUI respawns srtla_send on every network change and would
+    // read a leftover file as live.
     if let Some(stats_file) = args.stats_file.as_deref() {
         let _ = std::fs::remove_file(stats_file);
         let _ = std::fs::remove_file(format!("{stats_file}.tmp"));
@@ -284,7 +314,7 @@ async fn main() -> Result<()> {
     outcome.context("srtla_send failed")
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(loom)))]
 mod tests {
     use std::io::Write;
 
