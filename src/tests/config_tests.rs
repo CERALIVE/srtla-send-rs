@@ -16,13 +16,35 @@ mod tests {
 
     #[test]
     fn test_config_from_cli() {
-        let config = DynamicConfig::from_cli(SchedulingMode::Enhanced, false, false, 30);
+        let config = DynamicConfig::from_cli(
+            SchedulingMode::Enhanced,
+            false,
+            false,
+            30,
+            false,
+            false,
+            32,
+            3000,
+            1000,
+        );
         let snap = config.snapshot();
         assert_eq!(snap.mode, SchedulingMode::Enhanced);
         assert!(snap.quality_enabled);
         assert!(!snap.exploration_enabled);
+        assert!(!snap.earned_ack_window);
+        assert!(!snap.stall_deselect);
 
-        let config = DynamicConfig::from_cli(SchedulingMode::Classic, true, true, 50);
+        let config = DynamicConfig::from_cli(
+            SchedulingMode::Classic,
+            true,
+            true,
+            50,
+            false,
+            false,
+            32,
+            3000,
+            1000,
+        );
         let snap = config.snapshot();
         assert_eq!(snap.mode, SchedulingMode::Classic);
         assert!(!snap.quality_enabled);
@@ -154,6 +176,11 @@ mod tests {
             quality_enabled: true,
             exploration_enabled: true,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
+            stall_deselect: false,
+            stall_min_in_flight: 32,
+            stall_ack_stale_ms: 3000,
+            stall_reprobe_ms: 1000,
         };
         assert!(!snap.effective_quality_enabled());
         assert!(!snap.effective_exploration_enabled());
@@ -164,6 +191,11 @@ mod tests {
             quality_enabled: true,
             exploration_enabled: true,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
+            stall_deselect: false,
+            stall_min_in_flight: 32,
+            stall_ack_stale_ms: 3000,
+            stall_reprobe_ms: 1000,
         };
         assert!(snap.effective_quality_enabled());
         assert!(snap.effective_exploration_enabled());
@@ -174,6 +206,11 @@ mod tests {
             quality_enabled: true,
             exploration_enabled: true,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
+            stall_deselect: false,
+            stall_min_in_flight: 32,
+            stall_ack_stale_ms: 3000,
+            stall_reprobe_ms: 1000,
         };
         assert!(snap.effective_quality_enabled());
         assert!(!snap.effective_exploration_enabled());

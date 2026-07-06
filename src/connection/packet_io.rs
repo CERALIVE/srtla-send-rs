@@ -183,7 +183,18 @@ impl SrtlaConnection {
                     }
                 }
             } else if pt == SRTLA_TYPE_KEEPALIVE {
-                self.rtt.handle_keepalive_response(data, &self.label);
+                if self
+                    .rtt
+                    .handle_keepalive_response(data, &self.label)
+                    .is_some()
+                {
+                    // Stall signal (EXPERIMENTAL `stall_deselect`): a real
+                    // keepalive RTT measurement is a genuine live-return-path
+                    // sample. The second (and only other) stamp site besides the
+                    // earned-ACK path — never the raw inbound byte that also
+                    // refreshes `last_received`.
+                    self.last_ack_or_rtt_sample_ms = crate::utils::now_ms();
+                }
             } else {
                 incoming
                     .forward_to_client

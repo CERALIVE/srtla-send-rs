@@ -53,6 +53,8 @@ mod rtt_threshold;
 
 // Re-export for backward compatibility
 pub use quality::calculate_quality_multiplier;
+use smallvec::SmallVec;
+use tokio::time::Instant;
 
 use crate::config::ConfigSnapshot;
 use crate::connection::SrtlaConnection;
@@ -88,6 +90,38 @@ pub struct EdpfSchedulerState {
 /// The index of the selected connection, or None if no valid connections
 #[inline(always)]
 pub fn select_connection_idx(
+    conns: &mut [SrtlaConnection],
+    last_idx: Option<usize>,
+    last_switch_time_ms: u64,
+    current_time_ms: u64,
+    config: &ConfigSnapshot,
+    edpf_state: &mut EdpfSchedulerState,
+) -> Option<usize> {
+    if config.stall_deselect {
+        return select_with_stall_deselect(
+            conns,
+            last_idx,
+            last_switch_time_ms,
+            current_time_ms,
+            config,
+            edpf_state,
+        );
+    }
+    select_by_mode(
+        conns,
+        last_idx,
+        last_switch_time_ms,
+        current_time_ms,
+        config,
+        edpf_state,
+    )
+}
+
+/// Dispatch selection to the configured scheduling mode. This is the baseline
+/// selection layer — unchanged by `stall_deselect`, so the flag-off path is a
+/// pure pass-through with byte-identical behaviour.
+#[inline(always)]
+pub(crate) fn select_by_mode(
     conns: &mut [SrtlaConnection],
     last_idx: Option<usize>,
     last_switch_time_ms: u64,
@@ -174,6 +208,96 @@ fn edpf_pipeline_select(
         .or_else(|| edpf::select_from(conns, SRT_PKT_SIZE))
 }
 
+/// EXPERIMENTAL stalled-link deselect (flag `stall_deselect`, default OFF).
+///
+/// A BOUNDED SELECTION PENALTY at the mode-agnostic layer: when at least one
+/// non-stalled connected link exists, stalled links (per
+/// `SrtlaConnection::is_stall_penalized`) are excluded from the mode selector so
+/// a healthy link carries the traffic. Every `stall_reprobe_ms` a stalled link
+/// is made eligible again for one tick so a recovered link re-enters. If NOTHING
+/// healthy is available (all stalled), the mode selector runs unchanged — the
+/// ALL-STALLED FALLBACK: while any connection exists a link is still returned,
+/// never `None`.
+///
+/// Exclusion is a transient, fully-reversed mask (`connected=false` +
+/// `last_received=None` ⇒ `is_timed_out()==true`, which every mode selector
+/// already skips), restored before returning. It is a selection penalty ONLY:
+/// no re-registration, no reset, and `is_timed_out()` / `CONN_TIMEOUT` /
+/// housekeeping semantics are untouched. Hypothesis-only; NOT validated on real
+/// bond hardware; makes NO bond-level improvement claim.
+fn select_with_stall_deselect(
+    conns: &mut [SrtlaConnection],
+    last_idx: Option<usize>,
+    last_switch_time_ms: u64,
+    current_time_ms: u64,
+    config: &ConfigSnapshot,
+    edpf_state: &mut EdpfSchedulerState,
+) -> Option<usize> {
+    let min_in_flight = config.stall_min_in_flight;
+    let stale_ms = config.stall_ack_stale_ms;
+
+    let mut any_stalled = false;
+    let mut any_healthy = false;
+    for c in conns.iter() {
+        if c.is_stall_penalized(current_time_ms, min_in_flight, stale_ms) {
+            any_stalled = true;
+        } else if c.connected && !c.is_timed_out() {
+            any_healthy = true;
+        }
+    }
+
+    if !any_stalled || !any_healthy {
+        return select_by_mode(
+            conns,
+            last_idx,
+            last_switch_time_ms,
+            current_time_ms,
+            config,
+            edpf_state,
+        );
+    }
+
+    let reprobe_ms = config.stall_reprobe_ms;
+    let mut masked: SmallVec<(usize, bool, Option<Instant>), 4> = SmallVec::new();
+    for (i, c) in conns.iter_mut().enumerate() {
+        if !c.is_stall_penalized(current_time_ms, min_in_flight, stale_ms) {
+            continue;
+        }
+        if current_time_ms.saturating_sub(c.last_stall_reprobe_ms) >= reprobe_ms {
+            c.last_stall_reprobe_ms = current_time_ms;
+            continue;
+        }
+        masked.push((i, c.connected, c.last_received));
+        c.connected = false;
+        c.last_received = None;
+    }
+
+    let pick = select_by_mode(
+        conns,
+        last_idx,
+        last_switch_time_ms,
+        current_time_ms,
+        config,
+        edpf_state,
+    );
+
+    for (i, connected, last_received) in masked {
+        conns[i].connected = connected;
+        conns[i].last_received = last_received;
+    }
+
+    pick.or_else(|| {
+        select_by_mode(
+            conns,
+            last_idx,
+            last_switch_time_ms,
+            current_time_ms,
+            config,
+            edpf_state,
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,6 +322,11 @@ mod tests {
             quality_enabled: false,
             exploration_enabled: false,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
+            stall_deselect: false,
+            stall_min_in_flight: 32,
+            stall_ack_stale_ms: 3000,
+            stall_reprobe_ms: 1000,
         };
 
         // Classic mode should pick connection 1 (highest score) even during cooldown
@@ -234,6 +363,11 @@ mod tests {
             quality_enabled: true,
             exploration_enabled: false,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
+            stall_deselect: false,
+            stall_min_in_flight: 32,
+            stall_ack_stale_ms: 3000,
+            stall_reprobe_ms: 1000,
         };
 
         // Enhanced mode should stay with connection 0 due to cooldown
@@ -276,6 +410,11 @@ mod tests {
             quality_enabled: false,
             exploration_enabled: false,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
+            stall_deselect: false,
+            stall_min_in_flight: 32,
+            stall_ack_stale_ms: 3000,
+            stall_reprobe_ms: 1000,
         };
         let result = select_connection_idx(
             &mut conns,
@@ -302,6 +441,11 @@ mod tests {
             quality_enabled: false,
             exploration_enabled: false,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
+            stall_deselect: false,
+            stall_min_in_flight: 32,
+            stall_ack_stale_ms: 3000,
+            stall_reprobe_ms: 1000,
         };
 
         let mut state = EdpfSchedulerState::default();
@@ -328,6 +472,11 @@ mod tests {
             quality_enabled: false,
             exploration_enabled: false,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
+            stall_deselect: false,
+            stall_min_in_flight: 32,
+            stall_ack_stale_ms: 3000,
+            stall_reprobe_ms: 1000,
         };
 
         let mut state_a = EdpfSchedulerState::default();

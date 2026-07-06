@@ -17,6 +17,39 @@ use crate::registration::SrtlaRegistrationManager;
 /// Type alias for instant ACK forwarding: (client_addr, packet_data)
 pub type InstantForwarder = UnboundedSender<(SocketAddr, SmallVec<u8, 64>)>;
 
+/// Apply one broadcast SRTLA ACK across the link pool.
+///
+/// The earner index is captured at the point of packet-log removal (returned by
+/// `handle_srtla_ack_specific`): after removal the sequence is gone and can no
+/// longer be attributed. With `earned_ack_window` off (default) every eligible
+/// link takes the baseline global `+1`, byte-for-byte as before the valve
+/// existed; on, only the earner keeps the full `+1` (`now_ms` is read on that
+/// branch alone, keeping the default path unchanged).
+pub(crate) fn apply_srtla_ack(
+    connections: &mut [SrtlaConnection],
+    srtla_ack: i32,
+    classic: bool,
+    earned_ack_window: bool,
+) {
+    let mut earned_idx: Option<usize> = None;
+    for (i, c) in connections.iter_mut().enumerate() {
+        if c.handle_srtla_ack_specific(srtla_ack, classic) {
+            earned_idx = Some(i);
+            break;
+        }
+    }
+    if earned_ack_window {
+        let now_ms = crate::utils::now_ms();
+        for (i, c) in connections.iter_mut().enumerate() {
+            c.handle_srtla_ack_earned(Some(i) == earned_idx, now_ms);
+        }
+    } else {
+        for c in connections.iter_mut() {
+            c.handle_srtla_ack_global();
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn process_connection_events(
     idx: usize,
@@ -27,6 +60,7 @@ pub async fn process_connection_events(
     local_listener: &UdpSocket,
     seq_tracker: &SequenceTracker,
     classic: bool,
+    earned_ack_window: bool,
     incoming_override: Option<SrtlaIncoming>,
 ) -> Result<()> {
     if idx >= connections.len() {
@@ -57,14 +91,7 @@ pub async fn process_connection_events(
     }
 
     for srtla_ack in incoming.srtla_ack_numbers.iter() {
-        for c in connections.iter_mut() {
-            if c.handle_srtla_ack_specific(*srtla_ack as i32, classic) {
-                break;
-            }
-        }
-        for c in connections.iter_mut() {
-            c.handle_srtla_ack_global();
-        }
+        apply_srtla_ack(connections, *srtla_ack as i32, classic, earned_ack_window);
     }
 
     // Get current time once for all NAK processing
@@ -134,6 +161,7 @@ pub async fn handle_uplink_packet(
                     local_listener,
                     seq_tracker,
                     config_snap.mode.is_classic(),
+                    config_snap.earned_ack_window,
                     Some(incoming),
                 )
                 .await

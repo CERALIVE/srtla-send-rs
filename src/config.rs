@@ -8,7 +8,7 @@ use std::io::{BufRead, BufReader};
 #[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU32, AtomicU64, Ordering};
 
 #[cfg(unix)]
 use tracing::debug;
@@ -22,6 +22,31 @@ use crate::subscription::SubscriptionManager;
 /// Links within min_rtt + delta are considered "fast" and preferred.
 pub const DEFAULT_RTT_DELTA_MS: u32 = 30;
 
+/// Min interval (ms) between rate-limited PROBE window `+1` steps on a
+/// non-earning link under the EXPERIMENTAL `earned_ack_window` valve
+/// (`SrtlaConnection::handle_srtla_ack_earned`). Inert while the flag is off
+/// (default). Hypothesis-only; NOT validated on real bond hardware.
+pub const PROBE_GROWTH_INTERVAL_MS: u64 = 1000;
+
+// EXPERIMENTAL `stall_deselect` defaults (flag OFF): CLI-flag defaults for
+// `--stall-min-in-flight` / `--stall-ack-stale-ms` / `--stall-reprobe-ms`. The
+// mechanism is inert while the flag is off, so baseline selection is unchanged.
+// Hypothesis-only; NOT validated on real bond hardware; makes NO bond-level
+// improvement claim — mirrors the C sender's commented-out "very slow link"
+// deselect + re-probe note (srtla/src/sender.cpp select_conn()).
+
+/// In-flight packet backlog at or above which a link is a stall candidate.
+pub const STALL_MIN_IN_FLIGHT_PACKETS: i32 = 32;
+
+/// Staleness window (ms) for the last EARNED-ACK / keepalive-RTT sample. A
+/// candidate older than this is "stalled". Well below `CONN_TIMEOUT` (15 s):
+/// deselect is a selection penalty ONLY, never a liveness/timeout shortcut.
+pub const STALL_ACK_STALE_MS: u64 = 3000;
+
+/// Re-probe interval (ms): a deselected stalled link is made eligible again for
+/// one selection tick every interval so a recovered link re-enters.
+pub const STALL_REPROBE_INTERVAL_MS: u64 = 1000;
+
 /// Snapshot of configuration for efficient hot-path access.
 /// Call `DynamicConfig::snapshot()` once per select iteration to avoid
 /// multiple atomic loads per packet in the hot path.
@@ -31,6 +56,20 @@ pub struct ConfigSnapshot {
     pub quality_enabled: bool,
     pub exploration_enabled: bool,
     pub rtt_delta_ms: u32,
+    /// EXPERIMENTAL earned-ACK window valve (default OFF). Selects
+    /// `handle_srtla_ack_earned` over `handle_srtla_ack_global` at the SRTLA-ACK
+    /// call site; off ⇒ baseline behavior unchanged.
+    pub earned_ack_window: bool,
+    /// EXPERIMENTAL stalled-link deselect (default OFF). On ⇒ the mode-agnostic
+    /// selection layer applies a bounded penalty to stalled links; off ⇒
+    /// baseline selection unchanged.
+    pub stall_deselect: bool,
+    /// In-flight threshold for `stall_deselect` (default `STALL_MIN_IN_FLIGHT_PACKETS`).
+    pub stall_min_in_flight: i32,
+    /// ACK/RTT-sample staleness window in ms for `stall_deselect` (default `STALL_ACK_STALE_MS`).
+    pub stall_ack_stale_ms: u64,
+    /// Re-probe interval in ms for `stall_deselect` (default `STALL_REPROBE_INTERVAL_MS`).
+    pub stall_reprobe_ms: u64,
 }
 
 impl ConfigSnapshot {
@@ -57,6 +96,11 @@ pub struct DynamicConfig {
     quality_enabled: Arc<AtomicBool>,
     exploration_enabled: Arc<AtomicBool>,
     rtt_delta_ms: Arc<AtomicU32>,
+    earned_ack_window: Arc<AtomicBool>,
+    stall_deselect: Arc<AtomicBool>,
+    stall_min_in_flight: Arc<AtomicI32>,
+    stall_ack_stale_ms: Arc<AtomicU64>,
+    stall_reprobe_ms: Arc<AtomicU64>,
 }
 
 impl Default for DynamicConfig {
@@ -72,21 +116,37 @@ impl DynamicConfig {
             quality_enabled: Arc::new(AtomicBool::new(true)),
             exploration_enabled: Arc::new(AtomicBool::new(false)),
             rtt_delta_ms: Arc::new(AtomicU32::new(DEFAULT_RTT_DELTA_MS)),
+            earned_ack_window: Arc::new(AtomicBool::new(false)),
+            stall_deselect: Arc::new(AtomicBool::new(false)),
+            stall_min_in_flight: Arc::new(AtomicI32::new(STALL_MIN_IN_FLIGHT_PACKETS)),
+            stall_ack_stale_ms: Arc::new(AtomicU64::new(STALL_ACK_STALE_MS)),
+            stall_reprobe_ms: Arc::new(AtomicU64::new(STALL_REPROBE_INTERVAL_MS)),
         }
     }
 
     /// Create config from CLI arguments.
+    #[allow(clippy::too_many_arguments)]
     pub fn from_cli(
         mode: SchedulingMode,
         no_quality: bool,
         exploration: bool,
         rtt_delta_ms: u32,
+        earned_ack_window: bool,
+        stall_deselect: bool,
+        stall_min_in_flight: i32,
+        stall_ack_stale_ms: u64,
+        stall_reprobe_ms: u64,
     ) -> Self {
         Self {
             mode: Arc::new(AtomicU8::new(mode.as_u8())),
             quality_enabled: Arc::new(AtomicBool::new(!no_quality)),
             exploration_enabled: Arc::new(AtomicBool::new(exploration)),
             rtt_delta_ms: Arc::new(AtomicU32::new(rtt_delta_ms)),
+            earned_ack_window: Arc::new(AtomicBool::new(earned_ack_window)),
+            stall_deselect: Arc::new(AtomicBool::new(stall_deselect)),
+            stall_min_in_flight: Arc::new(AtomicI32::new(stall_min_in_flight)),
+            stall_ack_stale_ms: Arc::new(AtomicU64::new(stall_ack_stale_ms)),
+            stall_reprobe_ms: Arc::new(AtomicU64::new(stall_reprobe_ms)),
         }
     }
 
@@ -100,6 +160,11 @@ impl DynamicConfig {
             quality_enabled: self.quality_enabled.load(Ordering::Acquire),
             exploration_enabled: self.exploration_enabled.load(Ordering::Acquire),
             rtt_delta_ms: self.rtt_delta_ms.load(Ordering::Acquire),
+            earned_ack_window: self.earned_ack_window.load(Ordering::Acquire),
+            stall_deselect: self.stall_deselect.load(Ordering::Acquire),
+            stall_min_in_flight: self.stall_min_in_flight.load(Ordering::Acquire),
+            stall_ack_stale_ms: self.stall_ack_stale_ms.load(Ordering::Acquire),
+            stall_reprobe_ms: self.stall_reprobe_ms.load(Ordering::Acquire),
         }
     }
 
@@ -127,6 +192,31 @@ impl DynamicConfig {
     /// Set the RTT delta threshold in milliseconds.
     pub fn set_rtt_delta_ms(&self, delta: u32) {
         self.rtt_delta_ms.store(delta, Ordering::Release);
+    }
+
+    /// Toggle the EXPERIMENTAL earned-ACK window valve (default OFF).
+    pub fn set_earned_ack_window(&self, enabled: bool) {
+        self.earned_ack_window.store(enabled, Ordering::Release);
+    }
+
+    /// Toggle the EXPERIMENTAL stalled-link deselect (default OFF).
+    pub fn set_stall_deselect(&self, enabled: bool) {
+        self.stall_deselect.store(enabled, Ordering::Release);
+    }
+
+    /// Set the in-flight threshold for stalled-link deselect.
+    pub fn set_stall_min_in_flight(&self, packets: i32) {
+        self.stall_min_in_flight.store(packets, Ordering::Release);
+    }
+
+    /// Set the ACK/RTT-sample staleness window (ms) for stalled-link deselect.
+    pub fn set_stall_ack_stale_ms(&self, ms: u64) {
+        self.stall_ack_stale_ms.store(ms, Ordering::Release);
+    }
+
+    /// Set the re-probe interval (ms) for stalled-link deselect.
+    pub fn set_stall_reprobe_ms(&self, ms: u64) {
+        self.stall_reprobe_ms.store(ms, Ordering::Release);
     }
 }
 
@@ -197,6 +287,11 @@ pub enum CmdResponse {
 /// - `quality on|off` - toggle quality scoring
 /// - `explore on|off` - toggle exploration
 /// - `rtt-delta <ms>` - set RTT delta threshold
+/// - `earned-ack on|off` - toggle the EXPERIMENTAL earned-ACK window valve
+/// - `stall-deselect on|off` - toggle the EXPERIMENTAL stalled-link deselect
+/// - `stall-min-in-flight <n>` - set the stall in-flight threshold
+/// - `stall-ack-stale-ms <ms>` - set the stall ACK/RTT staleness window
+/// - `stall-reprobe-ms <ms>` - set the stall re-probe interval
 /// - `status` - show current configuration
 /// - `stats` - get per-link telemetry as JSON
 pub fn apply_cmd(config: &DynamicConfig, cmd: &str, stats: Option<&SharedStats>) -> CmdResponse {
@@ -298,6 +393,88 @@ pub fn apply_cmd(config: &DynamicConfig, cmd: &str, stats: Option<&SharedStats>)
             }
         }
 
+        "earned-ack" => {
+            if parts.len() != 2 {
+                warn!("usage: earned-ack on|off");
+                return CmdResponse::None;
+            }
+            match parts[1] {
+                "on" => {
+                    config.set_earned_ack_window(true);
+                    info!("earned-ack: on (EXPERIMENTAL)");
+                }
+                "off" => {
+                    config.set_earned_ack_window(false);
+                    info!("earned-ack: off");
+                }
+                other => {
+                    warn!("invalid value '{}': use on or off", other);
+                }
+            }
+        }
+
+        "stall-deselect" => {
+            if parts.len() != 2 {
+                warn!("usage: stall-deselect on|off");
+                return CmdResponse::None;
+            }
+            match parts[1] {
+                "on" => {
+                    config.set_stall_deselect(true);
+                    info!("stall-deselect: on (EXPERIMENTAL)");
+                }
+                "off" => {
+                    config.set_stall_deselect(false);
+                    info!("stall-deselect: off");
+                }
+                other => {
+                    warn!("invalid value '{}': use on or off", other);
+                }
+            }
+        }
+
+        "stall-min-in-flight" => {
+            if parts.len() != 2 {
+                warn!("usage: stall-min-in-flight <n>");
+                return CmdResponse::None;
+            }
+            match parts[1].parse::<i32>() {
+                Ok(packets) => {
+                    config.set_stall_min_in_flight(packets);
+                    info!("stall-min-in-flight: {}", packets);
+                }
+                Err(_) => warn!("invalid stall-min-in-flight value: {}", parts[1]),
+            }
+        }
+
+        "stall-ack-stale-ms" => {
+            if parts.len() != 2 {
+                warn!("usage: stall-ack-stale-ms <ms>");
+                return CmdResponse::None;
+            }
+            match parts[1].parse::<u64>() {
+                Ok(ms) => {
+                    config.set_stall_ack_stale_ms(ms);
+                    info!("stall-ack-stale-ms: {}", ms);
+                }
+                Err(_) => warn!("invalid stall-ack-stale-ms value: {}", parts[1]),
+            }
+        }
+
+        "stall-reprobe-ms" => {
+            if parts.len() != 2 {
+                warn!("usage: stall-reprobe-ms <ms>");
+                return CmdResponse::None;
+            }
+            match parts[1].parse::<u64>() {
+                Ok(ms) => {
+                    config.set_stall_reprobe_ms(ms);
+                    info!("stall-reprobe-ms: {}", ms);
+                }
+                Err(_) => warn!("invalid stall-reprobe-ms value: {}", parts[1]),
+            }
+        }
+
         "status" => {
             let snap = config.snapshot();
             info!("mode: {}", snap.mode);
@@ -314,6 +491,17 @@ pub fn apply_cmd(config: &DynamicConfig, cmd: &str, stats: Option<&SharedStats>)
                 }
             );
             info!("  rtt-delta: {}ms", snap.rtt_delta_ms);
+            info!(
+                "  earned-ack: {}",
+                if snap.earned_ack_window { "on" } else { "off" }
+            );
+            info!(
+                "  stall-deselect: {}",
+                if snap.stall_deselect { "on" } else { "off" }
+            );
+            info!("  stall-min-in-flight: {}", snap.stall_min_in_flight);
+            info!("  stall-ack-stale-ms: {}", snap.stall_ack_stale_ms);
+            info!("  stall-reprobe-ms: {}", snap.stall_reprobe_ms);
         }
 
         "stats" => {
@@ -501,16 +689,110 @@ mod tests {
         assert!(snap.quality_enabled);
         assert!(!snap.exploration_enabled);
         assert_eq!(snap.rtt_delta_ms, DEFAULT_RTT_DELTA_MS);
+        assert!(
+            !snap.earned_ack_window,
+            "earned-ack window valve defaults OFF"
+        );
+        assert!(!snap.stall_deselect, "stalled-link deselect defaults OFF");
+        assert_eq!(snap.stall_min_in_flight, STALL_MIN_IN_FLIGHT_PACKETS);
+        assert_eq!(snap.stall_ack_stale_ms, STALL_ACK_STALE_MS);
+        assert_eq!(snap.stall_reprobe_ms, STALL_REPROBE_INTERVAL_MS);
     }
 
     #[test]
     fn test_config_from_cli() {
-        let config = DynamicConfig::from_cli(SchedulingMode::Classic, true, true, 50);
+        let config = DynamicConfig::from_cli(
+            SchedulingMode::Classic,
+            true,
+            true,
+            50,
+            false,
+            false,
+            STALL_MIN_IN_FLIGHT_PACKETS,
+            STALL_ACK_STALE_MS,
+            STALL_REPROBE_INTERVAL_MS,
+        );
         let snap = config.snapshot();
         assert_eq!(snap.mode, SchedulingMode::Classic);
         assert!(!snap.quality_enabled); // no_quality=true means disabled
         assert!(snap.exploration_enabled);
         assert_eq!(snap.rtt_delta_ms, 50);
+        assert!(!snap.earned_ack_window);
+        assert!(!snap.stall_deselect);
+    }
+
+    #[test]
+    fn test_stall_deselect_defaults_off_and_toggles() {
+        let config = DynamicConfig::new();
+        assert!(!config.snapshot().stall_deselect);
+
+        apply_cmd(&config, "stall-deselect on", None);
+        assert!(config.snapshot().stall_deselect);
+
+        apply_cmd(&config, "stall-deselect off", None);
+        assert!(!config.snapshot().stall_deselect);
+    }
+
+    #[test]
+    fn test_stall_tunables_are_runtime_settable() {
+        let config = DynamicConfig::new();
+
+        apply_cmd(&config, "stall-min-in-flight 16", None);
+        apply_cmd(&config, "stall-ack-stale-ms 5000", None);
+        apply_cmd(&config, "stall-reprobe-ms 2000", None);
+
+        let snap = config.snapshot();
+        assert_eq!(snap.stall_min_in_flight, 16);
+        assert_eq!(snap.stall_ack_stale_ms, 5000);
+        assert_eq!(snap.stall_reprobe_ms, 2000);
+    }
+
+    #[test]
+    fn test_stall_deselect_from_cli_on() {
+        let config = DynamicConfig::from_cli(
+            SchedulingMode::Enhanced,
+            false,
+            false,
+            30,
+            false,
+            true,
+            48,
+            4000,
+            1500,
+        );
+        let snap = config.snapshot();
+        assert!(snap.stall_deselect);
+        assert_eq!(snap.stall_min_in_flight, 48);
+        assert_eq!(snap.stall_ack_stale_ms, 4000);
+        assert_eq!(snap.stall_reprobe_ms, 1500);
+    }
+
+    #[test]
+    fn test_earned_ack_commands() {
+        let config = DynamicConfig::new();
+        assert!(!config.snapshot().earned_ack_window);
+
+        apply_cmd(&config, "earned-ack on", None);
+        assert!(config.snapshot().earned_ack_window);
+
+        apply_cmd(&config, "earned-ack off", None);
+        assert!(!config.snapshot().earned_ack_window);
+    }
+
+    #[test]
+    fn test_earned_ack_from_cli_on() {
+        let config = DynamicConfig::from_cli(
+            SchedulingMode::Enhanced,
+            false,
+            false,
+            30,
+            true,
+            false,
+            STALL_MIN_IN_FLIGHT_PACKETS,
+            STALL_ACK_STALE_MS,
+            STALL_REPROBE_INTERVAL_MS,
+        );
+        assert!(config.snapshot().earned_ack_window);
     }
 
     #[test]
@@ -568,6 +850,11 @@ mod tests {
             quality_enabled: true,
             exploration_enabled: true,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
+            stall_deselect: false,
+            stall_min_in_flight: 32,
+            stall_ack_stale_ms: 3000,
+            stall_reprobe_ms: 1000,
         };
         assert!(!snap.effective_quality_enabled());
         assert!(!snap.effective_exploration_enabled());
@@ -578,6 +865,11 @@ mod tests {
             quality_enabled: true,
             exploration_enabled: true,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
+            stall_deselect: false,
+            stall_min_in_flight: 32,
+            stall_ack_stale_ms: 3000,
+            stall_reprobe_ms: 1000,
         };
         assert!(snap.effective_quality_enabled());
         assert!(snap.effective_exploration_enabled());
@@ -588,6 +880,11 @@ mod tests {
             quality_enabled: true,
             exploration_enabled: true,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
+            stall_deselect: false,
+            stall_min_in_flight: 32,
+            stall_ack_stale_ms: 3000,
+            stall_reprobe_ms: 1000,
         };
         assert!(snap.effective_quality_enabled());
         assert!(!snap.effective_exploration_enabled());

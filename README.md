@@ -201,6 +201,11 @@ srtla_send [OPTIONS] SRT_LISTEN_PORT SRTLA_HOST SRTLA_PORT BIND_IPS_FILE
 - `--control-socket <PATH>`: Unix domain socket path for remote control (e.g., `/tmp/srtla.sock`)
 - `--stats-file <PATH>`: Write per-uplink telemetry JSON to `<PATH>` (opt-in; see [Telemetry](#telemetry))
 - `--stats-file-interval <MS>`: Telemetry write cadence in milliseconds (default: 1000)
+- `--earned-ack-window`: `[EXPERIMENTAL]` gate broadcast-ACK window growth to the earning link, with rate-limited probe growth for the rest. Default OFF (see [Experimental scheduler-hardening flags](#experimental-scheduler-hardening-flags))
+- `--stall-deselect`: `[EXPERIMENTAL]` deselect a stalled link (high in-flight with no earned ACK/RTT sample) so healthy links carry traffic, re-probing so a recovered link re-enters. Default OFF (see [Experimental scheduler-hardening flags](#experimental-scheduler-hardening-flags))
+- `--stall-min-in-flight <N>`: `[EXPERIMENTAL]` in-flight threshold that marks a link stall-eligible for `--stall-deselect` (default: 32)
+- `--stall-ack-stale-ms <MS>`: `[EXPERIMENTAL]` earned-ACK/RTT staleness window in ms for `--stall-deselect` (default: 3000)
+- `--stall-reprobe-ms <MS>`: `[EXPERIMENTAL]` re-probe interval in ms for `--stall-deselect` (default: 1000)
 - `-v, --version`: Print version and exit
 
 ### Configuration check
@@ -313,6 +318,24 @@ echo 'status' | socat - UNIX-CONNECT:/tmp/srtla.sock
 **RTT-Threshold Mode**: Groups links into "fast" and "slow" based on RTT measurements. Links within `min_rtt + delta` (default 30ms) are "fast" and strongly preferred. When quality scoring is also enabled, NAK penalties are applied within the fast link group. Falls back to slow links only when all fast links are saturated. Useful for reducing packet reordering in networks with heterogeneous latencies.
 
 **EDPF Mode**: Earliest Delivery Path First. Runs a BLEST → IoDS → EDPF pipeline: a static-OWD head-of-line-blocking guard (50ms) excludes links that would stall the in-order stream, an in-order-delivery constraint bounds the candidate set (resetting when empty so no link starves), and the link with the lowest predicted arrival time `(in_flight_bytes + packet) / effective_capacity + owd` is selected. Scheduler state is owned per send-loop (no thread-local). Quality scoring and exploration do not apply.
+
+## Experimental Scheduler-Hardening Flags
+
+Two flags, gated behind their own CLI switches, harden the default `enhanced` mode against a specific satellite/LAN failure signature (a link that keeps a high scheduling weight while it silently degrades). Both are **default OFF** and mode-agnostic (they apply on top of whichever `--mode` is active). Neither has been validated against real bond hardware yet; treat every behavior claim below as a hypothesis pending that validation.
+
+### `--earned-ack-window`
+
+Without the flag, every broadcast SRTLA ACK grows ALL connected links' congestion window by one step, including links that are not actually carrying traffic. That growth is a deliberate "probing" mechanism (it keeps under-selected healthy links off the floor so the scheduler can re-pick them), not a bug, but it can let an unearned window climb on a link that has stopped delivering.
+
+With the flag on, only the link that actually earned the ACK (the one whose sent sequence was acknowledged) gets the full window step. Every other connected link still grows, but at most once per `PROBE_GROWTH_INTERVAL_MS` (1000ms) — the same "probing" role, just rate-limited instead of unconditional.
+
+### `--stall-deselect`
+
+The 15s `CONN_TIMEOUT` liveness check only reads inbound bytes (including keepalive echoes), so a link that keeps echoing keepalives while it silently stops carrying data still reads "connected" for a long time. `--stall-deselect` adds a selection-time penalty for that case: a link with a high in-flight packet count (`--stall-min-in-flight`, default 32) and no earned ACK/RTT sample within `--stall-ack-stale-ms` (default 3000ms) is excluded from selection for one tick, letting healthy links carry the traffic instead. A link is re-probed every `--stall-reprobe-ms` (default 1000ms) so a recovered link re-enters selection. This is a selection-time penalty only — it never re-registers, resets, or touches `CONN_TIMEOUT`/housekeeping. If every connected link is stalled, selection falls back to the normal (non-deselecting) path so a link is always returned.
+
+### Hardware-validation gate
+
+Both flags ship with unit and golden-trace tests proving flag-off behavior is byte-identical to the pre-flag code path, but neither has been exercised against a real bonded link (e.g. Starlink + cellular) outside this repo's test harness. Do not turn either flag on in production, and do not cite either flag as a proven improvement, until that hardware validation has run. See `docs/notes/sendmmsg-deferred.md`-style deferred-item tracking conventions for how this repo records unrun hardware gates, and the root workspace's `docs/notes/srtla-starlink-lan-diagnosis.md` for the mechanism analysis both flags address.
 
 ## IP List Reload (Unix only)
 

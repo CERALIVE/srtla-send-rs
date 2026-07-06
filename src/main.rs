@@ -123,6 +123,25 @@ struct Cli {
     /// RTT delta threshold in ms (rtt-threshold only, links within min_rtt + delta are "fast")
     #[arg(long = "rtt-delta-ms", default_value = "30")]
     rtt_delta_ms: u32,
+    /// [EXPERIMENTAL] Gate broadcast-ACK window growth to the earning link, with
+    /// rate-limited probe growth for the rest (default OFF; unvalidated on hardware)
+    #[arg(long = "earned-ack-window")]
+    earned_ack_window: bool,
+    /// [EXPERIMENTAL] Deselect a stalled link (high in-flight + no earned ACK/RTT
+    /// sample) so healthy links carry traffic, re-probing so a recovered link
+    /// re-enters (default OFF; unvalidated on hardware)
+    #[arg(long = "stall-deselect")]
+    stall_deselect: bool,
+    /// [EXPERIMENTAL] In-flight threshold that marks a link stall-eligible for
+    /// --stall-deselect
+    #[arg(long = "stall-min-in-flight", default_value_t = config::STALL_MIN_IN_FLIGHT_PACKETS)]
+    stall_min_in_flight: i32,
+    /// [EXPERIMENTAL] Earned-ACK/RTT staleness window in ms for --stall-deselect
+    #[arg(long = "stall-ack-stale-ms", default_value_t = config::STALL_ACK_STALE_MS)]
+    stall_ack_stale_ms: u64,
+    /// [EXPERIMENTAL] Re-probe interval in ms for --stall-deselect
+    #[arg(long = "stall-reprobe-ms", default_value_t = config::STALL_REPROBE_INTERVAL_MS)]
+    stall_reprobe_ms: u64,
 }
 
 /// Result of a `--dry-run` resolution: the parsed source IPs, any invalid
@@ -265,6 +284,11 @@ async fn main() -> Result<()> {
         args.no_quality,
         args.exploration,
         args.rtt_delta_ms,
+        args.earned_ack_window,
+        args.stall_deselect,
+        args.stall_min_in_flight,
+        args.stall_ack_stale_ms,
+        args.stall_reprobe_ms,
     );
 
     // Create shared stats for telemetry export
@@ -338,6 +362,110 @@ mod tests {
         assert!(!cli.dry_run);
         assert_eq!(cli.stats_file, None);
         assert_eq!(cli.stats_file_interval, DEFAULT_STATS_FILE_INTERVAL_MS);
+        assert!(
+            !cli.earned_ack_window,
+            "the EXPERIMENTAL earned-ack-window flag defaults OFF"
+        );
+        assert!(
+            !cli.stall_deselect,
+            "the EXPERIMENTAL stall-deselect flag defaults OFF"
+        );
+        assert_eq!(
+            cli.stall_min_in_flight,
+            config::STALL_MIN_IN_FLIGHT_PACKETS,
+            "stall-min-in-flight defaults to the named constant"
+        );
+        assert_eq!(cli.stall_ack_stale_ms, config::STALL_ACK_STALE_MS);
+        assert_eq!(cli.stall_reprobe_ms, config::STALL_REPROBE_INTERVAL_MS);
+    }
+
+    #[test]
+    fn stall_deselect_flag_defaults_off_and_parses_when_present() {
+        let cli =
+            Cli::try_parse_from(["srtla_send", "5000", "127.0.0.1", "5001", "/tmp/srtla_ips"])
+                .expect("baseline should parse");
+        assert!(!cli.stall_deselect, "absent flag => OFF");
+
+        let cli = Cli::try_parse_from([
+            "srtla_send",
+            "5000",
+            "127.0.0.1",
+            "5001",
+            "/tmp/srtla_ips",
+            "--stall-deselect",
+            "--stall-min-in-flight",
+            "48",
+            "--stall-ack-stale-ms",
+            "4000",
+            "--stall-reprobe-ms",
+            "1500",
+        ])
+        .expect("--stall-deselect and tunables should parse");
+        assert!(cli.stall_deselect, "present flag => ON");
+        assert_eq!(cli.stall_min_in_flight, 48);
+        assert_eq!(cli.stall_ack_stale_ms, 4000);
+        assert_eq!(cli.stall_reprobe_ms, 1500);
+    }
+
+    #[test]
+    fn stall_deselect_is_marked_experimental_in_help() {
+        use clap::CommandFactory;
+
+        let mut cmd = Cli::command();
+        let mut help = Vec::new();
+        cmd.write_long_help(&mut help).expect("render long help");
+        let help = String::from_utf8(help).expect("help is utf8");
+        assert!(
+            help.contains("--stall-deselect"),
+            "help must list the stall-deselect flag"
+        );
+        assert!(
+            help.contains("--stall-min-in-flight")
+                && help.contains("--stall-ack-stale-ms")
+                && help.contains("--stall-reprobe-ms"),
+            "help must list all three stall tunables"
+        );
+        assert!(
+            help.matches("EXPERIMENTAL").count() >= 2,
+            "the stall-deselect help text must be marked EXPERIMENTAL"
+        );
+    }
+
+    #[test]
+    fn earned_ack_window_flag_defaults_off_and_parses_when_present() {
+        let cli =
+            Cli::try_parse_from(["srtla_send", "5000", "127.0.0.1", "5001", "/tmp/srtla_ips"])
+                .expect("baseline should parse");
+        assert!(!cli.earned_ack_window, "absent flag => OFF");
+
+        let cli = Cli::try_parse_from([
+            "srtla_send",
+            "5000",
+            "127.0.0.1",
+            "5001",
+            "/tmp/srtla_ips",
+            "--earned-ack-window",
+        ])
+        .expect("--earned-ack-window should parse");
+        assert!(cli.earned_ack_window, "present flag => ON");
+    }
+
+    #[test]
+    fn earned_ack_window_is_marked_experimental_in_help() {
+        use clap::CommandFactory;
+
+        let mut cmd = Cli::command();
+        let mut help = Vec::new();
+        cmd.write_long_help(&mut help).expect("render long help");
+        let help = String::from_utf8(help).expect("help is utf8");
+        assert!(
+            help.contains("--earned-ack-window"),
+            "help must list the flag"
+        );
+        assert!(
+            help.contains("EXPERIMENTAL"),
+            "the earned-ack-window help text must be marked EXPERIMENTAL"
+        );
     }
 
     #[test]

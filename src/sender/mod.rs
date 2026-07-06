@@ -27,6 +27,9 @@ pub use connections::{
 #[allow(unused_imports)]
 pub use housekeeping::GLOBAL_TIMEOUT_MS;
 use housekeeping::handle_housekeeping;
+#[cfg(any(test, feature = "test-internals"))]
+#[allow(unused_imports)]
+pub(crate) use packet_handler::apply_srtla_ack;
 use packet_handler::{
     drain_packet_queue, flush_all_batches, handle_srt_packet, handle_uplink_packet,
 };

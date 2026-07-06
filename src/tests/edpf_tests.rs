@@ -47,6 +47,11 @@ mod tests {
             quality_enabled: false,
             exploration_enabled: false,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
+            stall_deselect: false,
+            stall_min_in_flight: 32,
+            stall_ack_stale_ms: 3000,
+            stall_reprobe_ms: 1000,
         }
     }
 
