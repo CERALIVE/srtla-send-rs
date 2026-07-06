@@ -108,6 +108,17 @@ pub struct SrtlaConnection {
     /// on probe growth (never by the earner's full growth). Inert while the flag
     /// is off (default), so baseline behavior is unchanged.
     pub(crate) last_probe_growth_ms: u64,
+    /// `now_ms()` of the last EARNED ACK (this link owned an acked seq) or
+    /// keepalive RTT response. Stamped ONLY at those two sites — NEVER on generic
+    /// inbound bytes (unlike `last_received`), so it stays stale on a link that
+    /// merely echoes keepalives while its ACK/RTT path is dead. `0` = no sample
+    /// yet. Read only by the EXPERIMENTAL `stall_deselect` selection penalty.
+    pub(crate) last_ack_or_rtt_sample_ms: u64,
+    /// `now_ms()` (selection clock) of this link's last stall re-probe. Lets a
+    /// deselected stalled link back into selection once per `stall_reprobe_ms` so
+    /// a recovered link re-enters. `0` = eligible for an immediate probe. Inert
+    /// while `stall_deselect` is off (default).
+    pub(crate) last_stall_reprobe_ms: u64,
     // Sub-structs for organized state management
     #[cfg(feature = "test-internals")]
     pub rtt: RttTracker,
@@ -158,6 +169,8 @@ impl SrtlaConnection {
             last_sent: None,
             last_keepalive_sent: None,
             last_probe_growth_ms: 0,
+            last_ack_or_rtt_sample_ms: 0,
+            last_stall_reprobe_ms: 0,
             rtt: RttTracker::default(),
             congestion: CongestionControl::default(),
             bitrate: BitrateTracker::default(),
@@ -184,6 +197,24 @@ impl SrtlaConnection {
             .saturating_add(self.batch_sender.queued_count());
         let denom = total_in_flight.saturating_add(1).max(1);
         self.window / denom
+    }
+
+    /// EXPERIMENTAL `stall_deselect` signal (pure read; never mutates). True for
+    /// a connected link whose in-flight backlog is at/above `min_in_flight` AND
+    /// whose last EARNED-ACK / keepalive-RTT sample is older than `stale_ms`.
+    /// `now_ms` is the selection clock (`current_time_ms`). This is a selection
+    /// penalty input ONLY — it is NOT a liveness check and never affects
+    /// `is_timed_out()` / re-registration / CONN_TIMEOUT.
+    #[inline]
+    pub(crate) fn is_stall_penalized(
+        &self,
+        now_ms: u64,
+        min_in_flight: i32,
+        stale_ms: u64,
+    ) -> bool {
+        self.connected
+            && self.in_flight_packets >= min_in_flight
+            && now_ms.saturating_sub(self.last_ack_or_rtt_sample_ms) >= stale_ms
     }
 
     /// Queue a data packet for batched sending.

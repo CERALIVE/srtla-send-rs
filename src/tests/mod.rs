@@ -14,6 +14,9 @@ pub mod sender_tests;
 pub mod earned_ack_tests;
 
 #[cfg(test)]
+pub mod stall_deselect_tests;
+
+#[cfg(test)]
 pub mod protocol_tests;
 
 #[cfg(test)]

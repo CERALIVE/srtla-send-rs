@@ -80,6 +80,12 @@ impl SrtlaConnection {
         if found {
             self.in_flight_packets = self.packet_log.len() as i32;
 
+            // Stall signal (EXPERIMENTAL `stall_deselect`): this link EARNED the
+            // ACK (it owned the acked seq) — the strongest per-link delivery
+            // proof. Stamped here + at the keepalive-RTT-response site ONLY, never
+            // on generic inbound bytes, so a stalled-but-echoing link stays stale.
+            self.last_ack_or_rtt_sample_ms = now_ms();
+
             if classic_mode {
                 self.congestion.handle_srtla_ack_specific_classic(
                     &mut self.window,

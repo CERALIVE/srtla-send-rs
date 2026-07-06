@@ -34,6 +34,10 @@ mod tests {
             exploration_enabled: false,
             rtt_delta_ms: 30,
             earned_ack_window: false,
+            stall_deselect: false,
+            stall_min_in_flight: 32,
+            stall_ack_stale_ms: 3000,
+            stall_reprobe_ms: 1000,
         };
 
         let selected = select_connection_idx(
@@ -70,6 +74,10 @@ mod tests {
             exploration_enabled: false,
             rtt_delta_ms: 30,
             earned_ack_window: false,
+            stall_deselect: false,
+            stall_min_in_flight: 32,
+            stall_ack_stale_ms: 3000,
+            stall_reprobe_ms: 1000,
         };
 
         let selected = select_connection_idx(
@@ -107,6 +115,10 @@ mod tests {
             exploration_enabled: false,
             rtt_delta_ms: 30,
             earned_ack_window: false,
+            stall_deselect: false,
+            stall_min_in_flight: 32,
+            stall_ack_stale_ms: 3000,
+            stall_reprobe_ms: 1000,
         };
 
         let selected = select_connection_idx(
@@ -141,6 +153,10 @@ mod tests {
             exploration_enabled: false,
             rtt_delta_ms: 30,
             earned_ack_window: false,
+            stall_deselect: false,
+            stall_min_in_flight: 32,
+            stall_ack_stale_ms: 3000,
+            stall_reprobe_ms: 1000,
         };
 
         // Per-packet selection: Should keep sending ALL packets via connection 0 during cooldown
@@ -179,6 +195,10 @@ mod tests {
             exploration_enabled: false,
             rtt_delta_ms: 30,
             earned_ack_window: false,
+            stall_deselect: false,
+            stall_min_in_flight: 32,
+            stall_ack_stale_ms: 3000,
+            stall_reprobe_ms: 1000,
         };
 
         // After cooldown: per-packet selection can now choose the better connection
@@ -221,6 +241,10 @@ mod tests {
             exploration_enabled: false,
             rtt_delta_ms: 30,
             earned_ack_window: false,
+            stall_deselect: false,
+            stall_min_in_flight: 32,
+            stall_ack_stale_ms: 3000,
+            stall_reprobe_ms: 1000,
         };
 
         // Cooldown is bypassed when current connection is invalid/timed out
@@ -260,6 +284,10 @@ mod tests {
             exploration_enabled: true, // exploration enabled
             rtt_delta_ms: 30,
             earned_ack_window: false,
+            stall_deselect: false,
+            stall_min_in_flight: 32,
+            stall_ack_stale_ms: 3000,
+            stall_reprobe_ms: 1000,
         };
 
         // Enable exploration, but should be blocked by cooldown
@@ -300,6 +328,10 @@ mod tests {
             exploration_enabled: false,
             rtt_delta_ms: 30,
             earned_ack_window: false,
+            stall_deselect: false,
+            stall_min_in_flight: 32,
+            stall_ack_stale_ms: 3000,
+            stall_reprobe_ms: 1000,
         };
 
         // Classic mode: per-packet selection ALWAYS picks highest score connection
@@ -644,6 +676,10 @@ mod tests {
             exploration_enabled: false,
             rtt_delta_ms: 30,
             earned_ack_window: false,
+            stall_deselect: false,
+            stall_min_in_flight: 32,
+            stall_ack_stale_ms: 3000,
+            stall_reprobe_ms: 1000,
         };
 
         let selected = select_connection_idx(
@@ -670,6 +706,10 @@ mod tests {
             exploration_enabled: true,
             rtt_delta_ms: 30,
             earned_ack_window: false,
+            stall_deselect: false,
+            stall_min_in_flight: 32,
+            stall_ack_stale_ms: 3000,
+            stall_reprobe_ms: 1000,
         };
 
         // Test exploration - this is time-dependent so we just test that it doesn't panic
@@ -1238,6 +1278,10 @@ mod tests {
             exploration_enabled: false,
             rtt_delta_ms: 30,
             earned_ack_window: false,
+            stall_deselect: false,
+            stall_min_in_flight: 32,
+            stall_ack_stale_ms: 3000,
+            stall_reprobe_ms: 1000,
         };
 
         let last_switch = now_ms();
@@ -1280,6 +1324,10 @@ mod tests {
             exploration_enabled: false,
             rtt_delta_ms: 30,
             earned_ack_window: false,
+            stall_deselect: false,
+            stall_min_in_flight: 32,
+            stall_ack_stale_ms: 3000,
+            stall_reprobe_ms: 1000,
         };
 
         let last_switch = now_ms();
@@ -1452,6 +1500,10 @@ mod tests {
             exploration_enabled: false,
             rtt_delta_ms: 30,
             earned_ack_window: false,
+            stall_deselect: false,
+            stall_min_in_flight: 32,
+            stall_ack_stale_ms: 3000,
+            stall_reprobe_ms: 1000,
         };
 
         let selected = select_connection_idx(
@@ -1498,6 +1550,10 @@ mod tests {
             exploration_enabled: true,
             rtt_delta_ms: 30,
             earned_ack_window: false,
+            stall_deselect: false,
+            stall_min_in_flight: 32,
+            stall_ack_stale_ms: 3000,
+            stall_reprobe_ms: 1000,
         };
 
         let last_switch = now_ms();
@@ -1544,6 +1600,10 @@ mod tests {
             exploration_enabled: true,
             rtt_delta_ms: 30,
             earned_ack_window: false,
+            stall_deselect: false,
+            stall_min_in_flight: 32,
+            stall_ack_stale_ms: 3000,
+            stall_reprobe_ms: 1000,
         };
 
         let last_switch = now_ms();
