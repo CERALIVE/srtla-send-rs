@@ -33,6 +33,7 @@ mod tests {
             quality_enabled: false,
             exploration_enabled: false,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
         };
 
         let selected = select_connection_idx(
@@ -68,6 +69,7 @@ mod tests {
             quality_enabled: true,
             exploration_enabled: false,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
         };
 
         let selected = select_connection_idx(
@@ -104,6 +106,7 @@ mod tests {
             quality_enabled: true,
             exploration_enabled: false,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
         };
 
         let selected = select_connection_idx(
@@ -137,6 +140,7 @@ mod tests {
             quality_enabled: true,
             exploration_enabled: false,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
         };
 
         // Per-packet selection: Should keep sending ALL packets via connection 0 during cooldown
@@ -174,6 +178,7 @@ mod tests {
             quality_enabled: true,
             exploration_enabled: false,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
         };
 
         // After cooldown: per-packet selection can now choose the better connection
@@ -215,6 +220,7 @@ mod tests {
             quality_enabled: true,
             exploration_enabled: false,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
         };
 
         // Cooldown is bypassed when current connection is invalid/timed out
@@ -253,6 +259,7 @@ mod tests {
             quality_enabled: true,
             exploration_enabled: true, // exploration enabled
             rtt_delta_ms: 30,
+            earned_ack_window: false,
         };
 
         // Enable exploration, but should be blocked by cooldown
@@ -292,6 +299,7 @@ mod tests {
             quality_enabled: false,
             exploration_enabled: false,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
         };
 
         // Classic mode: per-packet selection ALWAYS picks highest score connection
@@ -635,6 +643,7 @@ mod tests {
             quality_enabled: false,
             exploration_enabled: false,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
         };
 
         let selected = select_connection_idx(
@@ -660,6 +669,7 @@ mod tests {
             quality_enabled: false,
             exploration_enabled: true,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
         };
 
         // Test exploration - this is time-dependent so we just test that it doesn't panic
@@ -1227,6 +1237,7 @@ mod tests {
             quality_enabled: false,
             exploration_enabled: false,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
         };
 
         let last_switch = now_ms();
@@ -1268,6 +1279,7 @@ mod tests {
             quality_enabled: false,
             exploration_enabled: false,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
         };
 
         let last_switch = now_ms();
@@ -1439,6 +1451,7 @@ mod tests {
             quality_enabled: false,
             exploration_enabled: false,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
         };
 
         let selected = select_connection_idx(
@@ -1484,6 +1497,7 @@ mod tests {
             quality_enabled: false,
             exploration_enabled: true,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
         };
 
         let last_switch = now_ms();
@@ -1529,6 +1543,7 @@ mod tests {
             quality_enabled: false,
             exploration_enabled: true,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
         };
 
         let last_switch = now_ms();

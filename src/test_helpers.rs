@@ -53,6 +53,7 @@ fn create_connection_from_socket(
         last_received: Some(Instant::now()),
         last_sent: None,
         last_keepalive_sent: None,
+        last_probe_growth_ms: 0,
         rtt: RttTracker::default(),
         congestion: CongestionControl::default(),
         bitrate: BitrateTracker::default(),

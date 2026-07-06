@@ -47,6 +47,7 @@ mod tests {
             quality_enabled: false,
             exploration_enabled: false,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
         }
     }
 

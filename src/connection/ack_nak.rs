@@ -1,6 +1,7 @@
 use std::cmp::min;
 
 use super::SrtlaConnection;
+use crate::config::PROBE_GROWTH_INTERVAL_MS;
 use crate::protocol::*;
 use crate::utils::now_ms;
 
@@ -105,6 +106,29 @@ impl SrtlaConnection {
         // received)
         if self.connected && self.last_received.is_some() {
             self.window = min(self.window + 1, WINDOW_MAX * WINDOW_MULT);
+        }
+    }
+
+    /// EXPERIMENTAL earned-ACK valve (flag `earned_ack_window`, default OFF);
+    /// used in place of `handle_srtla_ack_global` only when the flag is on.
+    ///
+    /// The earner keeps the full `+1` (identical to the flag-off global step).
+    /// Every other connected link that has received data gets rate-limited PROBE
+    /// growth of `+1` at most once per `PROBE_GROWTH_INTERVAL_MS`, preserving the
+    /// C mechanism's under-selected-link probing without a free `+1` per broadcast
+    /// ACK. Timed-out/disconnected links get nothing. Hypothesis-only; not
+    /// validated on real bond hardware.
+    pub fn handle_srtla_ack_earned(&mut self, is_earner: bool, now_ms: u64) {
+        if !(self.connected && self.last_received.is_some()) {
+            return;
+        }
+        if is_earner {
+            self.window = min(self.window + 1, WINDOW_MAX * WINDOW_MULT);
+            return;
+        }
+        if now_ms.saturating_sub(self.last_probe_growth_ms) >= PROBE_GROWTH_INTERVAL_MS {
+            self.window = min(self.window + 1, WINDOW_MAX * WINDOW_MULT);
+            self.last_probe_growth_ms = now_ms;
         }
     }
 }

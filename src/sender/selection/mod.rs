@@ -198,6 +198,7 @@ mod tests {
             quality_enabled: false,
             exploration_enabled: false,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
         };
 
         // Classic mode should pick connection 1 (highest score) even during cooldown
@@ -234,6 +235,7 @@ mod tests {
             quality_enabled: true,
             exploration_enabled: false,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
         };
 
         // Enhanced mode should stay with connection 0 due to cooldown
@@ -276,6 +278,7 @@ mod tests {
             quality_enabled: false,
             exploration_enabled: false,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
         };
         let result = select_connection_idx(
             &mut conns,
@@ -302,6 +305,7 @@ mod tests {
             quality_enabled: false,
             exploration_enabled: false,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
         };
 
         let mut state = EdpfSchedulerState::default();
@@ -328,6 +332,7 @@ mod tests {
             quality_enabled: false,
             exploration_enabled: false,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
         };
 
         let mut state_a = EdpfSchedulerState::default();

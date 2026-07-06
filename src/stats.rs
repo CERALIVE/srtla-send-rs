@@ -221,6 +221,7 @@ mod tests {
             quality_enabled: true,
             exploration_enabled: false,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
         };
         stats.update(&[], &config);
         let snapshot = stats.get();

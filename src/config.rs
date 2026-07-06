@@ -22,6 +22,12 @@ use crate::subscription::SubscriptionManager;
 /// Links within min_rtt + delta are considered "fast" and preferred.
 pub const DEFAULT_RTT_DELTA_MS: u32 = 30;
 
+/// Min interval (ms) between rate-limited PROBE window `+1` steps on a
+/// non-earning link under the EXPERIMENTAL `earned_ack_window` valve
+/// (`SrtlaConnection::handle_srtla_ack_earned`). Inert while the flag is off
+/// (default). Hypothesis-only; NOT validated on real bond hardware.
+pub const PROBE_GROWTH_INTERVAL_MS: u64 = 1000;
+
 /// Snapshot of configuration for efficient hot-path access.
 /// Call `DynamicConfig::snapshot()` once per select iteration to avoid
 /// multiple atomic loads per packet in the hot path.
@@ -31,6 +37,10 @@ pub struct ConfigSnapshot {
     pub quality_enabled: bool,
     pub exploration_enabled: bool,
     pub rtt_delta_ms: u32,
+    /// EXPERIMENTAL earned-ACK window valve (default OFF). Selects
+    /// `handle_srtla_ack_earned` over `handle_srtla_ack_global` at the SRTLA-ACK
+    /// call site; off ⇒ baseline behavior unchanged.
+    pub earned_ack_window: bool,
 }
 
 impl ConfigSnapshot {
@@ -57,6 +67,7 @@ pub struct DynamicConfig {
     quality_enabled: Arc<AtomicBool>,
     exploration_enabled: Arc<AtomicBool>,
     rtt_delta_ms: Arc<AtomicU32>,
+    earned_ack_window: Arc<AtomicBool>,
 }
 
 impl Default for DynamicConfig {
@@ -72,6 +83,7 @@ impl DynamicConfig {
             quality_enabled: Arc::new(AtomicBool::new(true)),
             exploration_enabled: Arc::new(AtomicBool::new(false)),
             rtt_delta_ms: Arc::new(AtomicU32::new(DEFAULT_RTT_DELTA_MS)),
+            earned_ack_window: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -81,12 +93,14 @@ impl DynamicConfig {
         no_quality: bool,
         exploration: bool,
         rtt_delta_ms: u32,
+        earned_ack_window: bool,
     ) -> Self {
         Self {
             mode: Arc::new(AtomicU8::new(mode.as_u8())),
             quality_enabled: Arc::new(AtomicBool::new(!no_quality)),
             exploration_enabled: Arc::new(AtomicBool::new(exploration)),
             rtt_delta_ms: Arc::new(AtomicU32::new(rtt_delta_ms)),
+            earned_ack_window: Arc::new(AtomicBool::new(earned_ack_window)),
         }
     }
 
@@ -100,6 +114,7 @@ impl DynamicConfig {
             quality_enabled: self.quality_enabled.load(Ordering::Acquire),
             exploration_enabled: self.exploration_enabled.load(Ordering::Acquire),
             rtt_delta_ms: self.rtt_delta_ms.load(Ordering::Acquire),
+            earned_ack_window: self.earned_ack_window.load(Ordering::Acquire),
         }
     }
 
@@ -127,6 +142,11 @@ impl DynamicConfig {
     /// Set the RTT delta threshold in milliseconds.
     pub fn set_rtt_delta_ms(&self, delta: u32) {
         self.rtt_delta_ms.store(delta, Ordering::Release);
+    }
+
+    /// Toggle the EXPERIMENTAL earned-ACK window valve (default OFF).
+    pub fn set_earned_ack_window(&self, enabled: bool) {
+        self.earned_ack_window.store(enabled, Ordering::Release);
     }
 }
 
@@ -197,6 +217,7 @@ pub enum CmdResponse {
 /// - `quality on|off` - toggle quality scoring
 /// - `explore on|off` - toggle exploration
 /// - `rtt-delta <ms>` - set RTT delta threshold
+/// - `earned-ack on|off` - toggle the EXPERIMENTAL earned-ACK window valve
 /// - `status` - show current configuration
 /// - `stats` - get per-link telemetry as JSON
 pub fn apply_cmd(config: &DynamicConfig, cmd: &str, stats: Option<&SharedStats>) -> CmdResponse {
@@ -298,6 +319,26 @@ pub fn apply_cmd(config: &DynamicConfig, cmd: &str, stats: Option<&SharedStats>)
             }
         }
 
+        "earned-ack" => {
+            if parts.len() != 2 {
+                warn!("usage: earned-ack on|off");
+                return CmdResponse::None;
+            }
+            match parts[1] {
+                "on" => {
+                    config.set_earned_ack_window(true);
+                    info!("earned-ack: on (EXPERIMENTAL)");
+                }
+                "off" => {
+                    config.set_earned_ack_window(false);
+                    info!("earned-ack: off");
+                }
+                other => {
+                    warn!("invalid value '{}': use on or off", other);
+                }
+            }
+        }
+
         "status" => {
             let snap = config.snapshot();
             info!("mode: {}", snap.mode);
@@ -314,6 +355,10 @@ pub fn apply_cmd(config: &DynamicConfig, cmd: &str, stats: Option<&SharedStats>)
                 }
             );
             info!("  rtt-delta: {}ms", snap.rtt_delta_ms);
+            info!(
+                "  earned-ack: {}",
+                if snap.earned_ack_window { "on" } else { "off" }
+            );
         }
 
         "stats" => {
@@ -501,16 +546,39 @@ mod tests {
         assert!(snap.quality_enabled);
         assert!(!snap.exploration_enabled);
         assert_eq!(snap.rtt_delta_ms, DEFAULT_RTT_DELTA_MS);
+        assert!(
+            !snap.earned_ack_window,
+            "earned-ack window valve defaults OFF"
+        );
     }
 
     #[test]
     fn test_config_from_cli() {
-        let config = DynamicConfig::from_cli(SchedulingMode::Classic, true, true, 50);
+        let config = DynamicConfig::from_cli(SchedulingMode::Classic, true, true, 50, false);
         let snap = config.snapshot();
         assert_eq!(snap.mode, SchedulingMode::Classic);
         assert!(!snap.quality_enabled); // no_quality=true means disabled
         assert!(snap.exploration_enabled);
         assert_eq!(snap.rtt_delta_ms, 50);
+        assert!(!snap.earned_ack_window);
+    }
+
+    #[test]
+    fn test_earned_ack_commands() {
+        let config = DynamicConfig::new();
+        assert!(!config.snapshot().earned_ack_window);
+
+        apply_cmd(&config, "earned-ack on", None);
+        assert!(config.snapshot().earned_ack_window);
+
+        apply_cmd(&config, "earned-ack off", None);
+        assert!(!config.snapshot().earned_ack_window);
+    }
+
+    #[test]
+    fn test_earned_ack_from_cli_on() {
+        let config = DynamicConfig::from_cli(SchedulingMode::Enhanced, false, false, 30, true);
+        assert!(config.snapshot().earned_ack_window);
     }
 
     #[test]
@@ -568,6 +636,7 @@ mod tests {
             quality_enabled: true,
             exploration_enabled: true,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
         };
         assert!(!snap.effective_quality_enabled());
         assert!(!snap.effective_exploration_enabled());
@@ -578,6 +647,7 @@ mod tests {
             quality_enabled: true,
             exploration_enabled: true,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
         };
         assert!(snap.effective_quality_enabled());
         assert!(snap.effective_exploration_enabled());
@@ -588,6 +658,7 @@ mod tests {
             quality_enabled: true,
             exploration_enabled: true,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
         };
         assert!(snap.effective_quality_enabled());
         assert!(!snap.effective_exploration_enabled());

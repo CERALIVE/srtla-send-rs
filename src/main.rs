@@ -123,6 +123,10 @@ struct Cli {
     /// RTT delta threshold in ms (rtt-threshold only, links within min_rtt + delta are "fast")
     #[arg(long = "rtt-delta-ms", default_value = "30")]
     rtt_delta_ms: u32,
+    /// [EXPERIMENTAL] Gate broadcast-ACK window growth to the earning link, with
+    /// rate-limited probe growth for the rest (default OFF; unvalidated on hardware)
+    #[arg(long = "earned-ack-window")]
+    earned_ack_window: bool,
 }
 
 /// Result of a `--dry-run` resolution: the parsed source IPs, any invalid
@@ -265,6 +269,7 @@ async fn main() -> Result<()> {
         args.no_quality,
         args.exploration,
         args.rtt_delta_ms,
+        args.earned_ack_window,
     );
 
     // Create shared stats for telemetry export
@@ -338,6 +343,47 @@ mod tests {
         assert!(!cli.dry_run);
         assert_eq!(cli.stats_file, None);
         assert_eq!(cli.stats_file_interval, DEFAULT_STATS_FILE_INTERVAL_MS);
+        assert!(
+            !cli.earned_ack_window,
+            "the EXPERIMENTAL earned-ack-window flag defaults OFF"
+        );
+    }
+
+    #[test]
+    fn earned_ack_window_flag_defaults_off_and_parses_when_present() {
+        let cli =
+            Cli::try_parse_from(["srtla_send", "5000", "127.0.0.1", "5001", "/tmp/srtla_ips"])
+                .expect("baseline should parse");
+        assert!(!cli.earned_ack_window, "absent flag => OFF");
+
+        let cli = Cli::try_parse_from([
+            "srtla_send",
+            "5000",
+            "127.0.0.1",
+            "5001",
+            "/tmp/srtla_ips",
+            "--earned-ack-window",
+        ])
+        .expect("--earned-ack-window should parse");
+        assert!(cli.earned_ack_window, "present flag => ON");
+    }
+
+    #[test]
+    fn earned_ack_window_is_marked_experimental_in_help() {
+        use clap::CommandFactory;
+
+        let mut cmd = Cli::command();
+        let mut help = Vec::new();
+        cmd.write_long_help(&mut help).expect("render long help");
+        let help = String::from_utf8(help).expect("help is utf8");
+        assert!(
+            help.contains("--earned-ack-window"),
+            "help must list the flag"
+        );
+        assert!(
+            help.contains("EXPERIMENTAL"),
+            "the earned-ack-window help text must be marked EXPERIMENTAL"
+        );
     }
 
     #[test]

@@ -103,6 +103,11 @@ pub struct SrtlaConnection {
     pub(crate) last_sent: Option<Instant>,
     /// Timestamp of the last keepalive sent (for periodic telemetry)
     pub(crate) last_keepalive_sent: Option<Instant>,
+    /// `now_ms()` of this link's last rate-limited PROBE growth under the
+    /// EXPERIMENTAL `earned_ack_window` valve. `0` = eligible now; updated ONLY
+    /// on probe growth (never by the earner's full growth). Inert while the flag
+    /// is off (default), so baseline behavior is unchanged.
+    pub(crate) last_probe_growth_ms: u64,
     // Sub-structs for organized state management
     #[cfg(feature = "test-internals")]
     pub rtt: RttTracker,
@@ -152,6 +157,7 @@ impl SrtlaConnection {
             last_received: None,
             last_sent: None,
             last_keepalive_sent: None,
+            last_probe_growth_ms: 0,
             rtt: RttTracker::default(),
             congestion: CongestionControl::default(),
             bitrate: BitrateTracker::default(),

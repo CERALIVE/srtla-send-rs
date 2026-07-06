@@ -16,13 +16,14 @@ mod tests {
 
     #[test]
     fn test_config_from_cli() {
-        let config = DynamicConfig::from_cli(SchedulingMode::Enhanced, false, false, 30);
+        let config = DynamicConfig::from_cli(SchedulingMode::Enhanced, false, false, 30, false);
         let snap = config.snapshot();
         assert_eq!(snap.mode, SchedulingMode::Enhanced);
         assert!(snap.quality_enabled);
         assert!(!snap.exploration_enabled);
+        assert!(!snap.earned_ack_window);
 
-        let config = DynamicConfig::from_cli(SchedulingMode::Classic, true, true, 50);
+        let config = DynamicConfig::from_cli(SchedulingMode::Classic, true, true, 50, false);
         let snap = config.snapshot();
         assert_eq!(snap.mode, SchedulingMode::Classic);
         assert!(!snap.quality_enabled);
@@ -154,6 +155,7 @@ mod tests {
             quality_enabled: true,
             exploration_enabled: true,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
         };
         assert!(!snap.effective_quality_enabled());
         assert!(!snap.effective_exploration_enabled());
@@ -164,6 +166,7 @@ mod tests {
             quality_enabled: true,
             exploration_enabled: true,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
         };
         assert!(snap.effective_quality_enabled());
         assert!(snap.effective_exploration_enabled());
@@ -174,6 +177,7 @@ mod tests {
             quality_enabled: true,
             exploration_enabled: true,
             rtt_delta_ms: 30,
+            earned_ack_window: false,
         };
         assert!(snap.effective_quality_enabled());
         assert!(!snap.effective_exploration_enabled());
