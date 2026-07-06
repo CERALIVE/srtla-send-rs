@@ -481,6 +481,43 @@ The `bindings/typescript/` package uses Biome 2.5 via `@ceralive/biome-config` a
 
 **Golden fixtures are excluded from Biome** — `biome.json` sets `files.includes` to `["**", "!**/tests/fixtures/**"]`. `tests/fixtures/telemetry-golden.json` is a deliberately byte-identical copy of the Rust producer golden (`tests/fixtures/telemetry-golden.json` at the crate root): the single-line, newline-free atomic-publish telemetry shape (ADR-001). If Biome pretty-prints it (multi-line + trailing newline), the cross-language parity test (`tests/telemetry_fixture_parity.rs` — `rust_and_ts_goldens_are_byte_identical` plus the newline-free assertion) fails every Rust test job in CI. **Do not remove this exclude, and never `biome check --write` the fixtures** — re-sync the two goldens by editing both byte-for-byte instead.
 
+## EXPERIMENTAL SCHEDULER-HARDENING FLAGS (consolidated-flows-and-satellite, Todos 14-15)
+
+Two CLI flags harden the default `enhanced` mode against a satellite/LAN failure signature
+(a link that keeps a high scheduling weight while it silently degrades). Both are
+**`[EXPERIMENTAL]` in their `--help` text and default OFF everywhere** (CLI parse default,
+`DynamicConfig` atomic default, `ConfigSnapshot` default). Neither is validated against real
+bond hardware — see the HARDWARE-VALIDATION GATE below. Full operator-facing description:
+`README.md` → "Experimental Scheduler-Hardening Flags".
+
+- **`earned_ack_window`** (`--earned-ack-window`, Todo 14) — gates broadcast-ACK window
+  growth to the link that actually earned the ACK, with the rest growing at most once per
+  `PROBE_GROWTH_INTERVAL_MS` (1000ms, `src/config.rs`) instead of unconditionally on every
+  broadcast ACK. Wired through `apply_srtla_ack` (`sender/packet_handler.rs`) — ONE code path
+  shared by production and tests, so flag-off is byte-identical to pre-flag behavior (proven
+  by a golden-trace test). Tests: `src/tests/earned_ack_tests.rs` (16 tests).
+- **`stall_deselect`** (`--stall-deselect`, Todo 15) — a selection-time-only penalty (never
+  touches `CONN_TIMEOUT`/housekeeping/re-registration) that excludes a link from selection
+  for one tick when its in-flight count exceeds `--stall-min-in-flight` (default 32,
+  `STALL_MIN_IN_FLIGHT_PACKETS`) AND it has no earned ACK/RTT sample within
+  `--stall-ack-stale-ms` (default 3000, `STALL_ACK_STALE_MS`) — tracked via the new
+  `SrtlaConnection.last_ack_or_rtt_sample_ms` field, stamped only when a link actually earns
+  an ACK or a keepalive RTT reply (never on generic inbound traffic, which is the exact gap
+  this closes). Re-probed every `--stall-reprobe-ms` (default 1000,
+  `STALL_REPROBE_INTERVAL_MS`) so a recovered link re-enters. All-stalled falls back to the
+  normal selector so a link is always returned. Tests: `src/tests/stall_deselect_tests.rs`
+  (11 tests + 1 `#[ignore]`d hardware-repro test).
+
+**HARDWARE-VALIDATION GATE (unrun):** both flags are unit- and golden-trace-tested for
+flag-off byte-identical behavior against the pre-flag code, but neither has been exercised
+against a real bonded link (e.g. Starlink + cellular) outside this repo's in-process test
+harness. Do not enable either flag in production, and do not cite either as a proven
+improvement, until validated on real bond hardware. Mirrors the hardware-validation-gate
+pattern used elsewhere in this workspace (see `docs/notes/sendmmsg-deferred.md` for how this
+repo tracks a deferred/unrun item, and the root workspace's
+`docs/notes/srtla-starlink-lan-diagnosis.md` §6 for the mode-scoped mechanism analysis both
+flags address).
+
 ## ROBUSTNESS FIXES (robustness-pass, 2026-06-19)
 
 Four behavior changes landed in the robustness pass. None alter the parity contract.
