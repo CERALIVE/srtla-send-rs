@@ -256,7 +256,7 @@ These commits introduce behavior or structure we do not have. Each is reachable 
 - `--priority-bind` UDP sidecar (`73a410e`) — spoofable, defeats bonding
 - Keyframe size heuristic (`73a410e` `keyframe.rs:1-20`) — too coarse, false-positives at high bitrate
 - TOML dead code (`3919115`) — loaded and discarded, zero behavior
-- `mimalloc` as `#[global_allocator]` (`main.rs:5-7`) — unmeasured allocator swap on a 4 GB SBC; revisit only with Jetson profiling evidence
+- `mimalloc` as `#[global_allocator]` (`main.rs:5-7`) — unmeasured allocator swap on a 4 GB SBC; revisit only with constrained-device profiling evidence
 
 ---
 

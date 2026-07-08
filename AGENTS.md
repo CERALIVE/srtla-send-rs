@@ -469,7 +469,7 @@ The `// TODO: On Linux, could use sendmmsg ...` in `src/connection/batch_send.rs
 - What `sendmmsg(2)` would do (multi-datagram single syscall)
 - Why it is deferred: marginal gain at current rates (~60-67 flushes/s at 10 Mbps,
   already a ~15x reduction from raw per-packet sends), Linux-only unsafe FFI, and
-  complexity not justified without profiling evidence on the Jetson Nano target
+  complexity not justified without profiling evidence on the constrained device target
 - When to revisit: profiling shows syscall overhead, or Tokio adds native support
 
 Full rationale in `docs/notes/sendmmsg-deferred.md`.
