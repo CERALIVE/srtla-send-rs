@@ -34,6 +34,14 @@ function baseSnapshot(): Telemetry {
 	};
 }
 
+function onlyConnection(snapshot: Telemetry): Telemetry['connections'][number] {
+	const [connection] = snapshot.connections;
+	if (connection === undefined) {
+		throw new Error('base snapshot must contain one connection');
+	}
+	return connection;
+}
+
 async function writeAndRead(value: unknown): Promise<Telemetry | null> {
 	const p = `/tmp/srtla-send-task8-${Date.now()}-${Math.random().toString(36).slice(2)}.json`;
 	await Bun.write(p, typeof value === 'string' ? value : JSON.stringify(value));
@@ -113,7 +121,7 @@ describe('valid golden fixture → typed ADR-001 shape', () => {
 	});
 
 	test('connectionTelemetrySchema accepts a single golden record', () => {
-		const record = baseSnapshot().connections[0]!;
+		const record = onlyConnection(baseSnapshot());
 		expect(connectionTelemetrySchema.safeParse(record).success).toBe(true);
 	});
 });
@@ -184,15 +192,15 @@ describe('malformed input → graceful null (never an uncaught throw)', () => {
 
 	test('out-of-domain numeric values → null', async () => {
 		const negRtt = baseSnapshot();
-		negRtt.connections[0]!.rtt_ms = -1;
+		onlyConnection(negRtt).rtt_ms = -1;
 		expect(await writeAndRead(negRtt)).toBeNull();
 
 		const negBitrate = baseSnapshot();
-		negBitrate.connections[0]!.bitrate_bps = -10;
+		onlyConnection(negBitrate).bitrate_bps = -10;
 		expect(await writeAndRead(negBitrate)).toBeNull();
 
 		const weightTooHigh = baseSnapshot();
-		weightTooHigh.connections[0]!.weight_percent = 101;
+		onlyConnection(weightTooHigh).weight_percent = 101;
 		expect(await writeAndRead(weightTooHigh)).toBeNull();
 
 		const negLastUpdated = baseSnapshot();

@@ -75,7 +75,7 @@ tokio-test = "0.4"
 tempfile = "3"
 assert_matches = "1"
 network-sim = { path = "crates/network-sim" }
-criterion = "0.5"
+criterion = "0.8"
 # Concurrency model checker for the subscription manager interleavings. Only
 # compiled into `tests/subscription_loom.rs` (gated `#![cfg(loom)]`), so it never
 # touches the default `cargo test` gate; run it via

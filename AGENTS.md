@@ -128,11 +128,11 @@ them in an upstream merge or a `cargo upgrade` sweep without a deliberate PR:
 - **`libc = "0.2"`.** Stay on the 0.2 line — do **not** bump to a `1.0` alpha/pre-release.
 
 **`rand` is 0.10 (workspace + `crates/network-sim`), single version in the shipped
-binary (0.10.1).** rand 0.9→0.10 was an API break: `rand_core::RngCore` was renamed to
+binary (0.10.2).** rand 0.9→0.10 was an API break: `rand_core::RngCore` was renamed to
 `rand_core::Rng` (re-exported as `rand::Rng`) and the old `rand::Rng` ext trait became
 `rand::RngExt`. Call sites use `use rand::Rng;` for `fill_bytes`/`next_u64`
 (`src/registration/`, `src/connection/`) and `rand::RngExt` for `.random()`
-(`crates/network-sim/src/scenario.rs`). A `rand 0.9.2` duplicate persists **only** via
+(`crates/network-sim/src/scenario.rs`). A `rand 0.9.4` duplicate persists **only** via
 the `proptest` dev-dependency (latest 1.11.0 has no rand-0.10 release); it is dev/test
 -only and absent from the release binary — see the `deny.toml` RUSTSEC-2026-0097 note.
 
@@ -477,9 +477,14 @@ Full rationale in `docs/notes/sendmmsg-deferred.md`.
 
 ## TS BINDING TOOLING
 
+The binding package manager is **Bun**, verified by `bindings/typescript/bun.lock`;
+run package commands from `bindings/typescript/` with Bun (`bun install --frozen-lockfile`,
+`bun run typecheck`, `bun test`, `bun run build`). Do not introduce pnpm/npm/yarn
+lockfiles for this package.
+
 The `bindings/typescript/` package uses Biome 2.5 via `@ceralive/biome-config` as its first linter/formatter. The `biome.json` in `bindings/typescript/` extends `@ceralive/biome-config` (`"extends": ["@ceralive/biome-config"]`). ESLint and Prettier are not used. Run `biome check .` from `bindings/typescript/` (check) or `biome check --write .` (apply fixes). The binding gate includes `bun tsc --noEmit && bun test` — Biome is not a separate gate step but is expected clean before PR.
 
-**Golden fixtures are excluded from Biome** — `biome.json` sets `files.includes` to `["**", "!**/tests/fixtures/**"]`. `tests/fixtures/telemetry-golden.json` is a deliberately byte-identical copy of the Rust producer golden (`tests/fixtures/telemetry-golden.json` at the crate root): the single-line, newline-free atomic-publish telemetry shape (ADR-001). If Biome pretty-prints it (multi-line + trailing newline), the cross-language parity test (`tests/telemetry_fixture_parity.rs` — `rust_and_ts_goldens_are_byte_identical` plus the newline-free assertion) fails every Rust test job in CI. **Do not remove this exclude, and never `biome check --write` the fixtures** — re-sync the two goldens by editing both byte-for-byte instead.
+**Golden fixtures are excluded from Biome** — `biome.json` sets `files.includes` to `["**", "!**/tests/fixtures"]`. `tests/fixtures/telemetry-golden.json` is a deliberately byte-identical copy of the Rust producer golden (`tests/fixtures/telemetry-golden.json` at the crate root): the single-line, newline-free atomic-publish telemetry shape (ADR-001). If Biome pretty-prints it (multi-line + trailing newline), the cross-language parity test (`tests/telemetry_fixture_parity.rs` — `rust_and_ts_goldens_are_byte_identical` plus the newline-free assertion) fails every Rust test job in CI. **Do not remove this exclude, and never `biome check --write` the fixtures** — re-sync the two goldens by editing both byte-for-byte instead.
 
 ## EXPERIMENTAL SCHEDULER-HARDENING FLAGS (consolidated-flows-and-satellite, Todos 14-15)
 
