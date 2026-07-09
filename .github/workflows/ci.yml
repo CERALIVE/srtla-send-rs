@@ -127,6 +127,7 @@ jobs:
   # glob self-test.
   build-deb:
     name: Build .deb (${{ matrix.arch }})
+    needs: test
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
