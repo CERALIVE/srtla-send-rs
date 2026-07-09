@@ -55,6 +55,14 @@ jobs:
         with:
           bun-version: latest
 
+      - name: Cache Bun install
+        uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-store-${{ hashFiles('bindings/typescript/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-store-
+
       # npm (not bun) performs the publish: it speaks OIDC trusted publishing.
       - uses: actions/setup-node@v6
         with:
