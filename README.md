@@ -140,6 +140,8 @@ and pull request (`.github/workflows/ci.yml`):
   either architecture can be packaged or attached to the GitHub release
 - `python3 scripts/release_workflow_contract_test.py` checks both publication graphs and
   simulates a failed gate to verify every publish job is skipped
+- `bash scripts/release_version_contract_test.sh` proves `v3.2.0` selects 3.2.0 package
+  metadata/artifact names and rejects a tag that differs from `Cargo.toml`
 
 ### Debian packaging
 
@@ -148,7 +150,10 @@ and pull request (`.github/workflows/ci.yml`):
 `arm64`/`amd64`), and declares `Conflicts: srtla (<< <cutover>)` because the `srtla`
 package still ships the C `srtla_send`. Pushing a `v*` tag runs
 `.github/workflows/release.yml`, which rebuilds both architectures and attaches the
-`.deb`s to the GitHub release. See `AGENTS.md` → CI / PACKAGING for the full contract.
+`.deb`s to the GitHub release. The current source package version is `3.2.0`, producing
+`srtla-send-rs_3.2.0_arm64.deb` and `srtla-send-rs_3.2.0_amd64.deb`; a tag build is
+accepted only when the tag is `v3.2.0`. See `AGENTS.md` → CI / PACKAGING for the full
+contract.
 
 ### TypeScript binding package
 

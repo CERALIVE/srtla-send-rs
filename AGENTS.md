@@ -348,14 +348,16 @@ workflows. It pins the contract the device image depends on:
 `srtla-send-rs` is the one first-party component that does NOT follow the CeraLive
 CalVer (`YYYY.MINOR.PATCH`) scheme. Its `.deb` version comes directly from
 `Cargo.toml` `[package] version`, which tracks upstream irlserver semver.
-Current package version: `3.1.0`. `versions.yaml` pins it at `v3.1.0`.
+Current source package version: `3.2.0`. The workspace `versions.yaml` remains pinned at
+the last published release, `v3.1.0`, until the 3.2.0 release is published and adopted.
 
 Rationale: this repo is a fork of `irlserver/srtla_send`; keeping the upstream semver
 line in `Cargo.toml` preserves direct traceability to upstream releases.
 
-The GitHub release **tag** namespace (`v1.0.0+`, e.g. `v1.0.0`) is **decoupled** from
-the package version. The tag triggers the `.deb` build workflow; the package version is
-whatever `Cargo.toml` carries at that point. Do not conflate the two.
+The GitHub release **tag** namespace is `v<package-version>`. A tag-triggered package
+build must match the committed `Cargo.toml` version; `ci/build-deb.sh` rejects a tag ref
+whose `GITHUB_REF_NAME` differs from `v<package-version>`. For this source version, the
+only valid release tag is `v3.2.0`.
 
 The `@ceralive/srtla-send` npm binding ships on its own `bindings-vYYYY.M.P` tag
 namespace and uses CalVer independently of the Rust crate version.
@@ -388,6 +390,7 @@ ci/build-deb.sh      single-source .deb packager (control + filename + glob self
 .github/workflows/   ci.yml (gate + cross-build/package) + release.yml (tag-triggered) +
   publish-bindings.yml (binding gate + npm publish)
 scripts/release_workflow_contract_test.py  release graph and failure-propagation checks
+scripts/release_version_contract_test.sh  v3.2.0 tag/package/.deb version contract
 ```
 
 Conventions (enforced by the gate): edition 2024, `anyhow::Result`, `tracing` macros,

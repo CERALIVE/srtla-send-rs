@@ -64,6 +64,12 @@ CARGO_TOML="${REPO_ROOT}/Cargo.toml"
 VERSION="$(awk -F\" '/^version = /{print $2; exit}' "${CARGO_TOML}")"
 [[ -n "${VERSION}" ]] || die "could not read version from ${CARGO_TOML}"
 
+if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
+  EXPECTED_TAG="v${VERSION}"
+  [[ "${GITHUB_REF_NAME:-}" == "${EXPECTED_TAG}" ]] \
+    || die "release tag '${GITHUB_REF_NAME:-}' does not match package version '${VERSION}' (expected '${EXPECTED_TAG}')"
+fi
+
 CUTOVER="${SRTLA_CUTOVER_VERSION:-2026.6.2}"
 
 OUT="${OUTDIR%/}/srtla-send-rs_${VERSION}_${ARCH}.deb"
@@ -136,6 +142,7 @@ if command -v dpkg-deb >/dev/null 2>&1; then
 
   # Hard assertions on the expected-outcome contract.
   dpkg-deb -f "${OUT}" Package      | grep -qx 'srtla-send-rs'   || die "Package field != srtla-send-rs"
+  dpkg-deb -f "${OUT}" Version      | grep -qx "${VERSION}"      || die "Version field != ${VERSION}"
   dpkg-deb -f "${OUT}" Architecture | grep -qx "${ARCH}"         || die "Architecture field != ${ARCH}"
   dpkg-deb -f "${OUT}" Conflicts    | grep -q  'srtla (<< '      || die "Conflicts: srtla (<< …) missing"
   dpkg-deb -f "${OUT}" Provides     | grep -q  'srtla'           || die "Provides: srtla missing"
