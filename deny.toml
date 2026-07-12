@@ -5,13 +5,8 @@
 [advisories]
 yanked = "deny"
 
-# rand unsoundness (RUSTSEC-2026-0097), re-evaluated after the rand 0.10 bump (T20).
-# Shipped binary is now on the PATCHED rand 0.10.1 (advisory patched >= 0.10.1). The
-# advisory only still matches the dev-only proptest -> rand 0.9.2 path (0.9.2 < 0.9.3;
-# latest proptest 1.11.0 has no rand-0.10 release). Drop this once proptest ships one.
-[[advisories.ignore]]
-id = "RUSTSEC-2026-0097"
-reason = "patched in shipped binary (rand 0.10.1); remaining match is dev-only proptest -> rand 0.9.2"
+# RUSTSEC-2026-0097 is resolved: runtime rand 0.10.2 and proptest's dev-only
+# rand 0.9.4 are both on patched lines (>= 0.10.1 and >= 0.9.3 respectively).
 
 [sources]
 # Enforce crate source integrity.

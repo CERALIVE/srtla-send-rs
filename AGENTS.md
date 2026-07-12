@@ -134,7 +134,8 @@ binary (0.10.2).** rand 0.9→0.10 was an API break: `rand_core::RngCore` was re
 (`src/registration/`, `src/connection/`) and `rand::RngExt` for `.random()`
 (`crates/network-sim/src/scenario.rs`). A `rand 0.9.4` duplicate persists **only** via
 the `proptest` dev-dependency (latest 1.11.0 has no rand-0.10 release); it is dev/test
--only and absent from the release binary — see the `deny.toml` RUSTSEC-2026-0097 note.
+-only and absent from the release binary. Both 0.10.2 and 0.9.4 are patched for
+RUSTSEC-2026-0097, so `deny.toml` no longer carries an advisory ignore.
 
 ## PARITY CONTRACT (do not break without a versioned change)
 
@@ -232,13 +233,22 @@ cargo build --release
 cargo fmt --all -- --check
 cargo clippy -- -D warnings          # lib + bin (matches upstream ci.yml)
 cargo test --lib
-cargo test --all-features
-cargo test --features test-internals # upstream's full-coverage suite
+timeout --foreground --kill-after=10s 300s cargo test --all-features
+timeout --foreground --kill-after=10s 300s cargo test --features test-internals
 ```
 
 `test-internals` exposes internal fields for assertions; `--all-features` enables it.
-The whole sender test corpus runs in-process over loopback UDP — **no root / netns /
-CAP_NET_ADMIN required** (0 tests are gated/ignored).
+Most tests run in-process over loopback UDP. The `tests/netns_*.rs` integration targets
+are privileged supplements: they require Linux network namespaces, passwordless `sudo`
+or equivalent `CAP_NET_ADMIN`, and external tools including `srtla_rec` and
+`srt-live-transmit` (plus `tcpdump`/netem for relevant scenarios). They self-skip when
+their dependency checks fail, so an ordinary CI run does not prove the privileged
+topology. On dependency-rich hosts, `netns_basic` has a pre-existing shutdown hang that
+was reproduced on both `origin/main` and this branch (bounded attempts exceeded 90 s and
+60 s respectively). Never run these targets unbounded: use
+`scripts/netns_test_gate.sh`, which caps each target at 90 s by default. Separately,
+`stall_deselect_real_starlink_repro` is one intentionally ignored hardware-only test;
+run it with `--ignored` only on the bonded Starlink/cellular validation rig.
 
 **Loom model test (NOT part of the default gate).** `tests/subscription_loom.rs`
 exhaustively model-checks the `SubscriptionManager` (`src/subscription.rs`)
@@ -285,7 +295,7 @@ the unit-test binary holding the three pure tests. Install with
 The `@ceralive/srtla-send` TS binding (`bindings/typescript/`) has its own gate:
 
 ```bash
-cd bindings/typescript && bun install --frozen-lockfile && bun run lint && bun run typecheck && bun test
+cd bindings/typescript && pnpm install --frozen-lockfile && pnpm lint && pnpm typecheck && pnpm test && pnpm build
 ```
 
 `tsc --noEmit` typechecks **everything** via `tsconfig.json` (tests included). The
@@ -300,10 +310,12 @@ allowlist, `.npmignore`'s test-source pattern can't strip already-compiled
 
 Three workflows. The two Rust `.deb` workflows build on the **pinned nightly**
 (`setup-rust-toolchain` with no `toolchain` input reads `rust-toolchain.toml`); the
-binding-publish workflow is Node/Bun and shares no triggers with them:
+binding-publish workflow uses pnpm for package management and a pinned Bun runtime for
+the binding's Bun-native tests/API; it shares no triggers with the Rust workflows:
 
 - **`ci.yml`** (push/PR) — the gate (`fmt`, `clippy -D warnings` lib+bin, `check`,
-  the full test fan-out, `cargo audit`) **plus** a `build-deb` matrix that
+  bounded tests with the privileged-netns self-skip boundary, `cargo audit`) plus typed
+  workflow/ref/version contracts and a `build-deb` matrix that
   cross-compiles `aarch64-unknown-linux-gnu` (device) and `x86_64-unknown-linux-gnu`
   and packages each `.deb` so a packaging break is caught before any tag. Upstream's
   stable/beta/windows/macOS jobs are kept; under the pin they must call `cargo +<channel>`
@@ -317,18 +329,20 @@ binding-publish workflow is Node/Bun and shares no triggers with them:
   `registry-url: https://registry.npmjs.org/`) via npm **OIDC trusted publishing**
   (the `publish` job grants `id-token: write`, `npm publish --access public` — **no `NODE_AUTH_TOKEN`**;
   requires npm ≥ 11.5.1 / Node ≥ 22.14). Mirrors `@ceralive/cerastream`'s publish flow.
-  The `test-bindings` job runs lint, typecheck, tests, build, and the tarball guard,
-  uploads the validated `dist/`, and the separate `publish` job needs it before
-  publishing. A `workflow_dispatch` run with `dry_run=true` performs a registry
-  dry-run. **Binding version source:** the binding ships on its **own** tag namespace
+  The `test-bindings` job uses the committed pnpm lockfile to run lint, typecheck, tests,
+  build, and the tarball guard, then uploads validated `dist/`. The OIDC `publish` job
+  needs both that gate and `verify-release-ref`, which accepts only a tag-push event whose
+  `bindings-v*` tag, package version, ref, checked-out commit, and event SHA agree. A
+  `workflow_dispatch` run can reach only the separate non-OIDC `npm publish --dry-run`
+  job; it cannot publish. **Binding version source:** the binding ships on its **own** tag namespace
   `bindings-vYYYY.M.P` (CalVer, matching `@ceralive/cerastream`), deliberately distinct
   from the Rust crate's `v*` release tags — the two namespaces keep the `.deb` release
   and the binding publish fully decoupled (no shared trigger). A `-rc.N` suffix publishes
   under the `next` dist-tag; a plain version under `latest`. The published version **is**
   the committed `bindings/typescript/package.json` `version`; the tag does not mint it.
-  A guard step refuses to publish unless the tag's version equals `package.json` version,
-  so a tag can never ship a stale/mismatched version. Cut a binding release: bump
-  `package.json` `version` → commit → `git tag bindings-vYYYY.M.P && git push --tags`.
+  The provenance guard refuses stale, malformed, branch, dispatch, or mismatched refs.
+  Cut a binding release: bump `package.json` `version` → commit →
+  `git tag bindings-vYYYY.M.P && git push origin bindings-vYYYY.M.P`.
 
 **`ci/build-deb.sh` is the single source of truth** for the `.deb` and is called by both
 workflows. It pins the contract the device image depends on:
@@ -390,7 +404,11 @@ ci/build-deb.sh      single-source .deb packager (control + filename + glob self
 .github/workflows/   ci.yml (gate + cross-build/package) + release.yml (tag-triggered) +
   publish-bindings.yml (binding gate + npm publish)
 scripts/release_workflow_contract_test.py  release graph and failure-propagation checks
-scripts/release_version_contract_test.sh  v3.2.0 tag/package/.deb version contract
+scripts/workflow_contract.py  typed semantic GitHub workflow parser/model
+scripts/release_version_contract_test.sh  manifest-derived tag/package/.deb version contract
+scripts/bindings_release_ref_contract_test.sh  binding tag/ref/version/SHA provenance contract
+scripts/bindings_package_manager_contract_test.sh  root pnpm policy contract
+scripts/netns_test_gate.sh  bounded privileged network-namespace test runner
 ```
 
 Conventions (enforced by the gate): edition 2024, `anyhow::Result`, `tracing` macros,
@@ -462,8 +480,8 @@ adding to the existing 28):
 - Schema version: `schema_version` 2/0/missing/non-numeric all return `null`.
 
 `tsconfig.json` fix: added `tests/**/*` to `include`; moved `rootDir: "src"` into
-`tsconfig.build.json` only. This ensures `bun tsc --noEmit` typechecks tests (not
-just `src/`), while `bun run build` still emits only `dist/{index,sender/index,
+`tsconfig.build.json` only. This ensures `pnpm typecheck` typechecks tests (not
+just `src/`), while `pnpm build` still emits only `dist/{index,sender/index,
 telemetry/index}.js` with no test files. Tarball stays clean (`files: ["dist"]`
 allowlist + build-emit excludes `*.test.ts`).
 
@@ -483,12 +501,14 @@ Full rationale in `docs/notes/sendmmsg-deferred.md`.
 
 ## TS BINDING TOOLING
 
-The binding package manager is **Bun**, verified by `bindings/typescript/bun.lock`;
-run package commands from `bindings/typescript/` with Bun (`bun install --frozen-lockfile`,
-`bun run typecheck`, `bun test`, `bun run build`). Do not introduce pnpm/npm/yarn
-lockfiles for this package.
+The binding package manager is **pnpm**, pinned by `packageManager` and
+`bindings/typescript/pnpm-lock.yaml`. Run package commands from
+`bindings/typescript/` with pnpm (`pnpm install --frozen-lockfile`, `pnpm lint`,
+`pnpm typecheck`, `pnpm test`, `pnpm build`). The package API and tests remain Bun-native,
+so `pnpm test` invokes the pinned Bun test runtime; Bun is not the dependency manager.
+Do not add Bun/npm/yarn lockfiles for this package.
 
-The `bindings/typescript/` package uses Biome 2.5 via `@ceralive/biome-config` as its first linter/formatter. The `biome.json` in `bindings/typescript/` extends `@ceralive/biome-config` (`"extends": ["@ceralive/biome-config"]`). ESLint and Prettier are not used. Run `biome check .` from `bindings/typescript/` (check) or `biome check --write .` (apply fixes). The binding gate includes `bun tsc --noEmit && bun test` — Biome is not a separate gate step but is expected clean before PR.
+The `bindings/typescript/` package uses Biome 2.5 via `@ceralive/biome-config` as its first linter/formatter. The `biome.json` in `bindings/typescript/` extends `@ceralive/biome-config` (`"extends": ["@ceralive/biome-config"]`). ESLint and Prettier are not used. Run `pnpm lint` from `bindings/typescript/` (check) or `pnpm exec biome check --write .` (apply fixes). The binding gate includes `pnpm lint && pnpm typecheck && pnpm test && pnpm build`.
 
 **Golden fixtures are excluded from Biome** — `biome.json` sets `files.includes` to `["**", "!**/tests/fixtures"]`. `tests/fixtures/telemetry-golden.json` is a deliberately byte-identical copy of the Rust producer golden (`tests/fixtures/telemetry-golden.json` at the crate root): the single-line, newline-free atomic-publish telemetry shape (ADR-001). If Biome pretty-prints it (multi-line + trailing newline), the cross-language parity test (`tests/telemetry_fixture_parity.rs` — `rust_and_ts_goldens_are_byte_identical` plus the newline-free assertion) fails every Rust test job in CI. **Do not remove this exclude, and never `biome check --write` the fixtures** — re-sync the two goldens by editing both byte-for-byte instead.
 

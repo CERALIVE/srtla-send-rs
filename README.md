@@ -114,7 +114,7 @@ The project includes comprehensive test suites covering unit tests, integration 
 ### Run Tests Locally
 
 ```bash
-# Run all tests (requires nightly)
+# Run the default test command (privileged netns targets may self-skip)
 cargo test
 
 # Run with verbose output
@@ -132,13 +132,14 @@ cargo fmt --all -- --check
 GitHub Actions runs on the **pinned nightly** from `rust-toolchain.toml` on every push
 and pull request (`.github/workflows/ci.yml`):
 
-- The gate: `fmt`, `clippy -D warnings`, the full test fan-out, and `cargo audit`
+- The gate: `fmt`, `clippy -D warnings`, bounded Rust tests, and `cargo audit`; privileged
+  `netns_*` targets self-skip unless their root/tool dependencies are present
 - Cross-builds for `aarch64-unknown-linux-gnu` (device) and `x86_64-unknown-linux-gnu`,
   each packaged into a `.deb`
 - Cross-platform/cross-channel coverage (Linux/Windows/macOS, stable/beta)
 - A `v*` release runs the full Rust gate plus the parallel loom and miri lanes before
   either architecture can be packaged or attached to the GitHub release
-- `python3 scripts/release_workflow_contract_test.py` checks both publication graphs and
+- `uv run scripts/release_workflow_contract_test.py` semantically checks publication graphs and
   simulates a failed gate to verify every publish job is skipped
 - `bash scripts/release_version_contract_test.sh` proves `v3.2.0` selects 3.2.0 package
   metadata/artifact names and rejects a tag that differs from `Cargo.toml`
@@ -162,12 +163,14 @@ The `bindings/typescript/` helper publishes to the **public npm registry** as
 using npm **OIDC trusted publishing** (no `NPM_TOKEN`) — the same flow as
 `@ceralive/cerastream`. It is a **separate** release track from the Rust `.deb`s:
 pushing a `bindings-vYYYY.M.P` tag runs the typecheck + test gate, builds `dist/`, and
-publishes the package. The gate also runs `bun run lint`; a separate publish job can
-publish only after the validated `dist/` artifact is available. The published version is the committed
+publishes the package. The pnpm gate runs lint, typecheck, Bun-native tests, and build; a
+separate publish job needs both validated `dist/` and exact tag/ref/version/SHA
+provenance. Manual workflow dispatch is dry-run-only and has no path to the OIDC publish
+job. The published version is the committed
 `bindings/typescript/package.json` `version` (CalVer, matching `@ceralive/cerastream`;
 the workflow refuses to publish if the tag's version doesn't match it). To cut a
 binding release: bump `package.json` `version`, commit, then
-`git tag bindings-vYYYY.M.P && git push --tags`. See `AGENTS.md` → CI / PACKAGING.
+`git tag bindings-vYYYY.M.P && git push origin bindings-vYYYY.M.P`. See `AGENTS.md` → CI / PACKAGING.
 
 ### Test hardening (Tasks 7-8)
 
@@ -183,9 +186,19 @@ The telemetry layer has hardened integration tests:
   truncated, empty, non-object, absent file, missing required fields, wrong types,
   out-of-domain numerics, schema version mismatch).
 
-The binding's `tsconfig.json` was updated to include `tests/**/*` so `bun tsc --noEmit`
+The binding's `tsconfig.json` was updated to include `tests/**/*` so `pnpm typecheck`
 typechecks test files. `rootDir: "src"` moved to `tsconfig.build.json` only, keeping
 the published `dist/` free of compiled test output.
+
+### Privileged network-namespace tests
+
+Most Rust tests need no privileges. The `tests/netns_*.rs` supplements require Linux
+network namespaces, passwordless `sudo`/`CAP_NET_ADMIN`, `srtla_rec`,
+`srt-live-transmit`, and scenario-specific netem/tcpdump tools; otherwise they self-skip.
+On a dependency-rich host, the pre-existing `netns_basic` shutdown path can exceed 60–90
+seconds, so CI/release test commands are capped at 300 seconds and manual privileged runs
+must use `scripts/netns_test_gate.sh` (90 seconds per target by default). One separate
+real-Starlink stall reproduction is intentionally `#[ignore]` and runs only on hardware.
 
 ## Usage
 

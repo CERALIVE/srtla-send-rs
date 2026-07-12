@@ -309,5 +309,5 @@ Both listeners are opt-in but ship in the binary CeraUI launches:
 
 - `+toml` in manifest; lock +6 entries (mimalloc/cc/toml*)
 - `smallvec = =2.0.0-alpha.12` pre-release pin (inherited upstream) — worth review before any adoption
-- `rand` RUSTSEC-2026-0097 ignored with written rationale in `deny.toml`
+- `rand` RUSTSEC-2026-0097 resolved on runtime 0.10.2 and dev-only 0.9.4; no ignore remains
 - `mimalloc` as `#[global_allocator]` (`main.rs:5-7`, secure+v3) — unmeasured allocator swap on a 4 GB SBC

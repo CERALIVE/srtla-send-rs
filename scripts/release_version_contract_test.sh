@@ -2,14 +2,9 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-EXPECTED_VERSION="3.2.0"
-EXPECTED_TAG="v${EXPECTED_VERSION}"
-
 MANIFEST_VERSION="$(awk -F\" '/^version = /{print $2; exit}' "${REPO_ROOT}/Cargo.toml")"
-[[ "${MANIFEST_VERSION}" == "${EXPECTED_VERSION}" ]] || {
-  echo "release-version-contract: Cargo.toml has ${MANIFEST_VERSION}, expected ${EXPECTED_VERSION}" >&2
-  exit 1
-}
+[[ -n "${MANIFEST_VERSION}" ]] || { echo "release-version-contract: Cargo.toml version is empty" >&2; exit 1; }
+EXPECTED_TAG="v${MANIFEST_VERSION}"
 
 LOCK_VERSION="$(awk '
   /^\[\[package\]\]$/ { in_package = 1; package_name = ""; next }
@@ -20,8 +15,8 @@ LOCK_VERSION="$(awk '
     exit
   }
 ' "${REPO_ROOT}/Cargo.lock")"
-[[ "${LOCK_VERSION}" == "${EXPECTED_VERSION}" ]] || {
-  echo "release-version-contract: Cargo.lock has ${LOCK_VERSION}, expected ${EXPECTED_VERSION}" >&2
+[[ "${LOCK_VERSION}" == "${MANIFEST_VERSION}" ]] || {
+  echo "release-version-contract: Cargo.lock has ${LOCK_VERSION}, expected ${MANIFEST_VERSION}" >&2
   exit 1
 }
 
@@ -33,7 +28,7 @@ ARTIFACT_NAMES=()
 for ARCH in arm64 amd64; do
   BUILD_OUTPUT="$(GITHUB_REF_TYPE=tag GITHUB_REF_NAME="${EXPECTED_TAG}" \
     "${REPO_ROOT}/ci/build-deb.sh" "${ARCH}" "${TMPDIR}/srtla_send" "${TMPDIR}/out" 2>&1)"
-  ARTIFACT="${TMPDIR}/out/srtla-send-rs_${EXPECTED_VERSION}_${ARCH}.deb"
+  ARTIFACT="${TMPDIR}/out/srtla-send-rs_${MANIFEST_VERSION}_${ARCH}.deb"
   ARTIFACT_NAMES+=("$(basename "${ARTIFACT}")")
 
   grep -Fqx "build-deb: output=${ARTIFACT}" <<<"${BUILD_OUTPUT}" || {
@@ -41,8 +36,8 @@ for ARCH in arm64 amd64; do
     exit 1
   }
 
-  grep -Fq "| Version: ${EXPECTED_VERSION}" <<<"${BUILD_OUTPUT}" || {
-    echo "release-version-contract: control metadata is not Version: ${EXPECTED_VERSION}" >&2
+  grep -Fq "| Version: ${MANIFEST_VERSION}" <<<"${BUILD_OUTPUT}" || {
+    echo "release-version-contract: control metadata is not Version: ${MANIFEST_VERSION}" >&2
     exit 1
   }
 
@@ -52,18 +47,18 @@ for ARCH in arm64 amd64; do
       exit 1
     }
     DEB_VERSION="$(dpkg-deb -f "${ARTIFACT}" Version)"
-    [[ "${DEB_VERSION}" == "${EXPECTED_VERSION}" ]] || {
-      echo "release-version-contract: deb has ${DEB_VERSION}, expected ${EXPECTED_VERSION}" >&2
+    [[ "${DEB_VERSION}" == "${MANIFEST_VERSION}" ]] || {
+      echo "release-version-contract: deb has ${DEB_VERSION}, expected ${MANIFEST_VERSION}" >&2
       exit 1
     }
   fi
 done
 
-if GITHUB_REF_TYPE=tag GITHUB_REF_NAME="v3.2.1" \
+if GITHUB_REF_TYPE=tag GITHUB_REF_NAME="${EXPECTED_TAG}-mismatch" \
   "${REPO_ROOT}/ci/build-deb.sh" amd64 "${TMPDIR}/srtla_send" "${TMPDIR}/mismatch" \
   >/dev/null 2>&1; then
-  echo "release-version-contract: mismatched tag v3.2.1 was accepted" >&2
+  echo "release-version-contract: mismatched tag was accepted" >&2
   exit 1
 fi
 
-echo "release-version-contract: OK tag=${EXPECTED_TAG} artifacts=${ARTIFACT_NAMES[*]} version=${EXPECTED_VERSION}"
+echo "release-version-contract: OK tag=${EXPECTED_TAG} artifacts=${ARTIFACT_NAMES[*]} version=${MANIFEST_VERSION}"

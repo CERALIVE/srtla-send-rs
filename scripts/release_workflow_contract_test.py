@@ -1,174 +1,171 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["PyYAML==6.0.2"]
+# ///
+# ─── How to run ───
+# uv run scripts/release_workflow_contract_test.py
 
 from __future__ import annotations
 
-import json
 import unittest
 from pathlib import Path
-from typing import Any
+from typing import Final
 
-import yaml
-
-
-ROOT = Path(__file__).resolve().parents[1]
-RELEASE = ROOT / ".github/workflows/release.yml"
-BINDINGS = ROOT / ".github/workflows/publish-bindings.yml"
+from workflow_contract import JobStatus, load_workflow, simulate, transitive_needs
 
 
-def load_workflow(path: Path) -> dict[str, Any]:
-    with path.open(encoding="utf-8") as handle:
-        workflow = yaml.safe_load(handle)
-    assert isinstance(workflow, dict)
-    assert isinstance(workflow.get("jobs"), dict)
-    return workflow
-
-
-def needs(job: dict[str, Any]) -> list[str]:
-    value = job.get("needs", [])
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, list):
-        return [str(item) for item in value]
-    if isinstance(value, dict):
-        return [str(item) for item in value]
-    return []
-
-
-def job_text(job: dict[str, Any]) -> str:
-    return json.dumps(job, sort_keys=True)
-
-
-def publication_jobs(workflow: dict[str, Any]) -> set[str]:
-    jobs = workflow["jobs"]
-    return {
-        job_id
-        for job_id, job in jobs.items()
-        if any(
-            marker in job_text(job)
-            for marker in (
-                "softprops/action-gh-release",
-                "repository-dispatch",
-                "npm publish",
-            )
-        )
-    }
-
-
-def transitive_needs(workflow: dict[str, Any], job_id: str) -> set[str]:
-    jobs = workflow["jobs"]
-    found: set[str] = set()
-    pending = list(needs(jobs[job_id]))
-    while pending:
-        dependency = pending.pop()
-        if dependency in found:
-            continue
-        found.add(dependency)
-        pending.extend(needs(jobs[dependency]))
-    return found
-
-
-def simulate_gate_failure(workflow: dict[str, Any], failed_job: str) -> dict[str, str]:
-    jobs = workflow["jobs"]
-    statuses = {failed_job: "failure"}
-    remaining = set(jobs) - {failed_job}
-    while remaining:
-        progressed = False
-        for job_id in sorted(remaining):
-            dependencies = needs(jobs[job_id])
-            if any(dependency not in statuses for dependency in dependencies):
-                continue
-            statuses[job_id] = (
-                "skipped"
-                if any(statuses[dependency] != "success" for dependency in dependencies)
-                else "success"
-            )
-            remaining.remove(job_id)
-            progressed = True
-            break
-        if not progressed:
-            raise AssertionError(f"workflow graph is cyclic or has an unknown dependency: {remaining}")
-    return statuses
+ROOT: Final = Path(__file__).resolve().parents[1]
+CI: Final = ROOT / ".github/workflows/ci.yml"
+RELEASE: Final = ROOT / ".github/workflows/release.yml"
+BINDINGS: Final = ROOT / ".github/workflows/publish-bindings.yml"
 
 
 class ReleaseWorkflowContractTests(unittest.TestCase):
-    def test_release_has_full_rust_gate_and_parallel_safety_lanes(self) -> None:
+    def test_release_publication_needs_every_rust_gate(self) -> None:
         workflow = load_workflow(RELEASE)
-        jobs = workflow["jobs"]
-        for job_id in ("test", "loom", "miri", "build-deb", "release"):
-            self.assertIn(job_id, jobs)
+        gate = workflow.job("test")
 
-        rust_gate = job_text(jobs["test"])
-        for command in (
-            "cargo build --release",
-            "cargo fmt --all -- --check",
-            "cargo clippy -- -D warnings",
-            "cargo test --lib",
-            "cargo test --all-features",
-            "cargo test --features test-internals",
-            "cargo audit",
-            "cargo deny check advisories sources",
-        ):
-            self.assertIn(command, rust_gate)
+        self.assertTrue(gate.has_command("cargo", "build", "--release"))
+        self.assertTrue(gate.has_command("cargo", "fmt", "--check"))
+        self.assertTrue(gate.has_command("cargo", "clippy", "-D", "warnings"))
+        self.assertTrue(gate.has_command("cargo", "test", "--lib"))
+        self.assertTrue(gate.has_command("cargo", "test", "--all-features"))
+        self.assertTrue(gate.has_command("cargo", "test", "test-internals"))
+        self.assertTrue(gate.has_command("cargo", "audit"))
+        self.assertTrue(gate.has_command("cargo", "deny", "advisories", "sources"))
+        bounded_tests = tuple(
+            command
+            for command in gate.commands("cargo")
+            if command.has_arguments("test", "--all-features")
+            or command.has_arguments("test", "test-internals")
+        )
+        self.assertEqual(len(bounded_tests), 2)
+        self.assertTrue(all(command.is_bounded for command in bounded_tests))
 
-        self.assertIn("RUSTFLAGS", jobs["loom"].get("steps", [{}])[2].get("env", {}))
-        self.assertIn("--cfg loom", job_text(jobs["loom"]))
-        for command in (
+        build_dependencies = workflow.job("build-deb").needs
+        self.assertEqual(build_dependencies, frozenset(("test", "loom", "miri")))
+        self.assertEqual(workflow.job("release").needs, frozenset(("build-deb",)))
+        self.assertEqual(
+            transitive_needs(workflow, "release"),
+            frozenset(("test", "loom", "miri", "build-deb")),
+        )
+
+    def test_release_keeps_parallel_loom_and_miri_semantics(self) -> None:
+        workflow = load_workflow(RELEASE)
+        loom = workflow.job("loom")
+        miri = workflow.job("miri")
+
+        self.assertFalse(loom.needs)
+        self.assertFalse(miri.needs)
+        self.assertTrue(
+            any(
+                step.environment_value("RUSTFLAGS") == "--cfg loom"
+                for step in loom.steps
+            )
+        )
+        self.assertTrue(loom.has_command("cargo", "test", "subscription_loom"))
+        for test_filter in (
             "init_rebuilds_self_pointers_after_move",
             "iter_clamps_oversized_msg_len_to_mtu",
             "sockaddr_storage_roundtrip",
         ):
-            self.assertIn(command, job_text(jobs["miri"]))
+            self.assertTrue(miri.has_command("cargo", "miri", "test", test_filter))
 
-        self.assertGreaterEqual(set(needs(jobs["build-deb"])), {"test", "loom", "miri"})
-        self.assertEqual(needs(jobs["release"]), ["build-deb"])
-        self.assertTrue({"test", "loom", "miri"} <= transitive_needs(workflow, "release"))
-
-    def test_bindings_publish_has_separate_lint_typecheck_test_gate(self) -> None:
-        workflow = load_workflow(BINDINGS)
-        jobs = workflow["jobs"]
-        self.assertIn("test-bindings", jobs)
-        self.assertIn("publish", jobs)
-        gate_text = job_text(jobs["test-bindings"])
-        for command in (
-            "bun install --frozen-lockfile",
-            "bun run lint",
-            "bun run typecheck",
-            "bun test",
-            "bun run build",
-        ):
-            self.assertIn(command, gate_text)
-        self.assertNotIn("npm publish", gate_text)
-        self.assertEqual(needs(jobs["publish"]), ["test-bindings"])
-        self.assertEqual(transitive_needs(workflow, "publish"), {"test-bindings"})
-
-    def test_failed_gate_skips_every_publication_job(self) -> None:
-        release = load_workflow(RELEASE)
+    def test_failed_rust_gate_skips_every_release_publication(self) -> None:
+        workflow = load_workflow(RELEASE)
         for failed_gate in ("test", "loom", "miri"):
-            statuses = simulate_gate_failure(release, failed_gate)
-            for job_id in publication_jobs(release):
+            outcome = simulate(workflow, ((failed_gate, JobStatus.FAILURE),))
+            for publication_job in workflow.publication_jobs:
                 self.assertEqual(
-                    statuses[job_id],
-                    "skipped",
-                    f"{failed_gate} failure must block release job {job_id}",
+                    outcome.status(publication_job.job_id), JobStatus.SKIPPED
                 )
 
-        bindings = load_workflow(BINDINGS)
-        statuses = simulate_gate_failure(bindings, "test-bindings")
-        for job_id in publication_jobs(bindings):
-            self.assertEqual(
-                statuses[job_id],
-                "skipped",
-                f"binding gate failure must block publish job {job_id}",
-            )
+    def test_bindings_publish_requires_tests_and_verified_tag_provenance(self) -> None:
+        workflow = load_workflow(BINDINGS)
+        gate = workflow.job("test-bindings")
+        verifier = workflow.job("verify-release-ref")
+        publish = workflow.job("publish")
 
-    def test_publication_jobs_do_not_override_failed_needs(self) -> None:
+        for command in (
+            ("install", "--frozen-lockfile"),
+            ("lint",),
+            ("typecheck",),
+            ("test",),
+            ("build",),
+        ):
+            self.assertTrue(gate.has_command("pnpm", *command))
+        self.assertTrue(
+            verifier.has_command("bash", "ci/verify-bindings-release-ref.sh")
+        )
+        self.assertEqual(
+            publish.needs, frozenset(("test-bindings", "verify-release-ref"))
+        )
+        self.assertIn(("id-token", "write"), publish.permissions)
+
+    def test_manual_dispatch_can_only_reach_non_oidc_dry_run(self) -> None:
+        workflow = load_workflow(BINDINGS)
+        dry_run = workflow.job("dry-run")
+        publish = workflow.job("publish")
+
+        self.assertIn("workflow_dispatch", workflow.triggers)
+        self.assertIn("workflow_dispatch", dry_run.condition)
+        self.assertNotIn(("id-token", "write"), dry_run.permissions)
+        self.assertTrue(
+            any(
+                command.is_dry_run_package_publish
+                for command in dry_run.commands("npm")
+            )
+        )
+        self.assertFalse(
+            any(
+                command.is_mutating_package_publish
+                for command in dry_run.commands("npm")
+            )
+        )
+
+        outcome = simulate(
+            workflow,
+            (
+                ("test-bindings", JobStatus.SUCCESS),
+                ("verify-release-ref", JobStatus.SKIPPED),
+            ),
+        )
+        self.assertEqual(outcome.status(publish.job_id), JobStatus.SKIPPED)
+
+    def test_publication_jobs_never_override_failed_dependencies(self) -> None:
         for path in (RELEASE, BINDINGS):
             workflow = load_workflow(path)
-            for job_id in publication_jobs(workflow):
-                condition = str(workflow["jobs"][job_id].get("if", ""))
-                self.assertNotIn("always()", condition, f"{path}: {job_id}")
-                self.assertNotIn("continue-on-error", job_text(workflow["jobs"][job_id]))
+            for job in workflow.publication_jobs:
+                self.assertFalse(job.allows_failure)
+                self.assertNotIn("always()", job.condition)
+
+    def test_ci_executes_release_contracts_and_bounds_netns_capable_tests(self) -> None:
+        workflow = load_workflow(CI)
+        gate = workflow.job("test")
+
+        self.assertTrue(
+            gate.has_command("uv", "run", "scripts/release_workflow_contract_test.py")
+        )
+        self.assertTrue(
+            gate.has_command("bash", "scripts/release_version_contract_test.sh")
+        )
+        self.assertTrue(
+            gate.has_command("bash", "scripts/bindings_release_ref_contract_test.sh")
+        )
+        self.assertTrue(
+            gate.has_command(
+                "bash", "scripts/bindings_package_manager_contract_test.sh"
+            )
+        )
+        all_features = tuple(
+            command
+            for command in gate.commands("cargo")
+            if command.has_arguments("test", "--all-features")
+        )
+        self.assertEqual(len(all_features), 1)
+        self.assertTrue(all_features[0].is_bounded)
 
 
 if __name__ == "__main__":
-    unittest.main(verbosity=2)
+    _ = unittest.main(verbosity=2)
