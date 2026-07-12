@@ -12,6 +12,7 @@ import unittest
 from pathlib import Path
 from typing import Final
 
+from workflow_authority_contract_test import WorkflowAuthorityContractTests
 from workflow_contract import JobStatus, load_workflow, simulate, transitive_needs
 
 
@@ -44,27 +45,41 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         self.assertTrue(all(command.is_bounded for command in bounded_tests))
 
         build_dependencies = workflow.job("build-deb").needs
-        self.assertEqual(build_dependencies, frozenset(("test", "loom", "miri")))
+        self.assertEqual(
+            build_dependencies,
+            frozenset(("test", "loom", "miri")),
+        )
         self.assertEqual(workflow.job("release").needs, frozenset(("build-deb",)))
         self.assertEqual(
             transitive_needs(workflow, "release"),
             frozenset(("test", "loom", "miri", "build-deb")),
         )
 
-    def test_release_keeps_parallel_loom_and_miri_semantics(self) -> None:
-        workflow = load_workflow(RELEASE)
-        loom = workflow.job("loom")
-        miri = workflow.job("miri")
+    def test_ci_and_release_keep_exact_loom_command_contract(self) -> None:
+        for path in (CI, RELEASE):
+            with self.subTest(workflow=path.name):
+                loom = load_workflow(path).job("loom")
+                self.assertEqual(loom.name, "Loom model (subscription manager)")
+                self.assertFalse(loom.needs)
+                command_steps = tuple(
+                    (step, command)
+                    for step in loom.steps
+                    for command in step.commands
+                    if command.executable == "cargo"
+                )
+                self.assertEqual(len(command_steps), 1)
+                step, command = command_steps[0]
+                self.assertEqual(step.name, "Run loom model test")
+                self.assertEqual(step.environment_value("RUSTFLAGS"), "--cfg loom")
+                self.assertEqual(command.prefix, ())
+                self.assertEqual(
+                    command.arguments, ("test", "--test", "subscription_loom")
+                )
 
-        self.assertFalse(loom.needs)
+    def test_release_keeps_parallel_miri_semantics(self) -> None:
+        miri = load_workflow(RELEASE).job("miri")
+
         self.assertFalse(miri.needs)
-        self.assertTrue(
-            any(
-                step.environment_value("RUSTFLAGS") == "--cfg loom"
-                for step in loom.steps
-            )
-        )
-        self.assertTrue(loom.has_command("cargo", "test", "subscription_loom"))
         for test_filter in (
             "init_rebuilds_self_pointers_after_move",
             "iter_clamps_oversized_msg_len_to_mtu",
@@ -117,12 +132,7 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
                 for command in dry_run.commands("npm")
             )
         )
-        self.assertFalse(
-            any(
-                command.is_mutating_package_publish
-                for command in dry_run.commands("npm")
-            )
-        )
+        self.assertFalse(dry_run.has_external_mutation_authority)
 
         outcome = simulate(
             workflow,
@@ -165,6 +175,9 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         )
         self.assertEqual(len(all_features), 1)
         self.assertTrue(all_features[0].is_bounded)
+
+
+__all__ = ("ReleaseWorkflowContractTests", "WorkflowAuthorityContractTests")
 
 
 if __name__ == "__main__":

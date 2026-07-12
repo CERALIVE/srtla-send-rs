@@ -12,7 +12,7 @@ RTT). On the device it is driven by CeraUI and feeds the bonded path into
 `irl-srt-server`. Canonical branch `main`; sibling checkout under the workspace root
 (see CRITICAL CONSTRAINTS below).
 
-> **Status:** v1.0.0 — CeraLive parity layer complete. Fork created from upstream HEAD;
+> **Status:** current source v3.2.0; CeraLive parity milestone v1.0.0 complete. Fork created from upstream HEAD;
 > nightly pinned; full gate green on the pinned toolchain. Landed: CLI parity contract
 > (Task 9: `--verbose`/`--dry-run`/`--stats-file`/`--stats-file-interval`), the opt-in
 > ADR-001 telemetry sink (Task 10: `src/telemetry_file.rs`), signal/startup parity
@@ -25,7 +25,7 @@ RTT). On the device it is driven by CeraUI and feeds the bonded path into
 > pass (2026-06-19: S9 all-links-failed timeout fix, S5 dead-reader restart, S6 RTT
 > clamp + classifier fix, S7 zero-RTT keepalive rejection — see ROBUSTNESS FIXES).
 > Hardening pass (2026-06-25): EDPF scheduler state moved off thread-local + EDPF
-> pipeline tests, loom/miri/proptest model+fuzz lanes, telemetry fsync moved off the
+> pipeline tests, production-linked concurrency/Miri/proptest gates, telemetry fsync moved off the
 > packet-forwarding loop, keepalive interop (BELABOX 2-byte vs extended) + wire
 > conformance goldens, mimalloc gated behind a default-on feature, netns de-flake to
 > bounded readiness polling, and a final docs-consistency audit (T21: dangling-ref
@@ -250,22 +250,25 @@ was reproduced on both `origin/main` and this branch (bounded attempts exceeded 
 `stall_deselect_real_starlink_repro` is one intentionally ignored hardware-only test;
 run it with `--ignored` only on the bonded Starlink/cellular validation rig.
 
-**Loom model test (NOT part of the default gate).** `tests/subscription_loom.rs`
-exhaustively model-checks the `SubscriptionManager` (`src/subscription.rs`)
-`broadcast` (telemetry tick) vs `subscribe`/drop (control thread) interleavings
-over its `Mutex<Inner>` + capacity-1 `sync_channel`. It is gated `#![cfg(loom)]`,
-so it compiles to nothing — and the `loom` dev-dep stays unused — unless the
-`loom` cfg is set. Run it deliberately (it is a dedicated BLOCKING CI job, not
-part of `cargo test`):
+**Production subscription-concurrency invariant (BLOCKING, separate target).**
+`tests/subscription_loom.rs` uses Loom to enumerate schedules while racing the real
+`SubscriptionManager` (`src/subscription.rs`) `broadcast` path against its real
+`subscribe`/drop operations. Under `cfg(loom)`, only the synchronization primitives
+and capacity-one channel adapter change; the production manager state and methods are
+the code under test. The behavioral invariants are that a concurrent subscriber
+always receives the broadcast either live or through last-frame replay, and that a
+disconnected subscriber is pruned by the next broadcast. Run the dedicated target
+with the exact cross-repo command contract:
 
 ```bash
-RUSTFLAGS="--cfg loom" cargo test --features test-internals --test subscription_loom
+RUSTFLAGS="--cfg loom" cargo test --test subscription_loom
 ```
 
-It asserts four invariants under all schedules: no deadlock; `last_frame` equals
-the broadcast frame; a non-full subscriber registered before a broadcast never
-loses that frame (no lost wakeup); and a disconnected subscriber is pruned on the
-next broadcast (no panic, no unbounded growth).
+The `loom` job ID, display name, step name, environment, test filename, and command
+are retained as a cross-repo CI contract. The former test copied the manager/channel
+algorithm into an independent model, so it could stay green after production drift.
+The replacement drives the production manager directly and checks externally visible
+delivery, replay, and pruning behavior across the schedules Loom explores.
 
 **Miri lane (BLOCKING CI job, NOT part of the default gate).** The only `unsafe`
 FFI in the tree is the `recvmmsg` batch-receive path
@@ -320,15 +323,17 @@ the binding's Bun-native tests/API; it shares no triggers with the Rust workflow
   and packages each `.deb` so a packaging break is caught before any tag. Upstream's
   stable/beta/windows/macOS jobs are kept; under the pin they must call `cargo +<channel>`
   (explicit `+` outranks `rust-toolchain.toml`) to actually exercise that channel.
-- **`release.yml`** (tag push `v*`) — runs the full Rust gate plus the blocking loom
-  and miri lanes in parallel; `build-deb` needs all three before rebuilding both
+- **`release.yml`** (tag push `v*`) — runs the full Rust gate plus the blocking
+  `loom` contract job (production subscription-concurrency invariant) and Miri lane in
+  parallel; `build-deb` needs all three before rebuilding both
   arches, packaging, and attaching both `.deb`s + `.sha256`s to the GitHub release.
   No crates.io publish; no scheduled upstream-sync.
 - **`publish-bindings.yml`** (tag push **`bindings-v*`**) — publishes
   `@ceralive/srtla-send` to the **public npm registry** (`@ceralive` scope,
   `registry-url: https://registry.npmjs.org/`) via npm **OIDC trusted publishing**
   (the `publish` job grants `id-token: write`, `npm publish --access public` — **no `NODE_AUTH_TOKEN`**;
-  requires npm ≥ 11.5.1 / Node ≥ 22.14). Mirrors `@ceralive/cerastream`'s publish flow.
+  npm is pinned to `11.18.0`, above the trusted-publishing minimum of 11.5.1; Node is 24).
+  Mirrors `@ceralive/cerastream`'s publish flow.
   The `test-bindings` job uses the committed pnpm lockfile to run lint, typecheck, tests,
   build, and the tarball guard, then uploads validated `dist/`. The OIDC `publish` job
   needs both that gate and `verify-release-ref`, which accepts only a tag-push event whose
@@ -404,7 +409,9 @@ ci/build-deb.sh      single-source .deb packager (control + filename + glob self
 .github/workflows/   ci.yml (gate + cross-build/package) + release.yml (tag-triggered) +
   publish-bindings.yml (binding gate + npm publish)
 scripts/release_workflow_contract_test.py  release graph and failure-propagation checks
-scripts/workflow_contract.py  typed semantic GitHub workflow parser/model
+scripts/workflow_authority_contract_test.py  adversarial write/secret publication-authority checks
+scripts/workflow_contract.py  typed semantic GitHub workflow graph/model
+scripts/workflow_yaml.py  typed YAML-node and publication-authority parser
 scripts/release_version_contract_test.sh  manifest-derived tag/package/.deb version contract
 scripts/bindings_release_ref_contract_test.sh  binding tag/ref/version/SHA provenance contract
 scripts/bindings_package_manager_contract_test.sh  root pnpm policy contract
@@ -469,8 +476,7 @@ is `cargo clippy -- -D warnings` (lib+bin only, matches `ci.yml:32`).
 
 ### Task 8 -- TS binding test hardening
 
-New `bindings/typescript/tests/telemetry-reader.test.ts` (24 tests, 52 total after
-adding to the existing 28):
+New `bindings/typescript/tests/telemetry-reader.test.ts` (24 tests; 68 binding tests total):
 
 - Valid golden fixture: full ADR-001 typed shape (both uplinks, all 7 per-link fields),
   `bitrate_bps` x8 invariant.
@@ -478,6 +484,9 @@ adding to the existing 28):
   missing required field via `test.each`, wrong types, out-of-domain numerics -- all
   return graceful `null`.
 - Schema version: `schema_version` 2/0/missing/non-numeric all return `null`.
+- `src/telemetry/watch.test.ts` keeps six distinct watcher contracts without
+  fixed sleeps: absent, stale-boundary, stop, file-appears, invalid-schema, and
+  parsed-payload behavior. Callback/event-loop completion replaces timed windows.
 
 `tsconfig.json` fix: added `tests/**/*` to `include`; moved `rootDir: "src"` into
 `tsconfig.build.json` only. This ensures `pnpm typecheck` typechecks tests (not

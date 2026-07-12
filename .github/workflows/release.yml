@@ -76,7 +76,7 @@ jobs:
       - name: Run loom model test
         env:
           RUSTFLAGS: --cfg loom
-        run: cargo test --features test-internals --test subscription_loom
+        run: cargo test --test subscription_loom
 
   miri:
     name: Miri (batch_recv pure pointer logic)

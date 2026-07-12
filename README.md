@@ -137,10 +137,12 @@ and pull request (`.github/workflows/ci.yml`):
 - Cross-builds for `aarch64-unknown-linux-gnu` (device) and `x86_64-unknown-linux-gnu`,
   each packaged into a `.deb`
 - Cross-platform/cross-channel coverage (Linux/Windows/macOS, stable/beta)
-- A `v*` release runs the full Rust gate plus the parallel loom and miri lanes before
-  either architecture can be packaged or attached to the GitHub release
-- `uv run scripts/release_workflow_contract_test.py` semantically checks publication graphs and
-  simulates a failed gate to verify every publish job is skipped
+- A `v*` release runs the full Rust gate plus the parallel `loom` contract job
+  (a production subscription-concurrency invariant) and Miri lane before either
+  architecture can be packaged or attached to the GitHub release
+- `uv run scripts/release_workflow_contract_test.py` derives publication capability
+  structurally from write permissions and secret references, then simulates a failed
+  gate to verify every publication-capable job is skipped
 - `bash scripts/release_version_contract_test.sh` proves `v3.2.0` selects 3.2.0 package
   metadata/artifact names and rejects a tag that differs from `Cargo.toml`
 
@@ -163,7 +165,8 @@ The `bindings/typescript/` helper publishes to the **public npm registry** as
 using npm **OIDC trusted publishing** (no `NPM_TOKEN`) — the same flow as
 `@ceralive/cerastream`. It is a **separate** release track from the Rust `.deb`s:
 pushing a `bindings-vYYYY.M.P` tag runs the typecheck + test gate, builds `dist/`, and
-publishes the package. The pnpm gate runs lint, typecheck, Bun-native tests, and build; a
+publishes the package with the npm CLI pinned to `11.18.0`. The pnpm gate runs lint,
+typecheck, Bun-native tests, and build; a
 separate publish job needs both validated `dist/` and exact tag/ref/version/SHA
 provenance. Manual workflow dispatch is dry-run-only and has no path to the OIDC publish
 job. The published version is the committed
@@ -181,10 +184,16 @@ The telemetry layer has hardened integration tests:
   across a range of wire byte rates.
 - **`tests/telemetry_fixture_parity.rs`** (3 tests): Rust golden fixture vs TS-binding
   golden fixture asserted byte-identical, confirming the two consumers stay in sync.
-- **`bindings/typescript/tests/telemetry-reader.test.ts`** (24 tests, 52 total): valid
+- **`bindings/typescript/tests/telemetry-reader.test.ts`** (24 tests, 68 total): valid
   ADR-001 shape, `bitrate_bps` x8 invariant, malformed input returns `null` (non-JSON,
   truncated, empty, non-object, absent file, missing required fields, wrong types,
   out-of-domain numerics, schema version mismatch).
+- **`bindings/typescript/src/telemetry/watch.test.ts`** (6 tests): event-driven watcher
+  checks for absent, stale-boundary, stop, file-appears, invalid-schema, and payload
+  behavior without fixed sleep windows.
+- **`tests/subscription_loom.rs`** (2 tests): Loom schedule exploration against the
+  production manager under `cfg(loom)`, covering concurrent live-or-replay delivery
+  and disconnected-subscriber pruning without copying the manager algorithm.
 
 The binding's `tsconfig.json` was updated to include `tests/**/*` so `pnpm typecheck`
 typechecks test files. `rootDir: "src"` moved to `tsconfig.build.json` only, keeping

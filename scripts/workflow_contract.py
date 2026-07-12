@@ -9,26 +9,16 @@ import yaml
 from yaml import SafeLoader
 from yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
 
-
-class WorkflowFormatError(RuntimeError):
-    pass
-
-
-@dataclass(frozen=True, slots=True)
-class NodeMap:
-    entries: tuple[tuple[str, Node], ...]
-
-    def get(self, key: str) -> Node | None:
-        return next((value for name, value in self.entries if name == key), None)
-
-    def require(self, key: str) -> Node:
-        value = self.get(key)
-        if value is None:
-            raise WorkflowFormatError(f"missing required key: {key}")
-        return value
-
-    def keys(self) -> frozenset[str]:
-        return frozenset(name for name, _value in self.entries)
+from workflow_yaml import (
+    WorkflowFormatError,
+    mapping,
+    optional_scalar,
+    permissions,
+    scalar,
+    sequence,
+    string_pairs,
+    uses_secret,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,14 +35,6 @@ class ShellCommand:
         return "timeout" in self.prefix
 
     @property
-    def is_mutating_package_publish(self) -> bool:
-        return (
-            self.executable in ("npm", "pnpm")
-            and self.has_arguments("publish")
-            and "--dry-run" not in self.arguments
-        )
-
-    @property
     def is_dry_run_package_publish(self) -> bool:
         return self.executable in ("npm", "pnpm") and self.has_arguments(
             "publish", "--dry-run"
@@ -61,6 +43,7 @@ class ShellCommand:
 
 @dataclass(frozen=True, slots=True)
 class Step:
+    name: str
     action: str | None
     commands: tuple[ShellCommand, ...]
     environment: tuple[tuple[str, str], ...]
@@ -72,11 +55,13 @@ class Step:
 @dataclass(frozen=True, slots=True)
 class Job:
     job_id: str
+    name: str
     needs: frozenset[str]
     condition: str
     permissions: frozenset[tuple[str, str]]
     steps: tuple[Step, ...]
     allows_failure: bool
+    uses_secret: bool
 
     def commands(self, executable: str) -> tuple[ShellCommand, ...]:
         return tuple(
@@ -92,15 +77,9 @@ class Job:
         )
 
     @property
-    def mutates_external_release_state(self) -> bool:
-        publication_actions = (
-            "softprops/action-gh-release@",
-            "peter-evans/repository-dispatch@",
-        )
-        return any(
-            (step.action is not None and step.action.startswith(publication_actions))
-            or any(command.is_mutating_package_publish for command in step.commands)
-            for step in self.steps
+    def has_external_mutation_authority(self) -> bool:
+        return self.uses_secret or any(
+            access == "write" for _scope, access in self.permissions
         )
 
 
@@ -119,7 +98,7 @@ class Workflow:
 
     @property
     def publication_jobs(self) -> tuple[Job, ...]:
-        return tuple(job for job in self.jobs if job.mutates_external_release_state)
+        return tuple(job for job in self.jobs if job.has_external_mutation_authority)
 
 
 class JobStatus(StrEnum):
@@ -137,50 +116,6 @@ class Simulation:
         if status is None:
             raise WorkflowFormatError(f"simulation omitted job: {job_id}")
         return status
-
-
-def _mapping(node: Node) -> NodeMap:
-    match node:
-        case MappingNode(value=pairs):
-            entries: list[tuple[str, Node]] = []
-            for key_node, value_node in pairs:
-                entries.append((_scalar(key_node), value_node))
-            return NodeMap(tuple(entries))
-        case ScalarNode() | SequenceNode():
-            raise WorkflowFormatError("expected a YAML mapping")
-        case _:
-            raise WorkflowFormatError("unsupported YAML node")
-
-
-def _scalar(node: Node) -> str:
-    match node:
-        case ScalarNode(value=value):
-            return value
-        case MappingNode() | SequenceNode():
-            raise WorkflowFormatError("expected a YAML scalar")
-        case _:
-            raise WorkflowFormatError("unsupported YAML node")
-
-
-def _sequence(node: Node) -> tuple[Node, ...]:
-    match node:
-        case SequenceNode(value=items):
-            return tuple(items)
-        case ScalarNode() | MappingNode():
-            raise WorkflowFormatError("expected a YAML sequence")
-        case _:
-            raise WorkflowFormatError("unsupported YAML node")
-
-
-def _optional_scalar(mapping: NodeMap, key: str) -> str:
-    node = mapping.get(key)
-    return "" if node is None else _scalar(node)
-
-
-def _string_pairs(node: Node | None) -> tuple[tuple[str, str], ...]:
-    if node is None:
-        return ()
-    return tuple((key, _scalar(value)) for key, value in _mapping(node).entries)
 
 
 def _commands(script: str) -> tuple[ShellCommand, ...]:
@@ -204,12 +139,13 @@ def _commands(script: str) -> tuple[ShellCommand, ...]:
 
 
 def _step(node: Node) -> Step:
-    mapping = _mapping(node)
-    run = _optional_scalar(mapping, "run")
+    node_map = mapping(node)
+    run = optional_scalar(node_map, "run")
     return Step(
-        action=_optional_scalar(mapping, "uses") or None,
+        name=optional_scalar(node_map, "name"),
+        action=optional_scalar(node_map, "uses") or None,
         commands=_commands(run),
-        environment=_string_pairs(mapping.get("env")),
+        environment=string_pairs(node_map.get("env")),
     )
 
 
@@ -218,25 +154,32 @@ def _needs(node: Node | None) -> frozenset[str]:
         return frozenset()
     match node:
         case ScalarNode():
-            return frozenset((_scalar(node),))
+            return frozenset((scalar(node),))
         case SequenceNode():
-            return frozenset(_scalar(item) for item in _sequence(node))
+            return frozenset(scalar(item) for item in sequence(node))
         case MappingNode():
             raise WorkflowFormatError("job needs must be a string or sequence")
         case _:
             raise WorkflowFormatError("unsupported YAML node")
 
 
-def _job(job_id: str, node: Node) -> Job:
-    mapping = _mapping(node)
-    steps_node = mapping.require("steps")
+def _job(
+    job_id: str,
+    node: Node,
+    inherited_permissions: frozenset[tuple[str, str]],
+    inherited_secret: bool,
+) -> Job:
+    node_map = mapping(node)
+    steps_node = node_map.require("steps")
     return Job(
         job_id=job_id,
-        needs=_needs(mapping.get("needs")),
-        condition=_optional_scalar(mapping, "if"),
-        permissions=frozenset(_string_pairs(mapping.get("permissions"))),
-        steps=tuple(_step(step) for step in _sequence(steps_node)),
-        allows_failure=_optional_scalar(mapping, "continue-on-error") == "true",
+        name=optional_scalar(node_map, "name"),
+        needs=_needs(node_map.get("needs")),
+        condition=optional_scalar(node_map, "if"),
+        permissions=permissions(node_map.get("permissions"), inherited_permissions),
+        steps=tuple(_step(step) for step in sequence(steps_node)),
+        allows_failure=optional_scalar(node_map, "continue-on-error") == "true",
+        uses_secret=inherited_secret or uses_secret(node),
     )
 
 
@@ -245,19 +188,27 @@ def load_workflow(path: Path) -> Workflow:
         document = yaml.compose(handle, Loader=SafeLoader)
     if document is None:
         raise WorkflowFormatError(f"empty workflow: {path}")
-    root = _mapping(document)
+    root = mapping(document)
+    permissions_node = root.get("permissions")
+    inherited_permissions = (
+        permissions(permissions_node)
+        if permissions_node is not None
+        else frozenset((("*", "write"),))
+    )
+    inherited_secret = uses_secret(root.get("env"))
     trigger_node = root.require("on")
     match trigger_node:
         case ScalarNode():
-            triggers = frozenset((_scalar(trigger_node),))
+            triggers = frozenset((scalar(trigger_node),))
         case MappingNode():
-            triggers = _mapping(trigger_node).keys()
+            triggers = mapping(trigger_node).keys()
         case SequenceNode():
-            triggers = frozenset(_scalar(item) for item in _sequence(trigger_node))
+            triggers = frozenset(scalar(item) for item in sequence(trigger_node))
         case _:
             raise WorkflowFormatError("unsupported trigger node")
     jobs = tuple(
-        _job(job_id, node) for job_id, node in _mapping(root.require("jobs")).entries
+        _job(job_id, node, inherited_permissions, inherited_secret)
+        for job_id, node in mapping(root.require("jobs")).entries
     )
     return Workflow(triggers=triggers, jobs=jobs)
 

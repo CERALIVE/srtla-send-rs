@@ -31,7 +31,7 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
       - name: Install uv for typed workflow contracts
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@v8
 
       - name: Verify release workflow contracts
         run: uv run scripts/release_workflow_contract_test.py
@@ -76,11 +76,6 @@ jobs:
       - name: Run supply-chain checks (advisories + sources)
         run: cargo deny check advisories sources
 
-  # Dedicated BLOCKING loom model-check of the subscription manager. Gated
-  # `#![cfg(loom)]`, so it is invisible to the `test` job above; it only compiles
-  # and runs under `RUSTFLAGS="--cfg loom"`. Exhaustively explores the broadcast
-  # vs subscribe/drop interleavings (no deadlock, no lost last frame, dead
-  # subscriber pruned). A required gate: a regression here fails the PR.
   loom:
     name: Loom model (subscription manager)
     runs-on: ubuntu-latest
@@ -94,7 +89,7 @@ jobs:
       - name: Run loom model test
         env:
           RUSTFLAGS: --cfg loom
-        run: cargo test --features test-internals --test subscription_loom
+        run: cargo test --test subscription_loom
 
   # Dedicated BLOCKING miri lane over the ONLY unsafe FFI in the tree: the
   # `recvmmsg` batch-receive path in src/connection/batch_recv.rs. miri vets the

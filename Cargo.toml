@@ -47,6 +47,9 @@ mimalloc = { version = "0.1", default-features = false, features = [
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[target.'cfg(loom)'.dependencies]
+loom = "0.7.2"
+
 [features]
 default = ["mimalloc-allocator"]
 # Default-on preserves the shipped binary byte-for-byte; --no-default-features
@@ -55,11 +58,6 @@ mimalloc-allocator = ["dep:mimalloc"]
 test-internals = []
 
 [lints.rust]
-# `loom` is a build-time cfg (not a Cargo feature): set via `RUSTFLAGS="--cfg
-# loom"` only for the subscription-manager model test. Declaring it here teaches
-# the `unexpected_cfgs` lint that `cfg(loom)` / `cfg(not(loom))` in lib.rs and
-# main.rs are intentional, so the default `clippy -- -D warnings` gate stays
-# green without `loom` ever being set.
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
 
 [lib]
@@ -76,11 +74,6 @@ tempfile = "3"
 assert_matches = "1"
 network-sim = { path = "crates/network-sim" }
 criterion = "0.8"
-# Concurrency model checker for the subscription manager interleavings. Only
-# compiled into `tests/subscription_loom.rs` (gated `#![cfg(loom)]`), so it never
-# touches the default `cargo test` gate; run it via
-# `RUSTFLAGS="--cfg loom" cargo test --features test-internals --test subscription_loom`.
-loom = "0.7.2"
 proptest = "1.11"
 
 [[bench]]
