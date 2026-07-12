@@ -45,7 +45,7 @@ on the build host; results are not committed to the repo.
 
 ## Caveat — unmeasured on the device target
 
-The benchmark runs on the build host, **not** on the Jetson Nano / 4 GB SBC the
+The benchmark runs on the build host, **not** on the constrained 4 GB SBC class the
 device image targets. The original strata-port evaluation flagged mimalloc as an
 "unmeasured allocator swap on a 4 GB SBC" (see
 `docs/notes/strata-port-evaluation.md`). This bench validates that keeping

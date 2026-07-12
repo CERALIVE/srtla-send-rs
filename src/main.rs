@@ -1,9 +1,15 @@
+#[cfg(not(loom))]
 use std::net::{IpAddr, SocketAddr};
+#[cfg(not(loom))]
 use std::str::FromStr;
 
+#[cfg(not(loom))]
 use anyhow::{Context, Result, anyhow};
+#[cfg(not(loom))]
 use clap::Parser;
+#[cfg(not(loom))]
 use tracing::{info, warn};
+#[cfg(not(loom))]
 use tracing_subscriber::EnvFilter;
 
 // Use mimalloc as the global allocator for the binary (non-Windows only).
@@ -13,11 +19,6 @@ use tracing_subscriber::EnvFilter;
 #[global_allocator]
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-// `--cfg loom` (the subscription-manager model test) forces tokio to drop its
-// `net`/`time` modules, which this binary uses pervasively, so under loom the
-// whole real program is compiled out and replaced by a stub `main`. `cargo test
-// --test subscription_loom` still builds every bin to expose `CARGO_BIN_EXE_*`,
-// hence the stub rather than removing the target. No real build sets `loom`.
 #[cfg(loom)]
 fn main() {}
 
@@ -56,6 +57,7 @@ mod test_helpers;
 use mode::SchedulingMode;
 
 /// Default telemetry write cadence in milliseconds (`--stats-file-interval`).
+#[cfg(not(loom))]
 const DEFAULT_STATS_FILE_INTERVAL_MS: u64 = 1000;
 
 #[cfg(not(loom))]

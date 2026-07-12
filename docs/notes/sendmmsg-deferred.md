@@ -23,7 +23,7 @@ queued packet, so a flush of N packets is N syscalls.
 - **Linux-only `unsafe` FFI.** `sendmmsg` is not in the stable Tokio surface; using
   it means OS-specific `unsafe` code and a non-portable code path, raising the
   maintenance and soundness cost (cf. the `recvmmsg` Miri lane in `ci.yml`).
-- **No profiling justification.** There is no measurement on the **Jetson Nano**
+- **No profiling justification.** There is no measurement on the constrained
   device target showing the per-packet `send` syscall is a bottleneck. Optimizing
   without that evidence is speculative.
 

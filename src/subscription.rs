@@ -19,9 +19,17 @@
 //! non-Unix targets (where it is allow-listed) but still compiled so the
 //! last-frame replay stays wired into the shared state.
 
+#[cfg(loom)]
+use std::sync::mpsc::TrySendError;
+#[cfg(not(loom))]
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
+#[cfg(not(loom))]
 use std::sync::{Arc, Mutex};
 
+#[cfg(loom)]
+use loom::sync::{Arc, Mutex};
+#[cfg(loom)]
+use loom_channel::{Receiver, SyncSender, sync_channel};
 use tracing::warn;
 
 /// Per-subscriber channel capacity. Capacity 1 keeps only the freshest pending
@@ -31,9 +39,17 @@ const SUBSCRIBER_CHANNEL_CAPACITY: usize = 1;
 
 /// Shared telemetry-event fan-out: live subscriber channels plus the last
 /// broadcast frame for immediate replay on subscribe.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct SubscriptionManager {
     inner: Arc<Mutex<Inner>>,
+}
+
+impl Default for SubscriptionManager {
+    fn default() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(Inner::default())),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -97,19 +113,99 @@ impl SubscriptionManager {
     /// Lock the shared state, recovering the guard even if a previous holder
     /// panicked (the data is plain owned values, so a poisoned lock is safe to
     /// keep using).
+    #[cfg(not(loom))]
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
         self.inner
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    #[cfg(loom)]
+    fn lock(&self) -> loom::sync::MutexGuard<'_, Inner> {
+        self.inner.lock().expect("subscription manager lock")
+    }
+
     /// Number of live subscribers. Test-only assertion hook used by the lib
     /// test tree; `dead_code`-allowed for the binary's own test build, which
     /// recompiles this shared module without those tests.
-    #[cfg(all(test, unix))]
+    #[cfg(any(test, feature = "test-internals", loom))]
     #[allow(dead_code)]
     pub fn subscriber_count(&self) -> usize {
         self.lock().subscribers.len()
+    }
+}
+
+#[cfg(loom)]
+pub mod loom_channel {
+    use std::sync::mpsc::{TryRecvError, TrySendError};
+
+    use loom::sync::{Arc, Mutex};
+
+    struct Channel<T> {
+        state: Mutex<ChannelState<T>>,
+    }
+
+    struct ChannelState<T> {
+        slot: Option<T>,
+        receiver_alive: bool,
+    }
+
+    pub struct SyncSender<T> {
+        channel: Arc<Channel<T>>,
+    }
+
+    pub struct Receiver<T> {
+        channel: Arc<Channel<T>>,
+    }
+
+    pub fn sync_channel<T>(capacity: usize) -> (SyncSender<T>, Receiver<T>) {
+        assert_eq!(capacity, 1, "loom channel models capacity one");
+        let channel = Arc::new(Channel {
+            state: Mutex::new(ChannelState {
+                slot: None,
+                receiver_alive: true,
+            }),
+        });
+        (
+            SyncSender {
+                channel: Arc::clone(&channel),
+            },
+            Receiver { channel },
+        )
+    }
+
+    impl<T> SyncSender<T> {
+        pub fn try_send(&self, value: T) -> Result<(), TrySendError<T>> {
+            let mut state = self.channel.state.lock().expect("loom channel lock");
+            if !state.receiver_alive {
+                return Err(TrySendError::Disconnected(value));
+            }
+            if state.slot.is_some() {
+                return Err(TrySendError::Full(value));
+            }
+            state.slot = Some(value);
+            Ok(())
+        }
+    }
+
+    impl<T> Receiver<T> {
+        pub fn try_recv(&self) -> Result<T, TryRecvError> {
+            self.channel
+                .state
+                .lock()
+                .expect("loom channel lock")
+                .slot
+                .take()
+                .ok_or(TryRecvError::Empty)
+        }
+    }
+
+    impl<T> Drop for Receiver<T> {
+        fn drop(&mut self) {
+            let mut state = self.channel.state.lock().expect("loom channel lock");
+            state.receiver_alive = false;
+            state.slot = None;
+        }
     }
 }
 

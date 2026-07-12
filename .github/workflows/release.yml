@@ -10,7 +10,7 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 # Never cancel a release mid-run — a tag build that uploads .debs must complete.
 concurrency:
@@ -18,8 +18,91 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  test:
+    name: Test (pinned nightly)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        run: cargo clippy -- -D warnings
+
+      - name: Check compilation
+        run: cargo check
+
+      - name: Check compilation without test features
+        run: cargo check --release
+
+      - name: Run library tests
+        run: cargo test --lib
+
+      - name: Run bounded all-features test command
+        run: timeout --foreground --kill-after=10s 300s cargo test --all-features --verbose
+
+      - name: Run test-internals suite
+        run: timeout --foreground --kill-after=10s 300s cargo test --features test-internals
+
+      - name: Install cargo-audit + cargo-deny (prebuilt)
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,cargo-deny
+
+      - name: Run security audit
+        run: cargo audit
+
+      - name: Run supply-chain checks
+        run: cargo deny check advisories sources
+
+  loom:
+    name: Loom model (subscription manager)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Run loom model test
+        env:
+          RUSTFLAGS: --cfg loom
+        run: cargo test --test subscription_loom
+
+  miri:
+    name: Miri (batch_recv pure pointer logic)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Install miri component
+        run: rustup component add miri
+
+      - name: Miri — self-pointer rebuild after move
+        run: cargo miri test --lib --no-default-features --features test-internals init_rebuilds_self_pointers_after_move
+
+      - name: Miri — oversized msg_len clamps to MTU
+        run: cargo miri test --lib --no-default-features --features test-internals iter_clamps_oversized_msg_len_to_mtu
+
+      - name: Miri — sockaddr_storage round-trip decode
+        run: cargo miri test --lib --no-default-features --features test-internals sockaddr_storage_roundtrip
+
   build-deb:
     name: Build .deb (${{ matrix.arch }})
+    needs: [test, loom, miri]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -81,6 +164,8 @@ jobs:
   release:
     name: Attach .debs to release
     needs: build-deb
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
       - name: Download build artifacts

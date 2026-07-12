@@ -12,7 +12,7 @@ RTT). On the device it is driven by CeraUI and feeds the bonded path into
 `irl-srt-server`. Canonical branch `main`; sibling checkout under the workspace root
 (see CRITICAL CONSTRAINTS below).
 
-> **Status:** v1.0.0 — CeraLive parity layer complete. Fork created from upstream HEAD;
+> **Status:** current source v3.2.0; CeraLive parity milestone v1.0.0 complete. Fork created from upstream HEAD;
 > nightly pinned; full gate green on the pinned toolchain. Landed: CLI parity contract
 > (Task 9: `--verbose`/`--dry-run`/`--stats-file`/`--stats-file-interval`), the opt-in
 > ADR-001 telemetry sink (Task 10: `src/telemetry_file.rs`), signal/startup parity
@@ -25,7 +25,7 @@ RTT). On the device it is driven by CeraUI and feeds the bonded path into
 > pass (2026-06-19: S9 all-links-failed timeout fix, S5 dead-reader restart, S6 RTT
 > clamp + classifier fix, S7 zero-RTT keepalive rejection — see ROBUSTNESS FIXES).
 > Hardening pass (2026-06-25): EDPF scheduler state moved off thread-local + EDPF
-> pipeline tests, loom/miri/proptest model+fuzz lanes, telemetry fsync moved off the
+> pipeline tests, production-linked concurrency/Miri/proptest gates, telemetry fsync moved off the
 > packet-forwarding loop, keepalive interop (BELABOX 2-byte vs extended) + wire
 > conformance goldens, mimalloc gated behind a default-on feature, netns de-flake to
 > bounded readiness polling, and a final docs-consistency audit (T21: dangling-ref
@@ -128,13 +128,14 @@ them in an upstream merge or a `cargo upgrade` sweep without a deliberate PR:
 - **`libc = "0.2"`.** Stay on the 0.2 line — do **not** bump to a `1.0` alpha/pre-release.
 
 **`rand` is 0.10 (workspace + `crates/network-sim`), single version in the shipped
-binary (0.10.1).** rand 0.9→0.10 was an API break: `rand_core::RngCore` was renamed to
+binary (0.10.2).** rand 0.9→0.10 was an API break: `rand_core::RngCore` was renamed to
 `rand_core::Rng` (re-exported as `rand::Rng`) and the old `rand::Rng` ext trait became
 `rand::RngExt`. Call sites use `use rand::Rng;` for `fill_bytes`/`next_u64`
 (`src/registration/`, `src/connection/`) and `rand::RngExt` for `.random()`
-(`crates/network-sim/src/scenario.rs`). A `rand 0.9.2` duplicate persists **only** via
+(`crates/network-sim/src/scenario.rs`). A `rand 0.9.4` duplicate persists **only** via
 the `proptest` dev-dependency (latest 1.11.0 has no rand-0.10 release); it is dev/test
--only and absent from the release binary — see the `deny.toml` RUSTSEC-2026-0097 note.
+-only and absent from the release binary. Both 0.10.2 and 0.9.4 are patched for
+RUSTSEC-2026-0097, so `deny.toml` no longer carries an advisory ignore.
 
 ## PARITY CONTRACT (do not break without a versioned change)
 
@@ -232,30 +233,42 @@ cargo build --release
 cargo fmt --all -- --check
 cargo clippy -- -D warnings          # lib + bin (matches upstream ci.yml)
 cargo test --lib
-cargo test --all-features
-cargo test --features test-internals # upstream's full-coverage suite
+timeout --foreground --kill-after=10s 300s cargo test --all-features
+timeout --foreground --kill-after=10s 300s cargo test --features test-internals
 ```
 
 `test-internals` exposes internal fields for assertions; `--all-features` enables it.
-The whole sender test corpus runs in-process over loopback UDP — **no root / netns /
-CAP_NET_ADMIN required** (0 tests are gated/ignored).
+Most tests run in-process over loopback UDP. The `tests/netns_*.rs` integration targets
+are privileged supplements: they require Linux network namespaces, passwordless `sudo`
+or equivalent `CAP_NET_ADMIN`, and external tools including `srtla_rec` and
+`srt-live-transmit` (plus `tcpdump`/netem for relevant scenarios). They self-skip when
+their dependency checks fail, so an ordinary CI run does not prove the privileged
+topology. On dependency-rich hosts, `netns_basic` has a pre-existing shutdown hang that
+was reproduced on both `origin/main` and this branch (bounded attempts exceeded 90 s and
+60 s respectively). Never run these targets unbounded: use
+`scripts/netns_test_gate.sh`, which caps each target at 90 s by default. Separately,
+`stall_deselect_real_starlink_repro` is one intentionally ignored hardware-only test;
+run it with `--ignored` only on the bonded Starlink/cellular validation rig.
 
-**Loom model test (NOT part of the default gate).** `tests/subscription_loom.rs`
-exhaustively model-checks the `SubscriptionManager` (`src/subscription.rs`)
-`broadcast` (telemetry tick) vs `subscribe`/drop (control thread) interleavings
-over its `Mutex<Inner>` + capacity-1 `sync_channel`. It is gated `#![cfg(loom)]`,
-so it compiles to nothing — and the `loom` dev-dep stays unused — unless the
-`loom` cfg is set. Run it deliberately (it is a dedicated BLOCKING CI job, not
-part of `cargo test`):
+**Production subscription-concurrency invariant (BLOCKING, separate target).**
+`tests/subscription_loom.rs` uses Loom to enumerate schedules while racing the real
+`SubscriptionManager` (`src/subscription.rs`) `broadcast` path against its real
+`subscribe`/drop operations. Under `cfg(loom)`, only the synchronization primitives
+and capacity-one channel adapter change; the production manager state and methods are
+the code under test. The behavioral invariants are that a concurrent subscriber
+always receives the broadcast either live or through last-frame replay, and that a
+disconnected subscriber is pruned by the next broadcast. Run the dedicated target
+with the exact cross-repo command contract:
 
 ```bash
-RUSTFLAGS="--cfg loom" cargo test --features test-internals --test subscription_loom
+RUSTFLAGS="--cfg loom" cargo test --test subscription_loom
 ```
 
-It asserts four invariants under all schedules: no deadlock; `last_frame` equals
-the broadcast frame; a non-full subscriber registered before a broadcast never
-loses that frame (no lost wakeup); and a disconnected subscriber is pruned on the
-next broadcast (no panic, no unbounded growth).
+The `loom` job ID, display name, step name, environment, test filename, and command
+are retained as a cross-repo CI contract. The former test copied the manager/channel
+algorithm into an independent model, so it could stay green after production drift.
+The replacement drives the production manager directly and checks externally visible
+delivery, replay, and pruning behavior across the schedules Loom explores.
 
 **Miri lane (BLOCKING CI job, NOT part of the default gate).** The only `unsafe`
 FFI in the tree is the `recvmmsg` batch-receive path
@@ -285,7 +298,7 @@ the unit-test binary holding the three pure tests. Install with
 The `@ceralive/srtla-send` TS binding (`bindings/typescript/`) has its own gate:
 
 ```bash
-cd bindings/typescript && bun install && bun tsc --noEmit && bun test
+cd bindings/typescript && pnpm install --frozen-lockfile && pnpm lint && pnpm typecheck && pnpm test && pnpm build
 ```
 
 `tsc --noEmit` typechecks **everything** via `tsconfig.json` (tests included). The
@@ -300,34 +313,43 @@ allowlist, `.npmignore`'s test-source pattern can't strip already-compiled
 
 Three workflows. The two Rust `.deb` workflows build on the **pinned nightly**
 (`setup-rust-toolchain` with no `toolchain` input reads `rust-toolchain.toml`); the
-binding-publish workflow is Node/Bun and shares no triggers with them:
+binding-publish workflow uses pnpm for package management and a pinned Bun runtime for
+the binding's Bun-native tests/API; it shares no triggers with the Rust workflows:
 
 - **`ci.yml`** (push/PR) — the gate (`fmt`, `clippy -D warnings` lib+bin, `check`,
-  the full test fan-out, `cargo audit`) **plus** a `build-deb` matrix that
+  bounded tests with the privileged-netns self-skip boundary, `cargo audit`) plus typed
+  workflow/ref/version contracts and a `build-deb` matrix that
   cross-compiles `aarch64-unknown-linux-gnu` (device) and `x86_64-unknown-linux-gnu`
   and packages each `.deb` so a packaging break is caught before any tag. Upstream's
   stable/beta/windows/macOS jobs are kept; under the pin they must call `cargo +<channel>`
-  (explicit `+` outranks `rust-toolchain.toml`) to actually exercise that channel.
-- **`release.yml`** (tag push `v*`) — rebuilds both arches, packages, runs the glob
-  gate, and attaches both `.deb`s + `.sha256`s to the GitHub release for the tag.
+  (explicit `+` outranks `rust-toolchain.toml`) to actually exercise that channel. The
+  uv contract step uses the published `astral-sh/setup-uv@v8.3.2` release tag because
+  setup-uv does not publish a `v8` major alias; do not shorten this ref to `@v8`.
+- **`release.yml`** (tag push `v*`) — runs the full Rust gate plus the blocking
+  `loom` contract job (production subscription-concurrency invariant) and Miri lane in
+  parallel; `build-deb` needs all three before rebuilding both
+  arches, packaging, and attaching both `.deb`s + `.sha256`s to the GitHub release.
   No crates.io publish; no scheduled upstream-sync.
 - **`publish-bindings.yml`** (tag push **`bindings-v*`**) — publishes
   `@ceralive/srtla-send` to the **public npm registry** (`@ceralive` scope,
   `registry-url: https://registry.npmjs.org/`) via npm **OIDC trusted publishing**
-  (`permissions: id-token: write`, `npm publish --access public` — **no `NODE_AUTH_TOKEN`**;
-  requires npm ≥ 11.5.1 / Node ≥ 22.14). Mirrors `@ceralive/cerastream`'s publish flow.
-  Gated by `bun run typecheck && bun test` then `bun run build` (+ a tarball guard that
-  only compiled `dist/` ships) before publish. A `workflow_dispatch` run with
-  `dry_run=true` performs a registry dry-run. **Binding version source:** the binding
-  ships on its **own** tag namespace `bindings-vYYYY.M.P` (CalVer, matching
-  `@ceralive/cerastream`), deliberately distinct from the Rust crate's `v*` release tags
-  — the two namespaces keep the `.deb` release and the binding publish fully decoupled
-  (no shared trigger). A `-rc.N` suffix publishes under the `next` dist-tag; a plain
-  version under `latest`. The published version **is** the committed
-  `bindings/typescript/package.json` `version`; the tag does not mint it. A guard step
-  refuses to publish unless the tag's version equals `package.json` `version`, so a tag
-  can never ship a stale/mismatched version. Cut a binding release: bump `package.json`
-  `version` → commit → `git tag bindings-vYYYY.M.P && git push --tags`.
+  (the `publish` job grants `id-token: write`, `npm publish --access public` — **no `NODE_AUTH_TOKEN`**;
+  npm is pinned to `11.18.0`, above the trusted-publishing minimum of 11.5.1; Node is 24).
+  Mirrors `@ceralive/cerastream`'s publish flow.
+  The `test-bindings` job uses the committed pnpm lockfile to run lint, typecheck, tests,
+  build, and the tarball guard, then uploads validated `dist/`. The OIDC `publish` job
+  needs both that gate and `verify-release-ref`, which accepts only a tag-push event whose
+  `bindings-v*` tag, package version, ref, checked-out commit, and event SHA agree. A
+  `workflow_dispatch` run can reach only the separate non-OIDC `npm publish --dry-run`
+  job; it cannot publish. **Binding version source:** the binding ships on its **own** tag namespace
+  `bindings-vYYYY.M.P` (CalVer, matching `@ceralive/cerastream`), deliberately distinct
+  from the Rust crate's `v*` release tags — the two namespaces keep the `.deb` release
+  and the binding publish fully decoupled (no shared trigger). A `-rc.N` suffix publishes
+  under the `next` dist-tag; a plain version under `latest`. The published version **is**
+  the committed `bindings/typescript/package.json` `version`; the tag does not mint it.
+  The provenance guard refuses stale, malformed, branch, dispatch, or mismatched refs.
+  Cut a binding release: bump `package.json` `version` → commit →
+  `git tag bindings-vYYYY.M.P && git push origin bindings-vYYYY.M.P`.
 
 **`ci/build-deb.sh` is the single source of truth** for the `.deb` and is called by both
 workflows. It pins the contract the device image depends on:
@@ -347,14 +369,16 @@ workflows. It pins the contract the device image depends on:
 `srtla-send-rs` is the one first-party component that does NOT follow the CeraLive
 CalVer (`YYYY.MINOR.PATCH`) scheme. Its `.deb` version comes directly from
 `Cargo.toml` `[package] version`, which tracks upstream irlserver semver.
-Current package version: `3.1.0`. `versions.yaml` pins it at `v3.1.0`.
+Current source package version: `3.2.0`. The workspace `versions.yaml` remains pinned at
+the last published release, `v3.1.0`, until the 3.2.0 release is published and adopted.
 
 Rationale: this repo is a fork of `irlserver/srtla_send`; keeping the upstream semver
 line in `Cargo.toml` preserves direct traceability to upstream releases.
 
-The GitHub release **tag** namespace (`v1.0.0+`, e.g. `v1.0.0`) is **decoupled** from
-the package version. The tag triggers the `.deb` build workflow; the package version is
-whatever `Cargo.toml` carries at that point. Do not conflate the two.
+The GitHub release **tag** namespace is `v<package-version>`. A tag-triggered package
+build must match the committed `Cargo.toml` version; `ci/build-deb.sh` rejects a tag ref
+whose `GITHUB_REF_NAME` differs from `v<package-version>`. For this source version, the
+only valid release tag is `v3.2.0`.
 
 The `@ceralive/srtla-send` npm binding ships on its own `bindings-vYYYY.M.P` tag
 namespace and uses CalVer independently of the Rust crate version.
@@ -384,7 +408,16 @@ crates/network-sim/  dev-only network simulation harness (workspace member)
 rust-toolchain.toml  pinned nightly (CERALIVE)
 rustfmt.toml         unstable nightly fmt config (edition 2024)
 ci/build-deb.sh      single-source .deb packager (control + filename + glob self-test)
-.github/workflows/   ci.yml (gate + cross-build/package) + release.yml (tag-triggered)
+.github/workflows/   ci.yml (gate + cross-build/package) + release.yml (tag-triggered) +
+  publish-bindings.yml (binding gate + npm publish)
+scripts/release_workflow_contract_test.py  release graph and failure-propagation checks
+scripts/workflow_authority_contract_test.py  adversarial write/secret publication-authority checks
+scripts/workflow_contract.py  typed semantic GitHub workflow graph/model
+scripts/workflow_yaml.py  typed YAML-node and publication-authority parser
+scripts/release_version_contract_test.sh  manifest-derived tag/package/.deb version contract
+scripts/bindings_release_ref_contract_test.sh  binding tag/ref/version/SHA provenance contract
+scripts/bindings_package_manager_contract_test.sh  root pnpm policy contract
+scripts/netns_test_gate.sh  bounded privileged network-namespace test runner
 ```
 
 Conventions (enforced by the gate): edition 2024, `anyhow::Result`, `tracing` macros,
@@ -445,8 +478,7 @@ is `cargo clippy -- -D warnings` (lib+bin only, matches `ci.yml:32`).
 
 ### Task 8 -- TS binding test hardening
 
-New `bindings/typescript/tests/telemetry-reader.test.ts` (24 tests, 52 total after
-adding to the existing 28):
+New `bindings/typescript/tests/telemetry-reader.test.ts` (24 tests; 68 binding tests total):
 
 - Valid golden fixture: full ADR-001 typed shape (both uplinks, all 7 per-link fields),
   `bitrate_bps` x8 invariant.
@@ -454,10 +486,13 @@ adding to the existing 28):
   missing required field via `test.each`, wrong types, out-of-domain numerics -- all
   return graceful `null`.
 - Schema version: `schema_version` 2/0/missing/non-numeric all return `null`.
+- `src/telemetry/watch.test.ts` keeps six distinct watcher contracts without
+  fixed sleeps: absent, stale-boundary, stop, file-appears, invalid-schema, and
+  parsed-payload behavior. Callback/event-loop completion replaces timed windows.
 
 `tsconfig.json` fix: added `tests/**/*` to `include`; moved `rootDir: "src"` into
-`tsconfig.build.json` only. This ensures `bun tsc --noEmit` typechecks tests (not
-just `src/`), while `bun run build` still emits only `dist/{index,sender/index,
+`tsconfig.build.json` only. This ensures `pnpm typecheck` typechecks tests (not
+just `src/`), while `pnpm build` still emits only `dist/{index,sender/index,
 telemetry/index}.js` with no test files. Tarball stays clean (`files: ["dist"]`
 allowlist + build-emit excludes `*.test.ts`).
 
@@ -469,7 +504,7 @@ The `// TODO: On Linux, could use sendmmsg ...` in `src/connection/batch_send.rs
 - What `sendmmsg(2)` would do (multi-datagram single syscall)
 - Why it is deferred: marginal gain at current rates (~60-67 flushes/s at 10 Mbps,
   already a ~15x reduction from raw per-packet sends), Linux-only unsafe FFI, and
-  complexity not justified without profiling evidence on the Jetson Nano target
+  complexity not justified without profiling evidence on the constrained device target
 - When to revisit: profiling shows syscall overhead, or Tokio adds native support
 
 Full rationale in `docs/notes/sendmmsg-deferred.md`.
@@ -477,9 +512,16 @@ Full rationale in `docs/notes/sendmmsg-deferred.md`.
 
 ## TS BINDING TOOLING
 
-The `bindings/typescript/` package uses Biome 2.5 via `@ceralive/biome-config` as its first linter/formatter. The `biome.json` in `bindings/typescript/` extends `@ceralive/biome-config` (`"extends": ["@ceralive/biome-config"]`). ESLint and Prettier are not used. Run `biome check .` from `bindings/typescript/` (check) or `biome check --write .` (apply fixes). The binding gate includes `bun tsc --noEmit && bun test` — Biome is not a separate gate step but is expected clean before PR.
+The binding package manager is **pnpm**, pinned by `packageManager` and
+`bindings/typescript/pnpm-lock.yaml`. Run package commands from
+`bindings/typescript/` with pnpm (`pnpm install --frozen-lockfile`, `pnpm lint`,
+`pnpm typecheck`, `pnpm test`, `pnpm build`). The package API and tests remain Bun-native,
+so `pnpm test` invokes the pinned Bun test runtime; Bun is not the dependency manager.
+Do not add Bun/npm/yarn lockfiles for this package.
 
-**Golden fixtures are excluded from Biome** — `biome.json` sets `files.includes` to `["**", "!**/tests/fixtures/**"]`. `tests/fixtures/telemetry-golden.json` is a deliberately byte-identical copy of the Rust producer golden (`tests/fixtures/telemetry-golden.json` at the crate root): the single-line, newline-free atomic-publish telemetry shape (ADR-001). If Biome pretty-prints it (multi-line + trailing newline), the cross-language parity test (`tests/telemetry_fixture_parity.rs` — `rust_and_ts_goldens_are_byte_identical` plus the newline-free assertion) fails every Rust test job in CI. **Do not remove this exclude, and never `biome check --write` the fixtures** — re-sync the two goldens by editing both byte-for-byte instead.
+The `bindings/typescript/` package uses Biome 2.5 via `@ceralive/biome-config` as its first linter/formatter. The `biome.json` in `bindings/typescript/` extends `@ceralive/biome-config` (`"extends": ["@ceralive/biome-config"]`). ESLint and Prettier are not used. Run `pnpm lint` from `bindings/typescript/` (check) or `pnpm exec biome check --write .` (apply fixes). The binding gate includes `pnpm lint && pnpm typecheck && pnpm test && pnpm build`.
+
+**Golden fixtures are excluded from Biome** — `biome.json` sets `files.includes` to `["**", "!**/tests/fixtures"]`. `tests/fixtures/telemetry-golden.json` is a deliberately byte-identical copy of the Rust producer golden (`tests/fixtures/telemetry-golden.json` at the crate root): the single-line, newline-free atomic-publish telemetry shape (ADR-001). If Biome pretty-prints it (multi-line + trailing newline), the cross-language parity test (`tests/telemetry_fixture_parity.rs` — `rust_and_ts_goldens_are_byte_identical` plus the newline-free assertion) fails every Rust test job in CI. **Do not remove this exclude, and never `biome check --write` the fixtures** — re-sync the two goldens by editing both byte-for-byte instead.
 
 ## EXPERIMENTAL SCHEDULER-HARDENING FLAGS (consolidated-flows-and-satellite, Todos 14-15)
 
@@ -514,9 +556,8 @@ against a real bonded link (e.g. Starlink + cellular) outside this repo's in-pro
 harness. Do not enable either flag in production, and do not cite either as a proven
 improvement, until validated on real bond hardware. Mirrors the hardware-validation-gate
 pattern used elsewhere in this workspace (see `docs/notes/sendmmsg-deferred.md` for how this
-repo tracks a deferred/unrun item, and the root workspace's
-`docs/notes/srtla-starlink-lan-diagnosis.md` §6 for the mode-scoped mechanism analysis both
-flags address).
+repo tracks a deferred/unrun item, and the [workspace diagnosis](https://github.com/CERALIVE/ceralive/blob/master/docs/notes/srtla-starlink-lan-diagnosis.md)
+§6 for the mode-scoped mechanism analysis both flags address).
 
 ## ROBUSTNESS FIXES (robustness-pass, 2026-06-19)
 

@@ -4,14 +4,6 @@
 //! aggregation) sender implementation. It includes protocol handling,
 //! connection management, and dynamic configuration.
 
-// Under `--cfg loom` (the subscription-manager model test, `tests/
-// subscription_loom.rs`) the whole crate is compiled out: loom forces tokio to
-// drop its `net`/`time` modules (`#![cfg(not(loom))]` upstream), which this
-// runtime-oriented lib uses pervasively, so it cannot build there. The loom test
-// is self-contained and links only an empty crate. No real build ever sets the
-// `loom` cfg, so this is a strict no-op outside that one model-check invocation.
-#![cfg(not(loom))]
-
 // Use mimalloc as the global allocator for tests (non-Windows only).
 // Gated on the `mimalloc-allocator` feature so --no-default-features builds the
 // test binary against the system allocator (docs/notes/mimalloc-decision.md).
@@ -19,32 +11,49 @@
 #[global_allocator]
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+#[cfg(not(loom))]
 pub mod config;
+#[cfg(not(loom))]
 pub mod connection;
+#[cfg(not(loom))]
 pub mod ewma;
-#[cfg(unix)]
+#[cfg(all(unix, not(loom)))]
 pub mod jsonrpc;
+#[cfg(not(loom))]
 pub mod kalman;
+#[cfg(not(loom))]
 pub mod mode;
+#[cfg(not(loom))]
 pub mod protocol;
+#[cfg(not(loom))]
 pub mod registration;
+#[cfg(not(loom))]
 pub mod sender;
+#[cfg(not(loom))]
 pub mod stats;
 pub mod subscription;
+#[cfg(not(loom))]
 pub mod telemetry_file;
+#[cfg(not(loom))]
 pub mod utils;
 
 // Test helpers module - available when test-internals feature is enabled
-#[cfg(any(test, feature = "test-internals"))]
+#[cfg(all(any(test, feature = "test-internals"), not(loom)))]
 pub mod test_helpers;
 
-#[cfg(test)]
+#[cfg(all(test, not(loom)))]
 pub mod tests;
 
 // Re-export commonly used items
+#[cfg(not(loom))]
 pub use config::{ConfigSnapshot, DynamicConfig};
+#[cfg(not(loom))]
 pub use connection::SrtlaConnection;
+#[cfg(not(loom))]
 pub use mode::SchedulingMode;
+#[cfg(not(loom))]
 pub use protocol::*;
+#[cfg(not(loom))]
 pub use registration::SrtlaRegistrationManager;
+#[cfg(not(loom))]
 pub use utils::now_ms;
