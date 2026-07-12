@@ -136,6 +136,10 @@ and pull request (`.github/workflows/ci.yml`):
 - Cross-builds for `aarch64-unknown-linux-gnu` (device) and `x86_64-unknown-linux-gnu`,
   each packaged into a `.deb`
 - Cross-platform/cross-channel coverage (Linux/Windows/macOS, stable/beta)
+- A `v*` release runs the full Rust gate plus the parallel loom and miri lanes before
+  either architecture can be packaged or attached to the GitHub release
+- `python3 scripts/release_workflow_contract_test.py` checks both publication graphs and
+  simulates a failed gate to verify every publish job is skipped
 
 ### Debian packaging
 
@@ -153,7 +157,8 @@ The `bindings/typescript/` helper publishes to the **public npm registry** as
 using npm **OIDC trusted publishing** (no `NPM_TOKEN`) — the same flow as
 `@ceralive/cerastream`. It is a **separate** release track from the Rust `.deb`s:
 pushing a `bindings-vYYYY.M.P` tag runs the typecheck + test gate, builds `dist/`, and
-publishes the package. The published version is the committed
+publishes the package. The gate also runs `bun run lint`; a separate publish job can
+publish only after the validated `dist/` artifact is available. The published version is the committed
 `bindings/typescript/package.json` `version` (CalVer, matching `@ceralive/cerastream`;
 the workflow refuses to publish if the tag's version doesn't match it). To cut a
 binding release: bump `package.json` `version`, commit, then
@@ -335,7 +340,7 @@ The 15s `CONN_TIMEOUT` liveness check only reads inbound bytes (including keepal
 
 ### Hardware-validation gate
 
-Both flags ship with unit and golden-trace tests proving flag-off behavior is byte-identical to the pre-flag code path, but neither has been exercised against a real bonded link (e.g. Starlink + cellular) outside this repo's test harness. Do not turn either flag on in production, and do not cite either flag as a proven improvement, until that hardware validation has run. See `docs/notes/sendmmsg-deferred.md`-style deferred-item tracking conventions for how this repo records unrun hardware gates, and the root workspace's `docs/notes/srtla-starlink-lan-diagnosis.md` for the mechanism analysis both flags address.
+Both flags ship with unit and golden-trace tests proving flag-off behavior is byte-identical to the pre-flag code path, but neither has been exercised against a real bonded link (e.g. Starlink + cellular) outside this repo's test harness. Do not turn either flag on in production, and do not cite either flag as a proven improvement, until that hardware validation has run. See `docs/notes/sendmmsg-deferred.md`-style deferred-item tracking conventions for how this repo records unrun hardware gates, and the [workspace diagnosis](https://github.com/CERALIVE/ceralive/blob/master/docs/notes/srtla-starlink-lan-diagnosis.md) for the mechanism analysis both flags address.
 
 ## IP List Reload (Unix only)
 

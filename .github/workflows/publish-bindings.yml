@@ -34,7 +34,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write # OIDC identity for npm trusted publishing (+ provenance when public)
 
 # Never cancel a publish mid-run — a half-published npm release is unrecoverable.
 concurrency:
@@ -42,8 +41,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publish:
-    name: Build, test, publish
+  test-bindings:
+    name: Lint, typecheck, test, build
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -63,17 +62,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-bun-store-
 
-      # npm (not bun) performs the publish: it speaks OIDC trusted publishing.
       - uses: actions/setup-node@v6
         with:
-          node-version: 24 # Node 24 baseline; trusted publishing needs >= 22.14
+          node-version: 24
           registry-url: https://registry.npmjs.org/
 
       - name: Upgrade npm to a trusted-publishing-capable version
-        run: npm install -g npm@latest # OIDC trusted publishing needs npm >= 11.5.1
+        run: npm install -g npm@latest
 
-      # Refuse to publish unless package.json "version" == the tag's version, so a
-      # `bindings-v*` tag can only ship the version committed in the repo.
       - name: Verify tag matches package version
         if: startsWith(github.ref, 'refs/tags/bindings-v')
         run: |
@@ -87,6 +83,9 @@ jobs:
 
       - name: Install
         run: bun install --frozen-lockfile
+
+      - name: Lint
+        run: bun run lint
 
       - name: Typecheck
         run: bun run typecheck
@@ -107,6 +106,39 @@ jobs:
             exit 1
           fi
 
+      - name: Upload validated binding build
+        uses: actions/upload-artifact@v7
+        with:
+          name: srtla-send-binding-dist-${{ github.sha }}
+          path: bindings/typescript/dist
+          if-no-files-found: error
+
+  publish:
+    name: Publish to npm
+    needs: test-bindings
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bindings/typescript
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: srtla-send-binding-dist-${{ github.sha }}
+          path: bindings/typescript/dist
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org/
+
+      - name: Upgrade npm to a trusted-publishing-capable version
+        run: npm install -g npm@latest
+
       - name: Select npm dist-tag
         id: tag
         run: |
@@ -122,10 +154,6 @@ jobs:
           FORCE_DRY_RUN: ${{ github.event.inputs.dry_run }}
           REPO_PRIVATE: ${{ github.event.repository.private }}
         run: |
-          # Auth is the GitHub OIDC token (id-token: write) exchanged against the
-          # trusted publisher on the npm package — no NPM_TOKEN. npm auto-generates
-          # provenance for public repos but cannot for a private source repo, so
-          # disable it explicitly while private (re-enables when the repo is public).
           if [ "${REPO_PRIVATE}" = "true" ]; then
             export NPM_CONFIG_PROVENANCE=false
             echo "Private source repo — provenance disabled."

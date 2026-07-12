@@ -285,7 +285,7 @@ the unit-test binary holding the three pure tests. Install with
 The `@ceralive/srtla-send` TS binding (`bindings/typescript/`) has its own gate:
 
 ```bash
-cd bindings/typescript && bun install && bun tsc --noEmit && bun test
+cd bindings/typescript && bun install --frozen-lockfile && bun run lint && bun run typecheck && bun test
 ```
 
 `tsc --noEmit` typechecks **everything** via `tsconfig.json` (tests included). The
@@ -308,26 +308,27 @@ binding-publish workflow is Node/Bun and shares no triggers with them:
   and packages each `.deb` so a packaging break is caught before any tag. Upstream's
   stable/beta/windows/macOS jobs are kept; under the pin they must call `cargo +<channel>`
   (explicit `+` outranks `rust-toolchain.toml`) to actually exercise that channel.
-- **`release.yml`** (tag push `v*`) — rebuilds both arches, packages, runs the glob
-  gate, and attaches both `.deb`s + `.sha256`s to the GitHub release for the tag.
+- **`release.yml`** (tag push `v*`) — runs the full Rust gate plus the blocking loom
+  and miri lanes in parallel; `build-deb` needs all three before rebuilding both
+  arches, packaging, and attaching both `.deb`s + `.sha256`s to the GitHub release.
   No crates.io publish; no scheduled upstream-sync.
 - **`publish-bindings.yml`** (tag push **`bindings-v*`**) — publishes
   `@ceralive/srtla-send` to the **public npm registry** (`@ceralive` scope,
   `registry-url: https://registry.npmjs.org/`) via npm **OIDC trusted publishing**
-  (`permissions: id-token: write`, `npm publish --access public` — **no `NODE_AUTH_TOKEN`**;
+  (the `publish` job grants `id-token: write`, `npm publish --access public` — **no `NODE_AUTH_TOKEN`**;
   requires npm ≥ 11.5.1 / Node ≥ 22.14). Mirrors `@ceralive/cerastream`'s publish flow.
-  Gated by `bun run typecheck && bun test` then `bun run build` (+ a tarball guard that
-  only compiled `dist/` ships) before publish. A `workflow_dispatch` run with
-  `dry_run=true` performs a registry dry-run. **Binding version source:** the binding
-  ships on its **own** tag namespace `bindings-vYYYY.M.P` (CalVer, matching
-  `@ceralive/cerastream`), deliberately distinct from the Rust crate's `v*` release tags
-  — the two namespaces keep the `.deb` release and the binding publish fully decoupled
-  (no shared trigger). A `-rc.N` suffix publishes under the `next` dist-tag; a plain
-  version under `latest`. The published version **is** the committed
-  `bindings/typescript/package.json` `version`; the tag does not mint it. A guard step
-  refuses to publish unless the tag's version equals `package.json` `version`, so a tag
-  can never ship a stale/mismatched version. Cut a binding release: bump `package.json`
-  `version` → commit → `git tag bindings-vYYYY.M.P && git push --tags`.
+  The `test-bindings` job runs lint, typecheck, tests, build, and the tarball guard,
+  uploads the validated `dist/`, and the separate `publish` job needs it before
+  publishing. A `workflow_dispatch` run with `dry_run=true` performs a registry
+  dry-run. **Binding version source:** the binding ships on its **own** tag namespace
+  `bindings-vYYYY.M.P` (CalVer, matching `@ceralive/cerastream`), deliberately distinct
+  from the Rust crate's `v*` release tags — the two namespaces keep the `.deb` release
+  and the binding publish fully decoupled (no shared trigger). A `-rc.N` suffix publishes
+  under the `next` dist-tag; a plain version under `latest`. The published version **is**
+  the committed `bindings/typescript/package.json` `version`; the tag does not mint it.
+  A guard step refuses to publish unless the tag's version equals `package.json` version,
+  so a tag can never ship a stale/mismatched version. Cut a binding release: bump
+  `package.json` `version` → commit → `git tag bindings-vYYYY.M.P && git push --tags`.
 
 **`ci/build-deb.sh` is the single source of truth** for the `.deb` and is called by both
 workflows. It pins the contract the device image depends on:
@@ -384,7 +385,9 @@ crates/network-sim/  dev-only network simulation harness (workspace member)
 rust-toolchain.toml  pinned nightly (CERALIVE)
 rustfmt.toml         unstable nightly fmt config (edition 2024)
 ci/build-deb.sh      single-source .deb packager (control + filename + glob self-test)
-.github/workflows/   ci.yml (gate + cross-build/package) + release.yml (tag-triggered)
+.github/workflows/   ci.yml (gate + cross-build/package) + release.yml (tag-triggered) +
+  publish-bindings.yml (binding gate + npm publish)
+scripts/release_workflow_contract_test.py  release graph and failure-propagation checks
 ```
 
 Conventions (enforced by the gate): edition 2024, `anyhow::Result`, `tracing` macros,
@@ -519,9 +522,8 @@ against a real bonded link (e.g. Starlink + cellular) outside this repo's in-pro
 harness. Do not enable either flag in production, and do not cite either as a proven
 improvement, until validated on real bond hardware. Mirrors the hardware-validation-gate
 pattern used elsewhere in this workspace (see `docs/notes/sendmmsg-deferred.md` for how this
-repo tracks a deferred/unrun item, and the root workspace's
-`docs/notes/srtla-starlink-lan-diagnosis.md` §6 for the mode-scoped mechanism analysis both
-flags address).
+repo tracks a deferred/unrun item, and the [workspace diagnosis](https://github.com/CERALIVE/ceralive/blob/master/docs/notes/srtla-starlink-lan-diagnosis.md)
+§6 for the mode-scoped mechanism analysis both flags address).
 
 ## ROBUSTNESS FIXES (robustness-pass, 2026-06-19)
 
