@@ -322,7 +322,9 @@ the binding's Bun-native tests/API; it shares no triggers with the Rust workflow
   cross-compiles `aarch64-unknown-linux-gnu` (device) and `x86_64-unknown-linux-gnu`
   and packages each `.deb` so a packaging break is caught before any tag. Upstream's
   stable/beta/windows/macOS jobs are kept; under the pin they must call `cargo +<channel>`
-  (explicit `+` outranks `rust-toolchain.toml`) to actually exercise that channel.
+  (explicit `+` outranks `rust-toolchain.toml`) to actually exercise that channel. The
+  uv contract step uses the published `astral-sh/setup-uv@v8.3.2` release tag because
+  setup-uv does not publish a `v8` major alias; do not shorten this ref to `@v8`.
 - **`release.yml`** (tag push `v*`) — runs the full Rust gate plus the blocking
   `loom` contract job (production subscription-concurrency invariant) and Miri lane in
   parallel; `build-deb` needs all three before rebuilding both

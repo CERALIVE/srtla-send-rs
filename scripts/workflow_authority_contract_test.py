@@ -13,6 +13,7 @@ ROOT: Final = Path(__file__).resolve().parents[1]
 CI: Final = ROOT / ".github/workflows/ci.yml"
 BINDINGS: Final = ROOT / ".github/workflows/publish-bindings.yml"
 NPM_VERSION: Final = "11.18.0"
+SETUP_UV_ACTION: Final = "astral-sh/setup-uv@v8.3.2"
 
 
 def load_fixture(source: str) -> Workflow:
@@ -137,13 +138,16 @@ class WorkflowAuthorityContractTests(unittest.TestCase):
             ("opaque-helper",),
         )
 
-    def test_release_tooling_uses_current_action_majors_and_exact_npm(self) -> None:
+    def test_release_tooling_uses_resolvable_action_refs_and_exact_npm(self) -> None:
         ci = load_workflow(CI)
         bindings = load_workflow(BINDINGS)
 
-        self.assertTrue(
-            any(step.action == "astral-sh/setup-uv@v8" for step in ci.job("test").steps)
+        setup_uv_actions = tuple(
+            step.action
+            for step in ci.job("test").steps
+            if step.action is not None and step.action.startswith("astral-sh/setup-uv@")
         )
+        self.assertEqual(setup_uv_actions, (SETUP_UV_ACTION,))
         self.assertTrue(
             any(
                 step.action == "pnpm/action-setup@v6"
