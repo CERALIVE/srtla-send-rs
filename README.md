@@ -211,9 +211,12 @@ the published `dist/` free of compiled test output.
 Most Rust tests need no privileges. The `tests/netns_*.rs` supplements require Linux
 network namespaces, passwordless `sudo`/`CAP_NET_ADMIN`, `srtla_rec`,
 `srt-live-transmit`, and scenario-specific netem/tcpdump tools; otherwise they self-skip.
-On a dependency-rich host, the pre-existing `netns_basic` shutdown path can exceed 60–90
-seconds, so CI/release test commands are capped at 300 seconds and manual privileged runs
-must use `scripts/netns_test_gate.sh` (90 seconds per target by default). One separate
+The harness tears down the exact PIDs reported for each ephemeral namespace with bounded
+TERM-then-KILL polling; it does not assume the tracked `sudo` PID is a process-group leader
+and never blocks on an unbounded child wait. Namespace and veth names both include the
+PID+atomic-counter uniqueness suffix, so parallel scenarios in one test binary cannot
+collide. CI/release test commands remain capped at 300 seconds, and manual privileged runs
+use `scripts/netns_test_gate.sh` (90 seconds per target by default). One separate
 real-Starlink stall reproduction is intentionally `#[ignore]` and runs only on hardware.
 
 ## Usage

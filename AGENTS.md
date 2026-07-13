@@ -243,12 +243,17 @@ are privileged supplements: they require Linux network namespaces, passwordless 
 or equivalent `CAP_NET_ADMIN`, and external tools including `srtla_rec` and
 `srt-live-transmit` (plus `tcpdump`/netem for relevant scenarios). They self-skip when
 their dependency checks fail, so an ordinary CI run does not prove the privileged
-topology. On dependency-rich hosts, `netns_basic` has a pre-existing shutdown hang that
-was reproduced on both `origin/main` and this branch (bounded attempts exceeded 90 s and
-60 s respectively). Never run these targets unbounded: use
-`scripts/netns_test_gate.sh`, which caps each target at 90 s by default. Separately,
-`stall_deselect_real_starlink_repro` is one intentionally ignored hardware-only test;
-run it with `--ignored` only on the bonded Starlink/cellular validation rig.
+topology. `NamespaceProcess` teardown is namespace-scoped: it signals only the exact PIDs
+reported by `ip netns pids`, waits on bounded TERM/KILL grace periods, and never assumes
+the tracked `sudo` child PID is a process-group leader or performs an unbounded `wait`.
+`kill_returns_when_wrapper_and_inner_process_have_mismatched_groups` locks this behavior
+without privileges and covers repeated teardown calls. Both namespace and veth names use
+the shared PID+atomic-counter uniqueness suffix; do not replace the veth suffix with the
+test-binary PID alone because scenarios inside one integration target run in parallel.
+Never run the privileged targets unbounded: use `scripts/netns_test_gate.sh`, which caps
+each target at 90 s by default. Separately, `stall_deselect_real_starlink_repro` is one
+intentionally ignored hardware-only test; run it with `--ignored` only on the bonded
+Starlink/cellular validation rig.
 
 **Production subscription-concurrency invariant (BLOCKING, separate target).**
 `tests/subscription_loom.rs` uses Loom to enumerate schedules while racing the real
