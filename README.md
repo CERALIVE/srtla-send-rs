@@ -140,9 +140,16 @@ and pull request (`.github/workflows/ci.yml`):
 - A `v*` release runs the full Rust gate plus the parallel `loom` contract job
   (a production subscription-concurrency invariant) and Miri lane before either
   architecture can be packaged or attached to the GitHub release
+- Every Rust CI/release lane uses `Swatinem/rust-cache@v2` for Cargo's registry,
+  git, and bounded dependency-target cache. Keys separate OS, runner architecture,
+  toolchain, source/lockfile state, and `.deb` target architecture; Miri keeps
+  target artifacts disabled. The toolchain action's implicit cache is disabled so
+  there is one explicit cache owner per lane.
 - `uv run scripts/release_workflow_contract_test.py` derives publication capability
   structurally from write permissions and secret references, then simulates a failed
   gate to verify every publication-capable job is skipped
+- `uv run scripts/rust_cache_contract_test.py` verifies the cache action, key dimensions,
+  bounded-target settings, and failure-propagation shape across both Rust workflows
 - `bash scripts/release_version_contract_test.sh` proves `v3.2.0` selects 3.2.0 package
   metadata/artifact names and rejects a tag that differs from `Cargo.toml`
 

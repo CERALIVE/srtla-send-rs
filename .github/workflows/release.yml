@@ -27,6 +27,19 @@ jobs:
 
       - name: Install Rust toolchain (from rust-toolchain.toml)
         uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+
+      - name: Cache Rust dependencies and bounded target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          shared-key: "srtla-send-rs-${{ runner.os }}-${{ runner.arch }}-nightly-${{ hashFiles('rust-toolchain.toml') }}"
+          key: "source-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'rustfmt.toml', 'build.rs', 'src/**/*.rs', 'crates/**/*.rs', 'tests/**/*.rs') }}"
+          add-job-id-key: false
+          cache-targets: true
+          cache-bin: false
+          cache-on-failure: false
 
       - name: Build release binary
         run: cargo build --release
@@ -72,6 +85,19 @@ jobs:
 
       - name: Install Rust toolchain (from rust-toolchain.toml)
         uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+
+      - name: Cache Rust dependencies and bounded target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          shared-key: "srtla-send-rs-${{ runner.os }}-${{ runner.arch }}-nightly-loom-${{ hashFiles('rust-toolchain.toml') }}"
+          key: "source-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'rustfmt.toml', 'build.rs', 'src/**/*.rs', 'crates/**/*.rs', 'tests/**/*.rs') }}"
+          add-job-id-key: false
+          cache-targets: true
+          cache-bin: false
+          cache-on-failure: false
 
       - name: Run loom model test
         env:
@@ -87,6 +113,19 @@ jobs:
 
       - name: Install Rust toolchain (from rust-toolchain.toml)
         uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+
+      - name: Cache Rust dependencies (Miri target disabled)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          shared-key: "srtla-send-rs-${{ runner.os }}-${{ runner.arch }}-nightly-miri-${{ hashFiles('rust-toolchain.toml') }}"
+          key: "source-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'rustfmt.toml', 'build.rs', 'src/**/*.rs', 'crates/**/*.rs', 'tests/**/*.rs') }}"
+          add-job-id-key: false
+          cache-targets: false
+          cache-bin: false
+          cache-on-failure: false
 
       - name: Install miri component
         run: rustup component add miri
@@ -122,7 +161,19 @@ jobs:
       - name: Install Rust toolchain (from rust-toolchain.toml) + target
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
+          cache: false
           target: ${{ matrix.target }}
+
+      - name: Cache Rust dependencies and bounded target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          shared-key: "srtla-send-rs-${{ runner.os }}-${{ runner.arch }}-nightly-${{ matrix.arch }}-${{ matrix.target }}-${{ hashFiles('rust-toolchain.toml') }}"
+          key: "source-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'rustfmt.toml', 'build.rs', 'src/**/*.rs', 'crates/**/*.rs', 'tests/**/*.rs') }}"
+          add-job-id-key: false
+          cache-targets: true
+          cache-bin: false
+          cache-on-failure: false
 
       - name: Install aarch64 cross toolchain
         if: matrix.cross

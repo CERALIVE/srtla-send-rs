@@ -351,6 +351,30 @@ the binding's Bun-native tests/API; it shares no triggers with the Rust workflow
   Cut a binding release: bump `package.json` `version` → commit →
   `git tag bindings-vYYYY.M.P && git push origin bindings-vYYYY.M.P`.
 
+### Rust dependency-cache policy (Wave 6.6)
+
+Every Rust job in `ci.yml` and `release.yml` owns one explicit
+`Swatinem/rust-cache@v2` step. `actions-rust-lang/setup-rust-toolchain` has
+`cache: false` in these jobs so its implicit cache cannot compete with the
+explicit key. The cache action covers Cargo's registry and git stores and the
+workspace target directory (`. -> target`).
+
+Keys include `runner.os`, `runner.arch`, the lane toolchain, the target/arch
+matrix values for `.deb` jobs, the pinned `rust-toolchain.toml`, `Cargo.lock`,
+the root `build.rs`, and relevant Rust source/manifests. `add-job-id-key: false` allows CI and release
+lanes with the same semantics to reuse one cache. `cache-bin` and
+`cache-on-failure` are disabled. The action saves dependency artifacts only,
+removes stale/old target content, and disables incremental artifacts; this
+keeps target reuse bounded instead of accumulating full workspace builds toward
+GitHub's 10 GB cache limit. Miri intentionally caches only registry/git data
+(`cache-targets: false`) because its target artifacts are specialized.
+
+The CI `test` job runs `uv run scripts/rust_cache_contract_test.py`, which
+locks coverage for all nightly, Loom, Miri, `.deb`, stable, beta, Windows, and
+macOS Rust lanes in both workflows. The Rust cache action is the only cache
+owner for those lanes; the binding workflow separately uses setup-node's pnpm
+cache.
+
 **`ci/build-deb.sh` is the single source of truth** for the `.deb` and is called by both
 workflows. It pins the contract the device image depends on:
 
