@@ -173,10 +173,8 @@ fn start_stack(name: &str) -> Stack {
     }
 }
 
-/// Kill every process inside a namespace. `NamespaceProcess::kill` signals a
-/// process group that the sudo-wrapped children are not leaders of, so it can
-/// block forever on `wait`; killing the netns PIDs directly makes the wrappers
-/// exit and keeps teardown bounded.
+/// Kill every process inside a namespace before the custom stack fields drop,
+/// including capture and injector children not owned by `NamespaceProcess`.
 fn kill_netns_pids(ns_name: &str) {
     let Ok(out) = Command::new("sudo")
         .args(["ip", "netns", "pids", ns_name])

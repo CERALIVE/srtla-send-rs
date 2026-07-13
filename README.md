@@ -140,9 +140,16 @@ and pull request (`.github/workflows/ci.yml`):
 - A `v*` release runs the full Rust gate plus the parallel `loom` contract job
   (a production subscription-concurrency invariant) and Miri lane before either
   architecture can be packaged or attached to the GitHub release
+- Every Rust CI/release lane uses `Swatinem/rust-cache@v2` for Cargo's registry,
+  git, and bounded dependency-target cache. Keys separate OS, runner architecture,
+  toolchain, source/lockfile state, and `.deb` target architecture; Miri keeps
+  target artifacts disabled. The toolchain action's implicit cache is disabled so
+  there is one explicit cache owner per lane.
 - `uv run scripts/release_workflow_contract_test.py` derives publication capability
   structurally from write permissions and secret references, then simulates a failed
   gate to verify every publication-capable job is skipped
+- `uv run scripts/rust_cache_contract_test.py` verifies the cache action, key dimensions,
+  bounded-target settings, and failure-propagation shape across both Rust workflows
 - `bash scripts/release_version_contract_test.sh` proves `v3.2.0` selects 3.2.0 package
   metadata/artifact names and rejects a tag that differs from `Cargo.toml`
 
@@ -204,9 +211,12 @@ the published `dist/` free of compiled test output.
 Most Rust tests need no privileges. The `tests/netns_*.rs` supplements require Linux
 network namespaces, passwordless `sudo`/`CAP_NET_ADMIN`, `srtla_rec`,
 `srt-live-transmit`, and scenario-specific netem/tcpdump tools; otherwise they self-skip.
-On a dependency-rich host, the pre-existing `netns_basic` shutdown path can exceed 60–90
-seconds, so CI/release test commands are capped at 300 seconds and manual privileged runs
-must use `scripts/netns_test_gate.sh` (90 seconds per target by default). One separate
+The harness tears down the exact PIDs reported for each ephemeral namespace with bounded
+TERM-then-KILL polling; it does not assume the tracked `sudo` PID is a process-group leader
+and never blocks on an unbounded child wait. Namespace and veth names both include the
+PID+atomic-counter uniqueness suffix, so parallel scenarios in one test binary cannot
+collide. CI/release test commands remain capped at 300 seconds, and manual privileged runs
+use `scripts/netns_test_gate.sh` (90 seconds per target by default). One separate
 real-Starlink stall reproduction is intentionally `#[ignore]` and runs only on hardware.
 
 ## Usage
