@@ -152,6 +152,9 @@ and pull request (`.github/workflows/ci.yml`):
   bounded-target settings, and failure-propagation shape across both Rust workflows
 - `bash scripts/release_version_contract_test.sh` proves `v3.2.0` selects 3.2.0 package
   metadata/artifact names and rejects a tag that differs from `Cargo.toml`
+- `bash scripts/deb_version_ordering_test.sh` derives the package version from `Cargo.toml`,
+  proves a patch bump sorts newer under Debian ordering, and reports whether the known stale
+  CalVer artifact `2026.6.1` still outranks the current SemVer stream
 
 ### Debian packaging
 
