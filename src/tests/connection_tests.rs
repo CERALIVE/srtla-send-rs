@@ -815,6 +815,132 @@ mod tests {
         );
         assert_eq!(&buf[..10], &payload, "DATA payload must be unchanged");
     }
+
+    /// A minimal SRT handshake control packet: 16-byte control header
+    /// (control bit set, type UMSG_HANDSHAKE = 0x8000) + a plausible body.
+    fn srt_handshake_packet() -> Vec<u8> {
+        let mut p = Vec::new();
+        p.extend_from_slice(&0x8000_0000u32.to_be_bytes()); // control | type=handshake
+        p.extend_from_slice(&0u32.to_be_bytes()); // type-specific info
+        p.extend_from_slice(&0x0011_2233u32.to_be_bytes()); // timestamp
+        p.extend_from_slice(&0x4455_6677u32.to_be_bytes()); // dest socket id
+        p.extend_from_slice(&5u32.to_be_bytes()); // version
+        p.extend_from_slice(&0x0000_0002u32.to_be_bytes()); // encryption + ext field
+        p.extend_from_slice(&0xdead_beefu32.to_be_bytes()); // initial seq
+        p.extend_from_slice(&1500u32.to_be_bytes()); // MTU
+        p.extend_from_slice(&8192u32.to_be_bytes()); // flow window
+        p.extend_from_slice(&0xffff_fffeu32.to_be_bytes()); // handshake type (induction)
+        p.extend_from_slice(&0x0102_0304u32.to_be_bytes()); // socket id
+        p.extend_from_slice(&0x0a0b_0c0du32.to_be_bytes()); // syn cookie
+        p
+    }
+
+    /// An SRT KMREQ/KMRSP extension control packet carrying a keying-material (KM)
+    /// message. `ext_type` is the SRT extended-command id (KMREQ=3, KMRSP=4);
+    /// `declared_klen` is written into the KM key-length field, so an oversized
+    /// value reproduces the malformed CVE-2026-55869 KMREQ shape (a declared key
+    /// length larger than the bytes actually present).
+    fn srt_km_ext_packet(ext_type: u16, declared_klen: u8) -> Vec<u8> {
+        let mut p = Vec::new();
+        // control word high 16 bits = 0x8000 | UMSG_EXT(0x7FFF) = 0xFFFF; low = ext_type
+        p.extend_from_slice(&0xffffu16.to_be_bytes());
+        p.extend_from_slice(&ext_type.to_be_bytes());
+        p.extend_from_slice(&0u32.to_be_bytes()); // type-specific info
+        p.extend_from_slice(&0x0011_2233u32.to_be_bytes()); // timestamp
+        p.extend_from_slice(&0x4455_6677u32.to_be_bytes()); // dest socket id
+        // Keying-material message: HAICRYPT header + declared salt/key lengths.
+        p.push(0x12); // version | PT
+        p.extend_from_slice(&[0x20, 0x29]); // HAI signature
+        p.push(0x00); // resv1 | KK
+        p.extend_from_slice(&0xabcd_1234u32.to_be_bytes()); // KEKI
+        p.push(0x02); // cipher
+        p.push(0x01); // auth
+        p.push(0x00); // SE
+        p.push(0x00); // resv2
+        p.extend_from_slice(&0u16.to_be_bytes()); // resv3
+        p.push(0x10); // SLen/4
+        p.push(declared_klen); // KLen/4 — oversized in the CVE shape
+        p.extend_from_slice(&[0xaa; 16]); // short wrapped-key body
+        p
+    }
+
+    /// Transparency proof: SRT key-material (KM) and handshake control packets —
+    /// including the malformed KMREQ shape behind CVE-2026-55869 — are forwarded
+    /// byte-for-byte by the sender. The sender is an SRT transport proxy: it must
+    /// not parse, pad, sanitize, or otherwise interpret SRT control/KM bytes, so
+    /// the receiver's (fixed) libsrt stays the sole authority on KMREQ validation.
+    #[tokio::test(flavor = "current_thread")]
+    async fn km_and_handshake_packets_forwarded_untouched() {
+        use std::net::{IpAddr, Ipv4Addr};
+
+        use tokio::net::UdpSocket;
+
+        use crate::connection::SrtlaConnection;
+        use crate::protocol::{get_packet_type, get_srt_sequence_number};
+        use crate::utils::now_ms;
+
+        let corpus: Vec<(&str, Vec<u8>)> = vec![
+            ("srt_handshake", srt_handshake_packet()),
+            ("srt_kmreq_wellformed", srt_km_ext_packet(0x0003, 0x20)),
+            // CVE-2026-55869 shape: a KMREQ that DECLARES a key length far larger
+            // than the bytes present. A vulnerable receiver libsrt heap-overflows
+            // parsing this; the sender must still forward it verbatim — it is the
+            // receiver's fixed libsrt that rejects it, never the sender.
+            (
+                "srt_kmreq_cve_oversized_klen",
+                srt_km_ext_packet(0x0003, 0xff),
+            ),
+            ("srt_kmrsp", srt_km_ext_packet(0x0004, 0x20)),
+        ];
+
+        let receiver = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let recv_port = receiver.local_addr().unwrap().port();
+
+        let mut conn = SrtlaConnection::connect_from_ip(
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            "127.0.0.1",
+            recv_port,
+        )
+        .await
+        .unwrap();
+
+        for (name, packet) in &corpus {
+            // The sender must never mistake an SRT control packet for one of its own
+            // SRTLA control frames (0x9000..=0x92ff), and must never extract a
+            // sequence number from a control packet — both prove it stays opaque.
+            let ptype = get_packet_type(packet).expect("2-byte type readable");
+            assert!(
+                !(0x9000..=0x92ff).contains(&ptype),
+                "{name}: must not collide with an SRTLA control type (0x{ptype:04x})",
+            );
+            assert_eq!(
+                get_srt_sequence_number(packet),
+                None,
+                "{name}: control packet must yield no SRT sequence number",
+            );
+
+            // Forward it exactly as a local-ingress SRT packet is (DATA path, no seq).
+            conn.queue_data_packet(packet, None, now_ms());
+            conn.flush_batch().await.unwrap();
+
+            let mut buf = [0u8; 2048];
+            let (n, _) = tokio::time::timeout(Duration::from_secs(2), receiver.recv_from(&mut buf))
+                .await
+                .unwrap_or_else(|_| panic!("{name}: forwarded packet not received"))
+                .unwrap();
+
+            assert_eq!(
+                n,
+                packet.len(),
+                "{name}: forwarded length must be unchanged"
+            );
+            assert_eq!(
+                &buf[..n],
+                packet.as_slice(),
+                "{name}: forwarded bytes must be byte-for-byte identical",
+            );
+        }
+    }
 }
 
 /// Paused-clock timing tests, isolated from the real-time `tests` module above (G7).
