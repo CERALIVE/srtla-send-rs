@@ -30,6 +30,8 @@ RTT). On the device it is driven by CeraUI and feeds the bonded path into
 > conformance goldens, mimalloc gated behind a default-on feature, netns de-flake to
 > bounded readiness polling, and a final docs-consistency audit (T21: dangling-ref
 > sweep via `scripts/check-doc-refs.sh`, version-drift + Rule-A sync).
+> Startup bind ordering (2026-07-27: S10 — the local SRT listener binds before any uplink is
+> dialed, closing a live-reproduced `SRT_REJ_TIMEOUT` start race; see ROBUSTNESS FIXES).
 > CeraUI integration lands in follow-up tasks.
 
 **Relationship to `srtla/`:** this is the **sender** engine (Rust). The existing
@@ -179,6 +181,13 @@ CeraUI and the device integration depend on these staying stable:
   **not** fatal — the sender binds the local listener, starts with an empty
   uplink pool, and waits for a `SIGHUP` (CeraUI writes the file and signals once
   interfaces appear). It must not crash-loop the device.
+- **Startup listener bind ordering:** the local `SRT_LISTEN_PORT` listener is bound
+  **first** in `run_sender_with_config`, before the ips file is read and before any
+  uplink is dialed. CeraUI spawns the process and immediately dials that port with
+  no readiness handshake, so anything awaited ahead of the bind is a window in which
+  the encoder's SRT connect fails with `SRT_REJ_TIMEOUT`. **Never move the bind back
+  below uplink setup** — the sequential per-link connect loop makes the window grow
+  with the number of bonded modems. Pinned by `tests/startup_bind_ordering.rs`.
 - **Clean shutdown (`SIGTERM`/`SIGINT`, Unix):** exit `0` well within CeraUI's
   10s SIGKILL window; the `--stats-file` telemetry file (and its `.tmp` sibling)
   is unlinked so no stale snapshot outlives the process.
@@ -651,6 +660,42 @@ biasing it downward.
 The guard is now `if rtt > 0 && rtt <= 10_000`, matching the ACK path. Zero-RTT
 keepalive samples are silently discarded. Pinned by
 `test_keepalive_zero_rtt_rejected` (`src/tests/`).
+
+## ROBUSTNESS FIXES (startup bind ordering, 2026-07-27)
+
+### S10 — the local SRT listener binds before any uplink is dialed
+
+`run_sender_with_config` (`src/sender/mod.rs`) used to bind the local SRT UDP
+listener **after** `create_connections_from_ips()`. That loop is sequential —
+one `resolve_remote` + `bind` + `connect` await per uplink
+(`sender/connections.rs`) — so the local port CeraUI's encoder dials stayed
+closed for the whole duration of uplink setup.
+
+CeraUI spawns `srtla_send` and then immediately calls `start()` on the streaming
+engine, which opens an SRT connection to `127.0.0.1:<SRT_LISTEN_PORT>` with no
+readiness handshake in between (`apps/backend` `streamloop/start-stream.ts`).
+Whenever uplink setup outran that connect, the handshake hit a closed port and
+the operator got a hard, non-retriable stream-start failure — SRT rejection code
+16, `SRT_REJ_TIMEOUT`, surfaced as `engine_internal`. It reproduced live on
+device on 2 of 3 start→stop→start cycles.
+
+The window scales with the bond: N modems means up to N sequential resolve +
+connect round trips before the bind, so the failure gets **more** likely on the
+multi-link deployments this sender exists for, not less.
+
+Fix: the bind moved to the top of `run_sender_with_config`, ahead of
+`read_ip_list` and the connect loop. Binding a UDP port depends on nothing the
+uplinks provide, so the listener is open from the first instant the process is
+alive regardless of how long the bond takes to come up. Nothing else moved —
+uplink setup, `start_probing`, SIGHUP reload, `--dry-run` (which never reaches
+this function), and the `main.rs` telemetry/config-listener startup order are
+all unchanged, and no parity-contract behavior is affected.
+
+Pinned by `tests/startup_bind_ordering.rs` (3 tests, unprivileged): the
+`listening for SRT` log must precede the first `added uplink`, must precede
+every uplink line of a multi-link bond including a `failed to add uplink`
+attempt, and the port must genuinely be held (`AddrInUse`) once that log is
+emitted. The first two fail on the pre-fix ordering.
 
 ## DOCS DISCIPLINE (Rule A)
 

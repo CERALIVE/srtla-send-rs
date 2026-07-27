@@ -84,6 +84,19 @@ pub async fn run_sender_with_config(
         ips_file,
         config.mode()
     );
+    // Bind the local SRT listener FIRST, before reading the ips file and before
+    // any uplink is dialed. CeraUI spawns srtla_send and immediately tells the
+    // encoder to SRT-connect to this port without waiting for a readiness
+    // signal, so every await we perform ahead of the bind is a window in which
+    // that connect hits a closed port and fails with SRT_REJ_TIMEOUT. Uplink
+    // setup is the worst offender: it resolves the receiver and dials each
+    // bonded link sequentially, so the window grows with the number of modems.
+    // Binding a UDP port needs nothing from the uplinks, so it belongs here.
+    let local_listener = UdpSocket::bind(SocketAddr::from((Ipv6Addr::UNSPECIFIED, local_srt_port)))
+        .await
+        .context("bind local SRT UDP listener")?;
+    info!("listening for SRT on [::]:{}", local_srt_port);
+
     // A missing / empty / all-invalid ips file at startup is not fatal: bind no
     // uplinks, start with an empty pool, and wait for a SIGHUP reload. CeraUI
     // writes the IP file and signals srtla_send once interfaces appear, so
@@ -113,11 +126,6 @@ pub async fn run_sender_with_config(
     }
 
     let mut connections = create_connections_from_ips(&ips, receiver_host, receiver_port).await;
-
-    let local_listener = UdpSocket::bind(SocketAddr::from((Ipv6Addr::UNSPECIFIED, local_srt_port)))
-        .await
-        .context("bind local SRT UDP listener")?;
-    info!("listening for SRT on [::]:{}", local_srt_port);
 
     let mut reg = SrtlaRegistrationManager::new();
 

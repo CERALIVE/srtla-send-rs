@@ -204,6 +204,10 @@ The telemetry layer has hardened integration tests:
 - **`tests/subscription_loom.rs`** (2 tests): Loom schedule exploration against the
   production manager under `cfg(loom)`, covering concurrent live-or-replay delivery
   and disconnected-subscriber pruning without copying the manager algorithm.
+- **`tests/startup_bind_ordering.rs`** (3 tests): the local SRT listener is bound
+  before the first uplink connect, before every uplink of a multi-link bond
+  (including a failing attempt), and the port is genuinely held once the listener is
+  logged. Unprivileged; needs no reachable receiver.
 
 The binding's `tsconfig.json` was updated to include `tests/**/*` so `pnpm typecheck`
 typechecks test files. `rootDir: "src"` moved to `tsconfig.build.json` only, keeping
@@ -465,6 +469,7 @@ Normal registration:
 
 ### Implementation Details
 
+- The local `SRT_LISTEN_PORT` listener is bound before the IP list is read and before any uplink is dialed, so a local SRT producer that connects the instant the process starts is never rejected while the bond is still coming up. Uplink setup is sequential (one resolve + bind + connect per link), so on a multi-modem bond this ordering is what keeps startup latency off the local listener.
 - For each IP in `BIND_IPS_FILE`, the sender binds a UDP socket and connects to `SRTLA_HOST:SRTLA_PORT`.
 - Incoming SRT UDP packets are read on `SRT_LISTEN_PORT` and forwarded over the currently selected uplink based on the score `window / (in_flight + 1)`.
 - ACKs are applied to all uplinks to reduce in-flight counts; NAKs are attributed to the uplink that originally sent the sequence (tracked), falling back to the receiver uplink if unknown.
