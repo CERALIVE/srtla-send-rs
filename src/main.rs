@@ -48,6 +48,8 @@ mod subscription;
 mod telemetry_file;
 #[cfg(not(loom))]
 mod utils;
+#[cfg(not(loom))]
+mod version;
 
 // Test helpers for binary tests
 #[cfg(all(any(test, feature = "test-internals"), not(loom)))]
@@ -221,19 +223,7 @@ async fn main() -> Result<()> {
     let args = Cli::parse();
 
     if args.print_version {
-        let version = env!("CARGO_PKG_VERSION");
-        let git_hash = env!("GIT_HASH");
-        let git_branch = env!("GIT_BRANCH");
-        let git_dirty = env!("GIT_DIRTY");
-
-        println!(
-            "{} ({}@{}{}) [{}]",
-            version,
-            git_branch,
-            git_hash,
-            git_dirty,
-            env!("CARGO_PKG_NAME")
-        );
+        println!("{}", version::version_line());
         return Ok(());
     }
 

@@ -255,7 +255,30 @@ srtla_send [OPTIONS] SRT_LISTEN_PORT SRTLA_HOST SRTLA_PORT BIND_IPS_FILE
 - `--stall-min-in-flight <N>`: `[EXPERIMENTAL]` in-flight threshold that marks a link stall-eligible for `--stall-deselect` (default: 32)
 - `--stall-ack-stale-ms <MS>`: `[EXPERIMENTAL]` earned-ACK/RTT staleness window in ms for `--stall-deselect` (default: 3000)
 - `--stall-reprobe-ms <MS>`: `[EXPERIMENTAL]` re-probe interval in ms for `--stall-deselect` (default: 1000)
-- `-v, --version`: Print version and exit
+- `-v, --version`: Print version and exit (see [Version output](#version-output))
+
+### Version output
+
+`srtla_send -v` prints the crate version, an optional git build-metadata
+parenthetical, and the package name:
+
+```bash
+$ ./target/release/srtla_send -v
+3.2.0 (main@974c8b9) [srtla_send]
+```
+
+The parenthetical is emitted only when the build could resolve a commit. Building
+outside a git checkout — an exported source tarball, a container that copies only
+`src/`, a vendored crate — is a normal build with nothing to name, so the metadata
+is omitted entirely rather than filled with a placeholder:
+
+```bash
+$ ./target/release/srtla_send -v
+3.2.0 [srtla_send]
+```
+
+A tag build (detached HEAD) reports the bare hash, `3.2.0 (974c8b9) [srtla_send]`,
+and a build from a modified working tree suffixes the hash with `-dirty`.
 
 ### Configuration check
 

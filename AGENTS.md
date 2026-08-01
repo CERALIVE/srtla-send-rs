@@ -155,8 +155,29 @@ CeraUI and the device integration depend on these staying stable:
   `1000`). The `--stats-file` telemetry sink is **implemented** (`src/telemetry_file.rs`)
   and opt-in — absent means no file is ever written.
 - **Upstream scheduler/control-socket flags** (`--mode`, `--no-quality`, `--exploration`,
-  `--rtt-delta-ms`, `--control-socket`, `-v/--version`) stay present and functional but
-  are **not** surfaced in CeraUI.
+  `--rtt-delta-ms`, `--control-socket`) stay present and functional but are **not**
+  surfaced in CeraUI.
+- **`-v/--version` IS operator-visible, and its build metadata is OPTIONAL.** CeraUI
+  shells out to `srtla_send -v` and renders the raw stdout in Settings → Versions
+  (`apps/backend/src/modules/system/revisions.ts`), so this line is read by humans, not
+  only by scripts. Shape: `<version> [(<branch>@<hash>[-dirty>])] [<package>]` — the
+  parenthetical is emitted ONLY when `build.rs` resolved a commit, so a build with no
+  git context prints a bare `3.2.0 [srtla_send]`.
+  **A build outside a git checkout is NORMAL, not broken** — an exported source tarball,
+  a container that copies only `src/`, a vendored crate. The retired `build.rs` answered
+  that case with the literal string `"unknown"` for both branch and hash, and — because
+  `git diff --quiet` exits `128`/`129` (not `0`) with no repository at all, which the old
+  code read through `!status.success()` as "dirty" — appended `-dirty` on top. The
+  shipped device binary therefore read
+  `3.2.0 (unknown@unknown-dirty) [srtla_send]`, asserting a branch, a commit, and
+  uncommitted changes that all did not exist. CI was never the cause: `actions/checkout`
+  provides `.git`, and both `.deb` workflows build in the checkout.
+  `build.rs` now emits an EMPTY string for anything it could not resolve, treats a
+  detached HEAD (`--abbrev-ref HEAD` == `"HEAD"`, i.e. every tag build) as "no branch"
+  rather than a branch literally named `HEAD`, and only calls the tree dirty on an exact
+  exit code of `1`. `src/version.rs` `compose_version_line()` owns the composition and is
+  pinned by unit tests including the no-git-context case. Do NOT reintroduce a placeholder
+  word for missing metadata, and do NOT infer "dirty" from a non-zero `git diff` exit.
 - **Telemetry contract (`--stats-file <path>`, ADR-001):** opt-in (absent ⇒ no file is
   ever written). Newline-free JSON document, atomically published (temp sibling →
   `fsync` → `rename(2)`), shape
