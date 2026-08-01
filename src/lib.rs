@@ -36,6 +36,8 @@ pub mod subscription;
 pub mod telemetry_file;
 #[cfg(not(loom))]
 pub mod utils;
+#[cfg(not(loom))]
+pub mod version;
 
 // Test helpers module - available when test-internals feature is enabled
 #[cfg(all(any(test, feature = "test-internals"), not(loom)))]
