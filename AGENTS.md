@@ -178,16 +178,30 @@ CeraUI and the device integration depend on these staying stable:
   exit code of `1`. `src/version.rs` `compose_version_line()` owns the composition and is
   pinned by unit tests including the no-git-context case. Do NOT reintroduce a placeholder
   word for missing metadata, and do NOT infer "dirty" from a non-zero `git diff` exit.
-- **Telemetry contract (`--stats-file <path>`, ADR-001):** opt-in (absent ⇒ no file is
+- **Telemetry contract (`--stats-file <path>`, ADR-001 + ADR-002):** opt-in (absent ⇒ no file is
   ever written). Newline-free JSON document, atomically published (temp sibling →
   `fsync` → `rename(2)`), shape
-  `{"schema_version":1,"last_updated_ms":<ms>,"connections":[{"conn_id","rtt_ms","nak_count","weight_percent","window","in_flight","bitrate_bps"}]}`.
+  `{"schema_version":1,"last_updated_ms":<ms>,"connections":[{"conn_id","rtt_ms","nak_count","weight_percent","window","in_flight","bitrate_bps","bytes_sent_total"}],"bytes_sent_total":<bytes>}`.
   `bitrate_bps` is wire-bytes/s × 8 (the ×8 bits-per-second conversion is mandatory);
   `conn_id` is the string IP-list index (stable until a SIGHUP reorder); `window` and
   `in_flight` are **required** by the frozen `@ceralive/srtla` Zod reader. The cadence is
   `--stats-file-interval` ms (default 1000). The live file is unlinked on clean shutdown
   (SIGTERM/SIGINT). `schema_version` is additive over the C producer — the Zod reader
   strips it. Implemented in `src/telemetry_file.rs`; CeraUI parses this verbatim.
+- **Cumulative session bytes (`bytes_sent_total`, ADR-002).** Additive at BOTH scopes:
+  top-level (whole bond) and per-connection. **Unit is BYTES, and no ×8 is applied** —
+  it is a count, not a rate, and it sits directly beside `bitrate_bps` (bits/s), which
+  is the one place a consumer is most likely to introduce a factor-of-8 bug. Counted at
+  the same call site as `bitrate_bps` (`queue_data_packet`), so DATA and SRT-level
+  retransmits are IN and control frames are OUT, by construction. **Monotonic for the
+  process lifetime:** it does NOT reset on a per-link socket replacement
+  (`BitrateTracker::reset` rebases the rate window instead of zeroing the total) and
+  does NOT regress when a SIGHUP reload drops a link — the bond figure is a delta-banking
+  accumulator (`SessionBytes`, `src/stats.rs`), **not** a sum of the live links. It
+  restarts at 0 only when the process does, i.e. on a genuinely new stream; it therefore
+  survives a CeraUI backend restart that re-adopts a running stream. `schema_version`
+  stays `1`. The TS schema marks it OPTIONAL: absent means UNKNOWN, never zero. Full
+  rationale and the reset table: `docs/adr/ADR-002-session-bytes-telemetry.md`.
 - **IP-list reload (`SIGHUP`, Unix):** reloads `BIND_IPS_FILE` without restart.
   Surviving uplinks keep their socket + registration (no re-handshake, zero
   disconnect); the pool is rebuilt in **ips-file order** so `conn_id` tracks the

@@ -66,6 +66,20 @@ export const connectionTelemetrySchema = z.object({
 	 * never appears on the wire. Consumers must treat this field as bits/s.
 	 */
 	bitrate_bps: z.number().int().min(0),
+	/**
+	 * Cumulative wire **BYTES** this uplink has sent this session (ADR-002).
+	 *
+	 * Not bits and not a rate — deliberately unlike the `bitrate_bps` field
+	 * directly above it, which is bits/s. No ×8 is applied to this value.
+	 *
+	 * Monotonic for the sender process's lifetime: it does NOT reset when the
+	 * link's socket is replaced on a transient reconnect. It restarts at 0 only
+	 * when `srtla_send` itself restarts, i.e. on a genuinely new stream.
+	 *
+	 * OPTIONAL: a producer predating ADR-002 omits it. Absent means UNKNOWN,
+	 * never zero.
+	 */
+	bytes_sent_total: z.number().int().min(0).optional(),
 });
 
 /**
@@ -79,6 +93,22 @@ export const telemetrySchema = z.object({
 	schema_version: z.literal(1),
 	last_updated_ms: z.number().int().min(0),
 	connections: z.array(connectionTelemetrySchema),
+	/**
+	 * Cumulative wire **BYTES** the whole bond has sent this session (ADR-002).
+	 *
+	 * This is the authoritative "total data transferred" figure. It is a session
+	 * accumulator, NOT the sum of `connections[].bytes_sent_total`: a link torn
+	 * down by a SIGHUP IP-list reload leaves the `connections` array but its
+	 * bytes stay banked here, so this value never regresses. Summing the live
+	 * links instead would make an operator's total jump backwards.
+	 *
+	 * Resets to 0 only when the `srtla_send` process restarts — i.e. on a new
+	 * stream, and NOT on a per-link reconnect.
+	 *
+	 * OPTIONAL: a producer predating ADR-002 omits it. Absent means UNKNOWN,
+	 * never zero.
+	 */
+	bytes_sent_total: z.number().int().min(0).optional(),
 });
 
 export type ConnectionTelemetry = z.output<typeof connectionTelemetrySchema>;

@@ -502,6 +502,15 @@ impl SrtlaConnection {
         self.bitrate.mbps()
     }
 
+    /// Wire bytes this uplink has sent for the whole process lifetime (ADR-002).
+    ///
+    /// Counted at the same site as `bitrate_bps` (`queue_data_packet`), so the
+    /// two agree by construction: DATA only, SRT/SRTLA framing and SRT-level
+    /// retransmits included, control frames excluded.
+    pub fn session_bytes_sent(&self) -> u64 {
+        self.bitrate.bytes_sent_total
+    }
+
     /// Reset connection state after socket replacement.
     /// Full reset: clears all state including congestion/bitrate stats.
     fn reset_state(&mut self) {

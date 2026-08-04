@@ -189,6 +189,7 @@ describe('round-trip golden fixture (T21)', () => {
 				window: 8192,
 				in_flight: 100,
 				bitrate_bps: 2500000,
+				bytes_sent_total: 812000000,
 			},
 			{
 				conn_id: '1',
@@ -198,8 +199,10 @@ describe('round-trip golden fixture (T21)', () => {
 				window: 4096,
 				in_flight: 240,
 				bitrate_bps: 1200000,
+				bytes_sent_total: 808000000,
 			},
 		]);
+		expect(t.bytes_sent_total).toBe(1620000000);
 	});
 
 	test('bitrate_x8_invariant', async () => {

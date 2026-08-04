@@ -3,7 +3,18 @@ use crate::utils::now_ms;
 /// Bitrate measurement and tracking
 #[derive(Debug, Clone)]
 pub struct BitrateTracker {
+    /// Wire bytes this uplink has handed to the socket for the whole process
+    /// lifetime — the cumulative counter behind the operator-facing "total
+    /// transferred" figure (ADR-002).
+    ///
+    /// **Monotonic.** [`reset`] deliberately does NOT clear it: a socket
+    /// replacement (`SrtlaConnection::reconnect`) is a transient link event, not
+    /// a new streaming session, and a total that restarts on every radio blip is
+    /// worthless. Only a fresh process starts it at 0.
     pub bytes_sent_total: u64,
+    /// `bytes_sent_total` as of the last rate calculation — the baseline the
+    /// 2-second window subtracts. [`reset`] rebases this to `bytes_sent_total`
+    /// (not 0), so the first post-reset window still measures a zero delta.
     pub bytes_sent_window: u64,
     pub last_rate_update_ms: u64,
     pub current_bitrate_bps: f64,
@@ -21,10 +32,14 @@ impl Default for BitrateTracker {
 }
 
 impl BitrateTracker {
-    /// Reset all bitrate tracking state to start fresh measurement window
+    /// Restart the rate-measurement window, preserving `bytes_sent_total`.
+    ///
+    /// Called on socket replacement. Rebasing the window to the current total
+    /// (rather than zeroing both) keeps the next `calculate()` delta at 0 —
+    /// byte-identical rate behavior to zeroing both — while the cumulative
+    /// counter survives the reconnect.
     pub fn reset(&mut self) {
-        self.bytes_sent_total = 0;
-        self.bytes_sent_window = 0;
+        self.bytes_sent_window = self.bytes_sent_total;
         self.last_rate_update_ms = now_ms();
         self.current_bitrate_bps = 0.0;
     }
@@ -124,5 +139,52 @@ mod tests {
             t.current_bitrate_bps,
             expected
         );
+    }
+
+    #[test]
+    fn reset_preserves_cumulative_total() {
+        let mut t = BitrateTracker::default();
+        t.update_on_send(1_000_000);
+
+        t.reset();
+
+        assert_eq!(
+            t.bytes_sent_total, 1_000_000,
+            "a socket replacement is a transient link event, not a new session: the cumulative \
+             total must survive it"
+        );
+        assert_eq!(
+            t.bytes_sent_window, t.bytes_sent_total,
+            "the rate window must be rebased to the total, not zeroed"
+        );
+        assert_eq!(t.current_bitrate_bps, 0.0);
+    }
+
+    #[test]
+    fn reset_does_not_spike_the_next_rate_window() {
+        // Rebasing rather than zeroing is only safe if the first post-reset
+        // window still measures a zero delta; a naive "keep total, zero window"
+        // would report the entire session's bytes as one window's worth.
+        let mut t = BitrateTracker::default();
+        t.update_on_send(10_000_000);
+        t.reset();
+
+        t.last_rate_update_ms = now_ms().saturating_sub(2_500);
+        t.calculate();
+
+        assert_eq!(
+            t.current_bitrate_bps, 0.0,
+            "no bytes sent since the reset, so the window must read zero"
+        );
+    }
+
+    #[test]
+    fn cumulative_total_accrues_across_a_reset() {
+        let mut t = BitrateTracker::default();
+        t.update_on_send(400);
+        t.reset();
+        t.update_on_send(600);
+
+        assert_eq!(t.bytes_sent_total, 1_000);
     }
 }

@@ -206,5 +206,11 @@ and requires its own versioned change.
 - **Schema is frozen here.** The telemetry JSON schema is srtla ADR-001's; this ADR
   does not add, rename, or retype any telemetry field. `schema_version` remains the
   additive Rust-producer field already defined in the parity contract.
+  A later, deliberate extension — the additive cumulative `bytes_sent_total` at both
+  the document and per-connection scope — is recorded separately in
+  [`ADR-002-session-bytes-telemetry.md`](ADR-002-session-bytes-telemetry.md). It
+  neither renames nor retypes anything this ADR carries, and `schema_version` stays
+  `1`; both transports (stats file and `subscribe-events`) publish the identical
+  extended document.
 - **Hot path is sacrosanct.** The subscription is bounded + drop-with-log; it must
   never block or backpressure packet forwarding.
