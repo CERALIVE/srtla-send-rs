@@ -30,6 +30,7 @@ fn sample_conn() -> TelemetryConn {
         window: 8192,
         in_flight: 100,
         bitrate_bytes_per_sec: 312_500,
+        bytes_sent_total: 0,
     }
 }
 
@@ -69,7 +70,11 @@ fn subscribe_events_receives_event_notification() {
     // Given a listener with one already-broadcast snapshot to replay
     let config = DynamicConfig::new();
     let subscriptions = SubscriptionManager::new();
-    subscriptions.broadcast(&build_telemetry_json(1_749_556_546_000, &[sample_conn()]));
+    subscriptions.broadcast(&build_telemetry_json(
+        1_749_556_546_000,
+        &[sample_conn()],
+        0,
+    ));
     let (path, _dir) = spawn_listener_with(&config, &subscriptions);
 
     // When a client subscribes
@@ -101,7 +106,7 @@ fn subscribe_events_receives_event_notification() {
 fn subscribe_events_replays_last_known_snapshot() {
     // Given a manager with a previously broadcast snapshot
     let subscriptions = SubscriptionManager::new();
-    let snapshot = build_telemetry_json(42, &[sample_conn()]);
+    let snapshot = build_telemetry_json(42, &[sample_conn()], 0);
     subscriptions.broadcast(&snapshot);
 
     // When a new subscriber joins
@@ -129,7 +134,7 @@ fn slow_subscriber_does_not_block_broadcast() {
     // When many snapshots are broadcast rapidly
     let start = Instant::now();
     for i in 0..10_000u64 {
-        subscriptions.broadcast(&build_telemetry_json(i, &[]));
+        subscriptions.broadcast(&build_telemetry_json(i, &[], 0));
     }
 
     // Then broadcast returns promptly (capacity-1 channel drops, never blocks)
@@ -152,7 +157,7 @@ fn file_sink_still_writes_during_subscription() {
     let rx = subscriptions.subscribe();
 
     // When one snapshot drives both sinks (the real tick builds it once)
-    let snapshot = build_telemetry_json(7, &[sample_conn()]);
+    let snapshot = build_telemetry_json(7, &[sample_conn()], 0);
     write_atomic(&path, &snapshot).expect("file sink write");
     subscriptions.broadcast(&snapshot);
 
@@ -179,7 +184,7 @@ fn subscriber_cleanup_on_disconnect() {
 
     // When it disconnects (the receiver is dropped) and a broadcast runs
     drop(rx);
-    subscriptions.broadcast(&build_telemetry_json(1, &[]));
+    subscriptions.broadcast(&build_telemetry_json(1, &[], 0));
 
     // Then the dead subscriber is removed (no channel accumulation)
     assert_eq!(subscriptions.subscriber_count(), 0);

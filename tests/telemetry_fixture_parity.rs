@@ -19,9 +19,24 @@ use std::path::PathBuf;
 use srtla_send::telemetry_file::TELEMETRY_SCHEMA_VERSION;
 
 /// The frozen per-connection key set the `@ceralive/srtla` Zod reader requires.
-/// Sorted; both fixtures must carry exactly these and no others.
+/// Sorted. These may never be dropped or renamed; the schema grows only by
+/// addition, so this is asserted as a SUBSET, not as equality.
 const FROZEN_CONN_KEYS: [&str; 7] = [
     "bitrate_bps",
+    "conn_id",
+    "in_flight",
+    "nak_count",
+    "rtt_ms",
+    "weight_percent",
+    "window",
+];
+
+/// Every per-connection key the current producer emits: the frozen ADR-001 set
+/// plus ADR-002's `bytes_sent_total`. Asserted for equality so a NEW field can
+/// never land in the goldens without a deliberate edit here.
+const CURRENT_CONN_KEYS: [&str; 8] = [
+    "bitrate_bps",
+    "bytes_sent_total",
     "conn_id",
     "in_flight",
     "nak_count",
@@ -112,7 +127,12 @@ fn goldens_share_schema_version_and_top_level_keys() {
     );
     assert_eq!(
         sorted_keys(&rust),
-        vec!["connections", "last_updated_ms", "schema_version"],
+        vec![
+            "bytes_sent_total",
+            "connections",
+            "last_updated_ms",
+            "schema_version"
+        ],
         "top-level contract keys changed"
     );
 }
@@ -134,17 +154,23 @@ fn goldens_share_per_connection_key_structure() {
         "the golden must exercise at least one connection"
     );
 
-    let frozen: Vec<String> = FROZEN_CONN_KEYS.iter().map(|s| s.to_string()).collect();
+    let current: Vec<String> = CURRENT_CONN_KEYS.iter().map(|s| s.to_string()).collect();
     for (i, (r, t)) in rust_conns.iter().zip(ts_conns).enumerate() {
+        let keys = sorted_keys(r);
         assert_eq!(
-            sorted_keys(r),
+            keys,
             sorted_keys(t),
             "per-connection key sets differ at index {i}"
         );
+        for frozen in FROZEN_CONN_KEYS {
+            assert!(
+                keys.iter().any(|k| k == frozen),
+                "connection {i} dropped frozen ADR-001 key `{frozen}` — the schema may only grow"
+            );
+        }
         assert_eq!(
-            sorted_keys(r),
-            frozen,
-            "connection {i} keys drifted from the frozen ADR-001 contract"
+            keys, current,
+            "connection {i} keys drifted from the current producer contract"
         );
     }
 }

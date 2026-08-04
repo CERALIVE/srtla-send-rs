@@ -447,7 +447,7 @@ The document is rewritten atomically (`<path>.tmp` → `fsync` → `rename(2)`) 
 write. It is a single newline-free object:
 
 ```json
-{"schema_version":1,"last_updated_ms":1749556546000,"connections":[{"conn_id":"0","rtt_ms":42,"nak_count":3,"weight_percent":85,"window":8192,"in_flight":100,"bitrate_bps":2500000}]}
+{"schema_version":1,"last_updated_ms":1749556546000,"connections":[{"conn_id":"0","rtt_ms":42,"nak_count":3,"weight_percent":85,"window":8192,"in_flight":100,"bitrate_bps":2500000,"bytes_sent_total":812000000}],"bytes_sent_total":1620000000}
 ```
 
 - `conn_id` — the uplink's index in `BIND_IPS_FILE` order, as a string.
@@ -455,9 +455,38 @@ write. It is a single newline-free object:
 - `weight_percent` — the link's normalized share of selection weight (0–100).
 - `bitrate_bps` — send rate in **bits per second** (wire bytes/s × 8).
 - `window` / `in_flight` — congestion-window and in-flight packet counts.
+- `bytes_sent_total` — cumulative **bytes** sent this session. Present at two scopes:
+  per connection (that uplink) and at the top level (the whole bond).
 
 With no active links the file still exists with `"connections": []` ("running but idle",
 distinct from "absent"). The live file is removed on clean shutdown (SIGTERM/SIGINT).
+
+### Cumulative session bytes (`bytes_sent_total`)
+
+This is the "how much data have I transferred?" figure, and it is deliberately **not**
+the same kind of number as `bitrate_bps` sitting next to it:
+
+| | `bitrate_bps` | `bytes_sent_total` |
+|---|---|---|
+| Unit | **bits** per second | **bytes** |
+| Kind | instantaneous rate (2 s window) | cumulative count |
+| Conversion | wire bytes/s **× 8** | none — passed through verbatim |
+
+It counts SRT DATA at full wire length, so SRT-level retransmits are included (they
+really do cost the data plan twice); SRTLA control frames — keepalives and registration
+— are excluded, matching `bitrate_bps`.
+
+**It resets only when the sender process does**, which is once per streaming session:
+
+- a per-link reconnect (radio stall, socket replacement) does **not** reset it;
+- a `SIGHUP` IP-list reload that drops an uplink does **not** make it go backwards —
+  the bond figure is a session accumulator, not a sum of the currently-live links, so a
+  departed link's bytes stay counted;
+- a re-added uplink returns as a fresh connection and accrues on top;
+- stopping the stream and starting a new one restarts it at 0.
+
+Full rationale, the complete reset table, and the consumer contract are in
+[`docs/adr/ADR-002-session-bytes-telemetry.md`](docs/adr/ADR-002-session-bytes-telemetry.md).
 
 ## Startup Without an IP List (Unix)
 

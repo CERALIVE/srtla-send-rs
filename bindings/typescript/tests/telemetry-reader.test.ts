@@ -29,8 +29,10 @@ function baseSnapshot(): Telemetry {
 				window: 8192,
 				in_flight: 100,
 				bitrate_bps: 2500000,
+				bytes_sent_total: 812000000,
 			},
 		],
+		bytes_sent_total: 1620000000,
 	};
 }
 
@@ -75,6 +77,7 @@ describe('valid golden fixture → typed ADR-001 shape', () => {
 				window: 8192,
 				in_flight: 100,
 				bitrate_bps: 2500000,
+				bytes_sent_total: 812000000,
 			},
 			{
 				conn_id: '1',
@@ -84,6 +87,7 @@ describe('valid golden fixture → typed ADR-001 shape', () => {
 				window: 4096,
 				in_flight: 240,
 				bitrate_bps: 1200000,
+				bytes_sent_total: 808000000,
 			},
 		]);
 	});
@@ -123,6 +127,59 @@ describe('valid golden fixture → typed ADR-001 shape', () => {
 	test('connectionTelemetrySchema accepts a single golden record', () => {
 		const record = onlyConnection(baseSnapshot());
 		expect(connectionTelemetrySchema.safeParse(record).success).toBe(true);
+	});
+});
+
+describe('ADR-002 cumulative bytes → survives the reader as a byte count', () => {
+	test('the bond total is carried through, and it is bytes not bits', async () => {
+		const t = await readTelemetry(GOLDEN_FIXTURE_PATH);
+		expect(t).not.toBeNull();
+		if (t === null) return;
+
+		// No ×8 anywhere on this axis: the value on disk is the value read back.
+		expect(t.bytes_sent_total).toBe(1_620_000_000);
+		expect(t.connections[0]?.bytes_sent_total).toBe(812_000_000);
+		expect(t.connections[1]?.bytes_sent_total).toBe(808_000_000);
+	});
+
+	test('the bond total is not defined as the sum of the live links', () => {
+		// The golden happens to sum (no link was ever dropped), but the schema must
+		// accept a total that EXCEEDS the sum — the post-SIGHUP-teardown state.
+		const snapshot = baseSnapshot();
+		snapshot.bytes_sent_total = 9_000_000_000;
+
+		const parsed = telemetrySchema.safeParse(snapshot);
+		expect(parsed.success).toBe(true);
+		expect(parsed.success && parsed.data.bytes_sent_total).toBe(9_000_000_000);
+	});
+
+	test('a producer predating ADR-002 still parses; the field reads undefined', () => {
+		// A device running an older srtla_send emits neither scope, and the reader
+		// must accept it. Absent means UNKNOWN — a consumer must not read it as 0.
+		const snapshot = baseSnapshot();
+		snapshot.bytes_sent_total = undefined;
+		onlyConnection(snapshot).bytes_sent_total = undefined;
+
+		const parsed = telemetrySchema.safeParse(snapshot);
+		expect(parsed.success).toBe(true);
+		expect(parsed.success && parsed.data.bytes_sent_total).toBeUndefined();
+		expect(parsed.success && parsed.data.connections[0]?.bytes_sent_total).toBeUndefined();
+	});
+
+	test('a negative cumulative count is rejected at both scopes', async () => {
+		const negativeBond = baseSnapshot();
+		negativeBond.bytes_sent_total = -1;
+		expect(await writeAndRead(negativeBond)).toBeNull();
+
+		const negativeLink = baseSnapshot();
+		onlyConnection(negativeLink).bytes_sent_total = -1;
+		expect(await writeAndRead(negativeLink)).toBeNull();
+	});
+
+	test('a fractional byte count is rejected — it is a whole-byte counter', async () => {
+		const fractional = baseSnapshot();
+		fractional.bytes_sent_total = 1024.5;
+		expect(await writeAndRead(fractional)).toBeNull();
 	});
 });
 

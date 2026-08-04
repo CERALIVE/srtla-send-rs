@@ -16,19 +16,24 @@
 //! ```json
 //! {"schema_version":1,"last_updated_ms":1749556546000,"connections":[
 //!   {"conn_id":"0","rtt_ms":42,"nak_count":3,"weight_percent":85,
-//!    "window":8192,"in_flight":100,"bitrate_bps":2500000}]}
+//!    "window":8192,"in_flight":100,"bitrate_bps":2500000,
+//!    "bytes_sent_total":812000000}],"bytes_sent_total":1620000000}
 //! ```
 //!
-//! Divergences from the C producer, both additive / strictly-better:
+//! Divergences from the C producer, all additive / strictly-better:
 //! - `schema_version` is emitted (C omits it); the Zod reader strips unknown
 //!   keys, so the consumer is unaffected.
 //! - `rtt_ms` carries the Kalman-smoothed RTT (C hardcodes 0).
 //! - `weight_percent` is each link's normalized share of selection weight
 //!   (C reports a constant 100); the receiver-side scoring is not ported.
+//! - `bytes_sent_total` (both scopes) is the ADR-002 cumulative byte count; the
+//!   C producer has no equivalent.
 //!
 //! `conn_id` is the uplink's 0-based index in the IP-list order (stable until a
 //! SIGHUP reload reorders the file). `bitrate_bps` is wire bytes/s x 8 — the
 //! mandated bits/s conversion has its single home in [`build_telemetry_json`].
+//! `bytes_sent_total` is BYTES and is **not** multiplied: it is a count, not a
+//! rate. See `docs/adr/ADR-002-session-bytes-telemetry.md`.
 
 use std::fs::{self, File};
 use std::io::{self, Write};
@@ -60,6 +65,10 @@ pub struct TelemetryConn {
     pub window: i32,
     pub in_flight: i32,
     pub bitrate_bytes_per_sec: u32,
+    /// Cumulative wire BYTES for this uplink (ADR-002). Serialized verbatim —
+    /// unlike `bitrate_bytes_per_sec` there is no x8, because this is a byte
+    /// count and not a rate.
+    pub bytes_sent_total: u64,
 }
 
 /// Serialized per-connection record. `conn_id` is a string and `bitrate_bps` is
@@ -74,6 +83,7 @@ struct ConnRecord {
     window: i32,
     in_flight: i32,
     bitrate_bps: u64,
+    bytes_sent_total: u64,
 }
 
 impl From<&TelemetryConn> for ConnRecord {
@@ -87,6 +97,8 @@ impl From<&TelemetryConn> for ConnRecord {
             in_flight: c.in_flight,
             // The single, testable home of the mandated bytes/s -> bits/s x8.
             bitrate_bps: u64::from(c.bitrate_bytes_per_sec) * 8,
+            // No x8: a cumulative byte COUNT, not a rate.
+            bytes_sent_total: c.bytes_sent_total,
         }
     }
 }
@@ -98,20 +110,43 @@ struct TelemetryDoc {
     schema_version: u32,
     last_updated_ms: u64,
     connections: Vec<ConnRecord>,
+    bytes_sent_total: u64,
 }
 
 /// Serialize one snapshot to the exact ADR-001 JSON object (compact,
 /// newline-free). This is the single place the bytes/s -> bits/s x8 conversion
 /// lives, so the mandated unit transform has one testable home.
-pub fn build_telemetry_json(last_updated_ms: u64, conns: &[TelemetryConn]) -> String {
+///
+/// `session_bytes_sent` is the bond-level ADR-002 cumulative byte count. It is
+/// passed in rather than summed from `conns` because the sum of the LIVE links
+/// regresses when a link is torn down; see [`StatsSnapshot::session_bytes_sent`].
+pub fn build_telemetry_json(
+    last_updated_ms: u64,
+    conns: &[TelemetryConn],
+    session_bytes_sent: u64,
+) -> String {
     let doc = TelemetryDoc {
         schema_version: TELEMETRY_SCHEMA_VERSION,
         last_updated_ms,
         connections: conns.iter().map(ConnRecord::from).collect(),
+        bytes_sent_total: session_bytes_sent,
     };
     // The doc is plain scalars / strings, so serialization cannot fail; fall back
     // to an empty object defensively rather than panicking on the hot path.
     serde_json::to_string(&doc).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// Serialize a whole [`StatsSnapshot`] into the publishable telemetry document.
+///
+/// Both sinks (the `--stats-file` writer and the `subscribe-events` broadcaster)
+/// go through here, so the per-link projection and the bond-level cumulative
+/// counter can never be paired inconsistently.
+pub fn build_telemetry_json_from_stats(last_updated_ms: u64, stats: &StatsSnapshot) -> String {
+    build_telemetry_json(
+        last_updated_ms,
+        &conns_from_stats(stats),
+        stats.session_bytes_sent,
+    )
 }
 
 /// Project the shared stats snapshot into per-uplink telemetry records.
@@ -163,6 +198,7 @@ pub fn conns_from_stats(stats: &StatsSnapshot) -> Vec<TelemetryConn> {
                 // LinkStats.bitrate_bps is already wire bytes/s; the x8 to bits/s
                 // is applied once, at JSON serialization.
                 bitrate_bytes_per_sec: l.bitrate_bps,
+                bytes_sent_total: l.bytes_sent_total,
             }
         })
         .collect()
@@ -391,6 +427,7 @@ mod tests {
             window: 8192,
             in_flight: 100,
             bitrate_bytes_per_sec: 312_500,
+            bytes_sent_total: 812_000_000,
         }
     }
 
@@ -405,6 +442,7 @@ mod tests {
             rtt_ms: 20,
             nak_count: 0,
             bitrate_bps: bytes_per_sec,
+            bytes_sent_total: u64::from(bytes_per_sec) * 10,
             rtt_min_ms: 0.0,
             rtt_velocity: 0.0,
             base_score: score,
@@ -416,7 +454,7 @@ mod tests {
 
     #[test]
     fn schema_version_is_integer_one() {
-        let json = build_telemetry_json(1, &[]);
+        let json = build_telemetry_json(1, &[], 0);
         assert!(json.contains("\"schema_version\":1"), "got {json}");
         // It must be a number, never a string.
         assert!(!json.contains("\"schema_version\":\"1\""));
@@ -424,7 +462,7 @@ mod tests {
 
     #[test]
     fn document_is_newline_free() {
-        let json = build_telemetry_json(1, &[sample_conn()]);
+        let json = build_telemetry_json(1, &[sample_conn()], 0);
         assert!(
             !json.contains('\n'),
             "telemetry must be a single line: {json}"
@@ -433,20 +471,20 @@ mod tests {
 
     #[test]
     fn empty_connections_serialize_to_array() {
-        let json = build_telemetry_json(1_749_556_546_000, &[]);
+        let json = build_telemetry_json(1_749_556_546_000, &[], 0);
         assert!(json.contains("\"connections\":[]"), "got {json}");
         assert!(json.contains("\"last_updated_ms\":1749556546000"));
     }
 
     #[test]
     fn conn_id_is_stringified() {
-        let json = build_telemetry_json(0, &[sample_conn()]);
+        let json = build_telemetry_json(0, &[sample_conn()], 0);
         assert!(json.contains("\"conn_id\":\"0\""), "got {json}");
     }
 
     #[test]
     fn all_schema_fields_present_and_typed() {
-        let json = build_telemetry_json(7, &[sample_conn()]);
+        let json = build_telemetry_json(7, &[sample_conn()], 0);
         for needle in [
             "\"rtt_ms\":42",
             "\"nak_count\":3",
@@ -464,7 +502,7 @@ mod tests {
     #[test]
     fn bitrate_is_bytes_times_eight_bits_per_second() {
         // 312500 B/s -> 2500000 bps (the ADR-001 canonical example).
-        let json = build_telemetry_json(0, &[sample_conn()]);
+        let json = build_telemetry_json(0, &[sample_conn()], 0);
         assert!(json.contains("\"bitrate_bps\":2500000"), "got {json}");
         // The raw bytes/s value must never leak into the JSON.
         assert!(!json.contains("312500"), "raw bytes/s leaked: {json}");
@@ -547,7 +585,7 @@ mod tests {
     fn write_atomic_roundtrips_and_leaves_no_temp() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("stats.json");
-        let json = build_telemetry_json(111, &[sample_conn()]);
+        let json = build_telemetry_json(111, &[sample_conn()], 0);
 
         write_atomic(&path, &json).unwrap();
 
@@ -560,8 +598,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("stats.json");
 
-        write_atomic(&path, &build_telemetry_json(111, &[])).unwrap();
-        write_atomic(&path, &build_telemetry_json(222, &[])).unwrap();
+        write_atomic(&path, &build_telemetry_json(111, &[], 0)).unwrap();
+        write_atomic(&path, &build_telemetry_json(222, &[], 0)).unwrap();
 
         let content = fs::read_to_string(&path).unwrap();
         assert!(content.contains("\"last_updated_ms\":222"));
@@ -576,7 +614,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("stats.json");
         // Seed one complete snapshot so the reader always finds a live file.
-        write_atomic(&path, &build_telemetry_json(1, &[])).unwrap();
+        write_atomic(&path, &build_telemetry_json(1, &[], 0)).unwrap();
 
         let stop = Arc::new(AtomicBool::new(false));
         let writes = Arc::new(AtomicU64::new(0));
@@ -593,6 +631,7 @@ mod tests {
                 window: i as i32 * 100,
                 in_flight: i as i32,
                 bitrate_bytes_per_sec: i * 1000,
+                bytes_sent_total: u64::from(i) * 1_000_000,
             })
             .collect();
 
@@ -604,7 +643,7 @@ mod tests {
                 let mut t = 2u64;
                 while !stop.load(Ordering::Relaxed) {
                     let v = if t & 1 == 1 { &small } else { &big };
-                    let _ = write_atomic(&path, &build_telemetry_json(t, v));
+                    let _ = write_atomic(&path, &build_telemetry_json(t, v, 0));
                     writes.fetch_add(1, Ordering::Relaxed);
                     t += 1;
                 }
@@ -669,7 +708,7 @@ mod tests {
         let path = dir.path().join("stats.json");
         {
             let writer = TelemetryWriter::new(&path, 1000);
-            writer.publish_prebuilt(&build_telemetry_json(0, &[]));
+            writer.publish_prebuilt(&build_telemetry_json(0, &[], 0));
             assert!(
                 wait_until(|| path.exists(), Duration::from_secs(2)),
                 "publish should create the live file (on the writer thread)"
@@ -766,7 +805,7 @@ mod tests {
         let tmp = tmp_path(&path);
 
         let writer = TelemetryWriter::new(&path, 1000);
-        writer.publish_prebuilt(&build_telemetry_json(1, &[sample_conn()]));
+        writer.publish_prebuilt(&build_telemetry_json(1, &[sample_conn()], 0));
         assert!(
             wait_until(|| path.exists(), Duration::from_secs(2)),
             "writer thread should have published the live file"
@@ -774,7 +813,7 @@ mod tests {
 
         // A final snapshot is pending when shutdown is signalled: the writer must
         // drain it (durability) then unlink both the live file and the temp sibling.
-        writer.publish_prebuilt(&build_telemetry_json(2, &[sample_conn()]));
+        writer.publish_prebuilt(&build_telemetry_json(2, &[sample_conn()], 0));
         drop(writer); // shutdown + join: drain final slot, then unlink
 
         assert!(!path.exists(), "live file must be unlinked on shutdown");
@@ -801,7 +840,7 @@ mod tests {
     fn explicit_remove_clears_live_and_temp() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("stats.json");
-        write_atomic(&path, &build_telemetry_json(1, &[])).unwrap();
+        write_atomic(&path, &build_telemetry_json(1, &[], 0)).unwrap();
         // A stray temp sibling (e.g. from a crashed write) is also cleared.
         fs::write(tmp_path(&path), b"partial").unwrap();
 
@@ -825,7 +864,7 @@ mod tests {
         // whole shape at once: the schema tag, every field the frozen
         // `@ceralive/srtla` Zod reader requires, the x8 bitrate, and the
         // single-line invariant the atomic publish depends on.
-        let json = build_telemetry_json(GOLDEN_LAST_UPDATED_MS, &[sample_conn()]);
+        let json = build_telemetry_json(GOLDEN_LAST_UPDATED_MS, &[sample_conn()], 0);
 
         assert!(json.starts_with("{\"schema_version\":1,"), "got {json}");
         assert!(!json.contains("\"schema_version\":\"1\""));
@@ -855,7 +894,7 @@ mod tests {
         // "running but idle": a live process with no active uplinks still
         // serializes an empty array (distinct from an absent file), keeping the
         // schema tag and timestamp so a reader can tell idle from stale.
-        let json = build_telemetry_json(GOLDEN_LAST_UPDATED_MS, &[]);
+        let json = build_telemetry_json(GOLDEN_LAST_UPDATED_MS, &[], 0);
         assert!(json.contains("\"connections\":[]"), "got {json}");
         assert!(json.contains("\"schema_version\":1"), "got {json}");
         assert!(
@@ -873,7 +912,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("stats.json");
         let tmp = tmp_path(&path);
-        let json = build_telemetry_json(GOLDEN_LAST_UPDATED_MS, &[sample_conn()]);
+        let json = build_telemetry_json(GOLDEN_LAST_UPDATED_MS, &[sample_conn()], 0);
 
         assert_eq!(tmp.file_name().unwrap(), "stats.json.tmp");
 
@@ -900,6 +939,12 @@ mod tests {
     /// `@ceralive/srtla` reference fixture so both bindings round-trip the same ms.
     const GOLDEN_LAST_UPDATED_MS: u64 = 1_749_556_546_000;
 
+    /// Bond-level ADR-002 cumulative baked into the committed golden. It equals
+    /// the sum of the two links' own totals because the golden models a session
+    /// in which no link was ever torn down — the value is a session accumulator,
+    /// not a derived sum, and diverges from it after a SIGHUP removal.
+    const GOLDEN_SESSION_BYTES: u64 = 1_620_000_000;
+
     /// The exact connection set serialized into `tests/fixtures/telemetry-golden.json`.
     /// conn 0 is the ADR-001 canonical 312500 B/s -> 2_500_000 bps example; conn 1
     /// mirrors the `@ceralive/srtla` golden's second link (150000 B/s -> 1_200_000).
@@ -914,6 +959,7 @@ mod tests {
                 window: 4096,
                 in_flight: 240,
                 bitrate_bytes_per_sec: 150_000,
+                bytes_sent_total: 808_000_000,
             },
         ]
     }
@@ -933,7 +979,11 @@ mod tests {
         // (newline-free, single line) the `@ceralive/srtla-send` binding
         // round-trips in T21. Regenerate deliberately with UPDATE_GOLDEN=1 when
         // the schema changes — a silent drift fails this assertion.
-        let json = build_telemetry_json(GOLDEN_LAST_UPDATED_MS, &golden_conns());
+        let json = build_telemetry_json(
+            GOLDEN_LAST_UPDATED_MS,
+            &golden_conns(),
+            GOLDEN_SESSION_BYTES,
+        );
         let path = golden_path();
 
         if std::env::var_os("UPDATE_GOLDEN").is_some() {
