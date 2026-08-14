@@ -45,7 +45,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: "26"
 
       - name: Verify tag, package version, and checked-out commit
         run: bash ci/verify-bindings-release-ref.sh
@@ -69,7 +69,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: "26"
           registry-url: https://registry.npmjs.org/
           cache: pnpm
           cache-dependency-path: bindings/typescript/pnpm-lock.yaml
@@ -95,7 +95,10 @@ jobs:
       - name: Tarball guard — only compiled dist/ ships
         run: |
           npm pack --dry-run --json > /tmp/pack.json
-          FILES="$(node -e 'const j=require("/tmp/pack.json"); for (const f of j[0].files) console.log(f.path)')"
+          # `npm pack --json` reports an ARRAY on npm 11 and an OBJECT keyed by
+          # package name on npm 12 — read both so a future npm bump cannot turn
+          # this guard into a TypeError and fail the release before publish.
+          FILES="$(node -e 'const j=require("/tmp/pack.json"); const p=Array.isArray(j)?j[0]:Object.values(j)[0]; for (const f of p.files) console.log(f.path)')"
           echo "$FILES"
           if echo "$FILES" | grep -E '\.ts$' | grep -vE '\.d\.ts$'; then
             echo "::error::tarball contains TypeScript source — only compiled dist/ may ship"
@@ -129,7 +132,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: "26"
           registry-url: https://registry.npmjs.org/
 
       - name: Install pinned trusted-publishing npm
@@ -170,7 +173,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: "26"
           registry-url: https://registry.npmjs.org/
 
       - name: Install pinned npm

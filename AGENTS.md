@@ -374,6 +374,14 @@ the binding's Bun-native tests/API; it shares no triggers with the Rust workflow
   (explicit `+` outranks `rust-toolchain.toml`) to actually exercise that channel. The
   uv contract step uses the published `astral-sh/setup-uv@v8.3.2` release tag because
   setup-uv does not publish a `v8` major alias; do not shorten this ref to `@v8`.
+  It also carries the **`bindings` job — the PR-gated TypeScript binding lane**
+  (`pnpm install --frozen-lockfile`, `lint`, `typecheck`, `test`, `build` from
+  `bindings/typescript/`, under **Node 26**, pnpm 10.30.3 and Bun 1.3.14). It is
+  **REQUIRED, not a canary**: no `continue-on-error`, so a red binding blocks the PR
+  like any Rust lane. `publish-bindings.yml` runs the same commands, but only on a
+  `bindings-v*` tag — by then a break is already on `main`; this lane moves the gate
+  onto the PR. Node 26 is the CeraLive CI baseline as of 2026-08-14 (root `AGENTS.md`
+  → CI/CD STANDARD); do not pin Node 24 or older in any workflow here.
 - **`release.yml`** (tag push `v*`) — runs the full Rust gate plus the blocking
   `loom` contract job (production subscription-concurrency invariant) and Miri lane in
   parallel; `build-deb` needs all three before rebuilding both
@@ -383,7 +391,7 @@ the binding's Bun-native tests/API; it shares no triggers with the Rust workflow
   `@ceralive/srtla-send` to the **public npm registry** (`@ceralive` scope,
   `registry-url: https://registry.npmjs.org/`) via npm **OIDC trusted publishing**
   (the `publish` job grants `id-token: write`, `npm publish --access public` — **no `NODE_AUTH_TOKEN`**;
-  npm is pinned to `11.18.0`, above the trusted-publishing minimum of 11.5.1; Node is 24).
+  npm is pinned to `11.18.0`, above the trusted-publishing minimum of 11.5.1; Node is 26).
   Mirrors `@ceralive/cerastream`'s publish flow.
   The `test-bindings` job uses the committed pnpm lockfile to run lint, typecheck, tests,
   build, and the tarball guard, then uploads validated `dist/`. The OIDC `publish` job
@@ -397,6 +405,10 @@ the binding's Bun-native tests/API; it shares no triggers with the Rust workflow
   under the `next` dist-tag; a plain version under `latest`. The published version **is**
   the committed `bindings/typescript/package.json` `version`; the tag does not mint it.
   The provenance guard refuses stale, malformed, branch, dispatch, or mismatched refs.
+  The tarball guard reads `npm pack --dry-run --json` **shape-agnostically** (array on
+  npm 11, object keyed by package name on npm 12) — the sibling
+  `publish-biome-config.yml` failed a release on exactly that shape change; keep both
+  branches when touching it.
   Cut a binding release: bump `package.json` `version` → commit →
   `git tag bindings-vYYYY.M.P && git push origin bindings-vYYYY.M.P`.
 
@@ -592,7 +604,7 @@ The binding package manager is **pnpm**, pinned by `packageManager` and
 so `pnpm test` invokes the pinned Bun test runtime; Bun is not the dependency manager.
 Do not add Bun/npm/yarn lockfiles for this package.
 
-The `bindings/typescript/` package uses Biome 2.5 via `@ceralive/biome-config` as its first linter/formatter. The `biome.json` in `bindings/typescript/` extends `@ceralive/biome-config` (`"extends": ["@ceralive/biome-config"]`). ESLint and Prettier are not used. Run `pnpm lint` from `bindings/typescript/` (check) or `pnpm exec biome check --write .` (apply fixes). The binding gate includes `pnpm lint && pnpm typecheck && pnpm test && pnpm build`.
+The `bindings/typescript/` package uses Biome **2.5.8** via `@ceralive/biome-config` **2026.8.0** (the workspace canon — keep `biome.json`'s `$schema` on the same Biome patch) as its first linter/formatter. The `biome.json` in `bindings/typescript/` extends `@ceralive/biome-config` (`"extends": ["@ceralive/biome-config"]`). ESLint and Prettier are not used. Run `pnpm lint` from `bindings/typescript/` (check) or `pnpm exec biome check --write .` (apply fixes). The binding gate includes `pnpm lint && pnpm typecheck && pnpm test && pnpm build`.
 
 **Golden fixtures are excluded from Biome** — `biome.json` sets `files.includes` to `["**", "!**/tests/fixtures"]`. `tests/fixtures/telemetry-golden.json` is a deliberately byte-identical copy of the Rust producer golden (`tests/fixtures/telemetry-golden.json` at the crate root): the single-line, newline-free atomic-publish telemetry shape (ADR-001). If Biome pretty-prints it (multi-line + trailing newline), the cross-language parity test (`tests/telemetry_fixture_parity.rs` — `rust_and_ts_goldens_are_byte_identical` plus the newline-free assertion) fails every Rust test job in CI. **Do not remove this exclude, and never `biome check --write` the fixtures** — re-sync the two goldens by editing both byte-for-byte instead.
 
