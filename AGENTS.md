@@ -1001,6 +1001,17 @@ None alters the parity contract.
   authorization alive for a socket generation that was never re-armed. The `Err` branch
   now removes the entry, so "armed only by a send that left the host" holds for the
   current generation.
+- **REG_NGP is accepted only when nothing is in flight anywhere (round 4).** Accepting a
+  REG_NGP restarts the handshake at REG1, which re-opens the `pending_reg2_idx` window
+  the round-3 REG_ERR gate honors a REG_ERR in. The old condition
+  (`active_connections == 0 && pending_reg2_idx.is_none()`) let a forged REG_NGP do that
+  on a link that had just completed REG3: `active_connections` is recomputed only by a
+  later housekeeping tick, so it still read zero while `SrtlaConnection::connected` was
+  already `true`. `handle_reg_ngp` now additionally requires `awaiting_reg3.is_empty()`
+  (no outstanding REG3 grant on ANY index) and takes the uplink's own `connected` flag —
+  threaded through `process_registration_packet` from `packet_io.rs` — because that flag,
+  not the manager's counter, is authoritative in that window. This supersedes the
+  "deliberately NOT changed" REG_NGP residual recorded in the round-3 evidence.
 
 Pinned by `replayed_reg3_does_not_wipe_a_live_connection`,
 `reg2_broadcast_retry_skips_already_connected_uplinks`,
@@ -1009,7 +1020,10 @@ Pinned by `replayed_reg3_does_not_wipe_a_live_connection`,
 `out_of_phase_reg_err_does_not_damage_another_uplinks_handshake`,
 `in_phase_reg_err_still_aborts_the_registration`, and
 `failed_reg2_resend_revokes_a_stale_pre_existing_grant`
-(`src/tests/batch_io_tests.rs`) plus the SIGHUP reset assertions in
+(`src/tests/batch_io_tests.rs`), `reg_ngp_rejected_while_any_uplink_awaits_reg3`,
+`reg_ngp_rejected_on_connected_uplink_with_stale_active_count`,
+`forged_reg_ngp_cannot_reopen_the_reg_err_window_on_a_live_uplink`
+(`src/tests/registration_tests.rs`), plus the SIGHUP reset assertions in
 `src/tests/sender_tests.rs`.
 
 ## DOCS DISCIPLINE (Rule A)

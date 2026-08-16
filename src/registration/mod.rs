@@ -116,15 +116,20 @@ impl SrtlaRegistrationManager {
         self.awaiting_reg3.insert(conn_idx);
     }
 
+    /// `conn_connected` is the uplink's own authoritative
+    /// [`SrtlaConnection::connected`] flag. It is passed in because the
+    /// manager's `active_connections` counter is only recomputed by a later
+    /// housekeeping tick, so it is briefly stale after a REG3 promotes a link.
     pub fn process_registration_packet(
         &mut self,
         conn_idx: usize,
         buf: &[u8],
+        conn_connected: bool,
     ) -> Option<RegistrationEvent> {
         match get_packet_type(buf) {
             Some(SRTLA_TYPE_REG_NGP) => {
                 debug!("REG_NGP from uplink #{}", conn_idx);
-                self.handle_reg_ngp(conn_idx);
+                self.handle_reg_ngp(conn_idx, conn_connected);
                 Some(RegistrationEvent::RegNgp)
             }
             Some(SRTLA_TYPE_REG2) => {
@@ -227,20 +232,41 @@ impl SrtlaRegistrationManager {
         }
     }
 
-    fn handle_reg_ngp(&mut self, conn_idx: usize) {
+    /// Accepting a REG_NGP restarts the handshake from REG1, which re-opens the
+    /// `pending_reg2_idx` window a REG_ERR is honored in. A forged 2-byte
+    /// REG_NGP must therefore never be able to re-arm that window on a session
+    /// that is already past it, so acceptance requires that *nothing* is in
+    /// flight anywhere: no pending REG2, no outstanding REG3 grant, and no
+    /// established link.
+    ///
+    /// The `active_connections` counter alone is not sufficient for the last
+    /// condition: it is recomputed only by housekeeping, so it still reads zero
+    /// for a link whose REG3 was processed moments ago. `conn_connected` is that
+    /// link's own flag, set in the same dispatch that consumed the REG3, and
+    /// closes the staleness window.
+    fn handle_reg_ngp(&mut self, conn_idx: usize, conn_connected: bool) {
         if self.probing_state == ProbingState::WaitingForProbes {
             self.handle_probe_response(conn_idx);
             return;
         }
 
-        if self.active_connections == 0 && self.pending_reg2_idx.is_none() {
+        if self.active_connections == 0
+            && !conn_connected
+            && self.pending_reg2_idx.is_none()
+            && self.awaiting_reg3.is_empty()
+        {
             debug!("REG_NGP from uplink #{} accepted as REG1 target", conn_idx);
             self.reg1_target_idx = Some(conn_idx);
             self.reg1_next_send_at_ms = now_ms();
         } else {
             debug!(
-                "REG_NGP from uplink #{} ignored (active connections present or pending)",
-                conn_idx
+                "REG_NGP from uplink #{} ignored (connected={}, active={}, pending_reg2={:?}, \
+                 awaiting_reg3={})",
+                conn_idx,
+                conn_connected,
+                self.active_connections,
+                self.pending_reg2_idx,
+                self.awaiting_reg3.len()
             );
         }
     }

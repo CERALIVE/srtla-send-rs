@@ -473,7 +473,7 @@ mod tests {
         let mut forged = ours;
         forged[0] ^= 0xff;
         forged[SRTLA_ID_LEN / 2..].fill(0xab);
-        reg.process_registration_packet(0, &create_reg2_packet(&forged));
+        reg.process_registration_packet(0, &create_reg2_packet(&forged), false);
 
         assert_eq!(reg.srtla_id, ours, "a forged REG2 must not replace our id");
         assert!(!reg.broadcast_reg2_pending());
@@ -485,7 +485,7 @@ mod tests {
 
         let mut genuine = ours;
         genuine[SRTLA_ID_LEN / 2..].fill(0xcd);
-        reg.process_registration_packet(0, &create_reg2_packet(&genuine));
+        reg.process_registration_packet(0, &create_reg2_packet(&genuine), false);
         assert_eq!(
             reg.srtla_id, genuine,
             "the matching-prefix REG2 is accepted"
@@ -498,7 +498,7 @@ mod tests {
         let mut reg = SrtlaRegistrationManager::new();
         let reg3 = [(SRTLA_TYPE_REG3 >> 8) as u8, (SRTLA_TYPE_REG3 & 0xff) as u8];
 
-        reg.process_registration_packet(0, &reg3);
+        reg.process_registration_packet(0, &reg3, false);
         assert!(
             !reg.has_connected,
             "REG3 on an uplink that was never sent a REG2 must not connect it"
@@ -506,7 +506,7 @@ mod tests {
         assert_eq!(reg.out_of_phase_reg3(), 1);
 
         reg.arm_reg3_gate(0);
-        reg.process_registration_packet(0, &reg3);
+        reg.process_registration_packet(0, &reg3, false);
         assert!(
             reg.has_connected,
             "an in-phase REG3 still connects the link"

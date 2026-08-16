@@ -113,7 +113,7 @@ impl SrtlaConnection {
         let recv_time = Instant::now();
         let pt = get_packet_type(data);
         if let Some(pt) = pt {
-            if let Some(event) = reg.process_registration_packet(conn_idx, data) {
+            if let Some(event) = reg.process_registration_packet(conn_idx, data, self.connected) {
                 match event {
                     RegistrationEvent::RegNgp => {
                         reg.try_send_reg1_immediately(conn_idx, self).await;
