@@ -30,7 +30,6 @@ pub async fn handle_housekeeping(
     // If we're waiting on a REG2 response past the timeout, proactively retry REG1
     let current_ms = now_ms();
     let _ = reg.clear_pending_if_timed_out(current_ms);
-    reg.clear_awaiting_reg3_if_timed_out(current_ms);
 
     if reg.is_probing() {
         let was_probing = true;
@@ -224,43 +223,6 @@ mod tests {
             !reader_handles.get(&conn_id).unwrap().handle.is_finished(),
             "housekeeping must respawn the dead reader for the still-active connection"
         );
-    }
-
-    /// The REG3-wait expiry has to run from the production housekeeping tick, not just
-    /// from its own seam: `clear_pending_if_timed_out` cannot observe the deadline
-    /// `handle_reg2` re-arms, so without the sibling call the grant — and the REG_NGP
-    /// gate it holds shut — outlives its timeout forever.
-    #[tokio::test]
-    async fn housekeeping_expires_a_stale_reg3_grant() {
-        let mut connections = vec![create_test_connection().await];
-        let mut reg = SrtlaRegistrationManager::new();
-        let mut all_failed_at: Option<Instant> = None;
-        let mut reader_handles: HashMap<ConnectionId, ReaderHandle> = HashMap::new();
-        let (packet_tx, _packet_rx) = create_uplink_channel();
-
-        reg.send_reg2_to(0, &mut connections[0]).await;
-        assert!(reg.is_awaiting_reg3(0), "the REG2 armed the REG3 gate");
-        // Registration deadlines are wall-clock (now_ms == SystemTime), which no test
-        // clock advances, so an elapsed REG3 deadline is expressed by rewinding it.
-        reg.set_pending_timeout_at_ms(now_ms() - 1);
-
-        handle_housekeeping(
-            &mut connections,
-            &mut reg,
-            false,
-            &mut all_failed_at,
-            &mut reader_handles,
-            &packet_tx,
-            &mut SequenceTracker::new(),
-        )
-        .await
-        .expect("housekeeping on an active connection must not fail");
-
-        assert!(
-            !reg.is_awaiting_reg3(0),
-            "the housekeeping tick must revoke the expired grant"
-        );
-        assert_eq!(reg.pending_timeout_at_ms(), 0);
     }
 
     /// Regression for S9: the all-uplinks-failed timeout must measure time *since failure*

@@ -415,53 +415,6 @@ impl SrtlaRegistrationManager {
         None
     }
 
-    /// Expire the REG3 wait `handle_reg2` armed, revoking every outstanding
-    /// grant and re-opening the handshake.
-    ///
-    /// `handle_reg2` clears `pending_reg2_idx` and re-points
-    /// `pending_timeout_at_ms` at a `REG3_TIMEOUT` deadline in the same
-    /// statement block, so [`Self::clear_pending_if_timed_out`] — which only
-    /// fires *while* a REG2 is pending — can never observe that deadline. Left
-    /// unconsulted, an `awaiting_reg3` grant lives forever, and because
-    /// [`Self::handle_reg_ngp`] refuses to restart registration while any grant
-    /// is outstanding, a receiver that restarts between our REG2 and its REG3
-    /// strands the sender permanently: the receiver's entirely legitimate fresh
-    /// REG_NGP for the now-unknown group is rejected for the life of the
-    /// process.
-    ///
-    /// `pending_timeout_at_ms` is a single slot and `handle_reg2` sets it
-    /// exactly once per successful REG2, so it is one deadline for the whole
-    /// REG3-wait phase: every grant the REG2 broadcast round left outstanding
-    /// expires together. This is a timeout-bounded recovery, not an open door —
-    /// a fresh REG1 → REG2 → REG3 cycle re-arms the gate through
-    /// `send_reg2_to`, and a link that is merely late keeps its socket and is
-    /// re-registered by the housekeeping `CONN_TIMEOUT` recovery path.
-    pub fn clear_awaiting_reg3_if_timed_out(&mut self, now_ms_value: u64) -> bool {
-        // A pending REG2 means the deadline belongs to `clear_pending_if_timed_out`.
-        if self.pending_reg2_idx.is_some()
-            || self.awaiting_reg3.is_empty()
-            || self.pending_timeout_at_ms == 0
-            || now_ms_value < self.pending_timeout_at_ms
-        {
-            return false;
-        }
-
-        warn!(
-            "REG3 wait exceeded {}ms for {} uplink(s); revoking the grants and re-opening \
-             registration",
-            REG3_TIMEOUT * 1000,
-            self.awaiting_reg3.len()
-        );
-        self.awaiting_reg3.clear();
-        self.pending_timeout_at_ms = 0;
-        // The round is abandoned: a queued rebroadcast would re-arm the very
-        // grants just revoked, with an id the receiver may no longer know.
-        self.broadcast_reg2_pending = false;
-        self.reg1_target_idx = None;
-        self.reg1_next_send_at_ms = now_ms_value;
-        true
-    }
-
     pub fn get_selected_connection_idx(&self) -> Option<usize> {
         self.reg1_target_idx
     }
