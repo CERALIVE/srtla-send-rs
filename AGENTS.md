@@ -959,7 +959,7 @@ is ever dropped. `src/connection/batch_send.rs`, `src/connection/mod.rs`.
 
 ### REG3 authorization is one-shot; index-scoped registration state resets on SIGHUP (Final Verification Wave, `eaced59` + this round)
 
-Three registration-hardening bugfixes, all found by the post-merge verification wave.
+Five registration-hardening bugfixes, all found by the post-merge verification wave.
 None alters the parity contract.
 
 - **REG3 is a ONE-SHOT grant.** `handle_reg3` consumes the uplink's `awaiting_reg3`
@@ -982,11 +982,35 @@ None alters the parity contract.
   skip, the retry re-`insert`ed the index and re-armed the one-shot gate on an
   already-connected, actively-forwarding link, reintroducing the first bug through a
   slow multi-uplink broadcast instead of a raw duplicate packet.
+- **REG_ERR is phase-gated the same way REG3 is (round 3).** `handle_reg_err` used to
+  act on ANY REG_ERR: it set `connected = false` on the receiving link and cleared the
+  GLOBAL `pending_reg2_idx`/`reg1_target_idx`. SRTLA control frames are unauthenticated
+  and the uplink sockets are unconnected, so a forged 2-byte `SRTLA_TYPE_REG_ERR` from
+  anything that could reach an uplink's ephemeral port was a one-packet remote DoS
+  against an established, forwarding link — and collaterally aborted an *unrelated*
+  uplink's concurrent handshake. It is now honored only when that index is genuinely
+  mid-registration (`pending_reg2_idx == Some(idx)` OR `awaiting_reg3` member);
+  otherwise it is counted in `out_of_phase_reg_err` and returned as
+  `RegistrationEvent::RegErrOutOfPhase`, which `packet_io.rs` treats as a no-op. When
+  in phase, the clearing is SCOPED: the global REG1/REG2 fields are cleared only when
+  this index owns that single in-flight slot; an `awaiting_reg3`-phase REG_ERR revokes
+  only its own grant.
+- **A failed REG2 send revokes any stale pre-existing grant (round 3).** `send_reg2_to`
+  arms `awaiting_reg3` only on a successful send, but on failure it used to leave an
+  older grant for the same index untouched — so a failed RESEND could keep a REG3
+  authorization alive for a socket generation that was never re-armed. The `Err` branch
+  now removes the entry, so "armed only by a send that left the host" holds for the
+  current generation.
 
 Pinned by `replayed_reg3_does_not_wipe_a_live_connection`,
-`reg2_broadcast_retry_skips_already_connected_uplinks`, and
-`out_of_phase_reg3_is_counted_and_ignored` (`src/tests/batch_io_tests.rs`) plus the
-SIGHUP reset assertions in `src/tests/sender_tests.rs`.
+`reg2_broadcast_retry_skips_already_connected_uplinks`,
+`out_of_phase_reg3_is_counted_and_ignored`,
+`out_of_phase_reg_err_does_not_disconnect_a_live_uplink`,
+`out_of_phase_reg_err_does_not_damage_another_uplinks_handshake`,
+`in_phase_reg_err_still_aborts_the_registration`, and
+`failed_reg2_resend_revokes_a_stale_pre_existing_grant`
+(`src/tests/batch_io_tests.rs`) plus the SIGHUP reset assertions in
+`src/tests/sender_tests.rs`.
 
 ## DOCS DISCIPLINE (Rule A)
 

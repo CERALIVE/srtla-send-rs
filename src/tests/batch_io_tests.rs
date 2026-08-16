@@ -16,7 +16,7 @@ mod tests {
     use crate::connection::SrtlaConnection;
     use crate::connection::batch_recv::BatchUdpSocket;
     use crate::connection::batch_send::{BATCH_SEND_SIZE, BatchSender};
-    use crate::protocol::{SRTLA_ID_LEN, SRTLA_TYPE_REG3, create_reg2_packet};
+    use crate::protocol::{SRTLA_ID_LEN, SRTLA_TYPE_REG_ERR, SRTLA_TYPE_REG3, create_reg2_packet};
     use crate::registration::SrtlaRegistrationManager;
     use crate::sender::SequenceTracker;
     use crate::sender::packet_handler::{flush_all_batches, forward_via_connection};
@@ -299,6 +299,169 @@ mod tests {
             !reg.is_awaiting_reg3(0),
             "a REG2 that never left the host must not arm the REG3 gate"
         );
+    }
+
+    /// A failed REG2 *resend* must also revoke the grant an earlier successful
+    /// REG2 left on the same index: "armed only on a send that left the host"
+    /// has to hold for the current socket generation, not a stale one.
+    #[tokio::test]
+    async fn failed_reg2_resend_revokes_a_stale_pre_existing_grant() {
+        let mut reg = SrtlaRegistrationManager::new();
+        let (mut good, _peer) = reachable_connection().await;
+        let listener = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let (instant_tx, _instant_rx) = tokio::sync::mpsc::unbounded_channel();
+        let reg3 = [(SRTLA_TYPE_REG3 >> 8) as u8, (SRTLA_TYPE_REG3 & 0xff) as u8];
+
+        reg.send_reg2_to(0, &mut good).await;
+        assert!(reg.is_awaiting_reg3(0), "the first REG2 arms the gate");
+
+        let mut broken = unsendable_connection().await;
+        reg.send_reg2_to(0, &mut broken).await;
+
+        assert!(
+            !reg.is_awaiting_reg3(0),
+            "a failed REG2 resend must leave no stale grant behind"
+        );
+
+        broken
+            .process_packet(0, &mut reg, &listener, &instant_tx, None, &reg3)
+            .await
+            .unwrap();
+        assert!(
+            !broken.connected,
+            "a REG3 riding the revoked grant must not connect the uplink"
+        );
+        assert_eq!(reg.out_of_phase_reg3(), 1);
+    }
+
+    // ------------------------------------------------------------------
+    // REG_ERR phase gate
+    // ------------------------------------------------------------------
+
+    /// A forged 2-byte REG_ERR is the cheapest possible remote DoS: without a
+    /// phase gate it force-disconnects any established, forwarding uplink.
+    #[tokio::test]
+    async fn out_of_phase_reg_err_does_not_disconnect_a_live_uplink() {
+        let (mut conn, _peer) = reachable_connection().await;
+        let mut reg = SrtlaRegistrationManager::new();
+        let listener = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let (instant_tx, _instant_rx) = tokio::sync::mpsc::unbounded_channel();
+        let reg3 = [(SRTLA_TYPE_REG3 >> 8) as u8, (SRTLA_TYPE_REG3 & 0xff) as u8];
+        let reg_err = [
+            (SRTLA_TYPE_REG_ERR >> 8) as u8,
+            (SRTLA_TYPE_REG_ERR & 0xff) as u8,
+        ];
+
+        reg.send_reg2_to(0, &mut conn).await;
+        conn.process_packet(0, &mut reg, &listener, &instant_tx, None, &reg3)
+            .await
+            .unwrap();
+        assert!(conn.connected, "the uplink is established");
+        assert!(
+            !reg.is_awaiting_reg3(0),
+            "no registration is in flight any more"
+        );
+
+        conn.process_packet(0, &mut reg, &listener, &instant_tx, None, &reg_err)
+            .await
+            .unwrap();
+
+        assert!(
+            conn.connected,
+            "an out-of-phase REG_ERR must not disconnect an established uplink"
+        );
+        assert_eq!(reg.out_of_phase_reg_err(), 1);
+        assert_eq!(
+            reg.pending_reg2_idx(),
+            None,
+            "no handshake state existed to clear"
+        );
+    }
+
+    /// The REG1/REG2 fields are single-slot globals: a REG_ERR about uplink A
+    /// must not abort uplink B's concurrent handshake.
+    #[tokio::test]
+    async fn out_of_phase_reg_err_does_not_damage_another_uplinks_handshake() {
+        let mut reg = SrtlaRegistrationManager::new();
+        let (mut conn_a, _peer_a) = reachable_connection().await;
+        let (mut conn_b, _peer_b) = reachable_connection().await;
+        let listener = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let (instant_tx, _instant_rx) = tokio::sync::mpsc::unbounded_channel();
+        let reg_err = [
+            (SRTLA_TYPE_REG_ERR >> 8) as u8,
+            (SRTLA_TYPE_REG_ERR & 0xff) as u8,
+        ];
+
+        reg.send_reg1_to(1, &mut conn_b).await;
+        assert_eq!(reg.pending_reg2_idx(), Some(1));
+        let pending_timeout = reg.pending_timeout_at_ms();
+
+        conn_a
+            .process_packet(0, &mut reg, &listener, &instant_tx, None, &reg_err)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            reg.pending_reg2_idx(),
+            Some(1),
+            "uplink B keeps its in-flight REG2 window"
+        );
+        assert_eq!(
+            reg.reg1_target_idx(),
+            Some(1),
+            "uplink B keeps its REG1 target"
+        );
+        assert_eq!(reg.pending_timeout_at_ms(), pending_timeout);
+        assert_eq!(reg.out_of_phase_reg_err(), 1);
+    }
+
+    /// A REG_ERR that answers a handshake actually in flight — in either the
+    /// awaiting-REG2 or the awaiting-REG3 phase — still tears that attempt down.
+    #[tokio::test]
+    async fn in_phase_reg_err_still_aborts_the_registration() {
+        let mut reg = SrtlaRegistrationManager::new();
+        let (mut conn, _peer) = reachable_connection().await;
+        let listener = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let (instant_tx, _instant_rx) = tokio::sync::mpsc::unbounded_channel();
+        let reg_err = [
+            (SRTLA_TYPE_REG_ERR >> 8) as u8,
+            (SRTLA_TYPE_REG_ERR & 0xff) as u8,
+        ];
+
+        reg.send_reg1_to(0, &mut conn).await;
+        assert_eq!(reg.pending_reg2_idx(), Some(0));
+        conn.connected = true;
+
+        conn.process_packet(0, &mut reg, &listener, &instant_tx, None, &reg_err)
+            .await
+            .unwrap();
+
+        assert!(!conn.connected, "an in-phase REG_ERR tears the link down");
+        assert_eq!(reg.pending_reg2_idx(), None);
+        assert_eq!(reg.reg1_target_idx(), None);
+        assert_eq!(reg.pending_timeout_at_ms(), 0);
+        assert_eq!(reg.out_of_phase_reg_err(), 0);
+
+        let mut awaiting = SrtlaRegistrationManager::new();
+        let (mut conn2, _peer2) = reachable_connection().await;
+        awaiting.send_reg2_to(0, &mut conn2).await;
+        assert!(awaiting.is_awaiting_reg3(0));
+        conn2.connected = true;
+
+        conn2
+            .process_packet(0, &mut awaiting, &listener, &instant_tx, None, &reg_err)
+            .await
+            .unwrap();
+
+        assert!(
+            !conn2.connected,
+            "a REG_ERR while awaiting REG3 also aborts the attempt"
+        );
+        assert!(
+            !awaiting.is_awaiting_reg3(0),
+            "the grant is revoked by the in-phase REG_ERR"
+        );
+        assert_eq!(awaiting.out_of_phase_reg_err(), 0);
     }
 
     #[test]

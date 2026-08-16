@@ -20,6 +20,9 @@ pub enum RegistrationEvent {
     /// ignored: it must not promote the link to connected.
     Reg3OutOfPhase,
     RegErr,
+    /// A REG_ERR that arrived on an uplink which is not mid-registration.
+    /// Consumed and ignored: it must not tear down an established link.
+    RegErrOutOfPhase,
 }
 
 pub struct SrtlaRegistrationManager {
@@ -41,6 +44,8 @@ pub struct SrtlaRegistrationManager {
     awaiting_reg3: HashSet<usize>,
     /// REG3 frames rejected by the phase gate (diagnostic).
     out_of_phase_reg3: u64,
+    /// REG_ERR frames rejected by the phase gate (diagnostic).
+    out_of_phase_reg_err: u64,
 }
 
 impl Default for SrtlaRegistrationManager {
@@ -67,6 +72,7 @@ impl SrtlaRegistrationManager {
             probe_results: new_probe_results(),
             awaiting_reg3: HashSet::new(),
             out_of_phase_reg3: 0,
+            out_of_phase_reg_err: 0,
         }
     }
 
@@ -101,6 +107,10 @@ impl SrtlaRegistrationManager {
         info!("REG2 → uplink #{} ({} bytes)", conn_idx, pkt.len());
         if let Err(e) = conn.send_srtla_packet(&pkt).await {
             warn!("Failed to send REG2 to uplink #{}: {:?}", conn_idx, e);
+            // A resend that never left the host must also revoke any grant left
+            // over from an earlier REG2 on this index: the socket generation it
+            // was issued against may already be gone.
+            self.awaiting_reg3.remove(&conn_idx);
             return;
         }
         self.awaiting_reg3.insert(conn_idx);
@@ -132,8 +142,11 @@ impl SrtlaRegistrationManager {
             }
             Some(SRTLA_TYPE_REG_ERR) => {
                 debug!("REG_ERR from uplink #{}", conn_idx);
-                self.handle_reg_err(conn_idx);
-                Some(RegistrationEvent::RegErr)
+                if self.handle_reg_err(conn_idx) {
+                    Some(RegistrationEvent::RegErr)
+                } else {
+                    Some(RegistrationEvent::RegErrOutOfPhase)
+                }
             }
             _ => None,
         }
@@ -285,21 +298,43 @@ impl SrtlaRegistrationManager {
         true
     }
 
-    fn handle_reg_err(&mut self, conn_idx: usize) {
-        if self.pending_reg2_idx == Some(conn_idx) {
-            debug!("REG_ERR for uplink #{} while awaiting REG2", conn_idx);
-        } else {
-            debug!("REG_ERR for uplink #{} (no pending REG2)", conn_idx);
+    /// Returns `true` only when the REG_ERR was a meaningful protocol reply to
+    /// a handshake this index actually has in flight.
+    ///
+    /// SRTLA control frames are unauthenticated and the uplink sockets are
+    /// unconnected, so anything that can reach an uplink's ephemeral port can
+    /// forge a 2-byte REG_ERR. Acting on one for an established link would let
+    /// that host force-disconnect a live, forwarding uplink; acting on one with
+    /// the global REG1/REG2 fields would additionally abort an *unrelated*
+    /// uplink's concurrent handshake.
+    fn handle_reg_err(&mut self, conn_idx: usize) -> bool {
+        let awaiting_reg2 = self.pending_reg2_idx == Some(conn_idx);
+        let awaiting_reg3 = self.awaiting_reg3.contains(&conn_idx);
+
+        if !awaiting_reg2 && !awaiting_reg3 {
+            self.out_of_phase_reg_err = self.out_of_phase_reg_err.saturating_add(1);
+            warn!(
+                "REG_ERR for uplink #{} ignored: no registration in flight on it ({} out-of-phase \
+                 so far)",
+                conn_idx, self.out_of_phase_reg_err
+            );
+            return false;
         }
 
-        self.pending_reg2_idx = None;
-        self.pending_timeout_at_ms = 0;
-        self.reg1_target_idx = None;
+        if awaiting_reg2 {
+            debug!("REG_ERR for uplink #{} while awaiting REG2", conn_idx);
+            self.pending_reg2_idx = None;
+            self.pending_timeout_at_ms = 0;
+            self.reg1_target_idx = None;
+            // Wait for a fresh REG_NGP to select the next REG1 target
+            self.reg1_next_send_at_ms = now_ms() + REG2_TIMEOUT * 1000;
+        } else {
+            debug!("REG_ERR for uplink #{} while awaiting REG3", conn_idx);
+        }
         self.awaiting_reg3.remove(&conn_idx);
-        // Wait for a fresh REG_NGP to select the next REG1 target
-        self.reg1_next_send_at_ms = now_ms() + REG2_TIMEOUT * 1000;
 
         warn!("registration failed for connection {}", conn_idx);
+        true
     }
 
     pub async fn try_send_reg1_immediately(&mut self, conn_idx: usize, conn: &mut SrtlaConnection) {
@@ -433,6 +468,10 @@ impl SrtlaRegistrationManager {
 
     pub(crate) fn out_of_phase_reg3(&self) -> u64 {
         self.out_of_phase_reg3
+    }
+
+    pub(crate) fn out_of_phase_reg_err(&self) -> u64 {
+        self.out_of_phase_reg_err
     }
 
     pub(crate) fn arm_reg3_gate(&mut self, conn_idx: usize) {

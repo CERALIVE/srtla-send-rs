@@ -133,7 +133,9 @@ impl SrtlaConnection {
                         self.connected = false;
                         self.last_received = None;
                     }
-                    RegistrationEvent::Reg2 | RegistrationEvent::Reg3OutOfPhase => {}
+                    RegistrationEvent::Reg2
+                    | RegistrationEvent::Reg3OutOfPhase
+                    | RegistrationEvent::RegErrOutOfPhase => {}
                 }
                 return Ok(());
             }
