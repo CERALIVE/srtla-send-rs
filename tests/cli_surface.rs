@@ -252,3 +252,25 @@ fn usage_string_pins_the_positional_contract() {
         "override_usage must keep the documented shape; got: {usage}"
     );
 }
+
+#[test]
+fn main_has_no_duplicate_module_tree() {
+    let main_source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"));
+    const ALLOWED_TEST_MODULES: &[&str] = &[];
+    let duplicate_modules: Vec<&str> = main_source
+        .lines()
+        .filter_map(|line| line.strip_prefix("mod "))
+        .filter(|declaration| {
+            let module_name = declaration
+                .strip_suffix(';')
+                .map(str::trim)
+                .unwrap_or_default();
+            !ALLOWED_TEST_MODULES.contains(&module_name)
+        })
+        .collect();
+
+    assert!(
+        duplicate_modules.is_empty(),
+        "src/main.rs must not declare private modules; found: {duplicate_modules:?}"
+    );
+}
