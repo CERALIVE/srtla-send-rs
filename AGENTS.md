@@ -1012,6 +1012,52 @@ Pinned by `replayed_reg3_does_not_wipe_a_live_connection`,
 (`src/tests/batch_io_tests.rs`) plus the SIGHUP reset assertions in
 `src/tests/sender_tests.rs`.
 
+### REVERTED: the REG_NGP acceptance gate and its REG3-wait expiry (rounds 4-5)
+
+Two further rounds of the same arc were written, gated green, and then **REVERTED**
+(`ed7e74f` and `1680670`, reverted by `813832b` and `b74da1a`). They are recorded here
+so they are not re-attempted from the same premise. **Rounds 1-3 above are untouched and
+remain in force.**
+
+- **Round 4** additionally required `awaiting_reg3.is_empty()` and the uplink's own
+  `connected` flag before accepting a REG_NGP, closing a narrow window in which a forged
+  REG_NGP could re-open `pending_reg2_idx` on a just-connected link (`active_connections`
+  is refreshed only by a housekeeping tick, so it lags `SrtlaConnection::connected`) and
+  thereby walk back into the round-3 REG_ERR teardown.
+- **Round 5** tried to bound round 4 by expiring the REG3 wait from housekeeping.
+
+**Why they were reverted: a live-proven liveness regression.** With the gate in place, an
+ordinary `srtla_rec` **restart** while the sender is fully connected and forwarding —
+a routine operational event on a production device fleet — **never recovered**. Measured
+hands-on on loopback against a real `srtla_rec`: 180 s after the receiver came back, 32
+REG2 retries, 0 REG1, 0 `connection established`. The receiver legitimately no longer
+knows the group and answers every REG2 with a REG_NGP; the gate refuses all of them, and
+round 5's expiry did not reach that path. With rounds 4-5 reverted the same scenario
+recovers deterministically in ~18 s (15 s `CONN_TIMEOUT` + a ~1 s REG1→REG2→REG3 cycle),
+reproduced twice at 18.07 s / 18.09 s with 1 REG1, 2 REG2, 1 `connection established`.
+
+**The residual risk is KNOWN and ACCEPTED.** The uplink sockets are deliberately
+unconnected (see the accept-any-source rationale above), so any host that can reach an
+uplink's ephemeral port can already inject registration-adjacent traffic — that is the
+standing baseline, not something round 4 introduced. What round 4 closed on top of it is
+strictly narrower than the one-packet DoS rounds 1-3 closed: it needs a forged REG_NGP
+landing inside a sub-second-to-few-second window right after a REG3, **and** a subsequent
+forged REG_ERR, and it yields only a re-registration. A guaranteed loss of
+receiver-restart recovery is the worse trade, so the gate is out.
+
+**Tracked follow-up (do NOT re-attempt round 4 in isolation).** Rounds 1-5 are five
+instances of one defect class: registration phase lives in five uncoordinated fields
+(`pending_reg2_idx: Option<usize>`, `awaiting_reg3: HashSet<usize>`,
+`reg1_target_idx: Option<usize>`, `pending_timeout_at_ms`, and the lagging
+`active_connections` counter), and every acceptance check re-derives "what phase is this
+uplink in?" from a different subset. Rounds 3→4→5 each fixed a hazard the previous round
+created. The proper fix — independently flagged by multiple reviewers across rounds 4-6 —
+is **one per-connection registration-phase enum with a single transition function**
+(REG_NGP/REG1/REG2/REG3 phases explicit, every gate exhaustive by construction) plus
+removing `active_connections` as an acceptance input. That is a state-machine rewrite
+needing its own verification wave and its own receiver-restart hands-on test; it is the
+only sanctioned way to revisit this window.
+
 ## DOCS DISCIPLINE (Rule A)
 
 Any behavior/structure change updates this `AGENTS.md` and `README.md` in the SAME PR.
