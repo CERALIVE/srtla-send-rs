@@ -744,6 +744,54 @@ every uplink line of a multi-link bond including a `failed to add uplink`
 attempt, and the port must genuinely be held (`AddrInUse`) once that log is
 emitted. The first two fail on the pre-fix ordering.
 
+## ROBUSTNESS FIXES (EDPF bonding, 2026-08-15)
+
+`--mode edpf` did not work at all, and `tests/netns_edpf.rs` had been red since it
+was written. Two independent defects in the EDPF pipeline, both inherited from the
+upstream commits that introduced it (`27c6c00`, `80cd0c4`). Neither touches the
+parity contract; the other three modes are unaffected (their selectors never call
+the EDPF predictor).
+
+### E1 — EDPF could never bootstrap (`src/sender/selection/edpf.rs`)
+
+`predicted_arrival` returned `None` when `conn.bitrate.current_bitrate_bps <= 0.0`.
+That field is a **measurement** of bytes this uplink has already sent, so it is
+`0.0` on every link at process start. Every link therefore had no predicted
+arrival, EDPF selected nothing, and the sender logged `no available connection to
+forward packet` for every single DATA packet, forever — nothing sent means nothing
+measured means nothing ever sent. Reproduced in a two-namespace bond: `--mode edpf`
+forwarded **0** packets while `--mode enhanced` on the identical topology forwarded
+1913.
+
+Unmeasured links now use a flat `BOOTSTRAP_CAPACITY_BPS` (1 Mbps) placeholder. It
+is deliberately flat, not modelled: every unmeasured link gets the same number, so
+ordering among them falls to in-flight bytes and OWD, and a real measurement
+replaces it within one 2 s bitrate window. This also covers a link idle longer than
+that window, whose measurement decays back to `0.0`.
+
+### E2 — BLEST permanently starved the high-latency uplink (`selection/mod.rs`)
+
+`BlestFilter` is a static, capacity-blind OWD guard: a link more than 50 ms of OWD
+behind the fastest is excluded on **every** tick regardless of congestion, and the
+pipeline's fallback chain (`select_from_indices(candidates).or_else(select_from)`)
+is only reached when the admitted set yields nothing — which never happens while
+one fast link is admitted. A 30 ms + 150 ms bond therefore never bonded: after E1
+was fixed, the 150 ms link still carried **0** packets over a 16 s window while the
+30 ms link ran flat against its 4 Mbit cap and the excess was dropped.
+
+`with_congestion_escape` re-admits a BLEST-excluded link while its predicted arrival
+is **earlier** than every admitted link's. That is consistent with the guard BLEST
+exists to enforce — a packet that lands first cannot head-of-line-block anything —
+and it re-engages automatically once the fast link drains. Measured effect on the
+netns scenario: link1 0 → ~3100 packets, aggregate 5860 → ~8960 packets per 16 s
+window (~3.9 → ~5.9 Mbps), stable across 4 consecutive runs.
+
+Do NOT restore "zero bitrate ⇒ not selectable" or drop the escape in an upstream
+merge; `tests/netns_edpf.rs` plus the EDPF arms in `src/tests/edpf_tests.rs` and
+`src/sender/selection/edpf.rs` pin both. Todo 11's EDPF velocity/BDP-penalty work
+supersedes the flat bootstrap constant if it introduces a real capacity estimate;
+the BLEST escape is orthogonal and should survive it.
+
 ## DOCS DISCIPLINE (Rule A)
 
 Any behavior/structure change updates this `AGENTS.md` and `README.md` in the SAME PR.

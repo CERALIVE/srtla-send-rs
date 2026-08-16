@@ -131,15 +131,17 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------
-    // (b) Fallback arm 2: candidate set yields no valid arrival ⇒ global
-    //     select_from(conns) `.or_else` engages and reaches a BLEST-excluded link.
+    // (b) Fallback arm 2: an unmeasured admitted link still predicts an arrival
+    //     from the bootstrap capacity, so it competes on in-flight and OWD
+    //     instead of dropping out of the pipeline entirely.
     // ---------------------------------------------------------------------
     #[test]
-    fn edpf_fallback_global_when_candidates_have_no_arrival() {
+    fn edpf_prefers_low_owd_unmeasured_link_over_blest_excluded_one() {
         let mut conns = make_conns(2);
-        // c0: low OWD ⇒ admitted by BLEST, but zero bitrate ⇒ no predicted arrival.
+        // c0: low OWD ⇒ admitted by BLEST; no measured bitrate yet.
         set_link(&mut conns[0], 0.0, 0, 20.0);
-        // c1: high OWD (block_time 80ms > 50ms) ⇒ BLEST-excluded, but a valid arrival.
+        // c1: high OWD (block_time 80ms > 50ms) ⇒ BLEST-excluded, and its arrival
+        // is later than c0's, so the congestion escape must not re-admit it.
         set_link(&mut conns[1], 1_000_000.0, 0, 180.0);
 
         let config = edpf_config();
@@ -149,20 +151,19 @@ mod tests {
 
         assert_eq!(
             selected,
-            Some(1),
-            "when no admitted candidate has a valid arrival, the global fallback must reach the \
-             only link with a finite predicted arrival, even one BLEST excluded"
+            Some(0),
+            "an unmeasured admitted link must still be selectable — dropping it is what \
+             deadlocked EDPF at startup"
         );
     }
 
     // ---------------------------------------------------------------------
-    // (b) Fallback arm 3: no link anywhere has a valid arrival ⇒ the global
-    //     `.or_else` returns None (terminal fallback), without panicking.
+    // (b) Fallback arm 3: an all-unmeasured pool must still yield a link, or the
+    //     scheduler can never send the DATA that produces the first measurement.
     // ---------------------------------------------------------------------
     #[test]
-    fn edpf_fallback_terminal_none_when_no_valid_arrival() {
+    fn edpf_selects_from_an_all_unmeasured_pool() {
         let mut conns = make_conns(2);
-        // Both admitted by BLEST (close RTT) but zero bitrate ⇒ no arrival anywhere.
         set_link(&mut conns[0], 0.0, 0, 30.0);
         set_link(&mut conns[1], 0.0, 0, 40.0);
 
@@ -172,8 +173,40 @@ mod tests {
         let selected = edpf_select(&mut conns, &config, &mut state);
 
         assert_eq!(
-            selected, None,
-            "with no finite predicted arrival on any link, every fallback yields None"
+            selected,
+            Some(0),
+            "with equal bootstrap capacity and in-flight, the lower-OWD link wins"
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // (b) Fallback arm 4: a BLEST-excluded link is re-admitted only while it
+    //     would deliver earlier than every admitted link (congestion escape).
+    // ---------------------------------------------------------------------
+    #[test]
+    fn edpf_congestion_escape_admits_high_owd_link_only_when_it_lands_first() {
+        let mut conns = make_conns(2);
+        // c0: low OWD, admitted, but deeply congested — arrival ≈ 1.075 s.
+        set_link(&mut conns[0], 1_000_000.0, 800, 30.0);
+        // c1: high OWD (block_time 80ms > 50ms) ⇒ BLEST-excluded, idle — 0.19 s.
+        set_link(&mut conns[1], 1_000_000.0, 0, 180.0);
+
+        let config = edpf_config();
+        let mut state = EdpfSchedulerState::default();
+
+        assert_eq!(
+            edpf_select(&mut conns, &config, &mut state),
+            Some(1),
+            "a saturated fast link must not starve the high-OWD link that now lands first"
+        );
+
+        // Drain the fast link: it lands first again, so the guard re-engages.
+        set_link(&mut conns[0], 1_000_000.0, 0, 30.0);
+        let mut state = EdpfSchedulerState::default();
+        assert_eq!(
+            edpf_select(&mut conns, &config, &mut state),
+            Some(0),
+            "with the fast link uncongested, BLEST must still exclude the high-OWD link"
         );
     }
 
@@ -219,17 +252,17 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------
-    // (d) Disconnected and zero-bitrate links are never selected.
+    // (d) Disconnected links are never selected; unmeasured ones still are.
     // ---------------------------------------------------------------------
     #[test]
-    fn edpf_skips_disconnected_and_zero_bitrate_links() {
+    fn edpf_skips_disconnected_links() {
         let mut conns = make_conns(3);
         // c0: disconnected but otherwise the "best" link — must be ignored.
         set_link(&mut conns[0], 10_000_000.0, 0, 10.0);
         conns[0].connected = false;
-        // c1: connected, low RTT, but zero bitrate ⇒ no valid arrival.
+        // c1: connected, unmeasured, low OWD — bootstrap arrival ≈ 0.03053.
         set_link(&mut conns[1], 0.0, 0, 20.0);
-        // c2: the only viable link.
+        // c2: measured but slower to deliver — arrival ≈ 0.06053.
         set_link(&mut conns[2], 1_000_000.0, 0, 50.0);
 
         let config = edpf_config();
@@ -239,8 +272,8 @@ mod tests {
             let selected = edpf_select(&mut conns, &config, &mut state);
             assert_eq!(
                 selected,
-                Some(2),
-                "EDPF must skip the disconnected link and the zero-bitrate link every tick"
+                Some(1),
+                "EDPF must skip the disconnected link every tick and still use the unmeasured one"
             );
         }
     }

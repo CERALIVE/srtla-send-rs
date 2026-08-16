@@ -11,18 +11,31 @@ use crate::connection::SrtlaConnection;
 /// redeclaring it, so the EDPF pipeline and the predictor can never drift apart.
 pub(crate) const SRT_PKT_SIZE: usize = 1316;
 
+/// Neutral capacity estimate (bits/s) for a link with no measured send rate.
+///
+/// `current_bitrate_bps` measures what an uplink has *already* sent, so it is
+/// `0.0` until the link carries DATA. Dropping unmeasured links from the
+/// candidate set deadlocks EDPF at startup — nothing is selected, so nothing is
+/// sent, so nothing is ever measured — and starves any link idle longer than the
+/// 2 s bitrate window. A flat placeholder keeps unmeasured links comparable, so
+/// in-flight bytes and OWD decide between them until a measurement replaces it.
+const BOOTSTRAP_CAPACITY_BPS: f64 = 1_000_000.0;
+
 /// Compute predicted arrival time for a connection.
 ///
-/// Returns `None` if the connection lacks valid capacity or RTT data.
+/// Returns `None` if the connection is not usable (disconnected, or the
+/// prediction is not finite).
 fn predicted_arrival(conn: &SrtlaConnection, pkt_size: usize) -> Option<f64> {
     if !conn.connected {
         return None;
     }
 
-    let bitrate_bps = conn.bitrate.current_bitrate_bps;
-    if bitrate_bps <= 0.0 {
-        return None;
-    }
+    let measured_bps = conn.bitrate.current_bitrate_bps;
+    let bitrate_bps = if measured_bps > 0.0 {
+        measured_bps
+    } else {
+        BOOTSTRAP_CAPACITY_BPS
+    };
     let capacity_bytes_per_sec = bitrate_bps / 8.0;
 
     // Loss from quality multiplier
@@ -198,11 +211,50 @@ mod tests {
         conns[1].bitrate.current_bitrate_bps = -1.0;
 
         for conn in &conns {
-            let result = predicted_arrival(conn, SRT_PKT_SIZE);
-            assert_eq!(
-                result, None,
-                "non-positive bitrate must yield None, not NaN"
+            let arrival = predicted_arrival(conn, SRT_PKT_SIZE)
+                .expect("an unmeasured link must still yield an arrival estimate");
+            assert!(
+                arrival.is_finite() && arrival > 0.0,
+                "non-positive bitrate must fall back to a finite estimate, got {arrival}"
             );
         }
+    }
+
+    #[test]
+    fn select_bootstraps_when_no_link_has_a_measured_bitrate() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut conns = rt.block_on(create_test_connections(2));
+
+        for conn in conns.iter_mut() {
+            conn.connected = true;
+            conn.bitrate.current_bitrate_bps = 0.0;
+            conn.rtt.rtt_min_ms = 0.0;
+        }
+
+        assert!(
+            select_from(&conns, SRT_PKT_SIZE).is_some(),
+            "EDPF must select a link before any bitrate has been measured, otherwise no DATA is \
+             ever sent and no bitrate can ever be measured"
+        );
+    }
+
+    #[test]
+    fn measured_link_outranks_idle_link_of_equal_in_flight() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut conns = rt.block_on(create_test_connections(2));
+
+        for conn in conns.iter_mut() {
+            conn.connected = true;
+            conn.in_flight_packets = 4;
+            conn.rtt.rtt_min_ms = 30.0;
+        }
+        conns[0].bitrate.current_bitrate_bps = 0.0;
+        conns[1].bitrate.current_bitrate_bps = BOOTSTRAP_CAPACITY_BPS * 4.0;
+
+        assert_eq!(
+            select_from(&conns, SRT_PKT_SIZE),
+            Some(1),
+            "a measured high-capacity link must beat the bootstrap placeholder"
+        );
     }
 }

@@ -59,9 +59,9 @@ The sender supports four mutually exclusive scheduling modes:
 
 Earliest Delivery Path First. Instead of scoring links by capacity or RTT group, EDPF predicts when a packet would actually *arrive* over each link and picks the lowest. Selection runs through a three-stage pipeline:
 
-- **BLEST head-of-line-blocking guard**: a static one-way-delay (OWD) filter (50ms threshold, no penalty term) drops links whose OWD would stall the in-order SRT byte stream behind a slower link.
+- **BLEST head-of-line-blocking guard**: a static one-way-delay (OWD) filter (50ms threshold, no penalty term) drops links whose OWD would stall the in-order SRT byte stream behind a slower link. A dropped link is re-admitted while its predicted arrival is earlier than every admitted link's — a saturated fast link cannot permanently starve a high-latency uplink, because a packet that lands first blocks nothing.
 - **IoDS in-order-delivery constraint**: bounds the candidate set to links that keep delivery monotonic. When the admitted set is empty it resets, so no link is permanently starved.
-- **EDPF argmin**: among admitted links, selects the lowest predicted arrival `(in_flight_bytes + packet) / effective_capacity + owd`.
+- **EDPF argmin**: among admitted links, selects the lowest predicted arrival `(in_flight_bytes + packet) / effective_capacity + owd`. A link with no measured send rate yet (freshly registered, or idle past the 2s bitrate window) uses a flat 1 Mbps bootstrap capacity, so it stays comparable instead of dropping out of the pipeline — without it the scheduler at startup selects nothing, sends nothing, and therefore never measures anything.
 
 The scheduler state (BLEST + IoDS) is owned per send-loop (no thread-local), so selection is deterministic and allocation-free on the hot path.
 
@@ -392,7 +392,7 @@ echo 'status' | socat - UNIX-CONNECT:/tmp/srtla.sock
 
 **RTT-Threshold Mode**: Groups links into "fast" and "slow" based on RTT measurements. Links within `min_rtt + delta` (default 30ms) are "fast" and strongly preferred. When quality scoring is also enabled, NAK penalties are applied within the fast link group. Falls back to slow links only when all fast links are saturated. Useful for reducing packet reordering in networks with heterogeneous latencies.
 
-**EDPF Mode**: Earliest Delivery Path First. Runs a BLEST → IoDS → EDPF pipeline: a static-OWD head-of-line-blocking guard (50ms) excludes links that would stall the in-order stream, an in-order-delivery constraint bounds the candidate set (resetting when empty so no link starves), and the link with the lowest predicted arrival time `(in_flight_bytes + packet) / effective_capacity + owd` is selected. Scheduler state is owned per send-loop (no thread-local). Quality scoring and exploration do not apply.
+**EDPF Mode**: Earliest Delivery Path First. Runs a BLEST → IoDS → EDPF pipeline: a static-OWD head-of-line-blocking guard (50ms) excludes links that would stall the in-order stream (re-admitting one while it would deliver earlier than every admitted link, so a saturated fast link cannot starve a high-latency uplink), an in-order-delivery constraint bounds the candidate set (resetting when empty so no link starves), and the link with the lowest predicted arrival time `(in_flight_bytes + packet) / effective_capacity + owd` is selected. Links with no measured send rate yet fall back to a flat 1 Mbps bootstrap capacity so the scheduler can start. Scheduler state is owned per send-loop (no thread-local). Quality scoring and exploration do not apply.
 
 ## Experimental Scheduler-Hardening Flags
 
