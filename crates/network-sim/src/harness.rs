@@ -379,18 +379,22 @@ mod namespace_process_tests {
         let mut child = Command::new("sh")
             .args([
                 "-c",
-                "setsid sh -c 'trap \"\" TERM INT; exec sleep 30' & echo $!; wait",
+                "setsid sh -c 'trap \"\" TERM INT; echo ready; exec sleep 30' & echo $!; wait",
             ])
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
             .expect("spawn mismatched process groups");
         let wrapper_pid = child.id();
+        let mut reader = BufReader::new(child.stdout.take().expect("child stdout"));
         let mut pid_line = String::new();
-        BufReader::new(child.stdout.take().expect("child stdout"))
-            .read_line(&mut pid_line)
-            .expect("read inner pid");
+        reader.read_line(&mut pid_line).expect("read inner pid");
         let inner_pid = pid_line.trim().parse::<u32>().expect("parse inner pid");
+        let mut readiness_line = String::new();
+        reader
+            .read_line(&mut readiness_line)
+            .expect("read inner readiness");
+        assert_eq!(readiness_line.trim(), "ready");
 
         let wrapper_pgid = Command::new("ps")
             .args(["-o", "pgid=", "-p", &wrapper_pid.to_string()])
