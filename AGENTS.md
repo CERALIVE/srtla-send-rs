@@ -957,6 +957,37 @@ only, never the frozen ADR-001 telemetry JSON) is the mitigation — see the
 ANTI-PATTERNS entry above for the full accept-any-source rationale and why nothing
 is ever dropped. `src/connection/batch_send.rs`, `src/connection/mod.rs`.
 
+### REG3 authorization is one-shot; index-scoped registration state resets on SIGHUP (Final Verification Wave, `eaced59` + this round)
+
+Three registration-hardening bugfixes, all found by the post-merge verification wave.
+None alters the parity contract.
+
+- **REG3 is a ONE-SHOT grant.** `handle_reg3` consumes the uplink's `awaiting_reg3`
+  entry on success, so a duplicate or replayed REG3 falls through to the out-of-phase
+  branch (counted in `out_of_phase_reg3`, `RegistrationEvent::Reg3OutOfPhase`) instead
+  of re-firing `clear_pre_registration_state()` and wiping a live uplink's packet log,
+  in-flight count, congestion state, and batch queue. A legitimate reconnect re-arms
+  the gate through `send_reg2_to`.
+- **A SIGHUP pool reorder resets index-scoped registration state**
+  (`reset_index_scoped_state`: `awaiting_reg3`, `pending_reg2_idx`, `reg1_target_idx`,
+  probe results). Those are positional indices into the connection vector, which SIGHUP
+  rebuilds in ips-file order, so an in-flight grant could otherwise authorize a REG3 on
+  whichever uplink inherited the index. Only *incomplete* attempts are discarded —
+  established links keep their own `SrtlaConnection::connected` state, socket, and
+  window, so the "no re-handshake, zero disconnect" reload contract is unaffected
+  (confirmed by manual reorder QA).
+- **The REG2 broadcast retry skips uplinks that no longer need one.** A partially
+  failed broadcast retries on the next tick; the retry pass now skips any uplink that
+  is already `connected` or already holds a live `awaiting_reg3` grant. Without the
+  skip, the retry re-`insert`ed the index and re-armed the one-shot gate on an
+  already-connected, actively-forwarding link, reintroducing the first bug through a
+  slow multi-uplink broadcast instead of a raw duplicate packet.
+
+Pinned by `replayed_reg3_does_not_wipe_a_live_connection`,
+`reg2_broadcast_retry_skips_already_connected_uplinks`, and
+`out_of_phase_reg3_is_counted_and_ignored` (`src/tests/batch_io_tests.rs`) plus the
+SIGHUP reset assertions in `src/tests/sender_tests.rs`.
+
 ## DOCS DISCIPLINE (Rule A)
 
 Any behavior/structure change updates this `AGENTS.md` and `README.md` in the SAME PR.

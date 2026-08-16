@@ -440,4 +440,80 @@ mod tests {
             "a fully successful broadcast is not retried"
         );
     }
+
+    #[tokio::test]
+    async fn reg2_broadcast_retry_skips_already_connected_uplinks() {
+        let mut reg = SrtlaRegistrationManager::new();
+        let (conn_a, _peer_a) = reachable_connection().await;
+        let conn_b = unsendable_connection().await;
+        let mut connections: SmallVec<SrtlaConnection, 4> = SmallVec::new();
+        connections.push(conn_a);
+        connections.push(conn_b);
+        let listener = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let (instant_tx, _instant_rx) = tokio::sync::mpsc::unbounded_channel();
+        let reg3 = [(SRTLA_TYPE_REG3 >> 8) as u8, (SRTLA_TYPE_REG3 & 0xff) as u8];
+
+        reg.set_broadcast_reg2_pending(true);
+        reg.reg_driver_send_if_needed(&mut connections).await;
+        assert!(reg.is_awaiting_reg3(0), "uplink 0's REG2 left the host");
+        assert!(!reg.is_awaiting_reg3(1), "uplink 1's REG2 send failed");
+        assert!(
+            reg.broadcast_reg2_pending(),
+            "a partially failed broadcast is retried on the next tick"
+        );
+
+        connections[0]
+            .process_packet(0, &mut reg, &listener, &instant_tx, None, &reg3)
+            .await
+            .unwrap();
+        assert!(connections[0].connected);
+        assert!(
+            !reg.is_awaiting_reg3(0),
+            "the one-shot grant is consumed by the REG3 it authorized"
+        );
+
+        let mut last_selected_idx = None;
+        let mut last_switch_time_ms = 0u64;
+        let mut seq_tracker = SequenceTracker::new();
+        let now = now_ms();
+        forward_via_connection(
+            0,
+            &[3u8; 48],
+            Some(11),
+            &mut connections,
+            &mut last_selected_idx,
+            &mut last_switch_time_ms,
+            &mut seq_tracker,
+            now,
+        )
+        .await;
+        flush_all_batches(&mut connections, &mut seq_tracker).await;
+        let live_log = connections[0].packet_log.clone();
+        let live_in_flight = connections[0].in_flight_packets;
+        assert!(!live_log.is_empty() && live_in_flight > 0);
+
+        reg.reg_driver_send_if_needed(&mut connections).await;
+        assert!(
+            !reg.is_awaiting_reg3(0),
+            "the retry pass must not re-arm the consumed grant of a connected uplink"
+        );
+
+        connections[0]
+            .process_packet(0, &mut reg, &listener, &instant_tx, None, &reg3)
+            .await
+            .unwrap();
+        assert_eq!(
+            reg.out_of_phase_reg3(),
+            1,
+            "a REG3 replayed after the retry tick stays out of phase"
+        );
+        assert_eq!(
+            connections[0].packet_log, live_log,
+            "the live uplink's packet log survives the retry + replay"
+        );
+        assert_eq!(
+            connections[0].in_flight_packets, live_in_flight,
+            "the live uplink's in-flight counter survives the retry + replay"
+        );
+    }
 }

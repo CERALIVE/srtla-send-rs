@@ -148,8 +148,22 @@ clean `ADOPT` — the note on each such row references `b83f97b`.
     same path the send-loop already uses. MEDIUM-3 recovery leaves stale seq-tracker
     ownership for up to 5s — add `SequenceTracker::remove_connection` on recovery.
     MEDIUM-4 reconnect never re-resolves DNS — our tree has the identical flaw
-    (`connection/mod.rs:530` reuses `self.remote`); fix ships alongside: re-resolve on
-    reconnect, swap only on success. LOW-5/6: single-datagram `send_to` lacks the batch
+    (`connection/mod.rs:530` reuses `self.remote`). **As shipped (todo 12, `85f5544`) the
+    fix is DETECT-ONLY: reconnect re-resolves the hostname and emits a rate-limited
+    (≤1/min) receiver-identity warning on drift, but NEVER swaps the remote — not even on
+    a successful re-resolution.** The earlier "swap only on success" wording described a
+    design that was deliberately abandoned: SRTLA's receiver-generated full ID makes
+    swapping one uplink to a different receiver instance a bond-splitting hazard (some
+    uplinks registered against one receiver identity, some against another). The existing
+    peer is kept when re-resolution fails, when it is still among the fresh answers, and
+    when drift merely omits it without a clearly preferred replacement.
+    **DEFER-FOLLOWUP — coordinated whole-bond receiver migration**: there is no upstream
+    commit to port for this (hence prose here rather than a table row); it is a
+    fork-originated follow-up that must be specified and implemented as its own scoped
+    change, migrating every uplink together. `apply_connection_changes` preserves
+    surviving sockets/registrations across a SIGHUP reload, so SIGHUP is not a substitute
+    mechanism. Do not add a single-uplink swap in the meantime.
+    LOW-5/6: single-datagram `send_to` lacks the batch
     path's EINTR retry and `BATCH_SEND_SIZE` cap parity in the fallback path.
 - **Security rationale for accept-any sockets**: unconnected sockets mean any source can
   send datagrams that reach protocol state. This is deliberately kept (not hardened into

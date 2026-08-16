@@ -482,6 +482,11 @@ mod tests {
             create_test_connection().await,
             create_test_connection().await,
         ];
+        // The fixture marks a link connected on creation; a link mid-handshake
+        // is not, and the REG2 broadcast deliberately skips connected uplinks.
+        for c in connections.iter_mut() {
+            c.connected = false;
+        }
 
         let mut ngp = vec![0u8; 2];
         ngp[0..2].copy_from_slice(&SRTLA_TYPE_REG_NGP.to_be_bytes());

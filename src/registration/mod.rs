@@ -184,6 +184,20 @@ impl SrtlaRegistrationManager {
             );
             let mut any_failed = false;
             for (i, c) in connections.iter_mut().enumerate() {
+                // Re-sending REG2 to a link that is already connected, or that
+                // still holds a live grant from an earlier pass, would re-arm
+                // the ONE-SHOT `awaiting_reg3` gate `handle_reg3` consumed —
+                // authorizing a receiver-retransmitted REG3 to wipe a live,
+                // forwarding uplink's state.
+                if c.connected || self.awaiting_reg3.contains(&i) {
+                    debug!(
+                        "REG2 → uplink #{} skipped (connected={}, awaiting_reg3={})",
+                        i,
+                        c.connected,
+                        self.awaiting_reg3.contains(&i)
+                    );
+                    continue;
+                }
                 match c.send_srtla_packet(&pkt).await {
                     Ok(()) => {
                         self.awaiting_reg3.insert(i);
