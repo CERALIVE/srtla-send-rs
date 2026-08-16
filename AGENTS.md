@@ -959,7 +959,7 @@ is ever dropped. `src/connection/batch_send.rs`, `src/connection/mod.rs`.
 
 ### REG3 authorization is one-shot; index-scoped registration state resets on SIGHUP (Final Verification Wave, `eaced59` + this round)
 
-Five registration-hardening bugfixes, all found by the post-merge verification wave.
+Six registration-hardening bugfixes, all found by the post-merge verification wave.
 None alters the parity contract.
 
 - **REG3 is a ONE-SHOT grant.** `handle_reg3` consumes the uplink's `awaiting_reg3`
@@ -1012,6 +1012,24 @@ None alters the parity contract.
   threaded through `process_registration_packet` from `packet_io.rs` — because that flag,
   not the manager's counter, is authoritative in that window. This supersedes the
   "deliberately NOT changed" REG_NGP residual recorded in the round-3 evidence.
+- **The REG3 wait now actually times out (round 5).** `handle_reg2` clears
+  `pending_reg2_idx` and re-points `pending_timeout_at_ms` at a `REG3_TIMEOUT` (4s)
+  deadline in the same statement block, but `clear_pending_if_timed_out` only fires
+  `if let Some(idx) = self.pending_reg2_idx` — already `None` by then — so that deadline
+  was set and never consulted and an `awaiting_reg3` grant never expired. Combined with
+  round 4's gate that made the blockage PERMANENT: a receiver that restarts between our
+  REG2 and its REG3 answers the group it no longer knows with a perfectly legitimate
+  fresh REG_NGP, which the sender then refuses for the life of the process. The new
+  sibling `clear_awaiting_reg3_if_timed_out` — called from the same housekeeping tick,
+  right after `clear_pending_if_timed_out` — revokes every outstanding grant at the
+  deadline, zeroes `pending_timeout_at_ms`, drops a queued REG2 rebroadcast (it would
+  re-arm the grants just revoked, with an id the receiver may no longer know), and
+  re-opens the REG1 path. `pending_timeout_at_ms` is one slot that `handle_reg2` sets
+  exactly once per successful REG2, so it is one deadline for the whole REG3-wait phase
+  and the grants expire together; a pending REG2 cedes ownership back to
+  `clear_pending_if_timed_out`. This is a timeout-bounded recovery, not an open door —
+  the fresh REG1 → REG2 → REG3 cycle re-arms and re-gates, and a merely late link keeps
+  its socket and is re-registered by the housekeeping `CONN_TIMEOUT` path.
 
 Pinned by `replayed_reg3_does_not_wipe_a_live_connection`,
 `reg2_broadcast_retry_skips_already_connected_uplinks`,
@@ -1022,9 +1040,13 @@ Pinned by `replayed_reg3_does_not_wipe_a_live_connection`,
 `failed_reg2_resend_revokes_a_stale_pre_existing_grant`
 (`src/tests/batch_io_tests.rs`), `reg_ngp_rejected_while_any_uplink_awaits_reg3`,
 `reg_ngp_rejected_on_connected_uplink_with_stale_active_count`,
-`forged_reg_ngp_cannot_reopen_the_reg_err_window_on_a_live_uplink`
-(`src/tests/registration_tests.rs`), plus the SIGHUP reset assertions in
-`src/tests/sender_tests.rs`.
+`forged_reg_ngp_cannot_reopen_the_reg_err_window_on_a_live_uplink`,
+`reg3_timeout_fires_at_4s_logical` (`src/tests/registration_tests.rs`),
+`expired_reg3_grant_lets_a_fresh_reg_ngp_restart_registration`
+(`src/tests/batch_io_tests.rs`, driven end-to-end through
+`SrtlaConnection::process_packet`), `housekeeping_expires_a_stale_reg3_grant`
+(`src/sender/housekeeping.rs`, pinning the production call site), plus the SIGHUP reset
+assertions in `src/tests/sender_tests.rs`.
 
 ## DOCS DISCIPLINE (Rule A)
 

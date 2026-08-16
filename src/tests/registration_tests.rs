@@ -596,19 +596,24 @@ mod tests {
         );
     }
 
-    // handle_reg2 arms the REG3 deadline (REG3_TIMEOUT, 4s) and clears pending on
-    // success; re-arming pending models "REG3 never arrived" so the same seam can be
-    // driven to the REG3 boundary in logical time.
+    // handle_reg2 clears pending and re-points the same deadline slot at the REG3
+    // wait, so the boundary is driven on the state a real REG1 → REG2 leaves behind
+    // — never a hand-restored pending_reg2_idx, which would exercise the REG2 seam
+    // while claiming to test the REG3 one.
     #[tokio::test(start_paused = true)]
     async fn reg3_timeout_fires_at_4s_logical() {
         let mut reg = SrtlaRegistrationManager::new();
+        let mut conn = create_test_connection().await;
 
-        reg.set_pending_reg2_idx(Some(0));
+        reg.send_reg1_to(0, &mut conn).await;
         let mut full_id = reg.srtla_id;
         full_id[SRTLA_ID_LEN / 2..].fill(0x7e);
 
         let base = now_ms();
         reg.process_registration_packet(0, &create_reg2_packet(&full_id), false);
+        assert_eq!(reg.pending_reg2_idx(), None, "handle_reg2 clears pending");
+        reg.send_reg2_to(0, &mut conn).await;
+        assert!(reg.is_awaiting_reg3(0), "the REG2 armed the REG3 gate");
 
         let deadline = reg.pending_timeout_at_ms();
         assert!(
@@ -616,16 +621,24 @@ mod tests {
             "REG3 deadline must be REG3_TIMEOUT (4s) past the received REG2"
         );
 
-        reg.set_pending_reg2_idx(Some(0));
-        assert_eq!(
-            reg.clear_pending_if_timed_out(deadline - 1),
-            None,
-            "must not time out before REG3_TIMEOUT"
-        );
         assert_eq!(
             reg.clear_pending_if_timed_out(deadline),
-            Some(0),
+            None,
+            "the REG2 seam cannot see the REG3 deadline: pending is already cleared"
+        );
+        assert!(
+            !reg.clear_awaiting_reg3_if_timed_out(deadline - 1),
+            "must not time out before REG3_TIMEOUT"
+        );
+        assert!(
+            reg.clear_awaiting_reg3_if_timed_out(deadline),
             "REG3 wait must time out at REG3_TIMEOUT (4s)"
+        );
+        assert!(!reg.is_awaiting_reg3(0), "the expired grant is revoked");
+        assert_eq!(
+            reg.pending_timeout_at_ms(),
+            0,
+            "timeout clears the deadline"
         );
     }
 

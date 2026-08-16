@@ -16,7 +16,9 @@ mod tests {
     use crate::connection::SrtlaConnection;
     use crate::connection::batch_recv::BatchUdpSocket;
     use crate::connection::batch_send::{BATCH_SEND_SIZE, BatchSender};
-    use crate::protocol::{SRTLA_ID_LEN, SRTLA_TYPE_REG_ERR, SRTLA_TYPE_REG3, create_reg2_packet};
+    use crate::protocol::{
+        SRTLA_ID_LEN, SRTLA_TYPE_REG_ERR, SRTLA_TYPE_REG_NGP, SRTLA_TYPE_REG3, create_reg2_packet,
+    };
     use crate::registration::SrtlaRegistrationManager;
     use crate::sender::SequenceTracker;
     use crate::sender::packet_handler::{flush_all_batches, forward_via_connection};
@@ -462,6 +464,113 @@ mod tests {
             "the grant is revoked by the in-phase REG_ERR"
         );
         assert_eq!(awaiting.out_of_phase_reg_err(), 0);
+    }
+
+    fn reg2_reply_for(reg: &SrtlaRegistrationManager) -> [u8; 2 + SRTLA_ID_LEN] {
+        let mut full_id = reg.srtla_id;
+        full_id[SRTLA_ID_LEN / 2..].fill(0x7e);
+        create_reg2_packet(&full_id)
+    }
+
+    /// A grant that never expires makes the REG_NGP gate permanent: a receiver
+    /// that restarts between our REG2 and its REG3 answers the group it no
+    /// longer knows with a fresh REG_NGP, and a sender that refuses it forever
+    /// is stranded for the life of the process. Driven end-to-end through
+    /// `SrtlaConnection::process_packet` so the real call-site wiring is pinned,
+    /// and carried past the recovery into a second full cycle to prove the
+    /// expiry is timeout-bounded rather than an open door.
+    #[tokio::test]
+    async fn expired_reg3_grant_lets_a_fresh_reg_ngp_restart_registration() {
+        let mut reg = SrtlaRegistrationManager::new();
+        let (conn, _peer) = reachable_connection().await;
+        let mut connections = vec![conn];
+        connections[0].connected = false;
+        let listener = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let (instant_tx, _instant_rx) = tokio::sync::mpsc::unbounded_channel();
+        let reg_ngp = SRTLA_TYPE_REG_NGP.to_be_bytes();
+        let reg3 = [(SRTLA_TYPE_REG3 >> 8) as u8, (SRTLA_TYPE_REG3 & 0xff) as u8];
+
+        connections[0]
+            .process_packet(0, &mut reg, &listener, &instant_tx, None, &reg_ngp)
+            .await
+            .unwrap();
+        assert_eq!(
+            reg.pending_reg2_idx(),
+            Some(0),
+            "the REG_NGP sent REG1 on the production path"
+        );
+
+        let reg2 = reg2_reply_for(&reg);
+        connections[0]
+            .process_packet(0, &mut reg, &listener, &instant_tx, None, &reg2)
+            .await
+            .unwrap();
+        reg.reg_driver_send_if_needed(&mut connections).await;
+        assert!(
+            reg.is_awaiting_reg3(0),
+            "the REG2 broadcast armed the REG3 gate"
+        );
+        let deadline = reg.pending_timeout_at_ms();
+        assert_ne!(deadline, 0, "handle_reg2 armed the REG3 deadline");
+
+        connections[0]
+            .process_packet(0, &mut reg, &listener, &instant_tx, None, &reg_ngp)
+            .await
+            .unwrap();
+        assert_eq!(
+            reg.reg1_target_idx(),
+            None,
+            "the live grant still blocks a restart"
+        );
+
+        assert!(
+            reg.clear_awaiting_reg3_if_timed_out(deadline),
+            "the REG3 wait must expire at its deadline"
+        );
+        assert!(!reg.is_awaiting_reg3(0));
+
+        connections[0]
+            .process_packet(0, &mut reg, &listener, &instant_tx, None, &reg_ngp)
+            .await
+            .unwrap();
+        assert_eq!(
+            reg.reg1_target_idx(),
+            Some(0),
+            "the expired grant un-blocks the REG_NGP gate"
+        );
+        assert_eq!(
+            reg.pending_reg2_idx(),
+            Some(0),
+            "and registration restarts at REG1"
+        );
+
+        let reg2 = reg2_reply_for(&reg);
+        connections[0]
+            .process_packet(0, &mut reg, &listener, &instant_tx, None, &reg2)
+            .await
+            .unwrap();
+        reg.reg_driver_send_if_needed(&mut connections).await;
+        assert!(reg.is_awaiting_reg3(0), "the fresh cycle re-arms the gate");
+
+        connections[0]
+            .process_packet(0, &mut reg, &listener, &instant_tx, None, &reg_ngp)
+            .await
+            .unwrap();
+        assert_eq!(
+            reg.reg1_target_idx(),
+            None,
+            "the re-armed gate blocks again: this is a bounded recovery, not an open door"
+        );
+
+        connections[0]
+            .process_packet(0, &mut reg, &listener, &instant_tx, None, &reg3)
+            .await
+            .unwrap();
+        assert!(
+            connections[0].connected,
+            "the fresh cycle still completes through REG3"
+        );
+        assert_eq!(reg.out_of_phase_reg3(), 0);
     }
 
     #[test]
