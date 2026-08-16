@@ -336,14 +336,21 @@ pub async fn forward_via_connection(
     if *last_selected_idx != Some(sel_idx) {
         if let Some(prev_idx) = *last_selected_idx {
             if prev_idx < connections.len() {
-                // Flush the previous connection's batch before switching
+                // Flush the previous connection's batch before switching. A hard
+                // error means that link's transmit path is broken, so recover it
+                // (and drop its sequence entries) rather than only warning —
+                // otherwise a dead link keeps attracting NAK attribution.
                 if connections[prev_idx].has_queued_packets()
                     && let Err(e) = connections[prev_idx].flush_batch().await
                 {
+                    let conn = &mut connections[prev_idx];
                     warn!(
-                        "{}: batch flush on switch failed: {}",
-                        connections[prev_idx].label, e
+                        "{}: batch flush on switch failed, marking for recovery: {}",
+                        conn.label, e
                     );
+                    conn.mark_for_recovery();
+                    let recovered_conn_id = conn.conn_id;
+                    seq_tracker.remove_connection(recovered_conn_id);
                 }
                 debug!(
                     "Connection switch: {} → {} (seq: {:?})",
@@ -381,6 +388,7 @@ pub async fn forward_via_connection(
                 conn.label, e
             );
             conn.mark_for_recovery();
+            seq_tracker.remove_connection(conn_id);
         }
     }
 }
@@ -389,7 +397,10 @@ pub async fn forward_via_connection(
 ///
 /// Optimized with early exit: first check if any connection has queued packets
 /// before iterating. This avoids work on the 15ms timer when traffic is idle.
-pub async fn flush_all_batches(connections: &mut [SrtlaConnection]) {
+pub async fn flush_all_batches(
+    connections: &mut [SrtlaConnection],
+    seq_tracker: &mut SequenceTracker,
+) {
     // Quick scan to check if any connection has work to do
     // This is a fast read-only check that avoids the flush logic entirely when idle
     let has_work = connections
@@ -405,7 +416,12 @@ pub async fn flush_all_batches(connections: &mut [SrtlaConnection]) {
         if (conn.needs_batch_flush() || conn.has_queued_packets())
             && let Err(e) = conn.flush_batch().await
         {
-            warn!("{}: periodic batch flush failed: {}", conn.label, e);
+            warn!(
+                "{}: periodic batch flush failed, marking for recovery: {}",
+                conn.label, e
+            );
+            conn.mark_for_recovery();
+            seq_tracker.remove_connection(conn.conn_id);
         }
     }
 }

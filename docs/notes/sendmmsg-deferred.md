@@ -1,39 +1,47 @@
-# DEFERRED: `sendmmsg(2)` batch send
+# ADOPTED: `sendmmsg(2)` batch send (was: DEFERRED)
 
-**Status:** Deferred (tracked, not planned). Do **not** implement without profiling
-evidence and a deliberate PR.
+**Status:** ADOPTED. This note is retained as an adoption record so existing links
+stay valid; it no longer tracks a deferred item.
 
-**Location of the live note:** `src/connection/batch_send.rs` `flush()` (the
-`// DEFERRED: sendmmsg(2) batch send` comment block) and the
-AGENTS.md "TEST HARDENING (Tasks 7-8, 25) → Task 25 — sendmmsg triage" section.
+- **Adopted in:** the `merge/upstream-2026-08` upstream-sync PR, todo 9
+  ("sendmmsg batch flush + unconnected uplink sockets"), porting upstream
+  `673138d` *feat(srtla_send): flush batches with sendmmsg* with fork fixes.
+- **Triage row:** `docs/notes/upstream-sync-2026-08-evaluation.md` → `673138d`
+  (`ADOPT-WITH-FORK-FIX`). That row, not this file, is the authority.
 
-## What it would do
+## What shipped
 
-`sendmmsg(2)` is a Linux-only syscall that submits **multiple UDP datagrams in a
-single kernel entry**, amortizing the per-`send` syscall transition over a whole
-batch. Today `BatchSender::flush()` loops `socket.send(packet).await` once per
-queued packet, so a flush of N packets is N syscalls.
+`BatchSender::flush` no longer loops one `send` per queued packet. It submits up
+to `BATCH_SEND_SIZE = 32` datagrams per kernel entry via `sendmmsg(2)` on Linux
+(`src/connection/batch_recv.rs`), with a sequential fallback capped identically on
+other platforms. Uplink sockets are unconnected: `BatchUdpSocket` owns the
+resolved peer and names it on every send.
 
-## Why it is deferred
+The port also fixed the upstream defects the deferred note's "partial-failure
+drain semantics" warning was about:
 
-- **Marginal gain at current rates.** Packet batching (16-packet / 15 ms flush,
-  Moblin-inspired) already cuts syscalls ~15x — from ~960 syscalls/s per
-  connection to **~60-67 batch flushes/s at 10 Mbps**. `sendmmsg` would collapse
-  each flush's inner loop, but the flush rate itself is already low.
-- **Linux-only `unsafe` FFI.** `sendmmsg` is not in the stable Tokio surface; using
-  it means OS-specific `unsafe` code and a non-portable code path, raising the
-  maintenance and soundness cost (cf. the `recvmmsg` Miri lane in `ci.yml`).
-- **No profiling justification.** There is no measurement on the constrained
-  device target showing the per-packet `send` syscall is a bottleneck. Optimizing
-  without that evidence is speculative.
+- **Prefix commit.** `flush` returns a `FlushOutcome { accepted, error }` carrying
+  the tracking records for exactly the kernel-accepted datagrams, in queue order.
+  Candidates are peeked, transmitted, and only then removed; the unsent suffix is
+  retained. A partial send can neither duplicate nor drop a datagram.
+- **Short `msg_len` is a hard error.** A datagram is all-or-nothing, so a
+  kernel-reported length that differs from the packet length fails at that index
+  and the usable prefix is the messages before it. The remainder is never re-sent
+  as a fresh datagram.
+- **EINTR / WouldBlock.** EINTR retries without clearing readiness; WouldBlock
+  clears readiness and awaits writability (returning a short count after partial
+  progress rather than blocking).
+- **Recovery.** All three flush call sites (connection switch, batch threshold,
+  periodic timer) route a hard error into `mark_for_recovery()` plus
+  `SequenceTracker::remove_connection()`.
 
-## When to revisit
+## Invariants that still hold
 
-- Profiling on the device target shows syscall overhead in `flush()` is a real
-  bottleneck, **or**
-- Tokio gains native, safe `sendmmsg` support that removes the `unsafe`/portability
-  cost.
-
-Any future work must keep the existing **DATA-is-never-padded** invariant (only
-control frames route through `send_control_padded`; padding DATA would corrupt the
-SRT byte stream) and the partial-failure drain semantics in the current `flush()`.
+- **DATA is never padded.** Only control frames route through
+  `send_control_padded` (`MIN_CONTROL_PKT_LEN = 32`); padding DATA would corrupt
+  the SRT byte stream. The batch path deliberately bypasses it.
+- **ADR-002 byte accounting is unchanged.** `bitrate_bps` and `bytes_sent_total`
+  are still counted at `queue_data_packet`, not at transmit time.
+- **Miri cannot execute the syscall.** The `miri` lane vets only the pure pointer
+  logic around `recvmmsg`/`sendmmsg` (`sendmmsg_pointers_rebuilt_after_move`,
+  `sendmmsg_prefix_extraction_bounded`), never the live kernel transition.

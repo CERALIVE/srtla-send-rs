@@ -5,7 +5,7 @@
 //! and [`SrtlaTestStack`] for the full 3-process test pipeline
 //! (srt-live-transmit + srtla_rec + srtla_send).
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -226,6 +226,14 @@ impl NamespaceProcess {
     /// Read all captured stderr lines. Only meaningful after exit.
     pub fn stderr_lines(&mut self) -> Vec<String> {
         output_lines(&self.stderr_tail)
+    }
+
+    /// Snapshot the live stdout+stderr tail without waiting for exit. The drain
+    /// threads keep both tails current, so this is safe to poll while running.
+    pub fn log_snapshot(&self) -> Vec<String> {
+        let mut lines = output_lines(&self.stdout_tail);
+        lines.extend(output_lines(&self.stderr_tail));
+        lines
     }
 
     fn join_drains(&mut self) {
@@ -601,40 +609,32 @@ pub fn wait_for_udp_listener(ns: &Namespace, port: u16, timeout: Duration) -> Re
     }
 }
 
-/// Poll `ss -uan` inside `ns` until at least `min_count` UDP sockets are
-/// connected to `peer_ip:peer_port`. The sender `connect()`s one socket per
-/// source IP to the receiver as it brings each uplink online, so a connected
-/// peer entry is the observable readiness signal that replaces a fixed
-/// registration sleep — it returns as soon as the state appears.
-pub fn wait_for_connected_uplinks(
-    ns: &Namespace,
-    peer_ip: &str,
-    peer_port: u16,
-    min_count: usize,
-    timeout: Duration,
-) -> Result<()> {
-    let start = Instant::now();
-    let peer = format!("{peer_ip}:{peer_port}");
-    let mut last_ss_output;
+/// Count the uplinks that have reached REG3 according to the sender's own log.
+///
+/// `srtla_send` logs `REG3 from uplink #N` per uplink and
+/// `connection established (active=N)` for the aggregate, so registration
+/// readiness is observable from the log alone. Both signals are read because the
+/// aggregate line is only emitted on change.
+fn registered_uplink_count(log: &[String]) -> usize {
+    let mut reg3_uplinks: HashSet<String> = HashSet::new();
+    let mut max_active = 0usize;
 
-    loop {
-        let out = ns.exec("ss", &["-uan"])?;
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        let count = stdout.lines().filter(|line| line.contains(&peer)).count();
-        if count >= min_count {
-            return Ok(());
+    for line in log {
+        if let Some(rest) = line.split("REG3 from uplink #").nth(1) {
+            let idx: String = rest.chars().take_while(char::is_ascii_digit).collect();
+            if !idx.is_empty() {
+                let _ = reg3_uplinks.insert(idx);
+            }
         }
-        last_ss_output = stdout.to_string();
-
-        if start.elapsed() > timeout {
-            bail!(
-                "timeout waiting for {min_count} connected uplink(s) to {peer} in ns {} (saw \
-                 {count})\nlast ss -uan output:\n{last_ss_output}",
-                ns.name
-            );
+        if let Some(rest) = line.split("connection established (active=").nth(1) {
+            let count: String = rest.chars().take_while(char::is_ascii_digit).collect();
+            if let Ok(parsed) = count.parse::<usize>() {
+                max_active = max_active.max(parsed);
+            }
         }
-        std::thread::sleep(Duration::from_millis(200));
     }
+
+    reg3_uplinks.len().max(max_active)
 }
 
 // ---------------------------------------------------------------------------
@@ -752,6 +752,38 @@ impl SrtlaTestStack {
         })
     }
 
+    /// Snapshot srtla_send's live log without stopping the stack.
+    pub fn sender_log_snapshot(&self) -> Vec<String> {
+        self.srtla_send
+            .as_ref()
+            .map(NamespaceProcess::log_snapshot)
+            .unwrap_or_default()
+    }
+
+    /// Block until at least `min_count` uplinks have completed registration
+    /// (REG3), or `timeout` elapses.
+    ///
+    /// Registration is the readiness signal because uplink sockets are
+    /// unconnected — `ss` can no longer report a connected UDP peer per uplink.
+    pub fn wait_for_registered_uplinks(&self, min_count: usize, timeout: Duration) -> Result<()> {
+        let start = Instant::now();
+        loop {
+            let log = self.sender_log_snapshot();
+            let registered = registered_uplink_count(&log);
+            if registered >= min_count {
+                return Ok(());
+            }
+            if start.elapsed() > timeout {
+                bail!(
+                    "timeout waiting for {min_count} registered uplink(s) (saw \
+                     {registered})\nsrtla_send log:\n{}",
+                    log.join("\n")
+                );
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    }
+
     /// Apply impairment to sender-side link at `idx`.
     pub fn impair_link(&self, idx: usize, config: ImpairmentConfig) -> Result<()> {
         self.topo.impair_link(idx, config)
@@ -827,6 +859,56 @@ pub fn inject_udp_packets(ns: &Namespace, target_ip: &str, port: u16, count: usi
     Ok(())
 }
 
+/// Inject UDP datagrams from a SPECIFIC source address.
+///
+/// Lets a test reproduce a multi-homed receiver replying from another of its own
+/// addresses — the interop case unconnected uplink sockets exist for.
+pub fn inject_udp_packets_from(
+    ns: &Namespace,
+    source_ip: &str,
+    source_port: u16,
+    target_ip: &str,
+    target_port: u16,
+    payload_len: usize,
+    count: usize,
+) -> Result<()> {
+    let script = format!(
+        "import socket; s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); \
+         s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); \
+         s.bind(('{source_ip}',{source_port})); \
+         [s.sendto(b'\\x00'*{payload_len},('{target_ip}',{target_port})) for _ in \
+         range({count})]; s.close()"
+    );
+    ns.exec_checked("python3", &["-c", &script])
+        .with_context(|| {
+            format!(
+                "inject {count} UDP packets {source_ip}:{source_port} -> {target_ip}:{target_port}"
+            )
+        })?;
+    Ok(())
+}
+
+/// Local UDP ports bound to `local_ip` inside `ns`, newest listing order.
+///
+/// Uplink sockets are unconnected, so `ss` reports them as `UNCONN` with no
+/// peer; this reads the ephemeral source port a test needs to address them.
+pub fn bound_udp_ports(ns: &Namespace, local_ip: &str) -> Result<Vec<u16>> {
+    let out = ns.exec("ss", &["-uan"])?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let needle = format!("{local_ip}:");
+    let mut ports = Vec::new();
+    for line in stdout.lines() {
+        for field in line.split_whitespace() {
+            if let Some(port) = field.strip_prefix(&needle)
+                && let Ok(parsed) = port.parse::<u16>()
+            {
+                ports.push(parsed);
+            }
+        }
+    }
+    Ok(ports)
+}
+
 /// Inject UDP packets at a steady rate (packets/sec) for `duration`.
 pub fn inject_udp_stream(
     ns: &Namespace,
@@ -858,6 +940,27 @@ pub fn inject_udp_stream(
 
 /// Locate the srtla_send binary from a cargo build.
 fn find_srtla_send_binary() -> Result<PathBuf> {
+    // An explicit path always wins. `tests/common/build_srtla_send` publishes
+    // `CARGO_BIN_EXE_srtla_send` here, which is the only location that is
+    // correct under a redirected CARGO_TARGET_DIR — the hardcoded
+    // `<workspace>/target/...` candidates below silently resolve to a STALE
+    // binary in that case, which would invalidate every netns observation.
+    if let Ok(explicit) = std::env::var("SRTLA_SEND_BIN") {
+        let path = PathBuf::from(explicit);
+        if path.exists() {
+            return Ok(path);
+        }
+    }
+
+    if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
+        for profile in ["debug", "release"] {
+            let path = PathBuf::from(&target_dir).join(profile).join("srtla_send");
+            if path.exists() {
+                return Ok(path);
+            }
+        }
+    }
+
     // Check common cargo build output locations
     let candidates = [
         // Debug build

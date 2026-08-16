@@ -1,6 +1,6 @@
 mod connections;
 mod housekeeping;
-mod packet_handler;
+pub(crate) mod packet_handler;
 #[cfg(unix)]
 mod reload;
 #[cfg(any(test, feature = "test-internals"))]
@@ -9,7 +9,7 @@ pub mod selection;
 mod selection;
 mod sequence;
 mod status;
-mod uplink;
+pub(crate) mod uplink;
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
@@ -215,6 +215,7 @@ pub async fn run_sender_with_config(
             &mut all_failed_at,
             &mut reader_handles,
             &packet_tx,
+            &mut seq_tracker,
         )
         .await
         {
@@ -305,6 +306,7 @@ pub async fn run_sender_with_config(
                             &mut all_failed_at,
                             &mut reader_handles,
                             &packet_tx,
+                            &mut seq_tracker,
                         ).await {
                             warn!("housekeeping failed: {err}");
                         }
@@ -366,7 +368,7 @@ pub async fn run_sender_with_config(
                     }
                     $($sighup_branch)*
                     _ = batch_flush_timer.tick() => {
-                        flush_all_batches(&mut connections).await;
+                        flush_all_batches(&mut connections, &mut seq_tracker).await;
                     }
                 }
             }

@@ -37,12 +37,14 @@ fn create_connection_from_socket(
     local_ip: IpAddr,
     label: String,
 ) -> SrtlaConnection {
-    let batch_socket = BatchUdpSocket::new(socket).unwrap();
+    let batch_socket = BatchUdpSocket::new(socket, remote).unwrap();
 
     SrtlaConnection {
         conn_id: NEXT_TEST_CONN_ID.fetch_add(1, Ordering::Relaxed),
         socket: Arc::new(batch_socket),
         remote,
+        host: remote.ip().to_string(),
+        port: remote.port(),
         local_ip,
         label,
         connected: true,
@@ -76,6 +78,17 @@ pub async fn create_test_connection() -> SrtlaConnection {
     let local_ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
 
     create_connection_from_socket(socket, remote, local_ip, "test-connection".to_string())
+}
+
+/// A connection whose peer is unreachable at the syscall level: `sendto` to port
+/// 0 fails immediately with `EINVAL`, giving registration tests a deterministic
+/// send-failure seam with no timing or network dependency.
+pub async fn create_test_connection_with_failing_send() -> SrtlaConnection {
+    let socket = create_test_socket();
+    let remote = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
+    let local_ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+
+    create_connection_from_socket(socket, remote, local_ip, "failing-send".to_string())
 }
 
 pub async fn create_test_connections(count: usize) -> SmallVec<SrtlaConnection, 4> {

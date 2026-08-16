@@ -63,6 +63,21 @@ pub struct SrtlaConnection {
     pub remote: SocketAddr,
     #[cfg(not(feature = "test-internals"))]
     pub(crate) remote: SocketAddr,
+    /// The receiver hostname this uplink was created with, kept verbatim so a
+    /// later re-resolution can detect DNS drift against `remote`.
+    #[allow(dead_code)]
+    #[cfg(feature = "test-internals")]
+    pub host: String,
+    #[allow(dead_code)]
+    #[cfg(not(feature = "test-internals"))]
+    pub(crate) host: String,
+    /// The receiver port this uplink was created with (pairs with `host`).
+    #[allow(dead_code)]
+    #[cfg(feature = "test-internals")]
+    pub port: u16,
+    #[allow(dead_code)]
+    #[cfg(not(feature = "test-internals"))]
+    pub(crate) port: u16,
     #[allow(dead_code)]
     #[cfg(feature = "test-internals")]
     pub local_ip: IpAddr,
@@ -154,15 +169,20 @@ impl SrtlaConnection {
         use rand::Rng;
 
         let remote = resolve_remote(host, port).await?;
+        // The socket is deliberately left UNCONNECTED: the peer is owned by
+        // `BatchUdpSocket` and named on every send, so a multi-homed / NAT
+        // receiver replying from another address still reaches us (C-reference
+        // parity). See `batch_recv.rs` for the ownership map.
         let sock = bind_from_ip(ip, 0)?;
-        sock.connect(&remote.into())?;
         sock.set_nonblocking(true)?;
-        let socket = Arc::new(BatchUdpSocket::new(sock)?);
+        let socket = Arc::new(BatchUdpSocket::new(sock, remote)?);
         let startup_deadline = now_ms() + STARTUP_GRACE_MS;
         Ok(Self {
             conn_id: rand::rng().next_u64(),
             socket,
             remote,
+            host: host.to_string(),
+            port,
             local_ip: ip,
             label: format!("{}:{} via {}", host, port, ip),
             connected: false,
@@ -247,27 +267,39 @@ impl SrtlaConnection {
         self.batch_sender.has_queued_packets()
     }
 
-    /// Flush the batch queue, sending all queued packets.
+    /// Flush the batch queue, committing exactly the datagrams that went out.
     ///
-    /// This registers all sent packets for in-flight tracking.
+    /// The accepted prefix is registered for in-flight tracking even when the
+    /// transmit ended in a hard error — those packets are genuinely on the wire.
+    /// An `Err` return means the caller must recover the link (mark it for
+    /// recovery and drop its sequence-tracker entries); the unsent suffix stays
+    /// queued and is discarded by that reset.
     pub async fn flush_batch(&mut self) -> Result<()> {
         if !self.batch_sender.has_queued_packets() {
             return Ok(());
         }
 
-        match self.batch_sender.flush(&self.socket).await {
-            Ok(tracking_info) => {
-                // Register all sent packets for in-flight tracking
-                for (seq, send_time_ms) in tracking_info {
-                    if let Some(s) = seq {
-                        self.register_packet(s as i32, send_time_ms);
-                    }
-                }
-                self.last_sent = Some(Instant::now());
-                Ok(())
+        let outcome = self.batch_sender.flush(&self.socket).await;
+        let transmitted = !outcome.accepted.is_empty();
+        for (seq, send_time_ms) in outcome.accepted {
+            if let Some(s) = seq {
+                self.register_packet(s, send_time_ms);
             }
-            Err(e) => Err(anyhow::anyhow!("batch flush failed: {}", e)),
         }
+        if transmitted {
+            self.last_sent = Some(Instant::now());
+        }
+        match outcome.error {
+            Some(e) => Err(anyhow::anyhow!("batch flush failed: {}", e)),
+            None => Ok(()),
+        }
+    }
+
+    /// Datagrams this uplink received from an address other than the resolved
+    /// receiver. Diagnostic only (status logs); deliberately NOT part of the
+    /// frozen ADR-001 telemetry document.
+    pub fn foreign_source_datagrams(&self) -> u64 {
+        self.socket.foreign_source_datagrams()
     }
 
     pub async fn send_keepalive(&mut self) -> Result<()> {
@@ -540,9 +572,8 @@ impl SrtlaConnection {
 
     pub async fn reconnect(&mut self) -> Result<()> {
         let sock = bind_from_ip(self.local_ip, 0)?;
-        sock.connect(&self.remote.into())?;
         sock.set_nonblocking(true)?;
-        let socket = BatchUdpSocket::new(sock)?;
+        let socket = BatchUdpSocket::new(sock, self.remote)?;
         self.socket = Arc::new(socket);
 
         self.reset_state();

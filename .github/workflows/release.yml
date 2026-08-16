@@ -105,7 +105,7 @@ jobs:
         run: cargo test --test subscription_loom
 
   miri:
-    name: Miri (batch_recv pure pointer logic)
+    name: Miri (batch I/O pure pointer logic)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -138,6 +138,12 @@ jobs:
 
       - name: Miri — sockaddr_storage round-trip decode
         run: cargo miri test --lib --no-default-features --features test-internals sockaddr_storage_roundtrip
+
+      - name: Miri — sendmmsg self-pointer rebuild after move
+        run: cargo miri test --lib --no-default-features --features test-internals sendmmsg_pointers_rebuilt_after_move
+
+      - name: Miri — sendmmsg accepted-prefix extraction stays bounded
+        run: cargo miri test --lib --no-default-features --features test-internals sendmmsg_prefix_extraction_bounded
 
   build-deb:
     name: Build .deb (${{ matrix.arch }})

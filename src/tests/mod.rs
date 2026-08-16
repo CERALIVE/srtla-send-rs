@@ -1,4 +1,7 @@
 #[cfg(test)]
+pub mod batch_io_tests;
+
+#[cfg(test)]
 pub mod connection_tests;
 
 #[cfg(test)]

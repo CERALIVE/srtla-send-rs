@@ -5,7 +5,7 @@ use smallvec::SmallVec;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::task::JoinHandle;
 use tokio::time::Duration;
-use tracing::warn;
+use tracing::{debug, warn};
 
 use crate::connection::SrtlaConnection;
 use crate::connection::batch_recv::{BatchUdpSocket, RecvMmsgBuffer};
@@ -42,9 +42,25 @@ pub fn spawn_reader(
             match socket.recv_batch(&mut recv_buffer).await {
                 Ok(count) if count > 0 => {
                     // Process all received packets
-                    for (_addr, data) in recv_buffer.iter() {
+                    for (addr, data) in recv_buffer.iter() {
                         if data.is_empty() {
                             continue;
+                        }
+                        // Uplink sockets are unconnected, so the kernel delivers
+                        // datagrams from ANY source. That is deliberate — a
+                        // multi-homed / NAT receiver legitimately replies from a
+                        // different address — but SRTLA has no per-packet
+                        // authentication, so a foreign source is counted and
+                        // logged (never dropped) as a diagnostic.
+                        if let Some(total) = socket.observe_source(addr, crate::utils::now_ms()) {
+                            debug!(
+                                "{}: datagram from unexpected source {:?} (expected {}); \
+                                 processing anyway, {} so far",
+                                label,
+                                addr,
+                                socket.peer_addr(),
+                                total
+                            );
                         }
                         let packet = SmallVec::from_slice_copy(data);
                         if packet_tx
