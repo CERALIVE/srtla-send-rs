@@ -325,6 +325,7 @@ pub async fn run_sender_with_config(
                                 changes.receiver_port,
                                 &mut last_selected_idx,
                                 &mut seq_tracker,
+                                &mut reg,
                             ).await;
                             info!("connection changes applied successfully");
                             sync_readers(&connections, &mut reader_handles, &packet_tx);

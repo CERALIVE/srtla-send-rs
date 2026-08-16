@@ -260,6 +260,13 @@ impl SrtlaRegistrationManager {
             );
             return false;
         }
+        // The grant is ONE-SHOT: consume it here so a duplicate or replayed
+        // REG3 for the same index falls through to the out-of-phase branch.
+        // Without this, every later REG3 on an already-connected uplink would
+        // re-fire `RegistrationEvent::Reg3` and make the caller wipe live
+        // forwarding state (`clear_pre_registration_state`). A legitimate
+        // reconnect re-arms the gate through `send_reg2_to`.
+        self.awaiting_reg3.remove(&conn_idx);
         self.has_connected = true;
         true
     }
@@ -335,6 +342,25 @@ impl SrtlaRegistrationManager {
 
     pub fn get_selected_connection_idx(&self) -> Option<usize> {
         self.reg1_target_idx
+    }
+
+    /// Drop every piece of registration bookkeeping that is keyed by a
+    /// **positional index** into the sender's connection vector.
+    ///
+    /// A SIGHUP reload rebuilds that vector in ips-file order, so an index can
+    /// change occupant. Carrying `awaiting_reg3` / `pending_reg2_idx` /
+    /// `reg1_target_idx` / probe results across the rebuild would let one
+    /// uplink's in-flight registration grant authorize a REG3 on whichever
+    /// uplink inherits its index. Only *incomplete* attempts are discarded:
+    /// established links keep their own `SrtlaConnection::connected` state and
+    /// move with the reorder, so nothing already registered is disturbed.
+    pub(crate) fn reset_index_scoped_state(&mut self) {
+        self.awaiting_reg3.clear();
+        self.pending_reg2_idx = None;
+        self.pending_timeout_at_ms = 0;
+        self.reg1_target_idx = None;
+        self.reg1_next_send_at_ms = now_ms();
+        self.reset_probe_state();
     }
 }
 

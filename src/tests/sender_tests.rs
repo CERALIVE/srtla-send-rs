@@ -14,6 +14,7 @@ mod tests {
     use crate::protocol::{
         CONN_TIMEOUT, SRT_TYPE_ACK, SRT_TYPE_DATA, SRT_TYPE_NAK, get_packet_type, is_srt_ack,
     };
+    use crate::registration::SrtlaRegistrationManager;
     use crate::sender::*;
     use crate::test_helpers::{advance_test_clock, create_test_connections};
     use crate::utils::now_ms;
@@ -454,6 +455,7 @@ mod tests {
             8080,
             &mut last_selected_idx,
             &mut seq_tracker,
+            &mut SrtlaRegistrationManager::new(),
         ));
 
         // Should have removed some connections
@@ -505,6 +507,7 @@ mod tests {
             port,
             &mut last_selected_idx,
             &mut seq_tracker,
+            &mut SrtlaRegistrationManager::new(),
         ));
 
         assert_eq!(
@@ -548,6 +551,7 @@ mod tests {
             port,
             &mut last_selected_idx,
             &mut seq_tracker,
+            &mut SrtlaRegistrationManager::new(),
         ));
 
         assert_eq!(connections.len(), 1, "only the surviving uplink remains");
@@ -585,6 +589,7 @@ mod tests {
             port,
             &mut last_selected_idx,
             &mut seq_tracker,
+            &mut SrtlaRegistrationManager::new(),
         ));
 
         assert_eq!(connections.len(), 2);
@@ -859,6 +864,7 @@ mod tests {
                 port,
                 &mut last_selected_idx,
                 &mut seq_tracker,
+                &mut SrtlaRegistrationManager::new(),
             ));
 
             assert_eq!(
@@ -893,6 +899,94 @@ mod tests {
             );
         }
 
+        /// The registration manager's bookkeeping is keyed by the *position* of
+        /// an uplink in the pool, so a reorder makes every stale entry point at
+        /// the wrong link. A REG3 landing on the new occupant of a recycled
+        /// index must not be authorized by the previous occupant's grant.
+        #[test]
+        fn sighup_reorder_clears_stale_registration_index_state() {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let mut connections = rt.block_on(create_test_connections(2));
+            let host = "127.0.0.1";
+            let port = 9000u16;
+            let ip_a = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2));
+            let ip_b = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 3));
+            relabel_as_uplinks(&mut connections, host, port, &[ip_a, ip_b]);
+
+            let mut reg = SrtlaRegistrationManager::new();
+            reg.arm_reg3_gate(0);
+            reg.arm_reg3_gate(1);
+            reg.set_pending_reg2_idx(Some(1));
+            reg.set_reg1_target_idx(Some(1));
+
+            let mut last_selected_idx = Some(0);
+            let mut seq_tracker = SequenceTracker::new();
+
+            rt.block_on(apply_connection_changes(
+                &mut connections,
+                &[ip_b, ip_a],
+                host,
+                port,
+                &mut last_selected_idx,
+                &mut seq_tracker,
+                &mut reg,
+            ));
+
+            assert!(
+                !reg.is_awaiting_reg3(0) && !reg.is_awaiting_reg3(1),
+                "a reorder must drop every stale REG3 grant"
+            );
+            assert_eq!(reg.pending_reg2_idx(), None);
+            assert_eq!(reg.reg1_target_idx(), None);
+
+            let reg3 = [
+                (crate::protocol::SRTLA_TYPE_REG3 >> 8) as u8,
+                (crate::protocol::SRTLA_TYPE_REG3 & 0xff) as u8,
+            ];
+            reg.process_registration_packet(0, &reg3);
+            assert!(
+                !reg.has_connected,
+                "a REG3 on a recycled index must not be authorized by the previous occupant"
+            );
+            assert_eq!(reg.out_of_phase_reg3(), 1);
+        }
+
+        /// A SIGHUP whose file is byte-for-byte unchanged ([A, B] → [A, B]) must
+        /// keep that bookkeeping: nothing moved, so nothing is invalidated.
+        #[test]
+        fn sighup_unchanged_list_keeps_registration_index_state() {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let mut connections = rt.block_on(create_test_connections(2));
+            let host = "127.0.0.1";
+            let port = 9000u16;
+            let ip_a = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2));
+            let ip_b = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 3));
+            relabel_as_uplinks(&mut connections, host, port, &[ip_a, ip_b]);
+
+            let mut reg = SrtlaRegistrationManager::new();
+            reg.arm_reg3_gate(1);
+            reg.set_pending_reg2_idx(Some(1));
+
+            let mut last_selected_idx = Some(1);
+            let mut seq_tracker = SequenceTracker::new();
+
+            rt.block_on(apply_connection_changes(
+                &mut connections,
+                &[ip_a, ip_b],
+                host,
+                port,
+                &mut last_selected_idx,
+                &mut seq_tracker,
+                &mut reg,
+            ));
+
+            assert!(
+                reg.is_awaiting_reg3(1),
+                "an unchanged reload must not disturb an in-flight handshake"
+            );
+            assert_eq!(reg.pending_reg2_idx(), Some(1));
+        }
+
         /// A SIGHUP whose file is byte-for-byte unchanged ([A, B] → [A, B]) must
         /// not re-handshake any link: each survivor keeps its `conn_id` and the
         /// same socket Arc (no `connect_from_ip`), and the cached selection index
@@ -922,6 +1016,7 @@ mod tests {
                 port,
                 &mut last_selected_idx,
                 &mut seq_tracker,
+                &mut SrtlaRegistrationManager::new(),
             ));
 
             assert_eq!(connections.len(), 2);

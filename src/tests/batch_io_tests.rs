@@ -352,6 +352,76 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn replayed_reg3_does_not_wipe_a_live_connection() {
+        let (mut conn, _receiver) = reachable_connection().await;
+        let mut reg = SrtlaRegistrationManager::new();
+        let listener = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let (instant_tx, _instant_rx) = tokio::sync::mpsc::unbounded_channel();
+        let reg3 = [(SRTLA_TYPE_REG3 >> 8) as u8, (SRTLA_TYPE_REG3 & 0xff) as u8];
+
+        reg.send_reg2_to(0, &mut conn).await;
+        assert!(reg.is_awaiting_reg3(0));
+
+        conn.process_packet(0, &mut reg, &listener, &instant_tx, None, &reg3)
+            .await
+            .unwrap();
+        assert!(
+            conn.connected,
+            "the first in-phase REG3 registers the uplink"
+        );
+        assert!(
+            !reg.is_awaiting_reg3(0),
+            "the one-shot grant must be consumed by the REG3 it authorized"
+        );
+
+        let mut connections: SmallVec<SrtlaConnection, 4> = SmallVec::new();
+        connections.push(conn);
+        let mut last_selected_idx = None;
+        let mut last_switch_time_ms = 0u64;
+        let mut seq_tracker = SequenceTracker::new();
+        let now = now_ms();
+        forward_via_connection(
+            0,
+            &[7u8; 48],
+            Some(9),
+            &mut connections,
+            &mut last_selected_idx,
+            &mut last_switch_time_ms,
+            &mut seq_tracker,
+            now,
+        )
+        .await;
+        flush_all_batches(&mut connections, &mut seq_tracker).await;
+
+        let live_log = connections[0].packet_log.clone();
+        let live_in_flight = connections[0].in_flight_packets;
+        assert!(
+            !live_log.is_empty() && live_in_flight > 0,
+            "the uplink must carry real in-flight state before the replay"
+        );
+
+        connections[0]
+            .process_packet(0, &mut reg, &listener, &instant_tx, None, &reg3)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            reg.out_of_phase_reg3(),
+            1,
+            "the replayed REG3 must be rejected by the phase gate and counted"
+        );
+        assert_eq!(
+            connections[0].packet_log, live_log,
+            "a replayed REG3 must not clear the in-flight packet log of a live uplink"
+        );
+        assert_eq!(
+            connections[0].in_flight_packets, live_in_flight,
+            "a replayed REG3 must not reset the in-flight counter of a live uplink"
+        );
+        assert!(connections[0].connected, "the uplink stays connected");
+    }
+
+    #[tokio::test]
     async fn reg2_broadcast_arms_the_reg3_gate_for_every_uplink() {
         let mut reg = SrtlaRegistrationManager::new();
         let (conn_a, _peer_a) = reachable_connection().await;

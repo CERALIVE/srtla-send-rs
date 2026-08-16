@@ -6,6 +6,7 @@ use tracing::{info, warn};
 
 use super::sequence::SequenceTracker;
 use crate::connection::SrtlaConnection;
+use crate::registration::SrtlaRegistrationManager;
 
 pub struct PendingConnectionChanges {
     pub new_ips: Option<SmallVec<IpAddr, 4>>,
@@ -21,6 +22,10 @@ pub struct PendingConnectionChanges {
 /// the telemetry `conn_id` is the link's index in this vector (Task 10 ADR-001
 /// contract), reordering the file reorders `conn_id` consistently — matching the
 /// C sender's "reload reassigns by file order" semantics.
+///
+/// Any change to the vector also invalidates `reg`'s index-keyed registration
+/// bookkeeping, which is reset here — see
+/// [`SrtlaRegistrationManager::reset_index_scoped_state`].
 pub async fn apply_connection_changes(
     connections: &mut SmallVec<SrtlaConnection, 4>,
     new_ips: &[IpAddr],
@@ -28,6 +33,7 @@ pub async fn apply_connection_changes(
     receiver_port: u16,
     last_selected_idx: &mut Option<usize>,
     seq_tracker: &mut SequenceTracker,
+    reg: &mut SrtlaRegistrationManager,
 ) {
     let mut seen = HashSet::<IpAddr>::new();
     let desired: SmallVec<(IpAddr, String), 4> = new_ips
@@ -96,6 +102,7 @@ pub async fn apply_connection_changes(
     let new_order: SmallVec<u64, 4> = connections.iter().map(|c| c.conn_id).collect();
     if previous_order != new_order {
         *last_selected_idx = None;
+        reg.reset_index_scoped_state();
     }
 }
 
