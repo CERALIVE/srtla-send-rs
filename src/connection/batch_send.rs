@@ -20,8 +20,28 @@ use super::batch_recv::BatchUdpSocket;
 /// Maximum number of packets to buffer before flushing (Moblin uses 15+1=16)
 pub const BATCH_SIZE_THRESHOLD: usize = 16;
 
+/// Maximum datagrams submitted to the kernel in one transmit call.
+///
+/// Sizes the `sendmmsg` `iovec`/`mmsghdr` arrays on Linux and caps the
+/// sequential fallback identically, so both transmit paths drain the same
+/// bounded prefix per flush.
+pub const BATCH_SEND_SIZE: usize = 32;
+
 /// Maximum time in milliseconds between flushes (Moblin uses 15ms)
 const FLUSH_INTERVAL_MS: u64 = 15;
+
+/// Result of one [`BatchSender::flush`].
+///
+/// `accepted` carries the per-packet tracking records for exactly the datagrams
+/// the kernel accepted, in queue order. They are committed by the caller
+/// (`register_packet`) **even when `error` is `Some`** — the packets really did
+/// go out, so dropping their in-flight registration would corrupt the window
+/// accounting. The unsent suffix stays queued.
+#[derive(Debug, Default)]
+pub struct FlushOutcome {
+    pub accepted: SmallVec<(Option<i32>, u64), 4>,
+    pub error: Option<std::io::Error>,
+}
 
 /// Batch sender that queues packets and flushes them efficiently
 #[derive(Debug)]
@@ -89,64 +109,56 @@ impl BatchSender {
         self.queue.len() as i32
     }
 
-    /// Flush all queued packets to the socket
+    /// Transmit up to [`BATCH_SEND_SIZE`] queued packets, then commit.
     ///
-    /// Returns a vector of (seq, queue_time) pairs for packets that need tracking.
-    /// The caller should update in-flight tracking based on these.
-    pub async fn flush(
-        &mut self,
-        socket: &Arc<BatchUdpSocket>,
-    ) -> std::io::Result<Vec<(Option<u32>, u64)>> {
+    /// Transmit-then-commit: candidates are peeked (never removed up front),
+    /// handed to the socket's batch transmit path, and only the kernel-accepted
+    /// prefix is removed from the queue and reported in
+    /// [`FlushOutcome::accepted`]. The unsent suffix is retained in queue order,
+    /// so a partial send can neither duplicate nor drop a datagram.
+    ///
+    /// DATA packets go out verbatim. Unlike control frames (keepalive/REG, see
+    /// `packet_io.rs` `send_control_padded`), DATA is NEVER padded to a 32-byte
+    /// minimum — padding here would corrupt the SRT byte stream.
+    pub async fn flush(&mut self, socket: &Arc<BatchUdpSocket>) -> FlushOutcome {
         if self.queue.is_empty() {
-            return Ok(Vec::new());
+            return FlushOutcome::default();
         }
 
-        let packet_count = self.queue.len();
-        let mut sent_count = 0;
+        let candidates = self.queue.len().min(BATCH_SEND_SIZE);
+        let (sent_count, mut error) = {
+            let packets: SmallVec<&[u8], BATCH_SEND_SIZE> = self.queue[..candidates]
+                .iter()
+                .map(|packet| &packet[..])
+                .collect();
+            socket.send_batch(&packets).await
+        };
 
-        // Send DATA packets verbatim. Unlike control frames (keepalive/REG,
-        // see packet_io.rs `send_control_padded`), DATA is NEVER padded to a
-        // 32-byte minimum — padding here would corrupt the SRT byte stream.
-        //
-        // DEFERRED: sendmmsg(2) batch send -- Linux-only syscall that submits
-        // multiple UDP datagrams in one kernel entry, reducing per-packet
-        // overhead. Not implemented: adds OS-specific unsafe code and
-        // significant complexity for marginal gain at current packet rates
-        // (~60-67 batch flushes/s at 10 Mbps). Revisit if profiling shows
-        // syscall overhead is a bottleneck on the Jetson Nano target.
-        // Tracked in docs/notes/sendmmsg-deferred.md
-        for packet in &self.queue {
-            match socket.send(packet).await {
-                Ok(_) => sent_count += 1,
-                Err(e) => {
-                    // Partial failure: remove already-sent packets to avoid duplicates
-                    self.queue.drain(..sent_count);
-                    self.sequences.drain(..sent_count);
-                    self.queue_times.drain(..sent_count);
-                    return Err(e);
-                }
-            }
-        }
-
-        // Collect tracking info before clearing
-        let tracking_info: Vec<(Option<u32>, u64)> = self
+        let accepted: SmallVec<(Option<i32>, u64), 4> = self
             .sequences
             .iter()
             .zip(self.queue_times.iter())
-            .map(|(&seq, &time)| (seq, time))
+            .take(sent_count)
+            .map(|(&seq, &time)| (seq.map(|s| s as i32), time))
             .collect();
 
-        // Clear the queue
-        self.queue.clear();
-        self.sequences.clear();
-        self.queue_times.clear();
+        self.queue.drain(..sent_count);
+        self.sequences.drain(..sent_count);
+        self.queue_times.drain(..sent_count);
         self.last_flush_time = Instant::now();
 
-        if packet_count > 1 {
-            debug!("Batch flush: sent {} packets in one batch", packet_count);
+        if error.is_none() && sent_count == 0 {
+            error = Some(std::io::Error::new(
+                std::io::ErrorKind::WriteZero,
+                "batch transmit accepted no datagrams from a non-empty queue",
+            ));
         }
 
-        Ok(tracking_info)
+        if sent_count > 1 {
+            debug!("Batch flush: sent {} packets in one batch", sent_count);
+        }
+
+        FlushOutcome { accepted, error }
     }
 
     /// Reset the batch sender state (for reconnection)

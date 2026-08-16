@@ -14,6 +14,7 @@ TARGETS=(
   netns_impairment
   netns_pr19_parity
   netns_scenario
+  netns_unconnected
 )
 
 for TARGET in "${TARGETS[@]}"; do

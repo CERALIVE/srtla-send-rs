@@ -4,8 +4,7 @@
 use std::time::Duration;
 
 use network_sim::{
-    SrtlaTestStack, check_impairment_deps, check_integration_deps, wait_for_connected_uplinks,
-    wait_for_udp_listener,
+    SrtlaTestStack, check_impairment_deps, check_integration_deps, wait_for_udp_listener,
 };
 
 /// Check all integration test dependencies. Returns `true` if tests should
@@ -39,11 +38,26 @@ pub fn build_srtla_send() {
         .status()
         .expect("failed to run cargo build");
     assert!(status.success(), "cargo build failed");
+    // Publish the binary cargo just built. Without this the harness falls back
+    // to a hardcoded `<workspace>/target/debug` path, which is stale (or absent)
+    // whenever CARGO_TARGET_DIR is redirected.
+    unsafe {
+        std::env::set_var("SRTLA_SEND_BIN", env!("CARGO_BIN_EXE_srtla_send"));
+    }
 }
 
 /// Bounded readiness gate replacing a fixed "sleep N seconds for registration".
-/// Returns once srtla_send's local SRT listener is up and its uplink sockets are
-/// connected to the receiver, so callers wait on observed state, not a timer.
+/// Returns once srtla_send's local SRT listener is up and its uplinks have
+/// completed SRTLA registration, so callers wait on observed state, not a timer.
+///
+/// Uplink sockets are unconnected, so a connected-UDP-peer probe is no longer a
+/// valid readiness signal; registration (REG3) is.
+///
+/// The gate requires ONE registered uplink — the SRTLA group is established and
+/// the sender can forward — not every uplink. How many links of the veth
+/// topology actually reach the receiver is a property of the topology, not of
+/// sender readiness; a test that needs a specific count should call
+/// `SrtlaTestStack::wait_for_registered_uplinks` directly.
 pub fn wait_until_ready(stack: &SrtlaTestStack) {
     wait_for_udp_listener(
         &stack.topo.sender_ns,
@@ -51,14 +65,9 @@ pub fn wait_until_ready(stack: &SrtlaTestStack) {
         Duration::from_secs(15),
     )
     .expect("srtla_send local SRT listener up");
-    wait_for_connected_uplinks(
-        &stack.topo.sender_ns,
-        &stack.topo.receiver_ip,
-        stack.receiver_srtla_port(),
-        stack.topo.sender_ips.len(),
-        Duration::from_secs(15),
-    )
-    .expect("srtla_send uplink sockets connected to receiver");
+    stack
+        .wait_for_registered_uplinks(1, Duration::from_secs(15))
+        .expect("srtla_send registered at least one uplink with the receiver");
 }
 
 /// Inject `count` UDP packets to srtla_send's local SRT port from within

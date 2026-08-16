@@ -76,16 +76,25 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
                     command.arguments, ("test", "--test", "subscription_loom")
                 )
 
-    def test_release_keeps_parallel_miri_semantics(self) -> None:
-        miri = load_workflow(RELEASE).job("miri")
-
-        self.assertFalse(miri.needs)
-        for test_filter in (
+    def test_ci_and_release_keep_parallel_miri_semantics(self) -> None:
+        # Both the recvmmsg and sendmmsg pure-pointer filters are required in
+        # BOTH workflows: the unsafe FFI inventory is recvmmsg + sendmmsg.
+        required_filters: Final = (
             "init_rebuilds_self_pointers_after_move",
             "iter_clamps_oversized_msg_len_to_mtu",
             "sockaddr_storage_roundtrip",
-        ):
-            self.assertTrue(miri.has_command("cargo", "miri", "test", test_filter))
+            "sendmmsg_pointers_rebuilt_after_move",
+            "sendmmsg_prefix_extraction_bounded",
+        )
+        for path in (CI, RELEASE):
+            with self.subTest(workflow=path.name):
+                miri = load_workflow(path).job("miri")
+                self.assertFalse(miri.needs)
+                for test_filter in required_filters:
+                    self.assertTrue(
+                        miri.has_command("cargo", "miri", "test", test_filter),
+                        f"{path.name} miri lane must run {test_filter}",
+                    )
 
     def test_failed_rust_gate_skips_every_release_publication(self) -> None:
         workflow = load_workflow(RELEASE)

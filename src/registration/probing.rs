@@ -144,6 +144,11 @@ impl SrtlaRegistrationManager {
         false
     }
 
+    pub(super) fn reset_probe_state(&mut self) {
+        self.probe_results.clear();
+        self.probing_state = ProbingState::NotStarted;
+    }
+
     pub fn is_probing(&self) -> bool {
         matches!(
             self.probing_state,

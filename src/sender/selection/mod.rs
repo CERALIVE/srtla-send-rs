@@ -179,7 +179,7 @@ fn edpf_pipeline_select(
     let EdpfSchedulerState { blest, iods } = edpf_state;
 
     // 1. BLEST filters out HoL-blocking links
-    let candidates = blest.filter(conns);
+    let candidates = with_congestion_escape(conns, blest.filter(conns));
 
     // 2. IoDS filters for monotonic ordering
     let ordered = iods.filter_valid(&candidates, |idx| {
@@ -206,6 +206,40 @@ fn edpf_pipeline_select(
 
     edpf::select_from_indices(conns, &candidates, SRT_PKT_SIZE)
         .or_else(|| edpf::select_from(conns, SRT_PKT_SIZE))
+}
+
+/// Re-admit BLEST-excluded links that would deliver EARLIER than every admitted
+/// link.
+///
+/// BLEST's one-way-delay guard is capacity-blind and static, so a link more than
+/// `threshold_ms` slower than the fastest one is excluded on every tick no matter
+/// how congested the admitted links become — permanent starvation of the
+/// high-latency uplink, and no bonding at all once the fast link saturates. A
+/// link whose predicted arrival is below the best admitted arrival cannot be
+/// blocking the in-order stream, since its packet lands first, so admitting it is
+/// consistent with the guard BLEST exists to enforce.
+fn with_congestion_escape(conns: &[SrtlaConnection], admitted: Vec<usize>) -> Vec<usize> {
+    use edpf::SRT_PKT_SIZE;
+
+    let Some(best_admitted) = admitted
+        .iter()
+        .filter_map(|&i| edpf::arrival_time(&conns[i], SRT_PKT_SIZE))
+        .reduce(f64::min)
+    else {
+        return admitted;
+    };
+
+    let mut candidates = admitted;
+    for (i, conn) in conns.iter().enumerate() {
+        if candidates.contains(&i) {
+            continue;
+        }
+        if edpf::arrival_time(conn, SRT_PKT_SIZE).is_some_and(|a| a < best_admitted) {
+            candidates.push(i);
+        }
+    }
+    candidates.sort_unstable();
+    candidates
 }
 
 /// EXPERIMENTAL stalled-link deselect (flag `stall_deselect`, default OFF).

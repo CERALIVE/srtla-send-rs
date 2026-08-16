@@ -205,8 +205,10 @@ fn parser_reads_belabox_shaped_ack() {
 #[test]
 fn ack_builder_parser_roundtrip() {
     // Our own builder -> our own parser must round-trip the full 10-ack vector,
-    // confirming both ends agree on the 44-byte BELABOX layout.
-    let acks: [u32; 10] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0xffff_fffe];
+    // confirming both ends agree on the 44-byte BELABOX layout. The last entry
+    // is the top of the 31-bit sequence domain, not a full-width `u32`: an ACK
+    // word with bit 31 set is not a sequence number and the parser drops it.
+    let acks: [u32; 10] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0x7fff_fffe];
     let pkt = create_ack_packet(&acks);
     let parsed = parse_srtla_ack(&pkt);
     assert_eq!(parsed.as_slice(), &acks[..], "ACK build->parse round-trip");

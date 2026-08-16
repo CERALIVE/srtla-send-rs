@@ -5,6 +5,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::Instant;
 use tracing::{debug, error, info, warn};
 
+use super::sequence::SequenceTracker;
 use super::uplink::{ConnectionId, ReaderHandle, UplinkPacket, restart_reader_for};
 use crate::connection::{STARTUP_GRACE_MS, SrtlaConnection};
 use crate::registration::SrtlaRegistrationManager;
@@ -24,6 +25,7 @@ pub async fn handle_housekeeping(
     all_failed_at: &mut Option<Instant>,
     reader_handles: &mut HashMap<ConnectionId, ReaderHandle>,
     packet_tx: &UnboundedSender<UplinkPacket>,
+    seq_tracker: &mut SequenceTracker,
 ) -> Result<()> {
     // If we're waiting on a REG2 response past the timeout, proactively retry REG1
     let current_ms = now_ms();
@@ -66,6 +68,10 @@ pub async fn handle_housekeeping(
                 } else {
                     restart_reader_for(conn, reader_handles, packet_tx);
                 }
+                // Both arms discard this link's in-flight packet log, so any
+                // sequence it still owns in the tracker would misattribute a
+                // late NAK to a link that never transmitted it.
+                seq_tracker.remove_connection(conn.conn_id);
 
                 match reg.pending_reg2_idx() {
                     Some(idx) if idx == i => {
@@ -206,6 +212,7 @@ mod tests {
             &mut all_failed_at,
             &mut reader_handles,
             &packet_tx,
+            &mut SequenceTracker::new(),
         )
         .await
         .expect("housekeeping on an active connection must not fail");
@@ -253,6 +260,7 @@ mod tests {
             &mut all_failed_at,
             &mut reader_handles,
             &packet_tx,
+            &mut SequenceTracker::new(),
         )
         .await;
         assert!(
@@ -270,6 +278,7 @@ mod tests {
             &mut all_failed_at,
             &mut reader_handles,
             &packet_tx,
+            &mut SequenceTracker::new(),
         )
         .await;
         assert!(
@@ -285,6 +294,7 @@ mod tests {
             &mut all_failed_at,
             &mut reader_handles,
             &packet_tx,
+            &mut SequenceTracker::new(),
         )
         .await;
         assert!(

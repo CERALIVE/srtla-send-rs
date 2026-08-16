@@ -21,9 +21,10 @@ pub use incoming::SrtlaIncoming;
 pub use reconnection::ReconnectionState;
 pub use rtt::RttTracker;
 use rustc_hash::FxHashMap;
-pub use socket::{bind_from_ip, resolve_remote};
+use socket::remote_drift;
+pub use socket::{bind_from_ip, resolve_remote, resolve_remote_all};
 use tokio::time::Instant;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::protocol::*;
 use crate::utils::now_ms;
@@ -63,6 +64,17 @@ pub struct SrtlaConnection {
     pub remote: SocketAddr,
     #[cfg(not(feature = "test-internals"))]
     pub(crate) remote: SocketAddr,
+    /// The receiver hostname this uplink was created with, kept verbatim so a
+    /// later re-resolution can detect DNS drift against `remote`.
+    #[cfg(feature = "test-internals")]
+    pub host: String,
+    #[cfg(not(feature = "test-internals"))]
+    pub(crate) host: String,
+    /// The receiver port this uplink was created with (pairs with `host`).
+    #[cfg(feature = "test-internals")]
+    pub port: u16,
+    #[cfg(not(feature = "test-internals"))]
+    pub(crate) port: u16,
     #[allow(dead_code)]
     #[cfg(feature = "test-internals")]
     pub local_ip: IpAddr,
@@ -87,12 +99,17 @@ pub struct SrtlaConnection {
     pub packet_log: FxHashMap<i32, u64>,
     #[cfg(not(feature = "test-internals"))]
     pub(crate) packet_log: FxHashMap<i32, u64>,
-    /// Highest sequence number that has been cumulatively ACKed.
-    /// Used to optimize cumulative ACK processing by skipping already-ACKed sequences.
+    /// Highest sequence number that has been cumulatively ACKed, under 31-bit
+    /// serial (wrap-aware) ordering. `None` = nothing ACKed yet on this link.
+    ///
+    /// `Option` rather than a sentinel value: every point in the serial domain
+    /// is a legitimate sequence number, so no in-domain value can mean "unset"
+    /// (the retired `i32::MIN` sentinel only worked because the comparison was
+    /// raw integer arithmetic, which is the wrap bug itself).
     #[cfg(feature = "test-internals")]
-    pub highest_acked_seq: i32,
+    pub highest_acked_seq: Option<SrtSeq>,
     #[cfg(not(feature = "test-internals"))]
-    pub(crate) highest_acked_seq: i32,
+    pub(crate) highest_acked_seq: Option<SrtSeq>,
     #[cfg(feature = "test-internals")]
     pub last_received: Option<Instant>,
     #[cfg(not(feature = "test-internals"))]
@@ -119,6 +136,13 @@ pub struct SrtlaConnection {
     /// a recovered link re-enters. `0` = eligible for an immediate probe. Inert
     /// while `stall_deselect` is off (default).
     pub(crate) last_stall_reprobe_ms: u64,
+    /// `now_ms()` of the last emitted NAK-truncation warning for this link.
+    /// A receiver under heavy loss can NAK-truncate on every frame, so the warn
+    /// is rate limited to one per second per connection to keep a degraded link
+    /// from flooding the log. `0` = never warned, so the first one always fires.
+    pub(crate) last_trunc_warn_ms: u64,
+    /// `now_ms()` of the last receiver-DNS drift warning; limited to one per minute.
+    pub(crate) last_dns_drift_warn_ms: u64,
     // Sub-structs for organized state management
     #[cfg(feature = "test-internals")]
     pub rtt: RttTracker,
@@ -149,28 +173,35 @@ impl SrtlaConnection {
         use rand::Rng;
 
         let remote = resolve_remote(host, port).await?;
+        // The socket is deliberately left UNCONNECTED: the peer is owned by
+        // `BatchUdpSocket` and named on every send, so a multi-homed / NAT
+        // receiver replying from another address still reaches us (C-reference
+        // parity). See `batch_recv.rs` for the ownership map.
         let sock = bind_from_ip(ip, 0)?;
-        sock.connect(&remote.into())?;
         sock.set_nonblocking(true)?;
-        let socket = Arc::new(BatchUdpSocket::new(sock)?);
+        let socket = Arc::new(BatchUdpSocket::new(sock, remote)?);
         let startup_deadline = now_ms() + STARTUP_GRACE_MS;
         Ok(Self {
             conn_id: rand::rng().next_u64(),
             socket,
             remote,
+            host: host.to_string(),
+            port,
             local_ip: ip,
             label: format!("{}:{} via {}", host, port, ip),
             connected: false,
             window: WINDOW_DEF * WINDOW_MULT,
             in_flight_packets: 0,
             packet_log: FxHashMap::with_capacity_and_hasher(PKT_LOG_SIZE, Default::default()),
-            highest_acked_seq: i32::MIN,
+            highest_acked_seq: None,
             last_received: None,
             last_sent: None,
             last_keepalive_sent: None,
             last_probe_growth_ms: 0,
             last_ack_or_rtt_sample_ms: 0,
             last_stall_reprobe_ms: 0,
+            last_trunc_warn_ms: 0,
+            last_dns_drift_warn_ms: 0,
             rtt: RttTracker::default(),
             congestion: CongestionControl::default(),
             bitrate: BitrateTracker::default(),
@@ -241,27 +272,39 @@ impl SrtlaConnection {
         self.batch_sender.has_queued_packets()
     }
 
-    /// Flush the batch queue, sending all queued packets.
+    /// Flush the batch queue, committing exactly the datagrams that went out.
     ///
-    /// This registers all sent packets for in-flight tracking.
+    /// The accepted prefix is registered for in-flight tracking even when the
+    /// transmit ended in a hard error — those packets are genuinely on the wire.
+    /// An `Err` return means the caller must recover the link (mark it for
+    /// recovery and drop its sequence-tracker entries); the unsent suffix stays
+    /// queued and is discarded by that reset.
     pub async fn flush_batch(&mut self) -> Result<()> {
         if !self.batch_sender.has_queued_packets() {
             return Ok(());
         }
 
-        match self.batch_sender.flush(&self.socket).await {
-            Ok(tracking_info) => {
-                // Register all sent packets for in-flight tracking
-                for (seq, send_time_ms) in tracking_info {
-                    if let Some(s) = seq {
-                        self.register_packet(s as i32, send_time_ms);
-                    }
-                }
-                self.last_sent = Some(Instant::now());
-                Ok(())
+        let outcome = self.batch_sender.flush(&self.socket).await;
+        let transmitted = !outcome.accepted.is_empty();
+        for (seq, send_time_ms) in outcome.accepted {
+            if let Some(s) = seq {
+                self.register_packet(s, send_time_ms);
             }
-            Err(e) => Err(anyhow::anyhow!("batch flush failed: {}", e)),
         }
+        if transmitted {
+            self.last_sent = Some(Instant::now());
+        }
+        match outcome.error {
+            Some(e) => Err(anyhow::anyhow!("batch flush failed: {}", e)),
+            None => Ok(()),
+        }
+    }
+
+    /// Datagrams this uplink received from an address other than the resolved
+    /// receiver. Diagnostic only (status logs); deliberately NOT part of the
+    /// frozen ADR-001 telemetry document.
+    pub fn foreign_source_datagrams(&self) -> u64 {
+        self.socket.foreign_source_datagrams()
     }
 
     pub async fn send_keepalive(&mut self) -> Result<()> {
@@ -324,7 +367,7 @@ impl SrtlaConnection {
         self.rtt.kalman_rtt.is_initialized()
     }
 
-    /// RTT velocity (trend) in ms/sample from the Kalman filter.
+    /// RTT velocity (trend) in ms per Kalman update from the Kalman filter.
     /// Positive = rising RTT (congestion building), negative = falling.
     pub fn get_rtt_velocity(&self) -> f64 {
         self.rtt.kalman_rtt.velocity()
@@ -358,8 +401,13 @@ impl SrtlaConnection {
     }
 
     pub fn perform_window_recovery(&mut self) {
-        self.congestion
-            .perform_window_recovery(&mut self.window, self.connected, &self.label);
+        let rtt_velocity = self.get_rtt_velocity();
+        self.congestion.perform_window_recovery(
+            &mut self.window,
+            self.connected,
+            rtt_velocity,
+            &self.label,
+        );
     }
 
     /// Whether this link has gone silent past `CONN_TIMEOUT`.
@@ -417,7 +465,7 @@ impl SrtlaConnection {
         }
         self.packet_log.clear();
         self.in_flight_packets = 0;
-        self.highest_acked_seq = i32::MIN;
+        self.highest_acked_seq = None;
         self.congestion.reset();
         self.batch_sender.reset();
         self.quality_cache = CachedQuality::default();
@@ -430,7 +478,7 @@ impl SrtlaConnection {
         self.window = WINDOW_DEF * WINDOW_MULT;
         self.in_flight_packets = 0;
         self.packet_log.clear();
-        self.highest_acked_seq = i32::MIN;
+        self.highest_acked_seq = None;
         self.batch_sender.reset();
     }
 
@@ -528,10 +576,32 @@ impl SrtlaConnection {
     }
 
     pub async fn reconnect(&mut self) -> Result<()> {
+        match resolve_remote_all(&self.host, self.port).await {
+            Ok(answers) if remote_drift(&answers, &self.remote) => {
+                let now = now_ms();
+                if self.last_dns_drift_warn_ms == 0
+                    || now.saturating_sub(self.last_dns_drift_warn_ms) >= 60_000
+                {
+                    self.last_dns_drift_warn_ms = now;
+                    warn!(
+                        "receiver DNS answers no longer include {}; keeping current peer — moving \
+                         the bond to a new receiver requires a process restart",
+                        self.remote
+                    );
+                }
+            }
+            Ok(_) => {}
+            Err(error) => {
+                debug!(
+                    "{}: receiver DNS lookup failed during reconnect; keeping current peer {}: {}",
+                    self.label, self.remote, error
+                );
+            }
+        }
+
         let sock = bind_from_ip(self.local_ip, 0)?;
-        sock.connect(&self.remote.into())?;
         sock.set_nonblocking(true)?;
-        let socket = BatchUdpSocket::new(sock)?;
+        let socket = BatchUdpSocket::new(sock, self.remote)?;
         self.socket = Arc::new(socket);
 
         self.reset_state();

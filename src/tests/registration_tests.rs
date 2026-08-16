@@ -6,7 +6,9 @@ mod tests {
     use crate::connection::STARTUP_GRACE_MS;
     use crate::protocol::*;
     use crate::registration::*;
-    use crate::test_helpers::{advance_test_clock, create_test_connection};
+    use crate::test_helpers::{
+        advance_test_clock, create_test_connection, create_test_connection_with_failing_send,
+    };
     use crate::utils::now_ms;
 
     #[test]
@@ -73,6 +75,8 @@ mod tests {
         // Create REG3 packet
         let buf = vec![(SRTLA_TYPE_REG3 >> 8) as u8, (SRTLA_TYPE_REG3 & 0xff) as u8];
 
+        // The phase gate only honors REG3 on an uplink we sent a REG2 to.
+        reg.arm_reg3_gate(2);
         let handled = reg.process_registration_packet(2, &buf);
         assert!(handled.is_some());
 
@@ -249,6 +253,7 @@ mod tests {
 
         // Simulate multiple REG3 responses
         for i in 0..3 {
+            reg.arm_reg3_gate(i);
             let handled = reg.process_registration_packet(i, &reg3_packet);
             assert!(handled.is_some());
         }
@@ -307,6 +312,7 @@ mod tests {
 
         // Process REG3
         let reg3_packet = vec![0x92, 0x02];
+        reg.arm_reg3_gate(0);
         reg.process_registration_packet(0, &reg3_packet);
 
         assert!(reg.has_connected);
@@ -329,8 +335,8 @@ mod tests {
     async fn test_probing_fallback_when_send_fails() {
         let mut reg = SrtlaRegistrationManager::new();
         let mut connections = vec![
-            create_test_connection().await,
-            create_test_connection().await,
+            create_test_connection_with_failing_send().await,
+            create_test_connection_with_failing_send().await,
         ];
 
         assert_eq!(reg.reg1_target_idx(), None);
@@ -476,6 +482,11 @@ mod tests {
             create_test_connection().await,
             create_test_connection().await,
         ];
+        // The fixture marks a link connected on creation; a link mid-handshake
+        // is not, and the REG2 broadcast deliberately skips connected uplinks.
+        for c in connections.iter_mut() {
+            c.connected = false;
+        }
 
         let mut ngp = vec![0u8; 2];
         ngp[0..2].copy_from_slice(&SRTLA_TYPE_REG_NGP.to_be_bytes());

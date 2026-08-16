@@ -144,7 +144,16 @@ impl CongestionControl {
     }
 
     /// Perform window recovery (enhanced mode only)
-    pub fn perform_window_recovery(&mut self, window: &mut i32, connected: bool, label: &str) {
+    ///
+    /// `rtt_velocity` is the Kalman RTT trend in ms per update (not ms/s); a
+    /// positive value means RTT is rising and halves the recovery increment.
+    pub fn perform_window_recovery(
+        &mut self,
+        window: &mut i32,
+        connected: bool,
+        rtt_velocity: f64,
+        label: &str,
+    ) {
         enhanced::perform_window_recovery(
             window,
             connected,
@@ -153,6 +162,7 @@ impl CongestionControl {
             &mut self.nak_burst_start_time_ms,
             &mut self.last_window_increase_ms,
             &mut self.fast_recovery_mode,
+            rtt_velocity,
             label,
         );
     }

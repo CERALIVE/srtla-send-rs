@@ -151,6 +151,14 @@ pub(crate) fn log_connection_status(
             conn.current_bitrate_mbps()
         );
 
+        let foreign = conn.foreign_source_datagrams();
+        if foreign > 0 {
+            info!(
+                "        Foreign-source datagrams: {} (processed, not dropped)",
+                foreign
+            );
+        }
+
         if conn.rtt.estimated_rtt_ms > 0.0 {
             info!(
                 "        RTT: kalman={:.1}ms, velocity={:.2}ms/s, jitter={:.1}ms, stable={} \

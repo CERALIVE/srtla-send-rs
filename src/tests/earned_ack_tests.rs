@@ -111,7 +111,7 @@ mod tests {
                 Ev::SrtlaAck { seq } => apply_arm(arm, conns.as_mut_slice(), seq),
                 Ev::SrtAck { cum } => {
                     for c in conns.iter_mut() {
-                        c.handle_srt_ack(cum);
+                        c.handle_srt_ack(cum, now, false);
                     }
                 }
                 Ev::Nak { conn, seq } => {

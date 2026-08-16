@@ -1,4 +1,7 @@
 #[cfg(test)]
+pub mod batch_io_tests;
+
+#[cfg(test)]
 pub mod connection_tests;
 
 #[cfg(test)]
@@ -11,6 +14,9 @@ pub mod config_tests;
 pub mod sender_tests;
 
 #[cfg(test)]
+pub mod ack_rtt_tests;
+
+#[cfg(test)]
 pub mod earned_ack_tests;
 
 #[cfg(test)]
@@ -18,6 +24,9 @@ pub mod stall_deselect_tests;
 
 #[cfg(test)]
 pub mod protocol_tests;
+
+#[cfg(test)]
+pub mod utils_tests;
 
 #[cfg(test)]
 pub mod keepalive_interop_tests;

@@ -32,6 +32,21 @@ RTT). On the device it is driven by CeraUI and feeds the bonded path into
 > sweep via `scripts/check-doc-refs.sh`, version-drift + Rule-A sync).
 > Startup bind ordering (2026-07-27: S10 — the local SRT listener binds before any uplink is
 > dialed, closing a live-reproduced `SRT_REJ_TIMEOUT` start race; see ROBUSTNESS FIXES).
+> **Upstream sync landed (2026-08): 0 commits behind `irlserver/srtla_send` at
+> `c9f6bb2296f236d60802f2ec3b79d9da4dac6e28`.** All 138 commits in
+> `80cd0c4..c9f6bb2` were triaged (`docs/notes/upstream-sync-2026-08-evaluation.md`)
+> and merged history-only (`-s ours`); adopted substance landed as individually
+> gated follow-up commits, not merge auto-application. Ported: NAK loss-list
+> offset-16 with 31-bit wrap safety, unconnected uplink sockets +
+> `sendmmsg(2)` batch flush with prefix-commit semantics, monotonic `now_ms()`
+> (wall-clock carve-out for telemetry), ACK-RTT ownership attribution (wrap-aware),
+> the RTT-velocity window-recovery gate, and an EDPF velocity+BDP-overrun ranking
+> penalty (redesigned from upstream's hard-exclusion shape) — see ROBUSTNESS FIXES
+> and EXPERIMENTAL SCHEDULER-HARDENING FLAGS below for the hardware-validation
+> caveats that apply to some of these. DNS drift detection on reconnect landed;
+> coordinated whole-bond receiver migration is DEFERRED (see ROBUSTNESS FIXES).
+> Two candidate perf changes (switch-cooldown removal, flush-on-switch removal)
+> were measured via a real A/B harness and REJECTED — see the triage doc.
 > CeraUI integration lands in follow-up tasks.
 
 **Relationship to `srtla/`:** this is the **sender** engine (Rust). The existing
@@ -86,6 +101,11 @@ the fork parent attached when opening a PR. Verify: `git remote -v` must show on
   licensing at the workspace/distribution layer, not by stripping upstream notices.
 - **Fork start point:** upstream `80cd0c4` ("feat: use Kalman-smoothed RTT in EDPF
   arrival time prediction").
+- **Last-merged upstream SHA (2026-08 sync):** `c9f6bb2296f236d60802f2ec3b79d9da4dac6e28`.
+  Merged history-only via `-s ours` (see `docs/notes/upstream-sync-2026-08-evaluation.md`
+  for why); the next sync's merge base is computed from this SHA. Full 138-commit triage
+  table and the EXACT-SET VALIDATION proving no commit in the range was missed or
+  double-counted live in that same doc.
 
 ### Upstream-merge policy — MANUAL & COMPAT-GATED
 
@@ -320,28 +340,35 @@ The replacement drives the production manager directly and checks externally vis
 delivery, replay, and pruning behavior across the schedules Loom explores.
 
 **Miri lane (BLOCKING CI job, NOT part of the default gate).** The only `unsafe`
-FFI in the tree is the `recvmmsg` batch-receive path
+FFI in the tree is the **`recvmmsg` + `sendmmsg` batch I/O** paths
 (`src/connection/batch_recv.rs`). A dedicated BLOCKING `miri` job in `ci.yml`
-runs miri over its **pure pointer logic** — three single-filter invocations (miri
-takes one substring filter per run):
+**and `release.yml`** runs miri over their **pure pointer logic** — five
+single-filter invocations (miri takes one substring filter per run):
 
 ```bash
 cargo miri test --lib --no-default-features --features test-internals init_rebuilds_self_pointers_after_move
 cargo miri test --lib --no-default-features --features test-internals iter_clamps_oversized_msg_len_to_mtu
 cargo miri test --lib --no-default-features --features test-internals sockaddr_storage_roundtrip
+cargo miri test --lib --no-default-features --features test-internals sendmmsg_pointers_rebuilt_after_move
+cargo miri test --lib --no-default-features --features test-internals sendmmsg_prefix_extraction_bounded
 ```
 
-These vet, with no UB: the self-referential `iovec`/`mmsghdr` pointer rebuild
-after a value move (`rebuild_pointers`/`init`), the `msg_len`→`MTU` clamp in the
-iterator, and the `sockaddr_storage`→`SocketAddr` cast + big-endian decode.
-**HARD LIMIT — miri CANNOT execute the real `recvmmsg` syscall/FFI.** It validates
-only the Rust-side pointer arithmetic and decode *around* the syscall, never the
-live kernel transition; any test that binds a socket, issues `recvmmsg`, or spawns
-tokio must NOT run under miri (carry `#[cfg_attr(miri, ignore)]` if added — the
-current `batch_recv.rs` tests are all syscall-free, so none need it). Two flags
-are load-bearing: `--no-default-features` drops the mimalloc `#[global_allocator]`
-(C FFI miri cannot run — it aborts on `mi_malloc_aligned`), and `--lib` scopes to
-the unit-test binary holding the three pure tests. Install with
+These vet, with no UB: the receive-side self-referential `iovec`/`mmsghdr` pointer
+rebuild after a value move (`rebuild_pointers`/`init`), the `msg_len`→`MTU` clamp
+in the iterator, the `sockaddr_storage`→`SocketAddr` cast + big-endian decode, the
+send-side `SendMmsgBatch` pointer rebuild after a move (`msg_iov` into its own
+`iov`, `msg_name`/`msg_namelen` at the socket-owned peer), and the `sendmmsg`
+accepted-prefix bounds plus short-`msg_len` hard error
+(`validate_sent_prefix`). **HARD LIMIT — miri CANNOT execute the real `recvmmsg`
+or `sendmmsg` syscall/FFI.** It validates only the Rust-side pointer arithmetic
+and decode *around* the syscalls, never the live kernel transition; any test that
+binds a socket, issues `recvmmsg`/`sendmmsg`, or spawns tokio must NOT run under
+miri (carry `#[cfg_attr(miri, ignore)]` if added — the current `batch_recv.rs`
+tests are all syscall-free, so none need it). Two flags are load-bearing:
+`--no-default-features` drops the mimalloc `#[global_allocator]` (C FFI miri
+cannot run — it aborts on `mi_malloc_aligned`), and `--lib` scopes to the
+unit-test binary holding the five pure tests. `scripts/release_workflow_contract_test.py`
+requires all five filters in BOTH workflows. Install with
 `rustup component add miri` on the pinned nightly.
 
 The `@ceralive/srtla-send` TS binding (`bindings/typescript/`) has its own gate:
@@ -533,6 +560,21 @@ for the full operator/runtime reference (modes, runtime commands, tuning constan
   releases **standalone** in CI; the workspace parent does not exist there. The local
   orchestration scratch dir is gitignored and must appear in no other tracked file
   (Rule D).
+- **Unconnected uplink sockets' accept-any-source behavior is deliberate — do not add
+  silent source filtering without a versioned decision.** Uplink sockets are
+  unconnected (`recvmmsg`-based), so any host that can reach an uplink's ephemeral
+  port can inject ACK/NAK/keepalive traffic that influences scheduling and liveness;
+  REG2 ID matching only hardens registration, not the data-plane receive path. This
+  is a deliberate interop choice (matches the upstream C `srtla_send`/`_rec` pair and
+  BELABOX, and tolerates NAT/multi-homed receivers replying from a different source
+  address than the one dialed), not an oversight. The existing mitigation is defense
+  in depth, not exclusion: a `foreign_source_datagrams` counter + rate-limited (1/s)
+  `debug!` log on source mismatch, status-log-only (never in the frozen ADR-001
+  telemetry JSON), and nothing is ever dropped. Adding a hard source filter, dropping
+  foreign-source datagrams, or connect()-ing the uplink sockets per-peer would each
+  break this interop case and must go through a deliberate, versioned decision — not
+  a drive-by hardening patch. See `docs/notes/upstream-sync-2026-08-evaluation.md`
+  ("Security rationale for accept-any sockets") for the full rationale.
 
 ## TEST HARDENING (Tasks 7-8, 25)
 
@@ -581,19 +623,20 @@ just `src/`), while `pnpm build` still emits only `dist/{index,sender/index,
 telemetry/index}.js` with no test files. Tarball stays clean (`files: ["dist"]`
 allowlist + build-emit excludes `*.test.ts`).
 
-### Task 25 -- sendmmsg triage
+### Task 25 -- sendmmsg triage (superseded: sendmmsg IS now implemented)
 
-The `// TODO: On Linux, could use sendmmsg ...` in `src/connection/batch_send.rs`
-`flush()` has been converted to a tracked DEFERRED note. The note captures:
-
-- What `sendmmsg(2)` would do (multi-datagram single syscall)
-- Why it is deferred: marginal gain at current rates (~60-67 flushes/s at 10 Mbps,
-  already a ~15x reduction from raw per-packet sends), Linux-only unsafe FFI, and
-  complexity not justified without profiling evidence on the constrained device target
-- When to revisit: profiling shows syscall overhead, or Tokio adds native support
-
-Full rationale in `docs/notes/sendmmsg-deferred.md`.
-**Do not implement sendmmsg** without profiling evidence and a deliberate PR.
+The original DEFERRED note for `sendmmsg(2)` batch send was **superseded by
+adoption** in the 2026-08 upstream sync (todo 9), which ported upstream `673138d`
+*feat(srtla_send): flush batches with sendmmsg* with fork fixes. `BatchSender::flush`
+now submits up to `BATCH_SEND_SIZE = 32` datagrams per kernel entry via `sendmmsg(2)`
+on Linux, with a sequential fallback on other platforms, over now-unconnected uplink
+sockets (see the ANTI-PATTERNS note on accept-any-source above). Prefix-commit
+semantics guarantee a partial send can neither duplicate nor drop a datagram; a hard
+flush error routes into `mark_for_recovery()` + `SequenceTracker::remove_connection()`.
+`docs/notes/sendmmsg-deferred.md` is retained as an **adoption record** (its title
+is `ADOPTED: sendmmsg(2) batch send (was: DEFERRED)`), not a deferred-item pointer —
+do not cite it as an example of an unimplemented/deferred feature. The triage row of
+record is `docs/notes/upstream-sync-2026-08-evaluation.md` → `673138d`.
 
 ## TS BINDING TOOLING
 
@@ -743,6 +786,277 @@ Pinned by `tests/startup_bind_ordering.rs` (3 tests, unprivileged): the
 every uplink line of a multi-link bond including a `failed to add uplink`
 attempt, and the port must genuinely be held (`AddrInUse`) once that log is
 emitted. The first two fail on the pre-fix ordering.
+
+## ROBUSTNESS FIXES (EDPF bonding, 2026-08-15)
+
+`--mode edpf` did not work at all, and `tests/netns_edpf.rs` had been red since it
+was written. Two independent defects in the EDPF pipeline, both inherited from the
+upstream commits that introduced it (`27c6c00`, `80cd0c4`). Neither touches the
+parity contract; the other three modes are unaffected (their selectors never call
+the EDPF predictor).
+
+### E1 — EDPF could never bootstrap (`src/sender/selection/edpf.rs`)
+
+`predicted_arrival` returned `None` when `conn.bitrate.current_bitrate_bps <= 0.0`.
+That field is a **measurement** of bytes this uplink has already sent, so it is
+`0.0` on every link at process start. Every link therefore had no predicted
+arrival, EDPF selected nothing, and the sender logged `no available connection to
+forward packet` for every single DATA packet, forever — nothing sent means nothing
+measured means nothing ever sent. Reproduced in a two-namespace bond: `--mode edpf`
+forwarded **0** packets while `--mode enhanced` on the identical topology forwarded
+1913.
+
+Unmeasured links now use a flat `BOOTSTRAP_CAPACITY_BPS` (1 Mbps) placeholder. It
+is deliberately flat, not modelled: every unmeasured link gets the same number, so
+ordering among them falls to in-flight bytes and OWD, and a real measurement
+replaces it within one 2 s bitrate window. This also covers a link idle longer than
+that window, whose measurement decays back to `0.0`.
+
+### E2 — BLEST permanently starved the high-latency uplink (`selection/mod.rs`)
+
+`BlestFilter` is a static, capacity-blind OWD guard: a link more than 50 ms of OWD
+behind the fastest is excluded on **every** tick regardless of congestion, and the
+pipeline's fallback chain (`select_from_indices(candidates).or_else(select_from)`)
+is only reached when the admitted set yields nothing — which never happens while
+one fast link is admitted. A 30 ms + 150 ms bond therefore never bonded: after E1
+was fixed, the 150 ms link still carried **0** packets over a 16 s window while the
+30 ms link ran flat against its 4 Mbit cap and the excess was dropped.
+
+`with_congestion_escape` re-admits a BLEST-excluded link while its predicted arrival
+is **earlier** than every admitted link's. That is consistent with the guard BLEST
+exists to enforce — a packet that lands first cannot head-of-line-block anything —
+and it re-engages automatically once the fast link drains. Measured effect on the
+netns scenario: link1 0 → ~3100 packets, aggregate 5860 → ~8960 packets per 16 s
+window (~3.9 → ~5.9 Mbps), stable across 4 consecutive runs.
+
+Do NOT restore "zero bitrate ⇒ not selectable" or drop the escape in an upstream
+merge; `tests/netns_edpf.rs` plus the EDPF arms in `src/tests/edpf_tests.rs` and
+`src/sender/selection/edpf.rs` pin both. Todo 11's EDPF velocity/BDP-penalty work
+supersedes the flat bootstrap constant if it introduces a real capacity estimate;
+the BLEST escape is orthogonal and should survive it.
+
+## ROBUSTNESS FIXES (upstream sync, 2026-08)
+
+Seven behavior changes landed as individually gated port commits during the 2026-08
+upstream sync (todos 4-13). None alter the parity contract; the EDPF cold-start and
+BLEST-starvation fixes are covered separately above under "ROBUSTNESS FIXES (EDPF
+bonding, 2026-08-15)".
+
+### NAK loss-list offset-16 (todo 4, ported from upstream `71f4ecc`)
+
+The SRT NAK control frame's loss list starts at byte offset 16, not 4 — the naive
+upstream port is risky without hardening (a range end of `0x7fff_ffff` wraps `seq`
+to 0 under `seq <= end` with `wrapping_add`, potentially emitting up to 999 bogus
+loss IDs before the 1000-entry cap silently truncates). The fork's port introduces
+`SrtSeq`, a 31-bit modular sequence type (`src/protocol/srt_seq.rs`) with wrap-aware
+`serial_lt`/`serial_le`/`serial_gt`/`serial_ge` comparisons (RFC 1982 semantics —
+values exactly `2^30` apart are unordered in both directions, so `serial_lt` is
+**not** a total order and must never back a `sort_by`), a directional `distance`,
+and two constructors (`new` masks the protocol-flag bit; `from_u32_checked` rejects
+it — using the wrong one on a NAK range-end word silently accepts a corrupt frame as
+a huge valid range). `parse_srt_nak` returns a `NakList` with a global,
+per-packet truncation cap and a rate-limited truncation warning
+(`NAK_TRUNC_WARN_INTERVAL_MS = 1000`). Pinned by `src/protocol/srt_seq.rs` unit
+tests plus migrated fixtures across `protocol_tests.rs`, `integration_tests.rs`,
+`end_to_end_tests.rs`, and `tests/parser_proptest.rs`.
+
+### Monotonic `now_ms()` with a wall-clock carve-out (todo 5, ported from upstream `bd6fad8`)
+
+`src/utils.rs::now_ms()` is now backed by a monotonic clock so internal timing
+deltas (NAK decay, window recovery, liveness timeouts) survive a wall-clock step
+(NTP correction, manual clock change) without producing a spurious jump. A
+**deliberate carve-out**: `wall_clock_ms()` stays on `SystemTime` and is the one
+used for telemetry's `last_updated_ms`, because the TS-side telemetry watcher
+compares that field against `Date.now()` — anchoring it to the monotonic clock
+would drift after any wall-clock step and produce false staleness on the consumer
+side. `std::time::Instant` (not `tokio::time::Instant`) backs the monotonic clock
+specifically so it is NOT frozen by `tokio::time::pause()` in tests that rely on
+`now_ms()` moving independently of the virtual clock. Pinned in
+`src/tests/utils_tests.rs`.
+
+### RTT-velocity window-recovery gate (todo 6, ported from upstream `a8d8a37`) — SIM-TESTED, NOT HARDWARE-VALIDATED
+
+`perform_window_recovery` (enhanced mode) halves its window increment while the
+Kalman-filtered RTT velocity exceeds `RTT_VELOCITY_GATE_THRESHOLD = 2.0`
+**ms per Kalman update** (corrected from upstream's own mislabeled "ms/s" — the
+filter's predict step has no `dt` term, so the unit is inherently per-sample, not
+per-second). The existing 10s/7s/5s/else recovery schedule and the
+`fast_recovery_mode` 2x bonus are unchanged; only the resulting increment is
+scaled, and only ever downward, so the failure mode is slower recovery, never
+window inflation. **This gate ships without the experimental-flag hardware
+gate** used by `--earned-ack-window`/`--stall-deselect` precisely because it can
+only reduce growth — but it is still sim-tested only (unit + golden-trace tests),
+not exercised against real bonded hardware, and should be read with that caveat.
+
+### ACK-RTT ownership attribution (todo 10, ported from upstream `a094863` + `3b2c425`)
+
+An SRT cumulative ACK is broadcast to every uplink (all links still prune their
+packet logs), but only the uplink the `SequenceTracker` says actually carried the
+acknowledged sequence turns it into an RTT sample — previously every holding link
+would have reported a round trip it never observed. A tracker miss means no RTT
+sample on any link (conservative, intentional), not a fallback guess. An SRTLA ACK
+names one specific sequence, so a packet-log hit is itself the ownership proof and
+feeds the smoothed RTT directly with no additional gate. The `ack <=
+highest_acked_seq` comparison that gates fast-path pruning is now the 31-bit
+modular `serial_gt`/`distance`-based comparison (todo 4's `SrtSeq`), not a raw
+integer `<=` — the raw form silently mishandled the sequence-space wrap. **Known
+limitation, not a bug:** `record_round_trip` discards a measured RTT of exactly 0
+ms (`saturating_sub`), so a genuine sub-millisecond round trip (loopback, LAN, a
+colocated receiver) never contributes a sample. The fix is a finer clock, not a
+looser gate — relaxing the `rtt == 0` rejection would reintroduce the S7
+downward-bias regression on every real (non-sub-ms) link. `src/connection/rtt.rs`,
+`src/connection/ack_nak.rs`.
+
+### EDPF velocity + BDP-overrun RANKING penalty (todo 11, ported from upstream `57525c7` + `d53d8bc`) — SIM-TESTED, NOT HARDWARE-VALIDATED
+
+Upstream's own shape (`DO-NOT-PORT-AS-IS` per the triage doc's frozen bug list) hard
+-excludes a link once its bandwidth-delay product is exceeded — if every candidate
+link is over the cap, selection returns `None` and the connection pool empties,
+violating the fork's own "pool never empties" invariant (`src/sender/selection/mod.rs`).
+The fork redesigns both as **ranking** penalties instead of exclusions:
+`VELOCITY_PENALTY_FACTOR = 0.005` adds an RTT-velocity-proportional term to
+predicted arrival time, and `BDP_OVERRUN_MULT = 1.5` (with a `propagation_s.max(0.001)`
+1ms floor guarding the zero-RTT bypass) penalizes over-cap links in the EDPF argmin
+without removing them from consideration — `edpf_all_links_over_cap_selects_the_least_
+overrun_link` proves this is ranking, not filtering. EDPF is opt-in (`--mode edpf`,
+never the default), and both constants are heuristics carried from upstream, not
+field-derived — sim-tested (unit/golden tests plus the `netns_edpf` netem topology)
+but **not** exercised on real bonded hardware. Same hardware-validation-gate
+convention as `--earned-ack-window`/`--stall-deselect` applies: do not cite either
+constant as a proven improvement until validated on real bond hardware.
+
+### DNS drift detection on reconnect (todo 12, ported from upstream, MEDIUM-4 of `c9f6bb2`'s bug list) — single-uplink swap DEFERRED
+
+Reconnect now re-resolves the receiver hostname (`resolve_remote_all`) instead of
+reusing the previously-resolved `SocketAddr` forever (the pre-sync tree had the
+identical flaw upstream also carried). The existing peer is kept when re-resolution
+fails, when it remains among the fresh answers, or when drift simply omits it from
+the answer set without another candidate being clearly preferred; a genuine drift
+emits a rate-limited (at most once/minute) receiver-identity warning. **DEFERRED,
+not implemented: coordinated whole-bond receiver migration.** SRTLA's
+receiver-generated full ID makes swapping a single uplink to a different receiver
+instance unsafe — it would split the bond, with some uplinks registered against one
+receiver identity and some against another. `apply_connection_changes` deliberately
+preserves surviving sockets/registrations across a SIGHUP reload, so SIGHUP is not a
+substitute mechanism either. A later, separately-scoped change must specify and
+implement any coordinated multi-uplink migration; do not add a single-uplink swap in
+the meantime. `src/connection/mod.rs` (`host`/`port` fields alongside `remote`).
+
+### Partial-send prefix-commit invariant + foreign-source counter (todo 9, alongside unconnected sockets — see ANTI-PATTERNS)
+
+`flush_batch`'s `sendmmsg(2)` path commits (`register_packet`) only the
+kernel-**accepted prefix** of a queued batch, in order, even when the overall call
+returns an error — a partial send can neither duplicate nor silently drop a
+datagram, and the caller (`sender/packet_handler.rs`, `sender/housekeeping.rs`) must
+`mark_for_recovery()` + `seq_tracker.remove_connection(conn_id)` on any `Err`. This
+replaces upstream's HIGH-2 bug (draining the whole queue and registering it as sent
+before confirming the I/O succeeded). Because uplink sockets are now unconnected, a
+datagram from a source other than the dialed receiver can reach protocol state; the
+`foreign_source_datagrams` counter plus a 1/s rate-limited `debug!` (status logs
+only, never the frozen ADR-001 telemetry JSON) is the mitigation — see the
+ANTI-PATTERNS entry above for the full accept-any-source rationale and why nothing
+is ever dropped. `src/connection/batch_send.rs`, `src/connection/mod.rs`.
+
+### REG3 authorization is one-shot; index-scoped registration state resets on SIGHUP (Final Verification Wave, `eaced59` + this round)
+
+Five registration-hardening bugfixes, all found by the post-merge verification wave.
+None alters the parity contract.
+
+- **REG3 is a ONE-SHOT grant.** `handle_reg3` consumes the uplink's `awaiting_reg3`
+  entry on success, so a duplicate or replayed REG3 falls through to the out-of-phase
+  branch (counted in `out_of_phase_reg3`, `RegistrationEvent::Reg3OutOfPhase`) instead
+  of re-firing `clear_pre_registration_state()` and wiping a live uplink's packet log,
+  in-flight count, congestion state, and batch queue. A legitimate reconnect re-arms
+  the gate through `send_reg2_to`.
+- **A SIGHUP pool reorder resets index-scoped registration state**
+  (`reset_index_scoped_state`: `awaiting_reg3`, `pending_reg2_idx`, `reg1_target_idx`,
+  probe results). Those are positional indices into the connection vector, which SIGHUP
+  rebuilds in ips-file order, so an in-flight grant could otherwise authorize a REG3 on
+  whichever uplink inherited the index. Only *incomplete* attempts are discarded —
+  established links keep their own `SrtlaConnection::connected` state, socket, and
+  window, so the "no re-handshake, zero disconnect" reload contract is unaffected
+  (confirmed by manual reorder QA).
+- **The REG2 broadcast retry skips uplinks that no longer need one.** A partially
+  failed broadcast retries on the next tick; the retry pass now skips any uplink that
+  is already `connected` or already holds a live `awaiting_reg3` grant. Without the
+  skip, the retry re-`insert`ed the index and re-armed the one-shot gate on an
+  already-connected, actively-forwarding link, reintroducing the first bug through a
+  slow multi-uplink broadcast instead of a raw duplicate packet.
+- **REG_ERR is phase-gated the same way REG3 is (round 3).** `handle_reg_err` used to
+  act on ANY REG_ERR: it set `connected = false` on the receiving link and cleared the
+  GLOBAL `pending_reg2_idx`/`reg1_target_idx`. SRTLA control frames are unauthenticated
+  and the uplink sockets are unconnected, so a forged 2-byte `SRTLA_TYPE_REG_ERR` from
+  anything that could reach an uplink's ephemeral port was a one-packet remote DoS
+  against an established, forwarding link — and collaterally aborted an *unrelated*
+  uplink's concurrent handshake. It is now honored only when that index is genuinely
+  mid-registration (`pending_reg2_idx == Some(idx)` OR `awaiting_reg3` member);
+  otherwise it is counted in `out_of_phase_reg_err` and returned as
+  `RegistrationEvent::RegErrOutOfPhase`, which `packet_io.rs` treats as a no-op. When
+  in phase, the clearing is SCOPED: the global REG1/REG2 fields are cleared only when
+  this index owns that single in-flight slot; an `awaiting_reg3`-phase REG_ERR revokes
+  only its own grant.
+- **A failed REG2 send revokes any stale pre-existing grant (round 3).** `send_reg2_to`
+  arms `awaiting_reg3` only on a successful send, but on failure it used to leave an
+  older grant for the same index untouched — so a failed RESEND could keep a REG3
+  authorization alive for a socket generation that was never re-armed. The `Err` branch
+  now removes the entry, so "armed only by a send that left the host" holds for the
+  current generation.
+
+Pinned by `replayed_reg3_does_not_wipe_a_live_connection`,
+`reg2_broadcast_retry_skips_already_connected_uplinks`,
+`out_of_phase_reg3_is_counted_and_ignored`,
+`out_of_phase_reg_err_does_not_disconnect_a_live_uplink`,
+`out_of_phase_reg_err_does_not_damage_another_uplinks_handshake`,
+`in_phase_reg_err_still_aborts_the_registration`, and
+`failed_reg2_resend_revokes_a_stale_pre_existing_grant`
+(`src/tests/batch_io_tests.rs`) plus the SIGHUP reset assertions in
+`src/tests/sender_tests.rs`.
+
+### REVERTED: the REG_NGP acceptance gate and its REG3-wait expiry (rounds 4-5)
+
+Two further rounds of the same arc were written, gated green, and then **REVERTED**
+(`ed7e74f` and `1680670`, reverted by `813832b` and `b74da1a`). They are recorded here
+so they are not re-attempted from the same premise. **Rounds 1-3 above are untouched and
+remain in force.**
+
+- **Round 4** additionally required `awaiting_reg3.is_empty()` and the uplink's own
+  `connected` flag before accepting a REG_NGP, closing a narrow window in which a forged
+  REG_NGP could re-open `pending_reg2_idx` on a just-connected link (`active_connections`
+  is refreshed only by a housekeeping tick, so it lags `SrtlaConnection::connected`) and
+  thereby walk back into the round-3 REG_ERR teardown.
+- **Round 5** tried to bound round 4 by expiring the REG3 wait from housekeeping.
+
+**Why they were reverted: a live-proven liveness regression.** With the gate in place, an
+ordinary `srtla_rec` **restart** while the sender is fully connected and forwarding —
+a routine operational event on a production device fleet — **never recovered**. Measured
+hands-on on loopback against a real `srtla_rec`: 180 s after the receiver came back, 32
+REG2 retries, 0 REG1, 0 `connection established`. The receiver legitimately no longer
+knows the group and answers every REG2 with a REG_NGP; the gate refuses all of them, and
+round 5's expiry did not reach that path. With rounds 4-5 reverted the same scenario
+recovers deterministically in ~18 s (15 s `CONN_TIMEOUT` + a ~1 s REG1→REG2→REG3 cycle),
+reproduced twice at 18.07 s / 18.09 s with 1 REG1, 2 REG2, 1 `connection established`.
+
+**The residual risk is KNOWN and ACCEPTED.** The uplink sockets are deliberately
+unconnected (see the accept-any-source rationale above), so any host that can reach an
+uplink's ephemeral port can already inject registration-adjacent traffic — that is the
+standing baseline, not something round 4 introduced. What round 4 closed on top of it is
+strictly narrower than the one-packet DoS rounds 1-3 closed: it needs a forged REG_NGP
+landing inside a sub-second-to-few-second window right after a REG3, **and** a subsequent
+forged REG_ERR, and it yields only a re-registration. A guaranteed loss of
+receiver-restart recovery is the worse trade, so the gate is out.
+
+**Tracked follow-up (do NOT re-attempt round 4 in isolation).** Rounds 1-5 are five
+instances of one defect class: registration phase lives in five uncoordinated fields
+(`pending_reg2_idx: Option<usize>`, `awaiting_reg3: HashSet<usize>`,
+`reg1_target_idx: Option<usize>`, `pending_timeout_at_ms`, and the lagging
+`active_connections` counter), and every acceptance check re-derives "what phase is this
+uplink in?" from a different subset. Rounds 3→4→5 each fixed a hazard the previous round
+created. The proper fix — independently flagged by multiple reviewers across rounds 4-6 —
+is **one per-connection registration-phase enum with a single transition function**
+(REG_NGP/REG1/REG2/REG3 phases explicit, every gate exhaustive by construction) plus
+removing `active_connections` as an acceptance input. That is a state-machine rewrite
+needing its own verification wave and its own receiver-restart hands-on test; it is the
+only sanctioned way to revisit this window.
 
 ## DOCS DISCIPLINE (Rule A)
 

@@ -59,9 +59,9 @@ The sender supports four mutually exclusive scheduling modes:
 
 Earliest Delivery Path First. Instead of scoring links by capacity or RTT group, EDPF predicts when a packet would actually *arrive* over each link and picks the lowest. Selection runs through a three-stage pipeline:
 
-- **BLEST head-of-line-blocking guard**: a static one-way-delay (OWD) filter (50ms threshold, no penalty term) drops links whose OWD would stall the in-order SRT byte stream behind a slower link.
+- **BLEST head-of-line-blocking guard**: a static one-way-delay (OWD) filter (50ms threshold, no penalty term) drops links whose OWD would stall the in-order SRT byte stream behind a slower link. A dropped link is re-admitted while its predicted arrival is earlier than every admitted link's — a saturated fast link cannot permanently starve a high-latency uplink, because a packet that lands first blocks nothing.
 - **IoDS in-order-delivery constraint**: bounds the candidate set to links that keep delivery monotonic. When the admitted set is empty it resets, so no link is permanently starved.
-- **EDPF argmin**: among admitted links, selects the lowest predicted arrival `(in_flight_bytes + packet) / effective_capacity + owd`.
+- **EDPF argmin**: among admitted links, selects the lowest predicted arrival `(in_flight_bytes + packet) / effective_capacity + owd`. A link with no measured send rate yet (freshly registered, or idle past the 2s bitrate window) uses a flat 1 Mbps bootstrap capacity, so it stays comparable instead of dropping out of the pipeline — without it the scheduler at startup selects nothing, sends nothing, and therefore never measures anything.
 
 The scheduler state (BLEST + IoDS) is owned per send-loop (no thread-local), so selection is deterministic and allocation-free on the hot path.
 
@@ -392,7 +392,7 @@ echo 'status' | socat - UNIX-CONNECT:/tmp/srtla.sock
 
 **RTT-Threshold Mode**: Groups links into "fast" and "slow" based on RTT measurements. Links within `min_rtt + delta` (default 30ms) are "fast" and strongly preferred. When quality scoring is also enabled, NAK penalties are applied within the fast link group. Falls back to slow links only when all fast links are saturated. Useful for reducing packet reordering in networks with heterogeneous latencies.
 
-**EDPF Mode**: Earliest Delivery Path First. Runs a BLEST → IoDS → EDPF pipeline: a static-OWD head-of-line-blocking guard (50ms) excludes links that would stall the in-order stream, an in-order-delivery constraint bounds the candidate set (resetting when empty so no link starves), and the link with the lowest predicted arrival time `(in_flight_bytes + packet) / effective_capacity + owd` is selected. Scheduler state is owned per send-loop (no thread-local). Quality scoring and exploration do not apply.
+**EDPF Mode**: Earliest Delivery Path First. Runs a BLEST → IoDS → EDPF pipeline: a static-OWD head-of-line-blocking guard (50ms) excludes links that would stall the in-order stream (re-admitting one while it would deliver earlier than every admitted link, so a saturated fast link cannot starve a high-latency uplink), an in-order-delivery constraint bounds the candidate set (resetting when empty so no link starves), and the link with the lowest predicted arrival time `(in_flight_bytes + packet) / effective_capacity + owd` is selected. Links with no measured send rate yet fall back to a flat 1 Mbps bootstrap capacity so the scheduler can start. Scheduler state is owned per send-loop (no thread-local). Quality scoring and exploration do not apply.
 
 ## Experimental Scheduler-Hardening Flags
 
@@ -525,12 +525,18 @@ Normal registration:
 ### Implementation Details
 
 - The local `SRT_LISTEN_PORT` listener is bound before the IP list is read and before any uplink is dialed, so a local SRT producer that connects the instant the process starts is never rejected while the bond is still coming up. Uplink setup is sequential (one resolve + bind + connect per link), so on a multi-modem bond this ordering is what keeps startup latency off the local listener.
-- For each IP in `BIND_IPS_FILE`, the sender binds a UDP socket and connects to `SRTLA_HOST:SRTLA_PORT`.
-- Incoming SRT UDP packets are read on `SRT_LISTEN_PORT` and forwarded over the currently selected uplink based on the score `window / (in_flight + 1)`.
+- For each IP in `BIND_IPS_FILE`, the sender binds a UDP socket **without connecting it** to `SRTLA_HOST:SRTLA_PORT`; the resolved peer is named on every send instead. This is deliberate, not an oversight — it matches the C `srtla_send`/`_rec` reference pair and BELABOX, and tolerates a NAT/multi-homed receiver replying from a source address other than the one dialed. The tradeoff: any host that can reach an uplink's ephemeral port can inject traffic that reaches protocol state. The mitigation is defense in depth, not filtering — a `foreign_source_datagrams` counter plus a rate-limited (1/s) debug log on source mismatch, never a silent drop and never in the telemetry JSON.
+- Incoming SRT UDP packets are read on `SRT_LISTEN_PORT` and forwarded over the currently selected uplink based on the score `window / (in_flight + 1)`. Outgoing DATA is flushed in batches of up to 32 datagrams via `sendmmsg(2)` on Linux (a sequential fallback on other platforms); a batch flush commits only the kernel-accepted prefix, in order, so a partial send can neither duplicate nor drop a packet, and any flush error is routed through the same connection-recovery path the rest of the send loop uses.
+- Internal timing (NAK decay, window recovery, liveness) reads a monotonic clock, so it survives a wall-clock step (NTP correction, manual clock change) without a spurious jump. The `--stats-file` telemetry's `last_updated_ms` deliberately stays wall-clock instead, because a telemetry reader compares it against its own `Date.now()`.
+- The SRT NAK loss list is parsed starting at the correct wire offset (16 bytes into the control frame), with wrap-safe 31-bit sequence-number handling and a truncation warning if a single NAK frame names more loss entries than the per-packet cap.
 - ACKs are applied to all uplinks to reduce in-flight counts; NAKs are attributed to the uplink that originally sent the sequence (tracked), falling back to the receiver uplink if unknown.
+- RTT measured from an ACK is attributed the same way. An SRT cumulative ACK is broadcast to every uplink, but only the uplink the sequence tracker says carried the acknowledged sequence turns it into an RTT sample — the others would otherwise report a latency they never observed. If the sequence can no longer be attributed (the tracking entry expired), no uplink samples it. An SRTLA ACK names one specific sequence, so a packet-log hit is itself the attribution and it feeds the smoothed RTT directly.
+- Sequence-number comparisons are 31-bit modular (RFC 1982), so ACK processing keeps advancing across the `0x7FFFFFFF → 0` wrap instead of stalling behind a numerically larger stale value. An ACK that is exactly half the sequence space away carries no ordering information and is ignored rather than guessed at.
 - **Burst NAK Detection**: The system tracks NAK bursts (multiple NAKs within 1 second) per connection. When quality scoring is enabled, connections with recent NAK bursts (≥5 NAKs in burst, within last 3 seconds) receive an additional 0.7x multiplier (30% reduction) to their quality score, helping avoid connections experiencing packet loss issues.
-- Keepalives are sent when idle, and periodically for RTT measurement; the RTT is smoothed via a Kalman filter. The Kalman output is clamped to ≥0 before use. Keepalive RTT samples of exactly 0 are rejected (parity with the ACK path), so a reply that arrives within the same scheduler tick doesn't bias the filter downward. Window recovery is conservative and time-based when there are no recent NAKs.
+- Keepalives are sent when idle, and periodically for RTT measurement; the RTT is smoothed via a Kalman filter. The Kalman output is clamped to ≥0 before use. Keepalive and ACK RTT samples share one plausibility gate: a sample of exactly 0 (a reply within the same millisecond, or a clock that moved backwards) and anything above 10 s are both discarded, so neither biases the filter. A genuine sub-millisecond round trip on a LAN or loopback link also measures 0 and is therefore not sampled. Window recovery is conservative and time-based when there are no recent NAKs.
 - Small control packets (keepalive, REG1/REG2) are zero-padded to a 32-byte minimum on the wire (`MIN_CONTROL_PKT_LEN`), matching the C `pad_sendto` behavior, so cellular/carrier NAT keepalive thresholds don't silently drop tiny control frames. DATA packets are never padded.
+- A REG3 only registers an uplink the sender actually sent a REG2 on, and the authorization is one-shot: a duplicate or replayed REG3 is counted and ignored instead of resetting a live uplink's window and in-flight state. A REG2 broadcast retry skips uplinks that are already registered or already awaiting their REG3. A SIGHUP reload that reorders the pool drops only *incomplete* registration attempts — established uplinks keep their socket, registration, and window.
+- A REG_ERR is honored only for an uplink that is actually mid-registration (awaiting its REG2, or awaiting its REG3); one arriving on an established link is counted and ignored rather than disconnecting it, and an in-phase REG_ERR clears only the handshake state that uplink owns, never another uplink's concurrent attempt.
 - Each uplink's reader task is monitored on every housekeeping tick. If a reader exits unexpectedly (e.g. due to a socket error), it is restarted within one tick rather than waiting for the 15 s liveness timeout.
 - The all-uplinks-failed global timeout measures time elapsed since the failure, not process uptime. A transient all-down blip on a long-running session no longer triggers an immediate fatal exit.
 
@@ -635,6 +641,18 @@ If needed, these can be adjusted in `src/sender/selection/`:
 **Exploration (`enhanced.rs`):**
 
 - Exploration period: `should_explore_now()` function, currently 30s - adjust exploration interval
+
+**Window Recovery (`connection/mod.rs`):**
+
+- `RTT_VELOCITY_GATE_THRESHOLD`: 2.0 (ms per Kalman update, NOT ms/second) - halves the window-recovery increment while RTT is rising this fast or faster; sim-tested only, see [Experimental scheduler-hardening flags](#experimental-scheduler-hardening-flags)-style hardware-validation caveat in `AGENTS.md`
+
+**EDPF Mode (`selection/edpf.rs`), `--mode edpf` only:**
+
+- `VELOCITY_PENALTY_FACTOR`: 0.005 - scales the RTT-velocity ranking penalty added to predicted arrival time
+- `BDP_OVERRUN_MULT`: 1.5 (with a 1ms propagation floor) - ranking penalty multiplier for links over their bandwidth-delay-product cap; a ranking term, not an exclusion, so an all-over-cap pool still selects the least-overrun link instead of emptying
+- `BOOTSTRAP_CAPACITY_BPS`: 1 Mbps flat placeholder used for a link with no measured send rate yet (fresh registration, or idle past the 2s bitrate window)
+
+Both EDPF constants and the RTT-velocity gate are heuristics carried from upstream, sim-tested (unit/golden tests plus the `netns_edpf` netem topology) but not exercised against real bonded hardware — see `AGENTS.md` → ROBUSTNESS FIXES (upstream sync, 2026-08) before citing either as a proven improvement.
 
 ### Runtime Optimization
 

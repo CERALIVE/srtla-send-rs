@@ -5,9 +5,12 @@
 //! and [`SrtlaTestStack`] for the full 3-process test pipeline
 //! (srt-live-transmit + srtla_rec + srtla_send).
 
-use std::io::{BufRead, BufReader};
+use std::collections::{HashSet, VecDeque};
+use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
@@ -101,6 +104,44 @@ pub fn check_impairment_deps() -> std::result::Result<(), SkipReason> {
 // NamespaceProcess
 // ---------------------------------------------------------------------------
 
+const OUTPUT_TAIL_BYTES: usize = 64 * 1024;
+
+type OutputTail = Arc<Mutex<VecDeque<u8>>>;
+
+fn new_output_tail() -> OutputTail {
+    Arc::new(Mutex::new(VecDeque::with_capacity(OUTPUT_TAIL_BYTES)))
+}
+
+fn drain_pipe<R>(mut reader: R, tail: OutputTail) -> JoinHandle<()>
+where
+    R: Read + Send + 'static,
+{
+    std::thread::spawn(move || {
+        let mut buffer = [0_u8; 8192];
+        while let Ok(bytes_read) = reader.read(&mut buffer) {
+            if bytes_read == 0 {
+                break;
+            }
+            if let Ok(mut output) = tail.lock() {
+                output.extend(&buffer[..bytes_read]);
+                while output.len() > OUTPUT_TAIL_BYTES {
+                    output.pop_front();
+                }
+            }
+        }
+    })
+}
+
+fn output_lines(tail: &OutputTail) -> Vec<String> {
+    let Ok(mut output) = tail.lock() else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(output.make_contiguous())
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
 /// A child process running inside a network namespace.
 ///
 /// Captures stdout+stderr and kills the process on drop.
@@ -115,9 +156,32 @@ pub struct NamespaceProcess {
     label: String,
     scope: ProcessScope,
     reaped: bool,
+    stdout_tail: OutputTail,
+    stderr_tail: OutputTail,
+    drain_threads: Vec<JoinHandle<()>>,
 }
 
 impl NamespaceProcess {
+    fn from_child(mut child: Child, scope: ProcessScope) -> Result<Self> {
+        let stdout_tail = new_output_tail();
+        let stderr_tail = new_output_tail();
+        let stdout = child.stdout.take().context("capture child stdout")?;
+        let stderr = child.stderr.take().context("capture child stderr")?;
+        let drain_threads = vec![
+            drain_pipe(stdout, Arc::clone(&stdout_tail)),
+            drain_pipe(stderr, Arc::clone(&stderr_tail)),
+        ];
+        Ok(Self {
+            child,
+            label: "test child".to_string(),
+            scope,
+            reaped: false,
+            stdout_tail,
+            stderr_tail,
+            drain_threads,
+        })
+    }
+
     /// Spawn `binary args...` inside `ns` via `sudo ip netns exec`.
     pub fn spawn(ns: &Namespace, binary: &str, args: &[&str]) -> Result<Self> {
         Self::spawn_with_env(ns, binary, args, &[])
@@ -146,47 +210,48 @@ impl NamespaceProcess {
             .stderr(Stdio::piped());
 
         let child = cmd.spawn().with_context(|| format!("spawn {label}"))?;
+        let mut process = Self::from_child(child, ProcessScope::Namespace(ns.name.clone()))?;
+        process.label = label;
 
-        tracing::debug!(%label, pid = child.id(), "spawned namespace process");
-        Ok(Self {
-            child,
-            label,
-            scope: ProcessScope::Namespace(ns.name.clone()),
-            reaped: false,
-        })
+        tracing::debug!(label = %process.label, pid = process.child.id(), "spawned namespace process");
+        Ok(process)
     }
 
     /// Read all captured stdout lines (non-blocking snapshot via `try_wait`).
     /// Only meaningful after the process has exited.
     pub fn stdout_lines(&mut self) -> Vec<String> {
-        match self.child.stdout.take() {
-            Some(stdout) => BufReader::new(stdout)
-                .lines()
-                .map_while(|l| l.ok())
-                .collect(),
-            None => vec![],
-        }
+        output_lines(&self.stdout_tail)
     }
 
     /// Read all captured stderr lines. Only meaningful after exit.
     pub fn stderr_lines(&mut self) -> Vec<String> {
-        match self.child.stderr.take() {
-            Some(stderr) => BufReader::new(stderr)
-                .lines()
-                .map_while(|l| l.ok())
-                .collect(),
-            None => vec![],
+        output_lines(&self.stderr_tail)
+    }
+
+    /// Snapshot the live stdout+stderr tail without waiting for exit. The drain
+    /// threads keep both tails current, so this is safe to poll while running.
+    pub fn log_snapshot(&self) -> Vec<String> {
+        let mut lines = output_lines(&self.stdout_tail);
+        lines.extend(output_lines(&self.stderr_tail));
+        lines
+    }
+
+    fn join_drains(&mut self) {
+        for drain_thread in self.drain_threads.drain(..) {
+            let _ = drain_thread.join();
         }
     }
 
     /// Send SIGTERM to the namespace's exact PIDs, then SIGKILL if needed.
     pub fn kill(&mut self) {
         if self.reaped && self.scope_pids().is_empty() {
+            self.join_drains();
             return;
         }
 
         self.signal_scope("-TERM");
         if self.wait_until_stopped(Duration::from_secs(2)) {
+            self.join_drains();
             return;
         }
 
@@ -197,6 +262,7 @@ impl NamespaceProcess {
             drop(self.child.stdout.take());
             drop(self.child.stderr.take());
         }
+        self.join_drains();
     }
 
     /// Check if the process is still running.
@@ -209,6 +275,7 @@ impl NamespaceProcess {
     pub fn check_exit(&mut self) -> Option<(Option<i32>, String)> {
         match self.child.try_wait() {
             Ok(Some(status)) => {
+                self.join_drains();
                 let stderr = self.stderr_lines().join("\n");
                 Some((status.code(), stderr))
             }
@@ -298,9 +365,9 @@ mod namespace_process_tests {
     use std::process::{Command, Stdio};
     use std::sync::mpsc;
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
-    use super::{NamespaceProcess, ProcessScope};
+    use super::{NamespaceProcess, ProcessScope, new_output_tail};
 
     fn signal_exact(signal: &str, target: &str) {
         let _ = Command::new("kill").args([signal, "--", target]).status();
@@ -320,18 +387,22 @@ mod namespace_process_tests {
         let mut child = Command::new("sh")
             .args([
                 "-c",
-                "setsid sh -c 'trap \"\" TERM INT; exec sleep 30' & echo $!; wait",
+                "setsid sh -c 'trap \"\" TERM INT; echo ready; exec sleep 30' & echo $!; wait",
             ])
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
             .expect("spawn mismatched process groups");
         let wrapper_pid = child.id();
+        let mut reader = BufReader::new(child.stdout.take().expect("child stdout"));
         let mut pid_line = String::new();
-        BufReader::new(child.stdout.take().expect("child stdout"))
-            .read_line(&mut pid_line)
-            .expect("read inner pid");
+        reader.read_line(&mut pid_line).expect("read inner pid");
         let inner_pid = pid_line.trim().parse::<u32>().expect("parse inner pid");
+        let mut readiness_line = String::new();
+        reader
+            .read_line(&mut readiness_line)
+            .expect("read inner readiness");
+        assert_eq!(readiness_line.trim(), "ready");
 
         let wrapper_pgid = Command::new("ps")
             .args(["-o", "pgid=", "-p", &wrapper_pid.to_string()])
@@ -359,6 +430,9 @@ mod namespace_process_tests {
             label: "mismatched process groups".to_string(),
             scope: ProcessScope::Pids(vec![inner_pid]),
             reaped: false,
+            stdout_tail: new_output_tail(),
+            stderr_tail: new_output_tail(),
+            drain_threads: vec![],
         };
         let (done_tx, done_rx) = mpsc::channel();
         let teardown = thread::spawn(move || {
@@ -384,6 +458,43 @@ mod namespace_process_tests {
             "wrapper process leaked after teardown"
         );
         assert!(!is_alive(inner_pid), "inner process leaked after teardown");
+    }
+
+    #[test]
+    fn child_pipes_are_drained_during_sustained_output() {
+        let child = Command::new("sh")
+            .args([
+                "-c",
+                "head -c 131072 /dev/zero; head -c 131072 /dev/zero >&2",
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn pipe stress child");
+        let pid = child.id();
+        let mut process = NamespaceProcess::from_child(child, ProcessScope::Pids(vec![pid]))
+            .expect("wrap pipe stress child");
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut exit = None;
+        while Instant::now() < deadline {
+            if let Some(status) = process.check_exit() {
+                exit = Some(status);
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        let completed = exit.is_some();
+        if !completed {
+            process.kill();
+        }
+        assert!(
+            completed,
+            "child did not complete while both pipes were written"
+        );
+        assert!(!process.stdout_lines().is_empty(), "stdout tail was empty");
+        assert!(!process.stderr_lines().is_empty(), "stderr tail was empty");
     }
 }
 
@@ -498,40 +609,61 @@ pub fn wait_for_udp_listener(ns: &Namespace, port: u16, timeout: Duration) -> Re
     }
 }
 
-/// Poll `ss -uan` inside `ns` until at least `min_count` UDP sockets are
-/// connected to `peer_ip:peer_port`. The sender `connect()`s one socket per
-/// source IP to the receiver as it brings each uplink online, so a connected
-/// peer entry is the observable readiness signal that replaces a fixed
-/// registration sleep — it returns as soon as the state appears.
-pub fn wait_for_connected_uplinks(
-    ns: &Namespace,
-    peer_ip: &str,
-    peer_port: u16,
+/// Count the uplinks that have reached REG3 according to the sender's own log.
+///
+/// `srtla_send` logs `REG3 from uplink #N` per uplink and
+/// `connection established (active=N)` for the aggregate, so registration
+/// readiness is observable from the log alone. Both signals are read because the
+/// aggregate line is only emitted on change.
+/// Block until at least `min_count` of `process`'s uplinks have completed
+/// registration (REG3), or `timeout` elapses.
+///
+/// The free-function form is for stacks assembled outside `SrtlaTestStack`
+/// (custom routing, extra CLI flags); `SrtlaTestStack::wait_for_registered_uplinks`
+/// delegates here so both paths share one readiness definition.
+pub fn wait_for_registered_uplinks(
+    process: &NamespaceProcess,
     min_count: usize,
     timeout: Duration,
 ) -> Result<()> {
     let start = Instant::now();
-    let peer = format!("{peer_ip}:{peer_port}");
-    let mut last_ss_output;
-
     loop {
-        let out = ns.exec("ss", &["-uan"])?;
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        let count = stdout.lines().filter(|line| line.contains(&peer)).count();
-        if count >= min_count {
+        let log = process.log_snapshot();
+        let registered = registered_uplink_count(&log);
+        if registered >= min_count {
             return Ok(());
         }
-        last_ss_output = stdout.to_string();
-
         if start.elapsed() > timeout {
             bail!(
-                "timeout waiting for {min_count} connected uplink(s) to {peer} in ns {} (saw \
-                 {count})\nlast ss -uan output:\n{last_ss_output}",
-                ns.name
+                "timeout waiting for {min_count} registered uplink(s) (saw \
+                 {registered})\nsrtla_send log:\n{}",
+                log.join("\n")
             );
         }
         std::thread::sleep(Duration::from_millis(200));
     }
+}
+
+fn registered_uplink_count(log: &[String]) -> usize {
+    let mut reg3_uplinks: HashSet<String> = HashSet::new();
+    let mut max_active = 0usize;
+
+    for line in log {
+        if let Some(rest) = line.split("REG3 from uplink #").nth(1) {
+            let idx: String = rest.chars().take_while(char::is_ascii_digit).collect();
+            if !idx.is_empty() {
+                let _ = reg3_uplinks.insert(idx);
+            }
+        }
+        if let Some(rest) = line.split("connection established (active=").nth(1) {
+            let count: String = rest.chars().take_while(char::is_ascii_digit).collect();
+            if let Ok(parsed) = count.parse::<usize>() {
+                max_active = max_active.max(parsed);
+            }
+        }
+    }
+
+    reg3_uplinks.len().max(max_active)
 }
 
 // ---------------------------------------------------------------------------
@@ -649,6 +781,26 @@ impl SrtlaTestStack {
         })
     }
 
+    /// Snapshot srtla_send's live log without stopping the stack.
+    pub fn sender_log_snapshot(&self) -> Vec<String> {
+        self.srtla_send
+            .as_ref()
+            .map(NamespaceProcess::log_snapshot)
+            .unwrap_or_default()
+    }
+
+    /// Block until at least `min_count` uplinks have completed registration
+    /// (REG3), or `timeout` elapses.
+    ///
+    /// Registration is the readiness signal because uplink sockets are
+    /// unconnected — `ss` can no longer report a connected UDP peer per uplink.
+    pub fn wait_for_registered_uplinks(&self, min_count: usize, timeout: Duration) -> Result<()> {
+        match self.srtla_send.as_ref() {
+            Some(process) => wait_for_registered_uplinks(process, min_count, timeout),
+            None => bail!("srtla_send is not running"),
+        }
+    }
+
     /// Apply impairment to sender-side link at `idx`.
     pub fn impair_link(&self, idx: usize, config: ImpairmentConfig) -> Result<()> {
         self.topo.impair_link(idx, config)
@@ -724,6 +876,56 @@ pub fn inject_udp_packets(ns: &Namespace, target_ip: &str, port: u16, count: usi
     Ok(())
 }
 
+/// Inject UDP datagrams from a SPECIFIC source address.
+///
+/// Lets a test reproduce a multi-homed receiver replying from another of its own
+/// addresses — the interop case unconnected uplink sockets exist for.
+pub fn inject_udp_packets_from(
+    ns: &Namespace,
+    source_ip: &str,
+    source_port: u16,
+    target_ip: &str,
+    target_port: u16,
+    payload_len: usize,
+    count: usize,
+) -> Result<()> {
+    let script = format!(
+        "import socket; s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); \
+         s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); \
+         s.bind(('{source_ip}',{source_port})); \
+         [s.sendto(b'\\x00'*{payload_len},('{target_ip}',{target_port})) for _ in \
+         range({count})]; s.close()"
+    );
+    ns.exec_checked("python3", &["-c", &script])
+        .with_context(|| {
+            format!(
+                "inject {count} UDP packets {source_ip}:{source_port} -> {target_ip}:{target_port}"
+            )
+        })?;
+    Ok(())
+}
+
+/// Local UDP ports bound to `local_ip` inside `ns`, newest listing order.
+///
+/// Uplink sockets are unconnected, so `ss` reports them as `UNCONN` with no
+/// peer; this reads the ephemeral source port a test needs to address them.
+pub fn bound_udp_ports(ns: &Namespace, local_ip: &str) -> Result<Vec<u16>> {
+    let out = ns.exec("ss", &["-uan"])?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let needle = format!("{local_ip}:");
+    let mut ports = Vec::new();
+    for line in stdout.lines() {
+        for field in line.split_whitespace() {
+            if let Some(port) = field.strip_prefix(&needle)
+                && let Ok(parsed) = port.parse::<u16>()
+            {
+                ports.push(parsed);
+            }
+        }
+    }
+    Ok(ports)
+}
+
 /// Inject UDP packets at a steady rate (packets/sec) for `duration`.
 pub fn inject_udp_stream(
     ns: &Namespace,
@@ -755,6 +957,27 @@ pub fn inject_udp_stream(
 
 /// Locate the srtla_send binary from a cargo build.
 fn find_srtla_send_binary() -> Result<PathBuf> {
+    // An explicit path always wins. `tests/common/build_srtla_send` publishes
+    // `CARGO_BIN_EXE_srtla_send` here, which is the only location that is
+    // correct under a redirected CARGO_TARGET_DIR — the hardcoded
+    // `<workspace>/target/...` candidates below silently resolve to a STALE
+    // binary in that case, which would invalidate every netns observation.
+    if let Ok(explicit) = std::env::var("SRTLA_SEND_BIN") {
+        let path = PathBuf::from(explicit);
+        if path.exists() {
+            return Ok(path);
+        }
+    }
+
+    if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
+        for profile in ["debug", "release"] {
+            let path = PathBuf::from(&target_dir).join(profile).join("srtla_send");
+            if path.exists() {
+                return Ok(path);
+            }
+        }
+    }
+
     // Check common cargo build output locations
     let candidates = [
         // Debug build

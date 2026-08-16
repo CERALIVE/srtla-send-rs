@@ -12,6 +12,10 @@
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 #[cfg(not(loom))]
+pub mod ab_metrics;
+#[cfg(not(loom))]
+pub mod cli;
+#[cfg(not(loom))]
 pub mod config;
 #[cfg(not(loom))]
 pub mod connection;

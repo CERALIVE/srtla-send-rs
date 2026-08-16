@@ -14,6 +14,12 @@ const SLOW_WINDOW_SAMPLES: usize = 100;
 /// Number of samples in the min-RTT sample filter.
 const RTT_SAMPLE_FILTER_SIZE: usize = 15;
 
+/// Upper plausibility bound for a single round-trip sample, in milliseconds.
+///
+/// Anything above this is a stale packet-log entry, a clock jump, or a reply to
+/// a probe we have long since given up on — not a usable latency measurement.
+pub const MAX_PLAUSIBLE_RTT_MS: u64 = 10_000;
+
 /// RTT measurement and tracking.
 ///
 /// Uses a 2-state Kalman filter [value, velocity] as the primary smooth RTT
@@ -77,6 +83,28 @@ impl RttTracker {
         self.rtt_min_fast_window.clear();
         self.rtt_min_slow_window.clear();
         self.rtt_sample_filter.clear();
+    }
+
+    /// Feed one measured round trip, gated by the shared plausibility rule.
+    ///
+    /// Returns the accepted sample, or `None` when it is rejected. Rejection is
+    /// `rtt == 0 || rtt > MAX_PLAUSIBLE_RTT_MS`, and the zero arm is deliberate
+    /// (S7 parity): `saturating_sub` turns a same-millisecond reply or a
+    /// backwards clock into `0`, and a 0ms sample would seed `rtt_min_ms = 0`
+    /// and make the link look permanently fastest.
+    ///
+    /// LIMITATION: the clock is whole milliseconds, so a genuine sub-millisecond
+    /// round trip (loopback, LAN) also measures `0` and is discarded — such a
+    /// link simply never contributes RTT samples. Accepting `0` to cover that
+    /// case would reintroduce the S7 bias on every real link, which is the worse
+    /// trade; a finer clock, not a looser gate, is the fix if it ever matters.
+    pub fn record_round_trip(&mut self, sent_ms: u64, now_ms: u64) -> Option<u64> {
+        let rtt = now_ms.saturating_sub(sent_ms);
+        if rtt == 0 || rtt > MAX_PLAUSIBLE_RTT_MS {
+            return None;
+        }
+        self.update_estimate(rtt);
+        Some(rtt)
     }
 
     pub fn update_estimate(&mut self, rtt_ms: u64) {
@@ -163,12 +191,7 @@ impl RttTracker {
         }
         if let Some(ts) = extract_keepalive_timestamp(data) {
             let now = now_ms();
-            let rtt = now.saturating_sub(ts);
-            // Reject rtt == 0 (same-ms reply or future timestamp from clock skew):
-            // a 0ms RTT is not a real sample and would seed rtt_min_ms = 0, making
-            // the link look artificially fast. Matches the ACK path (ack_nak.rs).
-            if rtt > 0 && rtt <= 10_000 {
-                self.update_estimate(rtt);
+            if let Some(rtt) = self.record_round_trip(ts, now) {
                 self.waiting_for_keepalive_response = false;
                 debug!(
                     "{}: RTT from keepalive: {}ms (kalman: {:.1}ms, velocity: {:.2}ms/s, jitter: \
