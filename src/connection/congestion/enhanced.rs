@@ -62,6 +62,17 @@ pub fn handle_srtla_ack(
     }
 }
 
+/// RTT velocity threshold above which the recovery increment is halved.
+///
+/// UNIT: **ms per Kalman update** — NOT ms/s. `KalmanFilter` (`src/kalman.rs`)
+/// uses the state transition `x_pred = x + v` with no `dt` term, so `velocity()`
+/// is the per-update RTT delta, and this threshold is expressed in the same
+/// per-update unit. Do not relabel it as a per-second rate.
+///
+/// Positive velocity means RTT is rising — recovering aggressively during active
+/// congestion would just inflate in-flight and cause more loss.
+const RTT_VELOCITY_GATE_THRESHOLD: f64 = 2.0;
+
 /// Perform time-based window recovery (enhanced mode only)
 ///
 /// Progressively recovers window size based on time since last NAK:
@@ -69,6 +80,10 @@ pub fn handle_srtla_ack(
 /// - 7s+: moderate recovery (100% rate)
 /// - 5s+: slow recovery (50% rate)
 /// - <5s: minimal recovery (25% rate)
+///
+/// The chosen increment is then scaled by an RTT-velocity gate: while RTT is
+/// rising faster than [`RTT_VELOCITY_GATE_THRESHOLD`] (ms/update) the increment
+/// is halved. The time thresholds themselves are unchanged.
 #[allow(clippy::too_many_arguments)]
 pub fn perform_window_recovery(
     window: &mut i32,
@@ -78,6 +93,7 @@ pub fn perform_window_recovery(
     nak_burst_start_time_ms: &mut u64,
     last_window_increase_ms: &mut u64,
     fast_recovery_mode: &mut bool,
+    rtt_velocity: f64,
     label: &str,
 ) {
     if !connected || *window >= WINDOW_MAX * WINDOW_MULT {
@@ -125,20 +141,35 @@ pub fn perform_window_recovery(
         // Conservative recovery multipliers (using cached values)
         let fast_mode_bonus = if *fast_recovery_mode { 2 } else { 1 };
 
+        // A NaN velocity (never-measured / degenerate filter) compares false against
+        // every operand in Rust, so it falls through to the ungated 1.0 scale by
+        // construction — never-measured links keep their pre-gate recovery rate.
+        let velocity_scale = if rtt_velocity > RTT_VELOCITY_GATE_THRESHOLD {
+            debug!(
+                "{}: RTT velocity {:.2} ms/update > {:.2} ms/update, halving recovery rate",
+                label, rtt_velocity, RTT_VELOCITY_GATE_THRESHOLD
+            );
+            0.5
+        } else {
+            1.0
+        };
+
         // Progressive recovery based on how long since last NAK
-        if time_since_last_nak > 10_000 {
+        let base_incr = if time_since_last_nak > 10_000 {
             // No NAKs for 10+ seconds (or never): aggressive recovery (200% rate)
-            *window += WINDOW_INCR * 2 * fast_mode_bonus;
+            WINDOW_INCR * 2 * fast_mode_bonus
         } else if time_since_last_nak > 7_000 {
             // No NAKs for 7+ seconds: moderate recovery (100% rate)
-            *window += WINDOW_INCR * fast_mode_bonus;
+            WINDOW_INCR * fast_mode_bonus
         } else if time_since_last_nak > 5_000 {
             // No NAKs for 5+ seconds: slow recovery (50% rate)
-            *window += WINDOW_INCR * fast_mode_bonus / 2;
+            WINDOW_INCR * fast_mode_bonus / 2
         } else {
             // Recent NAKs: minimal recovery (25% rate)
-            *window += WINDOW_INCR * fast_mode_bonus / 4;
-        }
+            WINDOW_INCR * fast_mode_bonus / 4
+        };
+
+        *window += (base_incr as f64 * velocity_scale) as i32;
 
         *window = min(*window, WINDOW_MAX * WINDOW_MULT);
         *last_window_increase_ms = now;
@@ -150,8 +181,9 @@ pub fn perform_window_recovery(
                 format!("{:.1}s", (time_since_last_nak as f64) / 1000.0)
             };
             debug!(
-                "{}: Time-based window recovery {} → {} (last NAK: {}, fast_mode={})",
-                label, old_window, *window, time_str, *fast_recovery_mode
+                "{}: Time-based window recovery {} → {} (last NAK: {}, fast_mode={}, \
+                 vel={:.2}ms/update)",
+                label, old_window, *window, time_str, *fast_recovery_mode, rtt_velocity
             );
         }
 
@@ -236,6 +268,7 @@ mod tests {
             &mut nak_burst_start,
             &mut last_increase,
             &mut fast_recovery,
+            0.0,
             "test",
         );
 
@@ -263,6 +296,7 @@ mod tests {
             &mut nak_burst_start,
             &mut last_increase,
             &mut fast_recovery,
+            0.0,
             "test",
         );
 
@@ -298,6 +332,7 @@ mod tests {
             &mut nak_burst_start,
             &mut last_increase,
             &mut fast_recovery,
+            0.0,
             "test",
         );
 
@@ -305,6 +340,85 @@ mod tests {
         assert_eq!(
             window, 5000,
             "Window should not grow if increment wait hasn't elapsed"
+        );
+    }
+
+    const RECOVERY_START_WINDOW: i32 = 5000;
+
+    /// One aggressive-branch (>10s since NAK) recovery step, returning the increment.
+    fn recovery_increment(rtt_velocity: f64, fast_recovery: bool) -> i32 {
+        let mut window = RECOVERY_START_WINDOW;
+        let mut nak_burst_count = 0;
+        let mut nak_burst_start = 0;
+        let mut last_increase = 0;
+        let mut fast_recovery_mode = fast_recovery;
+
+        perform_window_recovery(
+            &mut window,
+            true,
+            now_ms() - 10_500,
+            &mut nak_burst_count,
+            &mut nak_burst_start,
+            &mut last_increase,
+            &mut fast_recovery_mode,
+            rtt_velocity,
+            "test",
+        );
+
+        window - RECOVERY_START_WINDOW
+    }
+
+    #[test]
+    fn test_window_recovery_gated_by_rtt_velocity() {
+        let full = WINDOW_INCR * 2;
+        let half = full / 2;
+
+        let cases: &[(f64, i32, &str)] = &[
+            (0.0, full, "stable RTT recovers at the full rate"),
+            (1.9, full, "just below the threshold is ungated"),
+            (
+                RTT_VELOCITY_GATE_THRESHOLD,
+                full,
+                "exactly at the threshold is ungated (strict >)",
+            ),
+            (2.1, half, "just above the threshold is halved"),
+            (5.0, half, "steeply rising RTT is halved"),
+            (-5.0, full, "falling RTT is ungated"),
+            (
+                f64::NAN,
+                full,
+                "NaN velocity compares false and stays ungated",
+            ),
+        ];
+
+        for &(velocity, expected, why) in cases {
+            assert_eq!(
+                recovery_increment(velocity, false),
+                expected,
+                "velocity {velocity} ms/update: {why}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_window_recovery_velocity_gate_preserves_fast_mode_bonus() {
+        let full_normal = WINDOW_INCR * 2;
+        let full_fast = full_normal * 2;
+
+        assert_eq!(
+            recovery_increment(0.0, true),
+            full_fast,
+            "fast recovery keeps its 2x bonus when RTT is stable"
+        );
+        assert_eq!(
+            recovery_increment(5.0, true),
+            full_fast / 2,
+            "fast recovery keeps its 2x bonus, then the velocity gate halves it"
+        );
+        assert_eq!(
+            recovery_increment(5.0, true),
+            recovery_increment(0.0, false),
+            "a gated fast-recovery link still recovers at the ungated normal rate"
         );
     }
 }

@@ -330,7 +330,7 @@ impl SrtlaConnection {
         self.rtt.kalman_rtt.is_initialized()
     }
 
-    /// RTT velocity (trend) in ms/sample from the Kalman filter.
+    /// RTT velocity (trend) in ms per Kalman update from the Kalman filter.
     /// Positive = rising RTT (congestion building), negative = falling.
     pub fn get_rtt_velocity(&self) -> f64 {
         self.rtt.kalman_rtt.velocity()
@@ -364,8 +364,13 @@ impl SrtlaConnection {
     }
 
     pub fn perform_window_recovery(&mut self) {
-        self.congestion
-            .perform_window_recovery(&mut self.window, self.connected, &self.label);
+        let rtt_velocity = self.get_rtt_velocity();
+        self.congestion.perform_window_recovery(
+            &mut self.window,
+            self.connected,
+            rtt_velocity,
+            &self.label,
+        );
     }
 
     /// Whether this link has gone silent past `CONN_TIMEOUT`.
