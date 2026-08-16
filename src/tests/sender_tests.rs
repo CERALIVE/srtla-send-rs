@@ -943,7 +943,7 @@ mod tests {
                 (crate::protocol::SRTLA_TYPE_REG3 >> 8) as u8,
                 (crate::protocol::SRTLA_TYPE_REG3 & 0xff) as u8,
             ];
-            reg.process_registration_packet(0, &reg3, false);
+            reg.process_registration_packet(0, &reg3);
             assert!(
                 !reg.has_connected,
                 "a REG3 on a recycled index must not be authorized by the previous occupant"
