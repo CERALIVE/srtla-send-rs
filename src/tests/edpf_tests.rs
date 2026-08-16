@@ -348,4 +348,143 @@ mod tests {
              deterministic link selection for a fixed input set"
         );
     }
+
+    // ---------------------------------------------------------------------
+    // (g) Selection I/O table for the BDP overrun RANKING penalty.
+    //
+    // BDP cap per link = capacity_bytes_per_sec * max(propagation_s, 1ms) * 1.5.
+    // Under the cap the penalty is zero, so ordering is identical to the
+    // pre-penalty predictor; over the cap the link is pushed later in the argmin
+    // but is NEVER removed from the candidate set.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn edpf_all_links_under_bdp_cap_keep_the_pre_penalty_ordering() {
+        let mut conns = make_conns(3);
+        // caps: c0 1Mbps/50ms → 11.7 pkt, c1 2Mbps/40ms → 11.4 pkt, c2 1Mbps/60ms → 14.2 pkt.
+        set_link(&mut conns[0], 1_000_000.0, 2, 50.0);
+        set_link(&mut conns[1], 2_000_000.0, 0, 40.0);
+        set_link(&mut conns[2], 1_000_000.0, 5, 60.0);
+
+        let config = edpf_config();
+        let mut state = EdpfSchedulerState::default();
+
+        assert_eq!(
+            edpf_select(&mut conns, &config, &mut state),
+            Some(1),
+            "with every link under its BDP cap the ordering must match the un-penalized argmin"
+        );
+    }
+
+    #[test]
+    fn edpf_over_cap_link_ranks_later_but_stays_selectable() {
+        let mut conns = make_conns(2);
+        // c0 is over its cap (60 pkt vs ~11.7) — ranked later, but if it is the
+        // only connected link it must still be returned.
+        set_link(&mut conns[0], 1_000_000.0, 60, 50.0);
+        set_link(&mut conns[1], 1_000_000.0, 0, 50.0);
+
+        let config = edpf_config();
+        let mut state = EdpfSchedulerState::default();
+        assert_eq!(
+            edpf_select(&mut conns, &config, &mut state),
+            Some(1),
+            "an over-cap link must rank behind an under-cap peer"
+        );
+
+        conns[1].connected = false;
+        let mut state = EdpfSchedulerState::default();
+        assert_eq!(
+            edpf_select(&mut conns, &config, &mut state),
+            Some(0),
+            "the BDP overrun is a RANKING penalty — the over-cap link is never excluded"
+        );
+    }
+
+    #[test]
+    fn edpf_all_links_over_cap_selects_the_least_overrun_link() {
+        let mut conns = make_conns(3);
+        set_link(&mut conns[0], 1_000_000.0, 300, 50.0);
+        set_link(&mut conns[1], 1_000_000.0, 100, 50.0);
+        set_link(&mut conns[2], 1_000_000.0, 500, 50.0);
+
+        let config = edpf_config();
+        let mut state = EdpfSchedulerState::default();
+
+        assert_eq!(
+            edpf_select(&mut conns, &config, &mut state),
+            Some(1),
+            "when every link is over its BDP cap the least-overrun link must win, and the pool \
+             must not empty out"
+        );
+    }
+
+    #[test]
+    fn edpf_all_degenerate_capacity_pool_still_returns_a_link() {
+        let mut conns = make_conns(3);
+        for c in conns.iter_mut() {
+            set_link(c, 1_000_000.0, 0, 30.0);
+            c.quality_cache.multiplier = f64::NAN;
+        }
+
+        let config = edpf_config();
+        let mut state = EdpfSchedulerState::default();
+
+        assert_eq!(
+            edpf_select(&mut conns, &config, &mut state),
+            Some(0),
+            "every candidate ranking f64::MAX must still yield the lowest-index link — an empty \
+             selection deadlocks EDPF"
+        );
+    }
+
+    #[test]
+    fn edpf_queued_packets_shift_the_overrun_threshold() {
+        let mut conns = make_conns(2);
+        set_link(&mut conns[0], 1_000_000.0, 4, 50.0);
+        set_link(&mut conns[1], 1_000_000.0, 4, 50.0);
+
+        let config = edpf_config();
+        let mut state = EdpfSchedulerState::default();
+        assert_eq!(
+            edpf_select(&mut conns, &config, &mut state),
+            Some(0),
+            "identical links tie-break to the lowest index"
+        );
+
+        let payload = [0_u8; 1316];
+        for _ in 0..24 {
+            conns[0].queue_data_packet(&payload, None, 0);
+        }
+        conns[0].bitrate.current_bitrate_bps = 1_000_000.0;
+
+        let mut state = EdpfSchedulerState::default();
+        assert_eq!(
+            edpf_select(&mut conns, &config, &mut state),
+            Some(1),
+            "a full batch queue must push the link past its BDP cap and behind its drained peer"
+        );
+    }
+
+    #[test]
+    fn edpf_rising_rtt_link_loses_to_a_stable_peer() {
+        let mut conns = make_conns(2);
+        set_link(&mut conns[0], 1_000_000.0, 0, 30.0);
+        set_link(&mut conns[1], 1_000_000.0, 0, 30.0);
+        for step in 0..12 {
+            conns[0].rtt.kalman_rtt.update(30.0 + f64::from(step) * 5.0);
+        }
+        for _ in 0..12 {
+            conns[1].rtt.kalman_rtt.update(30.0);
+        }
+
+        let config = edpf_config();
+        let mut state = EdpfSchedulerState::default();
+
+        assert_eq!(
+            edpf_select(&mut conns, &config, &mut state),
+            Some(1),
+            "a link with a rising RTT trend must rank behind an otherwise identical stable link"
+        );
+    }
 }
