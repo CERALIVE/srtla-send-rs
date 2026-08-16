@@ -24,12 +24,16 @@ mod tests {
     use crate::test_helpers::{create_test_connection, create_test_connection_with_failing_send};
     use crate::utils::now_ms;
 
-    /// An uplink whose peer port is 0: every `sendto` fails immediately with
-    /// EINVAL, with no timing or reachability dependency.
+    /// An uplink whose every send fails immediately, with no timing,
+    /// reachability, or OS-semantics dependency (see
+    /// `BatchUdpSocket::fail_sends`).
     async fn unsendable_connection() -> SrtlaConnection {
-        SrtlaConnection::connect_from_ip(IpAddr::V4(Ipv4Addr::LOCALHOST), "127.0.0.1", 0)
-            .await
-            .expect("bind must succeed even though the peer is unsendable")
+        let conn =
+            SrtlaConnection::connect_from_ip(IpAddr::V4(Ipv4Addr::LOCALHOST), "127.0.0.1", 9)
+                .await
+                .expect("bind must succeed even though the peer is unsendable");
+        conn.socket.fail_sends();
+        conn
     }
 
     async fn reachable_connection() -> (SrtlaConnection, UdpSocket) {

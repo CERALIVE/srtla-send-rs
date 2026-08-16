@@ -35,10 +35,32 @@
 //! `msg_len` is a hard error *at that index* — the accepted prefix is the
 //! messages strictly before it.
 //!
+//! ## Test-only send-failure injection
+//!
+//! Tests that exercise the send-failure recovery paths need a send that fails
+//! *synchronously and deterministically*. Naming a port-0 peer does that on
+//! Linux (`EINVAL`) but not on macOS, where an unconnected `sendto` to port 0
+//! is accepted, so every such test silently stopped testing recovery. Rather
+//! than depend on per-datagram destination-validation semantics — which differ
+//! across Linux/macOS/Windows now that uplink sockets are unconnected —
+//! [`BatchUdpSocket::fail_sends`] flips a flag that makes every send path
+//! return a synthetic error. The flag exists only under `cfg(test)` /
+//! `test-internals`; outside them the check is an `#[inline(always)]` `None`
+//! and the field is absent, exactly like `crate::ab_metrics`.
+//!
 //! Based on the rustorrent implementation:
 //! https://github.com/sebastiencs/rustorrent/blob/master/src/utp/udp_socket.rs
 
 use crate::protocol::MTU;
+
+/// The synthetic error every send path returns while failure injection is on.
+#[cfg(any(test, feature = "test-internals"))]
+fn injected_send_error() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::ConnectionRefused,
+        "test-injected send failure",
+    )
+}
 
 /// Number of packets to receive in a single `recvmmsg` call.
 /// 32 is a good balance between syscall reduction and memory usage.
@@ -119,6 +141,9 @@ mod unix_impl {
         peer_addr: SocketAddr,
         foreign_source_datagrams: AtomicU64,
         last_foreign_source_log_ms: AtomicU64,
+        /// Test-only send-failure injection; see [`BatchUdpSocket::fail_sends`].
+        #[cfg(any(test, feature = "test-internals"))]
+        force_send_error: std::sync::atomic::AtomicBool,
     }
 
     impl BatchUdpSocket {
@@ -131,7 +156,34 @@ mod unix_impl {
                 peer_addr,
                 foreign_source_datagrams: AtomicU64::new(0),
                 last_foreign_source_log_ms: AtomicU64::new(0),
+                #[cfg(any(test, feature = "test-internals"))]
+                force_send_error: std::sync::atomic::AtomicBool::new(false),
             })
+        }
+
+        /// Make every subsequent send on this socket fail with a synthetic
+        /// `ConnectionRefused`, with no dependency on OS destination-validation
+        /// semantics. See the module-level "Test-only send-failure injection"
+        /// note for why this replaces the port-0 peer trick.
+        #[cfg(any(test, feature = "test-internals"))]
+        pub fn fail_sends(&self) {
+            self.force_send_error.store(true, Ordering::Relaxed);
+        }
+
+        #[cfg(any(test, feature = "test-internals"))]
+        #[inline]
+        fn injected_send_error(&self) -> Option<std::io::Error> {
+            self.force_send_error
+                .load(Ordering::Relaxed)
+                .then(super::injected_send_error)
+        }
+
+        /// Zero-cost no-op outside test builds: the flag field does not exist and
+        /// every send-path call folds away.
+        #[cfg(not(any(test, feature = "test-internals")))]
+        #[inline(always)]
+        fn injected_send_error(&self) -> Option<std::io::Error> {
+            None
         }
 
         /// The receiver address every send on this socket is addressed to.
@@ -218,6 +270,9 @@ mod unix_impl {
 
         /// Send one datagram to the resolved peer, per the module send contract.
         pub async fn send(&self, buf: &[u8]) -> std::io::Result<usize> {
+            if let Some(e) = self.injected_send_error() {
+                return Err(e);
+            }
             loop {
                 let mut guard = self.inner.ready(Interest::WRITABLE).await?;
 
@@ -238,6 +293,9 @@ mod unix_impl {
         /// Returns WouldBlock if the socket is not ready.
         #[allow(dead_code)]
         pub fn try_send(&self, buf: &[u8]) -> std::io::Result<usize> {
+            if let Some(e) = self.injected_send_error() {
+                return Err(e);
+            }
             loop {
                 match self.inner.get_ref().send_to(buf, &self.peer) {
                     Ok(n) => return short_datagram_error(n, buf.len()).map_or(Ok(n), Err),
@@ -252,6 +310,9 @@ mod unix_impl {
         /// any). A `WouldBlock` after partial progress returns the short count
         /// rather than blocking: the caller retains the unsent suffix.
         pub async fn send_batch(&self, packets: &[&[u8]]) -> (usize, Option<std::io::Error>) {
+            if let Some(e) = self.injected_send_error() {
+                return (0, Some(e));
+            }
             let cap = packets.len().min(BATCH_SEND_SIZE);
             let mut sent = 0usize;
             while sent < cap {
@@ -284,6 +345,9 @@ mod unix_impl {
         /// `Err((accepted, e))` reports a hard error after `accepted` messages
         /// were fully accepted.
         pub fn try_send_batch(&self, packets: &[&[u8]]) -> Result<usize, (usize, std::io::Error)> {
+            if let Some(e) = self.injected_send_error() {
+                return Err((0, e));
+            }
             let mut batch = SendMmsgBatch::new();
             let count = batch.init(packets, &self.peer);
             if count == 0 {
@@ -774,6 +838,9 @@ mod fallback_impl {
         peer_addr: SocketAddr,
         foreign_source_datagrams: AtomicU64,
         last_foreign_source_log_ms: AtomicU64,
+        /// Test-only send-failure injection; see [`BatchUdpSocket::fail_sends`].
+        #[cfg(any(test, feature = "test-internals"))]
+        force_send_error: std::sync::atomic::AtomicBool,
     }
 
     impl BatchUdpSocket {
@@ -787,7 +854,33 @@ mod fallback_impl {
                 peer_addr,
                 foreign_source_datagrams: AtomicU64::new(0),
                 last_foreign_source_log_ms: AtomicU64::new(0),
+                #[cfg(any(test, feature = "test-internals"))]
+                force_send_error: std::sync::atomic::AtomicBool::new(false),
             })
+        }
+
+        /// Make every subsequent send on this socket fail with a synthetic
+        /// `ConnectionRefused`; see the module-level note on why this replaces
+        /// the port-0 peer trick.
+        #[cfg(any(test, feature = "test-internals"))]
+        pub fn fail_sends(&self) {
+            self.force_send_error.store(true, Ordering::Relaxed);
+        }
+
+        #[cfg(any(test, feature = "test-internals"))]
+        #[inline]
+        fn injected_send_error(&self) -> Option<std::io::Error> {
+            self.force_send_error
+                .load(Ordering::Relaxed)
+                .then(super::injected_send_error)
+        }
+
+        /// Zero-cost no-op outside test builds: the flag field does not exist and
+        /// every send-path call folds away.
+        #[cfg(not(any(test, feature = "test-internals")))]
+        #[inline(always)]
+        fn injected_send_error(&self) -> Option<std::io::Error> {
+            None
         }
 
         /// The receiver address every send on this socket is addressed to.
@@ -842,6 +935,9 @@ mod fallback_impl {
 
         /// Send one datagram to the resolved peer, per the module send contract.
         pub async fn send(&self, buf: &[u8]) -> std::io::Result<usize> {
+            if let Some(e) = self.injected_send_error() {
+                return Err(e);
+            }
             loop {
                 match self.inner.send_to(buf, self.peer_addr).await {
                     Ok(n) => return short_datagram_error(n, buf.len()).map_or(Ok(n), Err),
@@ -854,6 +950,9 @@ mod fallback_impl {
         /// Try to send one datagram without blocking, retrying on EINTR.
         #[allow(dead_code)]
         pub fn try_send(&self, buf: &[u8]) -> std::io::Result<usize> {
+            if let Some(e) = self.injected_send_error() {
+                return Err(e);
+            }
             loop {
                 match self.inner.try_send_to(buf, self.peer_addr) {
                     Ok(n) => return short_datagram_error(n, buf.len()).map_or(Ok(n), Err),

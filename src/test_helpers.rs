@@ -83,15 +83,17 @@ pub async fn create_test_connection() -> SrtlaConnection {
     create_connection_from_socket(socket, remote, local_ip, "test-connection".to_string())
 }
 
-/// A connection whose peer is unreachable at the syscall level: `sendto` to port
-/// 0 fails immediately with `EINVAL`, giving registration tests a deterministic
-/// send-failure seam with no timing or network dependency.
+/// A connection whose every send fails immediately, giving registration tests a
+/// deterministic send-failure seam with no timing, network, or OS-semantics
+/// dependency (see `BatchUdpSocket::fail_sends`).
 pub async fn create_test_connection_with_failing_send() -> SrtlaConnection {
     let socket = create_test_socket();
-    let remote = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
+    let remote = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080);
     let local_ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
 
-    create_connection_from_socket(socket, remote, local_ip, "failing-send".to_string())
+    let conn = create_connection_from_socket(socket, remote, local_ip, "failing-send".to_string());
+    conn.socket.fail_sends();
+    conn
 }
 
 pub async fn create_test_connections(count: usize) -> SmallVec<SrtlaConnection, 4> {
