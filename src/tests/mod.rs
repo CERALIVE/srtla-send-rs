@@ -14,6 +14,9 @@ pub mod config_tests;
 pub mod sender_tests;
 
 #[cfg(test)]
+pub mod ack_rtt_tests;
+
+#[cfg(test)]
 pub mod earned_ack_tests;
 
 #[cfg(test)]

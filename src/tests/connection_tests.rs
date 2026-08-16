@@ -66,7 +66,7 @@ mod tests {
         assert_eq!(initial_in_flight, 5);
 
         // ACK the first three packets (acknowledge packets 10, 20, 30)
-        conn.handle_srt_ack(30);
+        conn.handle_srt_ack(30, now_ms(), true);
 
         // Should have reduced in-flight count
         assert!(conn.in_flight_packets < 5);
@@ -75,7 +75,7 @@ mod tests {
         let initial_window = conn.window;
         conn.congestion.consecutive_acks_without_nak = 4; // Trigger window increase
         conn.congestion.last_window_increase_ms = now_ms() - 300; // Make sure enough time passed
-        conn.handle_srt_ack(40);
+        conn.handle_srt_ack(40, now_ms(), true);
 
         assert!(conn.window >= initial_window);
     }
@@ -553,7 +553,7 @@ mod tests {
 
         // Verify that packets can be found and acknowledged
         let recent_seq = (PKT_LOG_SIZE + 5) as i32;
-        conn.handle_srt_ack(recent_seq);
+        conn.handle_srt_ack(recent_seq, now_ms(), true);
 
         // Should have reduced in-flight count and removed acked packets from log
         assert!(conn.in_flight_packets < PKT_LOG_SIZE as i32 + 10);

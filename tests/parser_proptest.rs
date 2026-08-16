@@ -119,12 +119,25 @@ proptest! {
         prop_assert_eq!(extract_keepalive_conn_info(&pkt), Some(info));
     }
 
-    /// SRTLA ACK: `parse_srtla_ack(create_ack_packet(acks)) == acks`.
+    /// SRTLA ACK: `parse_srtla_ack(create_ack_packet(acks)) == acks` for words
+    /// inside the 31-bit domain.
     #[test]
-    fn srtla_ack_roundtrips(acks in prop::collection::vec(any::<u32>(), 0..64)) {
+    fn srtla_ack_roundtrips(acks in prop::collection::vec(0u32..0x8000_0000, 0..64)) {
         let pkt = create_ack_packet(&acks);
         let parsed = parse_srtla_ack(&pkt);
         prop_assert_eq!(parsed.as_slice(), acks.as_slice());
+    }
+
+    /// Every decoded SRTLA ACK is a valid 31-bit sequence number: a word with
+    /// bit 31 set is malformed and is dropped, while its well-formed neighbours
+    /// in the same frame still decode.
+    #[test]
+    fn srtla_ack_discards_high_bit_words(acks in prop::collection::vec(any::<u32>(), 0..64)) {
+        let pkt = create_ack_packet(&acks);
+        let parsed = parse_srtla_ack(&pkt);
+        let expected: Vec<u32> = acks.iter().copied().filter(|w| w & 0x8000_0000 == 0).collect();
+        prop_assert_eq!(parsed.as_slice(), expected.as_slice());
+        prop_assert!(parsed.iter().all(|s| s & 0x8000_0000 == 0));
     }
 
     /// SRT NAK, single-loss list: a frame whose words all have the high bit
@@ -174,12 +187,23 @@ proptest! {
 
     /// SRT ACK: a well-formed 20-byte ACK frame round-trips its ack number.
     #[test]
-    fn srt_ack_roundtrips(ack in any::<u32>()) {
+    fn srt_ack_roundtrips(ack in 0u32..0x8000_0000) {
         let mut buf = vec![0u8; 20];
         buf[0..2].copy_from_slice(&SRT_TYPE_ACK.to_be_bytes());
         buf[16..20].copy_from_slice(&ack.to_be_bytes());
         prop_assert!(is_srt_ack(&buf));
         prop_assert_eq!(parse_srt_ack(&buf), Some(ack));
+    }
+
+    /// An SRT ACK whose sequence word has bit 31 set is malformed — the word is
+    /// a bare sequence number with no flag to carry — and is rejected outright
+    /// rather than masked into a plausible-looking sequence.
+    #[test]
+    fn srt_ack_with_high_bit_is_rejected(ack in 0x8000_0000u32..=0xffff_ffff) {
+        let mut buf = vec![0u8; 20];
+        buf[0..2].copy_from_slice(&SRT_TYPE_ACK.to_be_bytes());
+        buf[16..20].copy_from_slice(&ack.to_be_bytes());
+        prop_assert_eq!(parse_srt_ack(&buf), None);
     }
 
     /// REG1 / REG2: the builders produce frames the type validators accept and

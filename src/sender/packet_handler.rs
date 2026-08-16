@@ -84,9 +84,19 @@ pub async fn process_connection_events(
         return Ok(());
     }
 
+    // One clock read shared by ACK attribution and NAK lookup below.
+    let current_time_ms = crate::utils::now_ms();
+
+    // A cumulative ACK is applied to every link (the sequence is off the wire
+    // for all of them), but only the link the tracker says carried it may turn
+    // it into an RTT sample. A tracker miss — expired, evicted by a ring
+    // collision, or sent by a link that has since gone — yields no sample on any
+    // link rather than a guess.
     for ack in incoming.ack_numbers.iter() {
+        let owner = seq_tracker.get(*ack, current_time_ms);
         for c in connections.iter_mut() {
-            c.handle_srt_ack(*ack as i32);
+            let owns_acked_seq = owner == Some(c.conn_id);
+            c.handle_srt_ack(*ack as i32, current_time_ms, owns_acked_seq);
         }
     }
 
@@ -94,8 +104,6 @@ pub async fn process_connection_events(
         apply_srtla_ack(connections, *srtla_ack as i32, classic, earned_ack_window);
     }
 
-    // Get current time once for all NAK processing
-    let current_time_ms = crate::utils::now_ms();
     for nak in incoming.nak_numbers.iter() {
         let mut handled = false;
 

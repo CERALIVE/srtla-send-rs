@@ -1055,7 +1055,7 @@ mod tests {
         // Broadcast a cumulative ACK of 30 to every uplink, exactly as
         // process_connection_events does (`for c in connections { c.handle_srt_ack }`).
         for c in connections.iter_mut() {
-            c.handle_srt_ack(30);
+            c.handle_srt_ack(30, now, false);
         }
 
         assert_eq!(

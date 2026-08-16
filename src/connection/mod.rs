@@ -102,12 +102,17 @@ pub struct SrtlaConnection {
     pub packet_log: FxHashMap<i32, u64>,
     #[cfg(not(feature = "test-internals"))]
     pub(crate) packet_log: FxHashMap<i32, u64>,
-    /// Highest sequence number that has been cumulatively ACKed.
-    /// Used to optimize cumulative ACK processing by skipping already-ACKed sequences.
+    /// Highest sequence number that has been cumulatively ACKed, under 31-bit
+    /// serial (wrap-aware) ordering. `None` = nothing ACKed yet on this link.
+    ///
+    /// `Option` rather than a sentinel value: every point in the serial domain
+    /// is a legitimate sequence number, so no in-domain value can mean "unset"
+    /// (the retired `i32::MIN` sentinel only worked because the comparison was
+    /// raw integer arithmetic, which is the wrap bug itself).
     #[cfg(feature = "test-internals")]
-    pub highest_acked_seq: i32,
+    pub highest_acked_seq: Option<SrtSeq>,
     #[cfg(not(feature = "test-internals"))]
-    pub(crate) highest_acked_seq: i32,
+    pub(crate) highest_acked_seq: Option<SrtSeq>,
     #[cfg(feature = "test-internals")]
     pub last_received: Option<Instant>,
     #[cfg(not(feature = "test-internals"))]
@@ -189,7 +194,7 @@ impl SrtlaConnection {
             window: WINDOW_DEF * WINDOW_MULT,
             in_flight_packets: 0,
             packet_log: FxHashMap::with_capacity_and_hasher(PKT_LOG_SIZE, Default::default()),
-            highest_acked_seq: i32::MIN,
+            highest_acked_seq: None,
             last_received: None,
             last_sent: None,
             last_keepalive_sent: None,
@@ -460,7 +465,7 @@ impl SrtlaConnection {
         }
         self.packet_log.clear();
         self.in_flight_packets = 0;
-        self.highest_acked_seq = i32::MIN;
+        self.highest_acked_seq = None;
         self.congestion.reset();
         self.batch_sender.reset();
         self.quality_cache = CachedQuality::default();
@@ -473,7 +478,7 @@ impl SrtlaConnection {
         self.window = WINDOW_DEF * WINDOW_MULT;
         self.in_flight_packets = 0;
         self.packet_log.clear();
-        self.highest_acked_seq = i32::MIN;
+        self.highest_acked_seq = None;
         self.batch_sender.reset();
     }
 
