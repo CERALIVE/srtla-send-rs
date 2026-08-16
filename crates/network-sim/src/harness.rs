@@ -5,9 +5,12 @@
 //! and [`SrtlaTestStack`] for the full 3-process test pipeline
 //! (srt-live-transmit + srtla_rec + srtla_send).
 
-use std::io::{BufRead, BufReader};
+use std::collections::VecDeque;
+use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
@@ -101,6 +104,44 @@ pub fn check_impairment_deps() -> std::result::Result<(), SkipReason> {
 // NamespaceProcess
 // ---------------------------------------------------------------------------
 
+const OUTPUT_TAIL_BYTES: usize = 64 * 1024;
+
+type OutputTail = Arc<Mutex<VecDeque<u8>>>;
+
+fn new_output_tail() -> OutputTail {
+    Arc::new(Mutex::new(VecDeque::with_capacity(OUTPUT_TAIL_BYTES)))
+}
+
+fn drain_pipe<R>(mut reader: R, tail: OutputTail) -> JoinHandle<()>
+where
+    R: Read + Send + 'static,
+{
+    std::thread::spawn(move || {
+        let mut buffer = [0_u8; 8192];
+        while let Ok(bytes_read) = reader.read(&mut buffer) {
+            if bytes_read == 0 {
+                break;
+            }
+            if let Ok(mut output) = tail.lock() {
+                output.extend(&buffer[..bytes_read]);
+                while output.len() > OUTPUT_TAIL_BYTES {
+                    output.pop_front();
+                }
+            }
+        }
+    })
+}
+
+fn output_lines(tail: &OutputTail) -> Vec<String> {
+    let Ok(mut output) = tail.lock() else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(output.make_contiguous())
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
 /// A child process running inside a network namespace.
 ///
 /// Captures stdout+stderr and kills the process on drop.
@@ -115,9 +156,32 @@ pub struct NamespaceProcess {
     label: String,
     scope: ProcessScope,
     reaped: bool,
+    stdout_tail: OutputTail,
+    stderr_tail: OutputTail,
+    drain_threads: Vec<JoinHandle<()>>,
 }
 
 impl NamespaceProcess {
+    fn from_child(mut child: Child, scope: ProcessScope) -> Result<Self> {
+        let stdout_tail = new_output_tail();
+        let stderr_tail = new_output_tail();
+        let stdout = child.stdout.take().context("capture child stdout")?;
+        let stderr = child.stderr.take().context("capture child stderr")?;
+        let drain_threads = vec![
+            drain_pipe(stdout, Arc::clone(&stdout_tail)),
+            drain_pipe(stderr, Arc::clone(&stderr_tail)),
+        ];
+        Ok(Self {
+            child,
+            label: "test child".to_string(),
+            scope,
+            reaped: false,
+            stdout_tail,
+            stderr_tail,
+            drain_threads,
+        })
+    }
+
     /// Spawn `binary args...` inside `ns` via `sudo ip netns exec`.
     pub fn spawn(ns: &Namespace, binary: &str, args: &[&str]) -> Result<Self> {
         Self::spawn_with_env(ns, binary, args, &[])
@@ -146,47 +210,40 @@ impl NamespaceProcess {
             .stderr(Stdio::piped());
 
         let child = cmd.spawn().with_context(|| format!("spawn {label}"))?;
+        let mut process = Self::from_child(child, ProcessScope::Namespace(ns.name.clone()))?;
+        process.label = label;
 
-        tracing::debug!(%label, pid = child.id(), "spawned namespace process");
-        Ok(Self {
-            child,
-            label,
-            scope: ProcessScope::Namespace(ns.name.clone()),
-            reaped: false,
-        })
+        tracing::debug!(label = %process.label, pid = process.child.id(), "spawned namespace process");
+        Ok(process)
     }
 
     /// Read all captured stdout lines (non-blocking snapshot via `try_wait`).
     /// Only meaningful after the process has exited.
     pub fn stdout_lines(&mut self) -> Vec<String> {
-        match self.child.stdout.take() {
-            Some(stdout) => BufReader::new(stdout)
-                .lines()
-                .map_while(|l| l.ok())
-                .collect(),
-            None => vec![],
-        }
+        output_lines(&self.stdout_tail)
     }
 
     /// Read all captured stderr lines. Only meaningful after exit.
     pub fn stderr_lines(&mut self) -> Vec<String> {
-        match self.child.stderr.take() {
-            Some(stderr) => BufReader::new(stderr)
-                .lines()
-                .map_while(|l| l.ok())
-                .collect(),
-            None => vec![],
+        output_lines(&self.stderr_tail)
+    }
+
+    fn join_drains(&mut self) {
+        for drain_thread in self.drain_threads.drain(..) {
+            let _ = drain_thread.join();
         }
     }
 
     /// Send SIGTERM to the namespace's exact PIDs, then SIGKILL if needed.
     pub fn kill(&mut self) {
         if self.reaped && self.scope_pids().is_empty() {
+            self.join_drains();
             return;
         }
 
         self.signal_scope("-TERM");
         if self.wait_until_stopped(Duration::from_secs(2)) {
+            self.join_drains();
             return;
         }
 
@@ -197,6 +254,7 @@ impl NamespaceProcess {
             drop(self.child.stdout.take());
             drop(self.child.stderr.take());
         }
+        self.join_drains();
     }
 
     /// Check if the process is still running.
@@ -209,6 +267,7 @@ impl NamespaceProcess {
     pub fn check_exit(&mut self) -> Option<(Option<i32>, String)> {
         match self.child.try_wait() {
             Ok(Some(status)) => {
+                self.join_drains();
                 let stderr = self.stderr_lines().join("\n");
                 Some((status.code(), stderr))
             }
@@ -298,9 +357,9 @@ mod namespace_process_tests {
     use std::process::{Command, Stdio};
     use std::sync::mpsc;
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
-    use super::{NamespaceProcess, ProcessScope};
+    use super::{NamespaceProcess, ProcessScope, new_output_tail};
 
     fn signal_exact(signal: &str, target: &str) {
         let _ = Command::new("kill").args([signal, "--", target]).status();
@@ -359,6 +418,9 @@ mod namespace_process_tests {
             label: "mismatched process groups".to_string(),
             scope: ProcessScope::Pids(vec![inner_pid]),
             reaped: false,
+            stdout_tail: new_output_tail(),
+            stderr_tail: new_output_tail(),
+            drain_threads: vec![],
         };
         let (done_tx, done_rx) = mpsc::channel();
         let teardown = thread::spawn(move || {
@@ -384,6 +446,43 @@ mod namespace_process_tests {
             "wrapper process leaked after teardown"
         );
         assert!(!is_alive(inner_pid), "inner process leaked after teardown");
+    }
+
+    #[test]
+    fn child_pipes_are_drained_during_sustained_output() {
+        let child = Command::new("sh")
+            .args([
+                "-c",
+                "head -c 131072 /dev/zero; head -c 131072 /dev/zero >&2",
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn pipe stress child");
+        let pid = child.id();
+        let mut process = NamespaceProcess::from_child(child, ProcessScope::Pids(vec![pid]))
+            .expect("wrap pipe stress child");
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut exit = None;
+        while Instant::now() < deadline {
+            if let Some(status) = process.check_exit() {
+                exit = Some(status);
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        let completed = exit.is_some();
+        if !completed {
+            process.kill();
+        }
+        assert!(
+            completed,
+            "child did not complete while both pipes were written"
+        );
+        assert!(!process.stdout_lines().is_empty(), "stdout tail was empty");
+        assert!(!process.stderr_lines().is_empty(), "stderr tail was empty");
     }
 }
 
