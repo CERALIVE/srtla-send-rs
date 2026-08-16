@@ -120,13 +120,50 @@ pub async fn resolve_remote(host: &str, port: u16) -> Result<SocketAddr> {
         .ok_or_else(|| anyhow::anyhow!("no DNS result for {}", host))
 }
 
+pub async fn resolve_remote_all(host: &str, port: u16) -> io::Result<Vec<SocketAddr>> {
+    tokio::net::lookup_host((host, port))
+        .await
+        .map(Iterator::collect)
+}
+
+pub(crate) fn remote_drift(answers: &[SocketAddr], current: &SocketAddr) -> bool {
+    !answers.contains(current)
+}
+
 #[cfg(test)]
 mod tests {
-    use std::net::{IpAddr, Ipv4Addr};
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
     use socket2::{Domain, Protocol, Socket, Type};
 
-    use super::{SourceIpBinder, UplinkBinder};
+    use super::{SourceIpBinder, UplinkBinder, remote_drift};
+
+    #[test]
+    fn remote_drift_is_false_when_current_peer_is_resolved() {
+        // Given: DNS answers include the connection's current peer.
+        let current = SocketAddr::from(([127, 0, 0, 1], 8080));
+
+        // When: drift detection checks those answers.
+        let drifted = remote_drift(
+            &[current, SocketAddr::from(([127, 0, 0, 2], 8080))],
+            &current,
+        );
+
+        // Then: the current peer is accepted without drift.
+        assert!(!drifted);
+    }
+
+    #[test]
+    fn remote_drift_is_true_when_current_peer_is_absent() {
+        // Given: DNS answers no longer include the connection's current peer.
+        let current = SocketAddr::from(([127, 0, 0, 1], 8080));
+
+        // When: drift detection checks those answers.
+        let drifted = remote_drift(&[SocketAddr::from(([127, 0, 0, 2], 8080))], &current);
+
+        // Then: the missing current peer is reported as drift.
+        assert!(drifted);
+    }
 
     #[test]
     fn source_ip_binder_binds_to_source_ip() {

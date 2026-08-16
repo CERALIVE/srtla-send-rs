@@ -21,9 +21,10 @@ pub use incoming::SrtlaIncoming;
 pub use reconnection::ReconnectionState;
 pub use rtt::RttTracker;
 use rustc_hash::FxHashMap;
-pub use socket::{bind_from_ip, resolve_remote};
+use socket::remote_drift;
+pub use socket::{bind_from_ip, resolve_remote, resolve_remote_all};
 use tokio::time::Instant;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::protocol::*;
 use crate::utils::now_ms;
@@ -65,17 +66,13 @@ pub struct SrtlaConnection {
     pub(crate) remote: SocketAddr,
     /// The receiver hostname this uplink was created with, kept verbatim so a
     /// later re-resolution can detect DNS drift against `remote`.
-    #[allow(dead_code)]
     #[cfg(feature = "test-internals")]
     pub host: String,
-    #[allow(dead_code)]
     #[cfg(not(feature = "test-internals"))]
     pub(crate) host: String,
     /// The receiver port this uplink was created with (pairs with `host`).
-    #[allow(dead_code)]
     #[cfg(feature = "test-internals")]
     pub port: u16,
-    #[allow(dead_code)]
     #[cfg(not(feature = "test-internals"))]
     pub(crate) port: u16,
     #[allow(dead_code)]
@@ -144,6 +141,8 @@ pub struct SrtlaConnection {
     /// is rate limited to one per second per connection to keep a degraded link
     /// from flooding the log. `0` = never warned, so the first one always fires.
     pub(crate) last_trunc_warn_ms: u64,
+    /// `now_ms()` of the last receiver-DNS drift warning; limited to one per minute.
+    pub(crate) last_dns_drift_warn_ms: u64,
     // Sub-structs for organized state management
     #[cfg(feature = "test-internals")]
     pub rtt: RttTracker,
@@ -202,6 +201,7 @@ impl SrtlaConnection {
             last_ack_or_rtt_sample_ms: 0,
             last_stall_reprobe_ms: 0,
             last_trunc_warn_ms: 0,
+            last_dns_drift_warn_ms: 0,
             rtt: RttTracker::default(),
             congestion: CongestionControl::default(),
             bitrate: BitrateTracker::default(),
@@ -576,6 +576,29 @@ impl SrtlaConnection {
     }
 
     pub async fn reconnect(&mut self) -> Result<()> {
+        match resolve_remote_all(&self.host, self.port).await {
+            Ok(answers) if remote_drift(&answers, &self.remote) => {
+                let now = now_ms();
+                if self.last_dns_drift_warn_ms == 0
+                    || now.saturating_sub(self.last_dns_drift_warn_ms) >= 60_000
+                {
+                    self.last_dns_drift_warn_ms = now;
+                    warn!(
+                        "receiver DNS answers no longer include {}; keeping current peer — moving \
+                         the bond to a new receiver requires a process restart",
+                        self.remote
+                    );
+                }
+            }
+            Ok(_) => {}
+            Err(error) => {
+                debug!(
+                    "{}: receiver DNS lookup failed during reconnect; keeping current peer {}: {}",
+                    self.label, self.remote, error
+                );
+            }
+        }
+
         let sock = bind_from_ip(self.local_ip, 0)?;
         sock.set_nonblocking(true)?;
         let socket = BatchUdpSocket::new(sock, self.remote)?;
