@@ -137,6 +137,9 @@ and pull request (`.github/workflows/ci.yml`):
 - Cross-builds for `aarch64-unknown-linux-gnu` (device) and `x86_64-unknown-linux-gnu`,
   each packaged into a `.deb`
 - Cross-platform/cross-channel coverage (Linux/Windows/macOS, stable/beta)
+- A required `bindings` job that runs the TypeScript binding gate (`pnpm install
+  --frozen-lockfile`, lint, typecheck, Bun tests, build) on **Node 26** — a red
+  binding blocks the PR, so a break no longer waits for a `bindings-v*` tag
 - A `v*` release runs the full Rust gate plus the parallel `loom` contract job
   (a production subscription-concurrency invariant) and Miri lane before either
   architecture can be packaged or attached to the GitHub release
