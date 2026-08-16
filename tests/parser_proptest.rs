@@ -17,16 +17,29 @@
 
 use proptest::prelude::*;
 use srtla_send::protocol::{
-    ConnectionInfo, SRT_TYPE_ACK, SRT_TYPE_NAK, SRTLA_ID_LEN, create_ack_packet,
-    create_keepalive_packet, create_keepalive_packet_ext, create_reg1_packet, create_reg2_packet,
-    extract_keepalive_conn_info, extract_keepalive_timestamp, get_packet_type,
-    get_srt_sequence_number, is_srt_ack, is_srtla_keepalive, is_srtla_reg1, is_srtla_reg2,
-    parse_srt_ack, parse_srt_nak, parse_srtla_ack,
+    ConnectionInfo, SRT_CONTROL_HEADER_LEN, SRT_NAK_MAX_ENTRIES, SRT_TYPE_ACK, SRT_TYPE_NAK,
+    SRTLA_ID_LEN, create_ack_packet, create_keepalive_packet, create_keepalive_packet_ext,
+    create_reg1_packet, create_reg2_packet, extract_keepalive_conn_info,
+    extract_keepalive_timestamp, get_packet_type, get_srt_sequence_number, is_srt_ack,
+    is_srtla_keepalive, is_srtla_reg1, is_srtla_reg2, parse_srt_ack, parse_srt_nak,
+    parse_srtla_ack,
 };
 
 /// Cap arbitrary inputs at 256 bytes: enough to reach every length branch and
 /// to let proptest synthesize NAK range words, while keeping each case fast.
 const MAX_INPUT: usize = 256;
+
+/// A 16-byte SRT control header for a NAK, with a NONZERO timestamp and
+/// destination socket id. Those two fields sit between the packet type and the
+/// loss list; making them nonzero means any regression back to an offset-4 read
+/// would surface them as spurious sequence numbers instead of hiding in zeros.
+fn nak_header() -> Vec<u8> {
+    let mut buf = vec![0u8; SRT_CONTROL_HEADER_LEN];
+    buf[0..2].copy_from_slice(&SRT_TYPE_NAK.to_be_bytes());
+    buf[8..12].copy_from_slice(&0xdead_beefu32.to_be_bytes());
+    buf[12..16].copy_from_slice(&0x2a2au32.to_be_bytes());
+    buf
+}
 
 prop_compose! {
     fn arb_conn_info()(
@@ -45,25 +58,25 @@ proptest! {
     // ---- ROBUSTNESS: arbitrary bytes never panic, results are bounded ----
 
     /// `parse_srt_nak` on arbitrary bytes never panics and never indexes OOB.
-    /// Upper bound: each 4-byte word yields at most one single ack, and range
-    /// expansion is internally capped at 1000 total entries, so the result is
-    /// at most `buf.len()/4 + 1000`.
+    /// The global entry cap bounds the result regardless of input, and every
+    /// emitted value is a valid 31-bit sequence number (bit 31 clear).
     #[test]
     fn parse_srt_nak_never_panics_and_is_bounded(buf in prop::collection::vec(any::<u8>(), 0..MAX_INPUT)) {
         let out = parse_srt_nak(&buf);
-        prop_assert!(out.len() <= buf.len() / 4 + 1000);
+        prop_assert!(out.len() <= SRT_NAK_MAX_ENTRIES);
+        prop_assert!(out.as_slice().iter().all(|s| s & 0x8000_0000 == 0));
     }
 
-    /// Same, but biased toward real NAK frames (correct type byte) so the
-    /// range/single decode branches are exercised far more often.
+    /// Same, but biased toward real NAK frames (correct type byte and a
+    /// well-formed 16-byte control header) so the range/single decode branches
+    /// are exercised far more often.
     #[test]
     fn parse_srt_nak_typed_never_panics_and_is_bounded(payload in prop::collection::vec(any::<u8>(), 0..MAX_INPUT)) {
-        let mut buf = Vec::with_capacity(payload.len() + 4);
-        buf.extend_from_slice(&SRT_TYPE_NAK.to_be_bytes());
-        buf.extend_from_slice(&[0u8, 0u8]);
+        let mut buf = nak_header();
         buf.extend_from_slice(&payload);
         let out = parse_srt_nak(&buf);
-        prop_assert!(out.len() <= buf.len() / 4 + 1000);
+        prop_assert!(out.len() <= SRT_NAK_MAX_ENTRIES);
+        prop_assert!(out.as_slice().iter().all(|s| s & 0x8000_0000 == 0));
     }
 
     /// `parse_srtla_ack` on arbitrary bytes never panics / never indexes OOB,
@@ -118,14 +131,13 @@ proptest! {
     /// clear decodes back to exactly those sequence numbers.
     #[test]
     fn srt_nak_singles_roundtrip(seqs in prop::collection::vec(0u32..0x8000_0000, 0..64)) {
-        let mut buf = Vec::with_capacity(4 + seqs.len() * 4);
-        buf.extend_from_slice(&SRT_TYPE_NAK.to_be_bytes());
-        buf.extend_from_slice(&[0u8, 0u8]);
+        let mut buf = nak_header();
         for &s in &seqs {
             buf.extend_from_slice(&s.to_be_bytes());
         }
         let parsed = parse_srt_nak(&buf);
         prop_assert_eq!(parsed.as_slice(), seqs.as_slice());
+        prop_assert!(!parsed.truncated);
     }
 
     /// SRT NAK, single range: a high-bit-set start word followed by an end word
@@ -134,14 +146,30 @@ proptest! {
     #[test]
     fn srt_nak_range_roundtrips(start in 0u32..0x7fff_0000, delta in 0u32..200) {
         let end = start + delta;
-        let mut buf = Vec::with_capacity(12);
-        buf.extend_from_slice(&SRT_TYPE_NAK.to_be_bytes());
-        buf.extend_from_slice(&[0u8, 0u8]);
+        let mut buf = nak_header();
         buf.extend_from_slice(&(start | 0x8000_0000).to_be_bytes());
         buf.extend_from_slice(&end.to_be_bytes());
         let parsed = parse_srt_nak(&buf);
         let expected: Vec<u32> = (start..=end).collect();
         prop_assert_eq!(parsed.as_slice(), expected.as_slice());
+        prop_assert!(!parsed.truncated);
+    }
+
+    /// Ranges anchored at the very top of the 31-bit domain expand across the
+    /// `0x7FFF_FFFF -> 0` wrap and stop after the end value — they never step
+    /// into `0x8000_0000`, which is not a sequence number.
+    #[test]
+    fn srt_nak_range_wraps_correctly(back in 0u32..64, fwd in 0u32..64) {
+        let start = 0x7fff_ffffu32 - back;
+        let end = fwd;
+        let mut buf = nak_header();
+        buf.extend_from_slice(&(start | 0x8000_0000).to_be_bytes());
+        buf.extend_from_slice(&end.to_be_bytes());
+        let parsed = parse_srt_nak(&buf);
+
+        let expected: Vec<u32> = (start..=0x7fff_ffff).chain(0..=end).collect();
+        prop_assert_eq!(parsed.as_slice(), expected.as_slice());
+        prop_assert!(parsed.as_slice().iter().all(|s| s & 0x8000_0000 == 0));
     }
 
     /// SRT ACK: a well-formed 20-byte ACK frame round-trips its ack number.

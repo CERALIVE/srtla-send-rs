@@ -56,6 +56,7 @@ fn create_connection_from_socket(
         last_probe_growth_ms: 0,
         last_ack_or_rtt_sample_ms: 0,
         last_stall_reprobe_ms: 0,
+        last_trunc_warn_ms: 0,
         rtt: RttTracker::default(),
         congestion: CongestionControl::default(),
         bitrate: BitrateTracker::default(),

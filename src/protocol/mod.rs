@@ -1,6 +1,7 @@
 mod builders;
 mod constants;
 mod parsers;
+mod srt_seq;
 mod types;
 
 // Re-export all public items for backwards compatibility
@@ -17,9 +18,12 @@ pub use constants::*;
 // Parsers
 #[allow(unused_imports)]
 pub use parsers::{
-    extract_keepalive_conn_info, extract_keepalive_timestamp, parse_srt_ack, parse_srt_nak,
-    parse_srtla_ack,
+    NakList, extract_keepalive_conn_info, extract_keepalive_timestamp, parse_srt_ack,
+    parse_srt_nak, parse_srtla_ack,
 };
+// 31-bit sequence-number serial domain
+#[allow(unused_imports)]
+pub use srt_seq::{SRT_SEQ_BITS, SRT_SEQ_MASK, SrtSeq};
 // Types and helpers
 #[allow(unused_imports)]
 pub use types::{

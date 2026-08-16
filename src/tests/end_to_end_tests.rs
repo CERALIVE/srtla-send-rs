@@ -180,9 +180,10 @@ async fn test_ack_nak_sequence_handling() {
     assert_eq!(parsed_acks, sequences);
 
     // Create SRT NAK packet with mixed single and range NAKs
-    let mut nak_packet = Vec::new();
-    nak_packet.extend_from_slice(&SRT_TYPE_NAK.to_be_bytes());
-    nak_packet.extend_from_slice(&0u16.to_be_bytes()); // Reserved field
+    let mut nak_packet = vec![0u8; SRT_CONTROL_HEADER_LEN];
+    nak_packet[0..2].copy_from_slice(&SRT_TYPE_NAK.to_be_bytes());
+    nak_packet[8..12].copy_from_slice(&0xdead_beefu32.to_be_bytes()); // timestamp
+    nak_packet[12..16].copy_from_slice(&0x2a2au32.to_be_bytes()); // dest socket id
 
     // Single NAK
     nak_packet.extend_from_slice(&200u32.to_be_bytes());
@@ -196,8 +197,8 @@ async fn test_ack_nak_sequence_handling() {
     nak_packet.extend_from_slice(&400u32.to_be_bytes());
 
     let parsed_naks = parse_srt_nak(&nak_packet);
-    let expected_naks: SmallVec<u32, 4> = SmallVec::from_vec(vec![200, 300, 301, 302, 303, 400]);
-    assert_eq!(parsed_naks, expected_naks);
+    assert_eq!(parsed_naks.as_slice(), &[200, 300, 301, 302, 303, 400]);
+    assert!(!parsed_naks.truncated);
 }
 
 #[tokio::test]
@@ -302,9 +303,8 @@ fn test_memory_usage_bounds() {
     use crate::protocol::*;
 
     // Test that parsing large NAK ranges doesn't consume excessive memory
-    let mut large_nak = Vec::new();
-    large_nak.extend_from_slice(&SRT_TYPE_NAK.to_be_bytes());
-    large_nak.extend_from_slice(&0u32.to_be_bytes()); // Padding
+    let mut large_nak = vec![0u8; SRT_CONTROL_HEADER_LEN];
+    large_nak[0..2].copy_from_slice(&SRT_TYPE_NAK.to_be_bytes());
 
     // Create a range that would be 10,000 items if not limited
     let range_start = 1u32 | 0x8000_0000;
@@ -313,8 +313,9 @@ fn test_memory_usage_bounds() {
 
     let naks = parse_srt_nak(&large_nak);
 
-    // Should be limited to 1000 items max
-    assert!(naks.len() <= 1000);
+    // Should be limited to the cap, and say so
+    assert_eq!(naks.len(), SRT_NAK_MAX_ENTRIES);
+    assert!(naks.truncated);
 }
 
 // Helper trait for memory usage testing (may not be available on all platforms)

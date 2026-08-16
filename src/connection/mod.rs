@@ -119,6 +119,11 @@ pub struct SrtlaConnection {
     /// a recovered link re-enters. `0` = eligible for an immediate probe. Inert
     /// while `stall_deselect` is off (default).
     pub(crate) last_stall_reprobe_ms: u64,
+    /// `now_ms()` of the last emitted NAK-truncation warning for this link.
+    /// A receiver under heavy loss can NAK-truncate on every frame, so the warn
+    /// is rate limited to one per second per connection to keep a degraded link
+    /// from flooding the log. `0` = never warned, so the first one always fires.
+    pub(crate) last_trunc_warn_ms: u64,
     // Sub-structs for organized state management
     #[cfg(feature = "test-internals")]
     pub rtt: RttTracker,
@@ -171,6 +176,7 @@ impl SrtlaConnection {
             last_probe_growth_ms: 0,
             last_ack_or_rtt_sample_ms: 0,
             last_stall_reprobe_ms: 0,
+            last_trunc_warn_ms: 0,
             rtt: RttTracker::default(),
             congestion: CongestionControl::default(),
             bitrate: BitrateTracker::default(),

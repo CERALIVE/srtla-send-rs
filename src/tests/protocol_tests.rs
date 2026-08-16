@@ -140,55 +140,171 @@ mod tests {
         assert_eq!(parse_srt_ack(&buf[..19]), None);
     }
 
+    /// Build a well-formed SRT NAK frame: the 16-byte control header (with a
+    /// NONZERO timestamp and destination socket id, so a parser that still read
+    /// from offset 4 would visibly leak them into the loss list) followed by the
+    /// given loss-list words.
+    fn nak_frame(words: &[u32]) -> Vec<u8> {
+        let mut buf = vec![0u8; SRT_CONTROL_HEADER_LEN];
+        buf[0..2].copy_from_slice(&SRT_TYPE_NAK.to_be_bytes());
+        buf[4..8].copy_from_slice(&0u32.to_be_bytes()); // type-specific info
+        buf[8..12].copy_from_slice(&0xdead_beefu32.to_be_bytes()); // timestamp
+        buf[12..16].copy_from_slice(&0x2a2au32.to_be_bytes()); // dest socket id
+        for &w in words {
+            buf.extend_from_slice(&w.to_be_bytes());
+        }
+        buf
+    }
+
+    const RANGE: u32 = 0x8000_0000;
+
     #[test]
     fn test_parse_srt_nak_single() {
-        let mut buf = vec![0u8; 8];
-        buf[0..2].copy_from_slice(&SRT_TYPE_NAK.to_be_bytes());
-        buf[4..8].copy_from_slice(&500u32.to_be_bytes());
-
-        let naks = parse_srt_nak(&buf);
+        let naks = parse_srt_nak(&nak_frame(&[500]));
         assert_eq!(naks.as_slice(), &[500]);
+        assert!(!naks.truncated);
     }
 
     #[test]
     fn test_parse_srt_nak_range() {
-        let mut buf = vec![0u8; 12];
-        buf[0..2].copy_from_slice(&SRT_TYPE_NAK.to_be_bytes());
-        // Range NAK: set high bit and provide start/end
-        let start = 100u32 | 0x8000_0000;
-        buf[4..8].copy_from_slice(&start.to_be_bytes());
-        buf[8..12].copy_from_slice(&103u32.to_be_bytes());
-
-        let naks = parse_srt_nak(&buf);
+        let naks = parse_srt_nak(&nak_frame(&[100 | RANGE, 103]));
         assert_eq!(naks.as_slice(), &[100, 101, 102, 103]);
     }
 
     #[test]
     fn test_parse_srt_nak_mixed() {
-        let mut buf = vec![0u8; 16];
-        buf[0..2].copy_from_slice(&SRT_TYPE_NAK.to_be_bytes());
-
-        // First: single NAK
-        buf[4..8].copy_from_slice(&50u32.to_be_bytes());
-
-        // Second: range NAK
-        let start = 100u32 | 0x8000_0000;
-        buf[8..12].copy_from_slice(&start.to_be_bytes());
-        buf[12..16].copy_from_slice(&102u32.to_be_bytes());
-
-        let naks = parse_srt_nak(&buf);
+        let naks = parse_srt_nak(&nak_frame(&[50, 100 | RANGE, 102]));
         assert_eq!(naks.as_slice(), &[50, 100, 101, 102]);
     }
 
     #[test]
     fn test_parse_srt_nak_invalid() {
         // Wrong packet type
-        let mut buf = vec![0u8; 8];
+        let mut buf = nak_frame(&[500]);
         buf[0..2].copy_from_slice(&SRT_TYPE_ACK.to_be_bytes());
         assert!(parse_srt_nak(&buf).is_empty());
 
         // Buffer too short
         assert!(parse_srt_nak(&[0x80, 0x03, 0x00]).is_empty());
+    }
+
+    /// The 12 header bytes between the packet type and the loss list carry a
+    /// timestamp and a socket id. Reading the loss list from offset 4 (the
+    /// pre-fork behavior) decoded them as three lost sequence numbers on EVERY
+    /// NAK, poisoning the retransmit accounting.
+    #[test]
+    fn test_parse_srt_nak_ignores_control_header() {
+        let naks = parse_srt_nak(&nak_frame(&[7]));
+        assert_eq!(naks.as_slice(), &[7]);
+        for header_word in [0u32, 0xdead_beef, 0x2a2a] {
+            assert!(
+                !naks.as_slice().contains(&header_word),
+                "control-header word {header_word:#x} leaked into the loss list"
+            );
+        }
+    }
+
+    /// Documents the deliberate wire-format break: a frame built against the
+    /// OLD 8-byte / offset-4 assumption no longer decodes to anything.
+    #[test]
+    fn test_parse_srt_nak_legacy_offset4_frame_now_empty() {
+        let mut legacy = vec![0u8; 8];
+        legacy[0..2].copy_from_slice(&SRT_TYPE_NAK.to_be_bytes());
+        legacy[4..8].copy_from_slice(&500u32.to_be_bytes());
+
+        let naks = parse_srt_nak(&legacy);
+        assert!(naks.is_empty());
+        assert!(!naks.truncated);
+    }
+
+    /// A frame with a complete control header but a loss list shorter than one
+    /// word carries nothing to decode.
+    #[test]
+    fn test_parse_srt_nak_header_only_lengths_are_empty() {
+        let full = nak_frame(&[500]);
+        for len in SRT_CONTROL_HEADER_LEN..SRT_CONTROL_HEADER_LEN + 4 {
+            let naks = parse_srt_nak(&full[..len]);
+            assert!(naks.is_empty(), "len {len} should decode to no sequences");
+            assert!(!naks.truncated);
+        }
+        assert_eq!(parse_srt_nak(&full).as_slice(), &[500]);
+    }
+
+    #[test]
+    fn test_parse_srt_nak_boundary_sequence_numbers() {
+        for seq in [0u32, 0x7fff_fffe, 0x7fff_ffff] {
+            assert_eq!(parse_srt_nak(&nak_frame(&[seq])).as_slice(), &[seq]);
+        }
+    }
+
+    /// A degenerate range at the top of the domain must emit exactly its one
+    /// member; stepping past it would wrap into `0x8000_0000`, which is not a
+    /// sequence number at all.
+    #[test]
+    fn test_parse_srt_nak_range_at_domain_max_emits_one() {
+        let naks = parse_srt_nak(&nak_frame(&[0x7fff_ffff | RANGE, 0x7fff_ffff]));
+        assert_eq!(naks.as_slice(), &[0x7fff_ffff]);
+        assert!(!naks.truncated);
+
+        let naks = parse_srt_nak(&nak_frame(&[0x7fff_fffe | RANGE, 0x7fff_ffff]));
+        assert_eq!(naks.as_slice(), &[0x7fff_fffe, 0x7fff_ffff]);
+    }
+
+    #[test]
+    fn test_parse_srt_nak_range_crossing_wrap_is_expanded() {
+        let naks = parse_srt_nak(&nak_frame(&[0x7fff_fffe | RANGE, 2]));
+        assert_eq!(naks.as_slice(), &[0x7fff_fffe, 0x7fff_ffff, 0, 1, 2]);
+        assert!(!naks.truncated);
+    }
+
+    #[test]
+    fn test_parse_srt_nak_descending_range_emits_nothing() {
+        let naks = parse_srt_nak(&nak_frame(&[100 | RANGE, 50, 900]));
+        assert_eq!(
+            naks.as_slice(),
+            &[900],
+            "descending range dropped, parsing continues"
+        );
+    }
+
+    /// A range end word with bit 31 set is not a sequence number. That range is
+    /// skipped, but the words after it still decode.
+    #[test]
+    fn test_parse_srt_nak_range_end_with_high_bit_is_skipped() {
+        let naks = parse_srt_nak(&nak_frame(&[10 | RANGE, 20 | RANGE, 42]));
+        assert_eq!(naks.as_slice(), &[42]);
+        assert!(!naks.truncated);
+    }
+
+    #[test]
+    fn test_parse_srt_nak_dangling_range_start_is_ignored() {
+        let naks = parse_srt_nak(&nak_frame(&[7, 99 | RANGE]));
+        assert_eq!(naks.as_slice(), &[7]);
+    }
+
+    #[test]
+    fn test_parse_srt_nak_truncates_and_flags() {
+        let naks = parse_srt_nak(&nak_frame(&[1 | RANGE, 5000]));
+        assert_eq!(naks.len(), SRT_NAK_MAX_ENTRIES);
+        assert!(
+            naks.truncated,
+            "hitting the cap must set the truncated flag"
+        );
+        assert_eq!(naks.as_slice()[0], 1);
+        assert_eq!(naks.as_slice()[SRT_NAK_MAX_ENTRIES - 1], 1000);
+
+        // Exactly at the cap is NOT truncation.
+        let exact = parse_srt_nak(&nak_frame(&[1 | RANGE, SRT_NAK_MAX_ENTRIES as u32]));
+        assert_eq!(exact.len(), SRT_NAK_MAX_ENTRIES);
+        assert!(!exact.truncated);
+    }
+
+    #[test]
+    fn test_parse_srt_nak_truncation_stops_parsing() {
+        let singles: Vec<u32> = (0..SRT_NAK_MAX_ENTRIES as u32 + 50).collect();
+        let naks = parse_srt_nak(&nak_frame(&singles));
+        assert_eq!(naks.len(), SRT_NAK_MAX_ENTRIES);
+        assert!(naks.truncated);
     }
 
     #[test]
@@ -393,9 +509,11 @@ mod decode {
         assert!(is_srt_ack(&ack));
         assert_eq!(parse_srt_ack(&ack), Some(424_242));
 
-        let mut nak = vec![0u8; 8];
+        let mut nak = vec![0u8; SRT_CONTROL_HEADER_LEN + 4];
         nak[0..2].copy_from_slice(&SRT_TYPE_NAK.to_be_bytes());
-        nak[4..8].copy_from_slice(&777u32.to_be_bytes()); // single lost seq at bytes 4..8
+        nak[8..12].copy_from_slice(&0xdead_beefu32.to_be_bytes()); // timestamp
+        nak[12..16].copy_from_slice(&0x2a2au32.to_be_bytes()); // dest socket id
+        nak[16..20].copy_from_slice(&777u32.to_be_bytes()); // loss list starts at 16
 
         assert_eq!(get_packet_type(&nak), Some(SRT_TYPE_NAK));
         let parsed = parse_srt_nak(&nak);

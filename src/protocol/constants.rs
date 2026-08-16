@@ -26,6 +26,26 @@ pub const SRTLA_TYPE_REG2_LEN: usize = 2 + SRTLA_ID_LEN;
 #[allow(dead_code)] // justified: used in integration_tests.rs for protocol validation
 pub const SRTLA_TYPE_REG3_LEN: usize = 2;
 
+/// Length of the fixed SRT **control**-packet header, in bytes.
+///
+/// Layout (RFC-draft SRT, section 3.2): `[F|ctrl-type:15][subtype:16]` (4 B),
+/// `type-specific info` (4 B), `timestamp` (4 B), `destination socket id` (4 B)
+/// = 16 bytes. The Control Information Field — for a NAK, the loss list —
+/// starts immediately after it, at offset 16.
+///
+/// The pre-fork parser read the NAK loss list from offset 4, so the
+/// type-specific info, timestamp and destination socket id were decoded as
+/// three bogus "lost" sequence numbers on every NAK, while the first real
+/// loss-list entries were the ones that got dropped.
+pub const SRT_CONTROL_HEADER_LEN: usize = 16;
+
+/// Hard cap on sequence numbers decoded from a single NAK frame.
+///
+/// A NAK range word pair can nominally describe up to `2^31` sequence numbers;
+/// expanding that would be a trivial remote memory-exhaustion vector. On the
+/// cap the parser stops and reports [`super::NakList::truncated`].
+pub const SRT_NAK_MAX_ENTRIES: usize = 1000;
+
 pub const MTU: usize = 1500;
 
 // Timeout constants

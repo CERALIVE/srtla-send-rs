@@ -19,6 +19,9 @@ use crate::registration::{RegistrationEvent, SrtlaRegistrationManager};
 /// (see `batch_send.rs`), so throughput accounting is unaffected.
 pub(crate) const MIN_CONTROL_PKT_LEN: usize = 32;
 
+/// Minimum gap between NAK-truncation warnings on a single connection, in ms.
+pub(crate) const NAK_TRUNC_WARN_INTERVAL_MS: u64 = 1000;
+
 impl SrtlaConnection {
     /// Send a control packet, zero-padding it to [`MIN_CONTROL_PKT_LEN`] when it
     /// is smaller. Mirrors C `pad_sendto`: buffers already `>=` the minimum are
@@ -157,6 +160,19 @@ impl SrtlaConnection {
                 incoming.forward_to_client.push(ack_packet);
             } else if pt == SRT_TYPE_NAK {
                 let nak_list = parse_srt_nak(data);
+                if nak_list.truncated {
+                    let now = crate::utils::now_ms();
+                    if now.saturating_sub(self.last_trunc_warn_ms) >= NAK_TRUNC_WARN_INTERVAL_MS {
+                        self.last_trunc_warn_ms = now;
+                        warn!(
+                            "⚠️ NAK loss list from {} truncated at {} sequences (cap {}); \
+                             remaining losses in this frame were dropped",
+                            self.label,
+                            nak_list.len(),
+                            SRT_NAK_MAX_ENTRIES
+                        );
+                    }
+                }
                 if !nak_list.is_empty() {
                     debug!(
                         "📦 NAK received from {}: {} sequences",

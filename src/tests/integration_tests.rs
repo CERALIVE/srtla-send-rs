@@ -41,20 +41,24 @@ async fn test_srt_ack_nak_parsing() {
     assert_eq!(parse_srt_ack(&ack_packet), Some(54321));
     assert!(is_srt_ack(&ack_packet));
 
-    // Test SRT NAK packet parsing - single NAK
-    let mut nak_packet = vec![0u8; 8];
+    // Test SRT NAK packet parsing - single NAK (loss list at offset 16)
+    let mut nak_packet = vec![0u8; SRT_CONTROL_HEADER_LEN + 4];
     nak_packet[0..2].copy_from_slice(&SRT_TYPE_NAK.to_be_bytes());
-    nak_packet[4..8].copy_from_slice(&12345u32.to_be_bytes());
+    nak_packet[8..12].copy_from_slice(&0xdead_beefu32.to_be_bytes());
+    nak_packet[12..16].copy_from_slice(&0x2a2au32.to_be_bytes());
+    nak_packet[16..20].copy_from_slice(&12345u32.to_be_bytes());
 
     let naks = parse_srt_nak(&nak_packet);
     assert_eq!(naks.as_slice(), &[12345]);
 
     // Test SRT NAK packet parsing - range NAK
-    let mut range_nak_packet = vec![0u8; 12];
+    let mut range_nak_packet = vec![0u8; SRT_CONTROL_HEADER_LEN + 8];
     range_nak_packet[0..2].copy_from_slice(&SRT_TYPE_NAK.to_be_bytes());
+    range_nak_packet[8..12].copy_from_slice(&0xdead_beefu32.to_be_bytes());
+    range_nak_packet[12..16].copy_from_slice(&0x2a2au32.to_be_bytes());
     let range_start = 1000u32 | 0x8000_0000;
-    range_nak_packet[4..8].copy_from_slice(&range_start.to_be_bytes());
-    range_nak_packet[8..12].copy_from_slice(&1003u32.to_be_bytes());
+    range_nak_packet[16..20].copy_from_slice(&range_start.to_be_bytes());
+    range_nak_packet[20..24].copy_from_slice(&1003u32.to_be_bytes());
 
     let range_naks = parse_srt_nak(&range_nak_packet);
     assert_eq!(range_naks.as_slice(), &[1000, 1001, 1002, 1003]);
@@ -156,19 +160,21 @@ fn conn_timeout_value_pinned() {
 #[test]
 fn test_large_nak_range_limit() {
     // Test that NAK parsing limits range size to prevent memory exhaustion
-    let mut large_range_packet = vec![0u8; 12];
+    let mut large_range_packet = vec![0u8; SRT_CONTROL_HEADER_LEN + 8];
     large_range_packet[0..2].copy_from_slice(&SRT_TYPE_NAK.to_be_bytes());
 
     // Create a range that would be > 1000 items
     let range_start = 1u32 | 0x8000_0000;
-    large_range_packet[4..8].copy_from_slice(&range_start.to_be_bytes());
-    large_range_packet[8..12].copy_from_slice(&2000u32.to_be_bytes());
+    large_range_packet[16..20].copy_from_slice(&range_start.to_be_bytes());
+    large_range_packet[20..24].copy_from_slice(&2000u32.to_be_bytes());
 
     let naks = parse_srt_nak(&large_range_packet);
-    assert!(
-        naks.len() <= 1000,
-        "NAK range should be limited to 1000 items"
+    assert_eq!(
+        naks.len(),
+        SRT_NAK_MAX_ENTRIES,
+        "NAK range should be limited to the cap"
     );
+    assert!(naks.truncated, "hitting the cap must be reported");
 }
 
 #[test]
@@ -184,7 +190,9 @@ fn test_malformed_packet_handling() {
     let short_nak = [0x80, 0x03, 0x00, 0x00]; // Too short for any NAK data
     assert!(parse_srt_nak(&short_nak).is_empty());
 
-    let wrong_type = [0x80, 0x02, 0x00, 0x00, 0x00, 0x00, 0x12, 0x34]; // ACK, not NAK
+    let mut wrong_type = vec![0u8; SRT_CONTROL_HEADER_LEN + 4]; // ACK, not NAK
+    wrong_type[0..2].copy_from_slice(&SRT_TYPE_ACK.to_be_bytes());
+    wrong_type[16..20].copy_from_slice(&0x1234u32.to_be_bytes());
     assert!(parse_srt_nak(&wrong_type).is_empty());
 }
 
