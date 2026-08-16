@@ -819,6 +819,11 @@ mod fallback_impl {
             self.foreign_source_datagrams.load(Ordering::Relaxed)
         }
 
+        /// The socket's bound local address.
+        pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
+            self.inner.local_addr()
+        }
+
         /// Receive packets (single packet at a time on non-Unix).
         pub async fn recv_batch(&self, buffer: &mut RecvMmsgBuffer) -> std::io::Result<usize> {
             match self.inner.recv_from(&mut buffer.buffer).await {
