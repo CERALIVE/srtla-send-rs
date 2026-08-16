@@ -1,3 +1,11 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["PyYAML==6.0.2"]
+# ///
+# ─── How to run ───
+# uv run scripts/workflow_authority_contract_test.py
+
 from __future__ import annotations
 
 import unittest
@@ -164,3 +172,10 @@ class WorkflowAuthorityContractTests(unittest.TestCase):
         self.assertTrue(
             all(command.has_arguments(f"npm@{NPM_VERSION}") for command in npm_installs)
         )
+
+
+__all__ = ("WorkflowAuthorityContractTests",)
+
+
+if __name__ == "__main__":
+    _ = unittest.main(verbosity=2)
