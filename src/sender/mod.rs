@@ -51,7 +51,7 @@ use crate::registration::SrtlaRegistrationManager;
 use crate::stats::SharedStats;
 use crate::subscription::SubscriptionManager;
 use crate::telemetry_file::{TelemetryWriter, build_telemetry_json_from_stats};
-use crate::utils::now_ms;
+use crate::utils::wall_clock_ms;
 
 pub const HOUSEKEEPING_INTERVAL_MS: u64 = 1000;
 const STATUS_LOG_INTERVAL_MS: u64 = 30_000;
@@ -227,7 +227,9 @@ pub async fn run_sender_with_config(
     // once and hand the identical bytes to both sinks.
     {
         shared_stats.update(&connections, &config.snapshot());
-        let snapshot_json = build_telemetry_json_from_stats(now_ms(), &shared_stats.get());
+        // `last_updated_ms` is compared against `Date.now()` by the TS watcher,
+        // so it must be a real wall-clock reading, not the monotonic `now_ms()`.
+        let snapshot_json = build_telemetry_json_from_stats(wall_clock_ms(), &shared_stats.get());
         if let Some(writer) = telemetry.as_ref() {
             writer.publish_prebuilt(&snapshot_json);
         }
@@ -354,7 +356,7 @@ pub async fn run_sender_with_config(
                     }
                     _ = telemetry_timer.tick() => {
                         let snapshot_json =
-                            build_telemetry_json_from_stats(now_ms(), &shared_stats.get());
+                            build_telemetry_json_from_stats(wall_clock_ms(), &shared_stats.get());
                         // The file write is handed to the writer thread's slot
                         // (non-blocking); the event broadcast stays inline on the loop.
                         if let Some(writer) = telemetry.as_ref() {

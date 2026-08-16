@@ -20,6 +20,9 @@ pub mod stall_deselect_tests;
 pub mod protocol_tests;
 
 #[cfg(test)]
+pub mod utils_tests;
+
+#[cfg(test)]
 pub mod keepalive_interop_tests;
 
 #[cfg(test)]
