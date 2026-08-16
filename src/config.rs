@@ -294,6 +294,7 @@ pub enum CmdResponse {
 /// - `stall-reprobe-ms <ms>` - set the stall re-probe interval
 /// - `status` - show current configuration
 /// - `stats` - get per-link telemetry as JSON
+/// - `metrics` - (`test-internals` only) A/B evaluation counters as JSON
 pub fn apply_cmd(config: &DynamicConfig, cmd: &str, stats: Option<&SharedStats>) -> CmdResponse {
     let cmd = cmd.trim();
     if cmd.is_empty() {
@@ -502,6 +503,14 @@ pub fn apply_cmd(config: &DynamicConfig, cmd: &str, stats: Option<&SharedStats>)
             info!("  stall-min-in-flight: {}", snap.stall_min_in_flight);
             info!("  stall-ack-stale-ms: {}", snap.stall_ack_stale_ms);
             info!("  stall-reprobe-ms: {}", snap.stall_reprobe_ms);
+        }
+
+        // Query-time truth for the A/B evaluation runner: process-lifetime
+        // monotonic counters, never reset, so a start/end pair yields a window
+        // delta. Absent from a production build (`test-internals` only).
+        #[cfg(feature = "test-internals")]
+        "metrics" => {
+            return CmdResponse::Json(crate::ab_metrics::metrics().to_json());
         }
 
         "stats" => {

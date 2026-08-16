@@ -104,6 +104,7 @@ pub fn select_connection(
 
             // If in cooldown period and last connection is still valid, keep it
             if in_switch_cooldown && last_still_valid {
+                crate::ab_metrics::record_cooldown_hold();
                 debug!(
                     "Switch dampening: staying with current connection (cooldown: {}ms remaining)",
                     MIN_SWITCH_INTERVAL_MS.saturating_sub(time_since_last_switch_ms)

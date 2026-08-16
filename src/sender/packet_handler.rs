@@ -105,6 +105,9 @@ pub async fn process_connection_events(
     }
 
     for nak in incoming.nak_numbers.iter() {
+        // Deliberately not the per-connection nak_count: that one is reset by
+        // the congestion controller, so a window delta across it is not a count.
+        crate::ab_metrics::record_nak();
         let mut handled = false;
 
         // O(1) lookup in the ring buffer
@@ -343,6 +346,7 @@ pub async fn forward_via_connection(
     }
     if *last_selected_idx != Some(sel_idx) {
         if let Some(prev_idx) = *last_selected_idx {
+            crate::ab_metrics::record_switch();
             if prev_idx < connections.len() {
                 // Flush the previous connection's batch before switching. A hard
                 // error means that link's transmit path is broken, so recover it

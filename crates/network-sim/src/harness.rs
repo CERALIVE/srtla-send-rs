@@ -615,6 +615,35 @@ pub fn wait_for_udp_listener(ns: &Namespace, port: u16, timeout: Duration) -> Re
 /// `connection established (active=N)` for the aggregate, so registration
 /// readiness is observable from the log alone. Both signals are read because the
 /// aggregate line is only emitted on change.
+/// Block until at least `min_count` of `process`'s uplinks have completed
+/// registration (REG3), or `timeout` elapses.
+///
+/// The free-function form is for stacks assembled outside `SrtlaTestStack`
+/// (custom routing, extra CLI flags); `SrtlaTestStack::wait_for_registered_uplinks`
+/// delegates here so both paths share one readiness definition.
+pub fn wait_for_registered_uplinks(
+    process: &NamespaceProcess,
+    min_count: usize,
+    timeout: Duration,
+) -> Result<()> {
+    let start = Instant::now();
+    loop {
+        let log = process.log_snapshot();
+        let registered = registered_uplink_count(&log);
+        if registered >= min_count {
+            return Ok(());
+        }
+        if start.elapsed() > timeout {
+            bail!(
+                "timeout waiting for {min_count} registered uplink(s) (saw \
+                 {registered})\nsrtla_send log:\n{}",
+                log.join("\n")
+            );
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
 fn registered_uplink_count(log: &[String]) -> usize {
     let mut reg3_uplinks: HashSet<String> = HashSet::new();
     let mut max_active = 0usize;
@@ -766,21 +795,9 @@ impl SrtlaTestStack {
     /// Registration is the readiness signal because uplink sockets are
     /// unconnected — `ss` can no longer report a connected UDP peer per uplink.
     pub fn wait_for_registered_uplinks(&self, min_count: usize, timeout: Duration) -> Result<()> {
-        let start = Instant::now();
-        loop {
-            let log = self.sender_log_snapshot();
-            let registered = registered_uplink_count(&log);
-            if registered >= min_count {
-                return Ok(());
-            }
-            if start.elapsed() > timeout {
-                bail!(
-                    "timeout waiting for {min_count} registered uplink(s) (saw \
-                     {registered})\nsrtla_send log:\n{}",
-                    log.join("\n")
-                );
-            }
-            std::thread::sleep(Duration::from_millis(200));
+        match self.srtla_send.as_ref() {
+            Some(process) => wait_for_registered_uplinks(process, min_count, timeout),
+            None => bail!("srtla_send is not running"),
         }
     }
 

@@ -19,7 +19,7 @@ pub mod topology;
 pub use harness::{
     NamespaceProcess, SkipReason, SrtlaTestStack, SrtlaTestTopology, StackOutput, bound_udp_ports,
     check_binary, check_impairment_deps, check_integration_deps, inject_udp_packets,
-    inject_udp_packets_from, inject_udp_stream, wait_for_udp_listener,
+    inject_udp_packets_from, inject_udp_stream, wait_for_registered_uplinks, wait_for_udp_listener,
 };
 pub use impairment::{GemodelConfig, ImpairmentConfig, apply_impairment};
 pub use scenario::{LinkScenarioConfig, Scenario, ScenarioConfig, ScenarioFrame};

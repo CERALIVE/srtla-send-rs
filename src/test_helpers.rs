@@ -8,7 +8,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use socket2::{Domain, Protocol, Socket, Type};
-use tokio::time::{Duration, Instant};
+#[cfg(test)]
+use tokio::time::Duration;
+use tokio::time::Instant;
 
 use crate::connection::{
     BatchSender, BatchUdpSocket, BitrateTracker, CachedQuality, CongestionControl,
@@ -117,6 +119,13 @@ pub async fn create_test_connections(count: usize) -> SmallVec<SrtlaConnection, 
 /// logic fire deterministically with no real sleep. This is the test seam: timing
 /// tests advance the clock through here rather than calling `tokio::time::advance`
 /// inline, keeping the dependency on the virtual clock explicit.
+///
+/// `cfg(test)` only: `tokio::time::advance` needs tokio's `test-util` feature,
+/// which arrives via dev-dependencies. Gating it on `test-internals` too would
+/// make `cargo build --features test-internals` (the A/B evaluation binary)
+/// fail to compile, and enabling `tokio/test-util` in that binary would put a
+/// clock indirection under the very measurements it exists to take.
+#[cfg(test)]
 pub async fn advance_test_clock(by: Duration) {
     tokio::time::advance(by).await;
 }

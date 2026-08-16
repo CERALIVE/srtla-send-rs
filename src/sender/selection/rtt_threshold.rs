@@ -134,6 +134,7 @@ pub fn select_connection(
         // Check if last connection is still valid
         let last_valid = last < conns.len() && !conns[last].is_timed_out() && conns[last].connected;
         if last_valid && conns[last].get_score() > 0 {
+            crate::ab_metrics::record_cooldown_hold();
             return Some(last);
         }
     }
