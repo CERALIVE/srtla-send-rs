@@ -32,6 +32,21 @@ RTT). On the device it is driven by CeraUI and feeds the bonded path into
 > sweep via `scripts/check-doc-refs.sh`, version-drift + Rule-A sync).
 > Startup bind ordering (2026-07-27: S10 — the local SRT listener binds before any uplink is
 > dialed, closing a live-reproduced `SRT_REJ_TIMEOUT` start race; see ROBUSTNESS FIXES).
+> **Upstream sync landed (2026-08): 0 commits behind `irlserver/srtla_send` at
+> `c9f6bb2296f236d60802f2ec3b79d9da4dac6e28`.** All 138 commits in
+> `80cd0c4..c9f6bb2` were triaged (`docs/notes/upstream-sync-2026-08-evaluation.md`)
+> and merged history-only (`-s ours`); adopted substance landed as individually
+> gated follow-up commits, not merge auto-application. Ported: NAK loss-list
+> offset-16 with 31-bit wrap safety, unconnected uplink sockets +
+> `sendmmsg(2)` batch flush with prefix-commit semantics, monotonic `now_ms()`
+> (wall-clock carve-out for telemetry), ACK-RTT ownership attribution (wrap-aware),
+> the RTT-velocity window-recovery gate, and an EDPF velocity+BDP-overrun ranking
+> penalty (redesigned from upstream's hard-exclusion shape) — see ROBUSTNESS FIXES
+> and EXPERIMENTAL SCHEDULER-HARDENING FLAGS below for the hardware-validation
+> caveats that apply to some of these. DNS drift detection on reconnect landed;
+> coordinated whole-bond receiver migration is DEFERRED (see ROBUSTNESS FIXES).
+> Two candidate perf changes (switch-cooldown removal, flush-on-switch removal)
+> were measured via a real A/B harness and REJECTED — see the triage doc.
 > CeraUI integration lands in follow-up tasks.
 
 **Relationship to `srtla/`:** this is the **sender** engine (Rust). The existing
@@ -86,6 +101,11 @@ the fork parent attached when opening a PR. Verify: `git remote -v` must show on
   licensing at the workspace/distribution layer, not by stripping upstream notices.
 - **Fork start point:** upstream `80cd0c4` ("feat: use Kalman-smoothed RTT in EDPF
   arrival time prediction").
+- **Last-merged upstream SHA (2026-08 sync):** `c9f6bb2296f236d60802f2ec3b79d9da4dac6e28`.
+  Merged history-only via `-s ours` (see `docs/notes/upstream-sync-2026-08-evaluation.md`
+  for why); the next sync's merge base is computed from this SHA. Full 138-commit triage
+  table and the EXACT-SET VALIDATION proving no commit in the range was missed or
+  double-counted live in that same doc.
 
 ### Upstream-merge policy — MANUAL & COMPAT-GATED
 
@@ -540,6 +560,21 @@ for the full operator/runtime reference (modes, runtime commands, tuning constan
   releases **standalone** in CI; the workspace parent does not exist there. The local
   orchestration scratch dir is gitignored and must appear in no other tracked file
   (Rule D).
+- **Unconnected uplink sockets' accept-any-source behavior is deliberate — do not add
+  silent source filtering without a versioned decision.** Uplink sockets are
+  unconnected (`recvmmsg`-based), so any host that can reach an uplink's ephemeral
+  port can inject ACK/NAK/keepalive traffic that influences scheduling and liveness;
+  REG2 ID matching only hardens registration, not the data-plane receive path. This
+  is a deliberate interop choice (matches the upstream C `srtla_send`/`_rec` pair and
+  BELABOX, and tolerates NAT/multi-homed receivers replying from a different source
+  address than the one dialed), not an oversight. The existing mitigation is defense
+  in depth, not exclusion: a `foreign_source_datagrams` counter + rate-limited (1/s)
+  `debug!` log on source mismatch, status-log-only (never in the frozen ADR-001
+  telemetry JSON), and nothing is ever dropped. Adding a hard source filter, dropping
+  foreign-source datagrams, or connect()-ing the uplink sockets per-peer would each
+  break this interop case and must go through a deliberate, versioned decision — not
+  a drive-by hardening patch. See `docs/notes/upstream-sync-2026-08-evaluation.md`
+  ("Security rationale for accept-any sockets") for the full rationale.
 
 ## TEST HARDENING (Tasks 7-8, 25)
 
@@ -588,19 +623,20 @@ just `src/`), while `pnpm build` still emits only `dist/{index,sender/index,
 telemetry/index}.js` with no test files. Tarball stays clean (`files: ["dist"]`
 allowlist + build-emit excludes `*.test.ts`).
 
-### Task 25 -- sendmmsg triage
+### Task 25 -- sendmmsg triage (superseded: sendmmsg IS now implemented)
 
-The `// TODO: On Linux, could use sendmmsg ...` in `src/connection/batch_send.rs`
-`flush()` has been converted to a tracked DEFERRED note. The note captures:
-
-- What `sendmmsg(2)` would do (multi-datagram single syscall)
-- Why it is deferred: marginal gain at current rates (~60-67 flushes/s at 10 Mbps,
-  already a ~15x reduction from raw per-packet sends), Linux-only unsafe FFI, and
-  complexity not justified without profiling evidence on the constrained device target
-- When to revisit: profiling shows syscall overhead, or Tokio adds native support
-
-Full rationale in `docs/notes/sendmmsg-deferred.md`.
-**Do not implement sendmmsg** without profiling evidence and a deliberate PR.
+The original DEFERRED note for `sendmmsg(2)` batch send was **superseded by
+adoption** in the 2026-08 upstream sync (todo 9), which ported upstream `673138d`
+*feat(srtla_send): flush batches with sendmmsg* with fork fixes. `BatchSender::flush`
+now submits up to `BATCH_SEND_SIZE = 32` datagrams per kernel entry via `sendmmsg(2)`
+on Linux, with a sequential fallback on other platforms, over now-unconnected uplink
+sockets (see the ANTI-PATTERNS note on accept-any-source above). Prefix-commit
+semantics guarantee a partial send can neither duplicate nor drop a datagram; a hard
+flush error routes into `mark_for_recovery()` + `SequenceTracker::remove_connection()`.
+`docs/notes/sendmmsg-deferred.md` is retained as an **adoption record** (its title
+is `ADOPTED: sendmmsg(2) batch send (was: DEFERRED)`), not a deferred-item pointer —
+do not cite it as an example of an unimplemented/deferred feature. The triage row of
+record is `docs/notes/upstream-sync-2026-08-evaluation.md` → `673138d`.
 
 ## TS BINDING TOOLING
 
@@ -798,6 +834,128 @@ merge; `tests/netns_edpf.rs` plus the EDPF arms in `src/tests/edpf_tests.rs` and
 `src/sender/selection/edpf.rs` pin both. Todo 11's EDPF velocity/BDP-penalty work
 supersedes the flat bootstrap constant if it introduces a real capacity estimate;
 the BLEST escape is orthogonal and should survive it.
+
+## ROBUSTNESS FIXES (upstream sync, 2026-08)
+
+Seven behavior changes landed as individually gated port commits during the 2026-08
+upstream sync (todos 4-13). None alter the parity contract; the EDPF cold-start and
+BLEST-starvation fixes are covered separately above under "ROBUSTNESS FIXES (EDPF
+bonding, 2026-08-15)".
+
+### NAK loss-list offset-16 (todo 4, ported from upstream `71f4ecc`)
+
+The SRT NAK control frame's loss list starts at byte offset 16, not 4 — the naive
+upstream port is risky without hardening (a range end of `0x7fff_ffff` wraps `seq`
+to 0 under `seq <= end` with `wrapping_add`, potentially emitting up to 999 bogus
+loss IDs before the 1000-entry cap silently truncates). The fork's port introduces
+`SrtSeq`, a 31-bit modular sequence type (`src/protocol/srt_seq.rs`) with wrap-aware
+`serial_lt`/`serial_le`/`serial_gt`/`serial_ge` comparisons (RFC 1982 semantics —
+values exactly `2^30` apart are unordered in both directions, so `serial_lt` is
+**not** a total order and must never back a `sort_by`), a directional `distance`,
+and two constructors (`new` masks the protocol-flag bit; `from_u32_checked` rejects
+it — using the wrong one on a NAK range-end word silently accepts a corrupt frame as
+a huge valid range). `parse_srt_nak` returns a `NakList` with a global,
+per-packet truncation cap and a rate-limited truncation warning
+(`NAK_TRUNC_WARN_INTERVAL_MS = 1000`). Pinned by `src/protocol/srt_seq.rs` unit
+tests plus migrated fixtures across `protocol_tests.rs`, `integration_tests.rs`,
+`end_to_end_tests.rs`, and `tests/parser_proptest.rs`.
+
+### Monotonic `now_ms()` with a wall-clock carve-out (todo 5, ported from upstream `bd6fad8`)
+
+`src/utils.rs::now_ms()` is now backed by a monotonic clock so internal timing
+deltas (NAK decay, window recovery, liveness timeouts) survive a wall-clock step
+(NTP correction, manual clock change) without producing a spurious jump. A
+**deliberate carve-out**: `wall_clock_ms()` stays on `SystemTime` and is the one
+used for telemetry's `last_updated_ms`, because the TS-side telemetry watcher
+compares that field against `Date.now()` — anchoring it to the monotonic clock
+would drift after any wall-clock step and produce false staleness on the consumer
+side. `std::time::Instant` (not `tokio::time::Instant`) backs the monotonic clock
+specifically so it is NOT frozen by `tokio::time::pause()` in tests that rely on
+`now_ms()` moving independently of the virtual clock. Pinned in
+`src/tests/utils_tests.rs`.
+
+### RTT-velocity window-recovery gate (todo 6, ported from upstream `a8d8a37`) — SIM-TESTED, NOT HARDWARE-VALIDATED
+
+`perform_window_recovery` (enhanced mode) halves its window increment while the
+Kalman-filtered RTT velocity exceeds `RTT_VELOCITY_GATE_THRESHOLD = 2.0`
+**ms per Kalman update** (corrected from upstream's own mislabeled "ms/s" — the
+filter's predict step has no `dt` term, so the unit is inherently per-sample, not
+per-second). The existing 10s/7s/5s/else recovery schedule and the
+`fast_recovery_mode` 2x bonus are unchanged; only the resulting increment is
+scaled, and only ever downward, so the failure mode is slower recovery, never
+window inflation. **This gate ships without the experimental-flag hardware
+gate** used by `--earned-ack-window`/`--stall-deselect` precisely because it can
+only reduce growth — but it is still sim-tested only (unit + golden-trace tests),
+not exercised against real bonded hardware, and should be read with that caveat.
+
+### ACK-RTT ownership attribution (todo 10, ported from upstream `a094863` + `3b2c425`)
+
+An SRT cumulative ACK is broadcast to every uplink (all links still prune their
+packet logs), but only the uplink the `SequenceTracker` says actually carried the
+acknowledged sequence turns it into an RTT sample — previously every holding link
+would have reported a round trip it never observed. A tracker miss means no RTT
+sample on any link (conservative, intentional), not a fallback guess. An SRTLA ACK
+names one specific sequence, so a packet-log hit is itself the ownership proof and
+feeds the smoothed RTT directly with no additional gate. The `ack <=
+highest_acked_seq` comparison that gates fast-path pruning is now the 31-bit
+modular `serial_gt`/`distance`-based comparison (todo 4's `SrtSeq`), not a raw
+integer `<=` — the raw form silently mishandled the sequence-space wrap. **Known
+limitation, not a bug:** `record_round_trip` discards a measured RTT of exactly 0
+ms (`saturating_sub`), so a genuine sub-millisecond round trip (loopback, LAN, a
+colocated receiver) never contributes a sample. The fix is a finer clock, not a
+looser gate — relaxing the `rtt == 0` rejection would reintroduce the S7
+downward-bias regression on every real (non-sub-ms) link. `src/connection/rtt.rs`,
+`src/connection/ack_nak.rs`.
+
+### EDPF velocity + BDP-overrun RANKING penalty (todo 11, ported from upstream `57525c7` + `d53d8bc`) — SIM-TESTED, NOT HARDWARE-VALIDATED
+
+Upstream's own shape (`DO-NOT-PORT-AS-IS` per the triage doc's frozen bug list) hard
+-excludes a link once its bandwidth-delay product is exceeded — if every candidate
+link is over the cap, selection returns `None` and the connection pool empties,
+violating the fork's own "pool never empties" invariant (`src/sender/selection/mod.rs`).
+The fork redesigns both as **ranking** penalties instead of exclusions:
+`VELOCITY_PENALTY_FACTOR = 0.005` adds an RTT-velocity-proportional term to
+predicted arrival time, and `BDP_OVERRUN_MULT = 1.5` (with a `propagation_s.max(0.001)`
+1ms floor guarding the zero-RTT bypass) penalizes over-cap links in the EDPF argmin
+without removing them from consideration — `edpf_all_links_over_cap_selects_the_least_
+overrun_link` proves this is ranking, not filtering. EDPF is opt-in (`--mode edpf`,
+never the default), and both constants are heuristics carried from upstream, not
+field-derived — sim-tested (unit/golden tests plus the `netns_edpf` netem topology)
+but **not** exercised on real bonded hardware. Same hardware-validation-gate
+convention as `--earned-ack-window`/`--stall-deselect` applies: do not cite either
+constant as a proven improvement until validated on real bond hardware.
+
+### DNS drift detection on reconnect (todo 12, ported from upstream, MEDIUM-4 of `c9f6bb2`'s bug list) — single-uplink swap DEFERRED
+
+Reconnect now re-resolves the receiver hostname (`resolve_remote_all`) instead of
+reusing the previously-resolved `SocketAddr` forever (the pre-sync tree had the
+identical flaw upstream also carried). The existing peer is kept when re-resolution
+fails, when it remains among the fresh answers, or when drift simply omits it from
+the answer set without another candidate being clearly preferred; a genuine drift
+emits a rate-limited (at most once/minute) receiver-identity warning. **DEFERRED,
+not implemented: coordinated whole-bond receiver migration.** SRTLA's
+receiver-generated full ID makes swapping a single uplink to a different receiver
+instance unsafe — it would split the bond, with some uplinks registered against one
+receiver identity and some against another. `apply_connection_changes` deliberately
+preserves surviving sockets/registrations across a SIGHUP reload, so SIGHUP is not a
+substitute mechanism either. A later, separately-scoped change must specify and
+implement any coordinated multi-uplink migration; do not add a single-uplink swap in
+the meantime. `src/connection/mod.rs` (`host`/`port` fields alongside `remote`).
+
+### Partial-send prefix-commit invariant + foreign-source counter (todo 9, alongside unconnected sockets — see ANTI-PATTERNS)
+
+`flush_batch`'s `sendmmsg(2)` path commits (`register_packet`) only the
+kernel-**accepted prefix** of a queued batch, in order, even when the overall call
+returns an error — a partial send can neither duplicate nor silently drop a
+datagram, and the caller (`sender/packet_handler.rs`, `sender/housekeeping.rs`) must
+`mark_for_recovery()` + `seq_tracker.remove_connection(conn_id)` on any `Err`. This
+replaces upstream's HIGH-2 bug (draining the whole queue and registering it as sent
+before confirming the I/O succeeded). Because uplink sockets are now unconnected, a
+datagram from a source other than the dialed receiver can reach protocol state; the
+`foreign_source_datagrams` counter plus a 1/s rate-limited `debug!` (status logs
+only, never the frozen ADR-001 telemetry JSON) is the mitigation — see the
+ANTI-PATTERNS entry above for the full accept-any-source rationale and why nothing
+is ever dropped. `src/connection/batch_send.rs`, `src/connection/mod.rs`.
 
 ## DOCS DISCIPLINE (Rule A)
 

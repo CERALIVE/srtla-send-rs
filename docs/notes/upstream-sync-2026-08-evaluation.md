@@ -245,8 +245,8 @@ clean `ADOPT` — the note on each such row references `b83f97b`.
 | 9b14dd7 | 2026-07-14 | fix(srtla_send): restore the windows build | ALREADY-CONVERGENT | our Windows build is already maintained, with the SIGHUP-reload arm correctly Unix-only |
 | f5de6c0 | 2026-07-14 | fix(srtla_send): make LinkPhase a scheduling weight, not an admission gate | DEFER-FOLLOWUP | R1-fix, `link_cc`/classifier subsystem we don't have |
 | 3b9f0a2 | 2026-07-14 | feat(srtla_send): probe starved links instead of the second-best one | REJECT | superseded/culled by upstream itself (later replaced by the `34b6b2b` duplicate-probe mechanism); moot, no code to port |
-| 24b5f64 | 2026-07-14 | fix(srtla_send): remove the switch cooldown that was costing 15 points | PENDING-EVAL | todo 13 A/B measurement pending; resolves per mapping in taxonomy above |
-| 0cc0c6d | 2026-07-14 | refactor(srtla_send): drop the batch flush on connection switch | PENDING-EVAL | todo 13 A/B measurement pending; resolves per mapping in taxonomy above |
+| 24b5f64 | 2026-07-14 | fix(srtla_send): remove the switch cooldown that was costing 15 points | REJECT | dependent-on-rejected: requires 0cc0c6d. Unmeasured, per the taxonomy's explicit rule that Step B runs only if Step A was adopted. `0cc0c6d` was REJECTed, so this step was never exercised. Full A/B evidence: `.omo/evidence/task-13-upstream-sync-irlserver.md` |
+| 0cc0c6d | 2026-07-14 | refactor(srtla_send): drop the batch flush on connection switch | REJECT | MEASURED (todo 13, 3 uplinks, 20/60/120ms delay, 4Mbit/link, 6Mbit offered load, 3 paired runs/mode). Mean goodput ratio candidate/baseline vs the pre-committed ≥99% floor: enhanced 0.9713 FAIL, rtt-threshold 0.9758 FAIL, classic 0.9981 pass, edpf 1.0339 pass. The rule requires the floor to hold in EVERY measured mode, so this is REJECT despite two modes passing. Mechanism: without the switch flush, the previous link's partial batch waits for the 15ms `FLUSH_INTERVAL_MS` cooldown instead of flushing immediately; on a 20/60/120ms heterogeneous bond that delay lands on SRT's TSBPD deadline and shows up as sink drops (every `enhanced` baseline run beat every candidate run bar one overlapping pair). The step also silently drops the flush's error-recovery arm (`mark_for_recovery` + `seq_tracker.remove_connection`), so it is not a pure performance trade. NAK and switch-thrash gates passed in all four modes; the activation gate (`switch_count` delta ≥ 1) was met in every gating run, so this is a genuine measured rejection. Full per-run table: `.omo/evidence/task-13-upstream-sync-irlserver.md` |
 | 673138d | 2026-07-14 | feat(srtla_send): flush batches with sendmmsg | ADOPT-WITH-FORK-FIX | Q-A user decision (adopt in this merge, overriding the prior deferred-gate note); `BATCH_SEND_SIZE=32` iovec/mmsghdr, `docs/notes/sendmmsg-deferred.md` + AGENTS.md anti-pattern note updated in the same port PR |
 | e3f936f | 2026-07-13 | ci(srtla_send): add miri lane over batch_recv unsafe pointer logic | ALREADY-CONVERGENT | we already have our own dedicated BLOCKING miri job (AGENTS.md "Miri lane") covering `batch_recv.rs`'s pure pointer logic |
 | c1946f8 | 2026-07-13 | style(srtla_send): apply nightly rustfmt import wrapping | REJECT | mechanical style-only |
@@ -311,5 +311,32 @@ clean `ADOPT` — the note on each such row references `b83f97b`.
 
 ## Row count check
 
-138 data rows above, matching the verified commit count. `PENDING-EVAL` appears on
-exactly 2 rows (`24b5f64`, `0cc0c6d`); every other row carries a FINAL verdict.
+138 data rows above, matching the verified commit count. All 138 rows carry a FINAL
+verdict (no `PENDING-EVAL` remains) — `24b5f64` and `0cc0c6d` were resolved to REJECT
+by todo 13's A/B measurement (see rows above).
+
+## EXACT-SET VALIDATION (todo 14, post-merge)
+
+Every SHA in the table above was resolved to its full 40-character commit id via
+`git rev-parse`, sorted and de-duplicated, and diffed against the full,
+sorted `git rev-list` output for the same range. Both endpoints are ordinary commits
+in local history post-merge, so this is a real, reproducible check, not an estimate:
+
+```
+$ grep -oE '^\| [a-f0-9]{7} ' docs/notes/upstream-sync-2026-08-evaluation.md \
+    | sed 's/| //;s/ //' | while read sha; do git rev-parse "$sha"; done \
+    | sort -u | wc -l
+138
+
+$ git rev-list 80cd0c45851ef2b3d9ee48864a8a63e7fcd3bf74..c9f6bb2296f236d60802f2ec3b79d9da4dac6e28 \
+    | sort -u | wc -l
+138
+
+$ diff <(table SHAs, resolved+sorted) <(git rev-list range, sorted)
+(empty)
+```
+
+Both sets contain exactly 138 entries; the diff is empty. The 3 merge commits in the
+range (`a608584`, `a844258`, `4eedb41`) are included naturally as ordinary table rows,
+each individually triaged — not skipped or blanket-verdicted. Full command transcript
+in `.omo/evidence/task-14-upstream-sync-irlserver.md`.
