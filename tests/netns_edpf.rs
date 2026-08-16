@@ -152,11 +152,11 @@ fn start_stack(name: &str) -> Stack {
         .expect("srtla_rec listener");
 
     let ips = topo.write_ip_list().expect("write ip list");
-    let bin = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/debug/srtla_send");
+    let bin = env!("CARGO_BIN_EXE_srtla_send");
     let local = LOCAL_SRT_PORT.to_string();
     let send = NamespaceProcess::spawn_with_env(
         &topo.sender_ns,
-        bin.to_str().expect("bin path"),
+        bin,
         &[
             local.as_str(),
             recv_ip.as_str(),
