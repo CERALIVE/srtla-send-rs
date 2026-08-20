@@ -42,6 +42,7 @@ pub mod stats;
 pub mod subscription;
 #[cfg(not(loom))]
 pub mod telemetry_doc;
+#[cfg(not(loom))]
 pub mod telemetry_file;
 #[cfg(not(loom))]
 pub mod utils;

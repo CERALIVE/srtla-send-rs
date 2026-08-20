@@ -204,6 +204,14 @@ The telemetry layer has hardened integration tests:
 - **`bindings/typescript/src/telemetry/watch.test.ts`** (6 tests): event-driven watcher
   checks for absent, stale-boundary, stop, file-appears, invalid-schema, and payload
   behavior without fixed sleep windows.
+- **`bindings/typescript/tests/telemetry-roundtrip.test.ts`** (14 tests): re-serializing a
+  parsed snapshot reproduces the producer's bytes exactly, for every producer-ordered
+  fixture — so no field the sender emits, `iface` and `link_id` included, is silently
+  dropped by the reader. A Zod schema strips undeclared keys *without erroring*, so a
+  parse-succeeds assertion cannot catch that; comparing bytes can. Includes a
+  falsifiability control that deletes the two identity fields and requires the comparison
+  to fail, plus the old-shape half: a pre-identity payload parses, round-trips byte-stably,
+  and reports both fields `undefined` with no key materialized.
 - **`tests/subscription_loom.rs`** (2 tests): Loom schedule exploration against the
   production manager under `cfg(loom)`, covering concurrent live-or-replay delivery
   and disconnected-subscriber pruning without copying the manager algorithm.

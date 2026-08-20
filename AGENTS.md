@@ -771,18 +771,53 @@ New `bindings/typescript/tests/telemetry-reader.test.ts` (24 tests; 68 binding t
 - `src/telemetry/watch.test.ts` keeps six distinct watcher contracts without
   fixed sleeps: absent, stale-boundary, stop, file-appears, invalid-schema, and
   parsed-payload behavior. Callback/event-loop completion replaces timed windows.
-- `bindings/typescript/tests/telemetry-fixtures.test.ts` (13 tests) is the consumer half
+-   `bindings/typescript/tests/telemetry-fixtures.test.ts` (13 tests) is the consumer half
   of the cross-language matrix: it parses the Rust-written fixtures and asserts
   old-producer tolerance (every added field reads `undefined`, and `undefined` is NOT
   conflated with the positive `'absent'` state), twin-modem disambiguation by `link_id`,
   reorder/reconnect identity stability, both degraded modes, the seven frozen degraded
   reasons, and forward tolerance of a future producer's unknown keys.
+- `bindings/typescript/tests/telemetry-roundtrip.test.ts` (14 tests) is the
+  **byte-parity passthrough proof** — see BYTE-PARITY ROUND TRIP below.
 
 > **`extra_fields_stripped_or_rejected` was ADAPTED, not weakened.** That test used
 > `iface` as its stand-in for "a field a future producer might add"; `iface` has since
 > BECOME a known optional field, so the placeholder moved to a genuinely unknown key and
 > the now-known field is additionally asserted to be PRESERVED. Same contract, read from
 > both sides.
+
+### BYTE-PARITY ROUND TRIP — the identity-passthrough proof
+
+`bindings/typescript/tests/telemetry-roundtrip.test.ts` asserts
+`JSON.stringify(telemetrySchema.parse(bytes)) === bytes` for all seven
+producer-ordered fixtures, so nothing the sender emits — `iface` and `link_id`
+included — is dropped by the reader.
+
+**Why the suite exists at all:** a Zod object strips undeclared keys *silently and
+successfully*. A reader that has never heard of `iface`/`link_id` parses a mapped
+snapshot with no error and hands the consumer a document with both twins' identities
+deleted — which is what the released `@ceralive/srtla-send@2026.6.2` reader did, and
+what no "does it parse?" assertion can see. Re-serializing and comparing bytes does
+see it.
+
+Two properties keep the suite honest and must survive any edit:
+
+- **The schema declares its keys in the producer's own field order**, which is why
+  byte parity (not mere deep-equality) holds. Reordering `connectionTelemetrySchema`
+  or `telemetrySchema` breaks it — that is the intended alarm, not a test bug: fix
+  the order, do not relax the assertion to `toEqual`.
+- **A falsifiability control** (`a stripped identity field falsifies the byte-parity
+  assertion`) deletes exactly what a stripping parser would delete and requires the
+  comparison to FAIL. Without it, byte parity would also pass for a reader that
+  strips fields the producer never emitted.
+
+`telemetry-unknown-fields` is excluded from the byte-parity set by construction (it
+is hand-ordered and carries a future producer's keys); it gets an idempotence
+assertion — one pass reaches the fixed point — plus the known additive fields kept.
+The old-shape half asserts a pre-identity payload parses, round-trips byte-stably,
+and reports both fields as `undefined` with **no key materialized** (no `null`, no
+`""`), because an omitted optional must stay omitted for "absent" to stay
+distinguishable from "empty".
 
 `tsconfig.json` fix: added `tests/**/*` to `include`; moved `rootDir: "src"` into
 `tsconfig.build.json` only. This ensures `pnpm typecheck` typechecks tests (not

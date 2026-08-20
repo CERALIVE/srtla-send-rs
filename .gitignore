@@ -32,3 +32,5 @@ test-results/
 
 # Python bytecode cache from the scripts/ contract tests
 __pycache__/
+/dist/
+/target-xbuild/
