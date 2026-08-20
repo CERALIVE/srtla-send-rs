@@ -956,7 +956,7 @@ pub fn inject_udp_stream(
 // ---------------------------------------------------------------------------
 
 /// Locate the srtla_send binary from a cargo build.
-fn find_srtla_send_binary() -> Result<PathBuf> {
+pub(crate) fn find_srtla_send_binary() -> Result<PathBuf> {
     // An explicit path always wins. `tests/common/build_srtla_send` publishes
     // `CARGO_BIN_EXE_srtla_send` here, which is the only location that is
     // correct under a redirected CARGO_TARGET_DIR — the hardcoded

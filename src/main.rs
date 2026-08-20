@@ -137,7 +137,10 @@ async fn main() -> Result<()> {
         local_srt_port,
         receiver_host,
         receiver_port,
-        ips_file,
+        sender::SenderPaths {
+            ips_file,
+            bind_map: args.bind_map.as_deref(),
+        },
         config,
         shared_stats,
         sender::TelemetrySinks {

@@ -226,8 +226,19 @@ TERM-then-KILL polling; it does not assume the tracked `sudo` PID is a process-g
 and never blocks on an unbounded child wait. Namespace and veth names both include the
 PID+atomic-counter uniqueness suffix, so parallel scenarios in one test binary cannot
 collide. CI/release test commands remain capped at 300 seconds, and manual privileged runs
-use `scripts/netns_test_gate.sh` (90 seconds per target by default). One separate
-real-Starlink stall reproduction is intentionally `#[ignore]` and runs only on hardware.
+use `./scripts/netns_test_gate.sh` (90 seconds per target by default; `netns_twin` gets
+420 because its scenarios wait out the sender's own 15-second liveness timeout and
+30-second status-log interval). One separate real-Starlink stall reproduction is
+intentionally `#[ignore]` and runs only on hardware.
+
+`tests/netns_twin.rs` covers the duplicate-IP twin case that a single-subnet veth
+topology cannot express: two uplinks on ONE source address, each behind its own NAT
+carrier namespace, exactly as two identical HiLink dongles present themselves. It proves
+that both twins register and carry traffic at the same time — and, as the control, that
+the *same* topology without `--bind-map` leaves the second twin carrying nothing. It also
+covers reload remove/re-add under a stable `link_id`, a file-order swap that recreates no
+socket, an unplug/replug recovering on a new ifindex, and a route-removal blackhole being
+reported rather than read as healthy.
 
 ## Usage
 
@@ -528,8 +539,35 @@ If the pair never agrees, the sender **fails open without guessing**:
 - **on a reload** (SIGHUP) that degrades, the sender keeps the last valid mapping running
   rather than silently un-binding a live bond.
 
-**Without `--bind-map` nothing above happens** — no hashing, no sidecar, no new failure
-mode. `--dry-run` validates both files and exits non-zero if the sidecar is unusable.
+### What a mapped link does differently
+
+A mapped uplink's socket is bound **to the interface and to the source address**:
+`SO_BINDTODEVICE` decides which interface the packet physically leaves by (overriding the
+routing table, so the host no longer needs source routing), and `bind(ip, 0)` pins the
+source address the receiver sees. Both are needed — the device binding alone would let the
+kernel choose a source address, which is exactly what makes two same-IP modems
+indistinguishable on the wire.
+
+Beyond binding, three things change for a mapped link:
+
+- **Identity outlives the socket.** A link is its `link_id`, not its IP. Reordering the
+  file, changing a modem's DHCP lease, or moving it to another interface does not make it
+  a different link — but a socket key that moves gets a **new socket**, because the
+  window, packet log, and in-flight counts all described the interface it left.
+- **The interface is re-resolved by name every time a socket is created**, and re-checked
+  every second. `SO_BINDTODEVICE` freezes the interface index at bind time, so a modem
+  that is unplugged and replugged leaves a working-looking socket that can only fail. A
+  re-enumeration rebinds; a disappearance marks the link `removed`, and it waits for the
+  next reload rather than retrying against a name the kernel no longer knows.
+- **Losing the default route is reported, not guessed at.** Traffic pinned to an interface
+  with no default route is silently blackholed — IPv4 ARPs for the receiver's public
+  address and `sendto` still succeeds. So default-route presence is read from the routing
+  table and shown per link in the status log, separately from whether the link is still
+  ACKing. Nothing is ever written to the routing table.
+
+**Without `--bind-map` nothing above happens** — no hashing, no sidecar, no device
+binding, no new failure mode. `--dry-run` validates both files and exits non-zero if the
+sidecar is unusable.
 Full contract: [`docs/adr/ADR-003-bind-map-contract.md`](docs/adr/ADR-003-bind-map-contract.md).
 
 ## Capability probe

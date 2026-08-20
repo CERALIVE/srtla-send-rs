@@ -3,11 +3,14 @@ pub mod batch_recv;
 pub mod batch_send;
 mod bitrate;
 mod congestion;
+pub mod egress;
 mod incoming;
 mod packet_io;
 mod reconnection;
+pub mod route;
 mod rtt;
 mod socket;
+mod spec;
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
@@ -17,15 +20,20 @@ pub use batch_recv::BatchUdpSocket;
 pub use batch_send::BatchSender;
 pub use bitrate::BitrateTracker;
 pub use congestion::CongestionControl;
+pub use egress::{EgressFault, EgressLifecycle, EgressPoll, IfaceResolver, LinkState};
+use egress::{SystemIfaceResolver, classify_egress_fault};
 pub use incoming::SrtlaIncoming;
 pub use reconnection::ReconnectionState;
+pub use route::RouteHealth;
 pub use rtt::RttTracker;
 use rustc_hash::FxHashMap;
 use socket::remote_drift;
-pub use socket::{bind_from_ip, resolve_remote, resolve_remote_all};
+pub use socket::{bind_for_link, bind_from_ip, resolve_remote, resolve_remote_all};
+pub use spec::{SocketKey, UplinkSpec};
 use tokio::time::Instant;
 use tracing::{debug, warn};
 
+use crate::bind_map::{IfaceName, LinkId};
 use crate::protocol::*;
 use crate::utils::now_ms;
 
@@ -80,6 +88,15 @@ pub struct SrtlaConnection {
     pub local_ip: IpAddr,
     #[cfg(not(feature = "test-internals"))]
     pub(crate) local_ip: IpAddr,
+    /// This uplink's stable, writer-assigned identity (`--bind-map`), or `None`
+    /// for an unmapped link. Registration, stats, and telemetry state belong to
+    /// this — never to `local_ip`, which is only the current socket key.
+    pub link_id: Option<LinkId>,
+    /// Egress-interface binding lifecycle. Inert for an unmapped link.
+    pub egress: EgressLifecycle,
+    /// Per-interface default-route observation, refreshed by housekeeping.
+    /// Deliberately separate from ACK liveness — see [`route`].
+    pub route_health: RouteHealth,
     pub label: String,
     #[cfg(feature = "test-internals")]
     pub connected: bool,
@@ -169,15 +186,34 @@ pub struct SrtlaConnection {
 }
 
 impl SrtlaConnection {
+    /// Create an uplink with no bind-map row: legacy source-IP binding.
     pub async fn connect_from_ip(ip: IpAddr, host: &str, port: u16) -> Result<Self> {
+        Self::connect(&UplinkSpec::unmapped(ip), host, port).await
+    }
+
+    /// Create an uplink for `spec`, pinning egress to its interface when the
+    /// bind-map named one.
+    ///
+    /// The interface is resolved by **name** here, immediately before the bind,
+    /// and never from a cached ifindex — see [`egress`].
+    pub async fn connect(spec: &UplinkSpec, host: &str, port: u16) -> Result<Self> {
         use rand::Rng;
+
+        let ip = spec.ip;
+        let mut egress = match spec.iface.clone() {
+            Some(iface) => EgressLifecycle::for_iface(iface),
+            None => EgressLifecycle::unmapped(),
+        };
+        egress
+            .resolve_for_bind(&SystemIfaceResolver)
+            .map_err(|fault| anyhow::anyhow!("egress interface unusable: {}", fault.as_str()))?;
 
         let remote = resolve_remote(host, port).await?;
         // The socket is deliberately left UNCONNECTED: the peer is owned by
         // `BatchUdpSocket` and named on every send, so a multi-homed / NAT
         // receiver replying from another address still reaches us (C-reference
         // parity). See `batch_recv.rs` for the ownership map.
-        let sock = bind_from_ip(ip, 0)?;
+        let sock = bind_for_link(ip, 0, egress.iface().map(IfaceName::as_str))?;
         sock.set_nonblocking(true)?;
         let socket = Arc::new(BatchUdpSocket::new(sock, remote)?);
         let startup_deadline = now_ms() + STARTUP_GRACE_MS;
@@ -188,7 +224,10 @@ impl SrtlaConnection {
             host: host.to_string(),
             port,
             local_ip: ip,
-            label: format!("{}:{} via {}", host, port, ip),
+            link_id: spec.link_id.clone(),
+            egress,
+            route_health: RouteHealth::Unknown,
+            label: spec.label(host, port),
             connected: false,
             window: WINDOW_DEF * WINDOW_MULT,
             in_flight_packets: 0,
@@ -295,9 +334,59 @@ impl SrtlaConnection {
             self.last_sent = Some(Instant::now());
         }
         match outcome.error {
-            Some(e) => Err(anyhow::anyhow!("batch flush failed: {}", e)),
+            Some(e) => {
+                if let Some(fault) = self.egress.note_send_error(&e) {
+                    warn!(
+                        "{}: egress fault {} on {}; the socket's interface binding is dead and \
+                         will not be reused",
+                        self.label,
+                        fault.as_str(),
+                        self.egress.iface().map_or("-", IfaceName::as_str)
+                    );
+                }
+                Err(anyhow::anyhow!("batch flush failed: {}", e))
+            }
             None => Ok(()),
         }
+    }
+
+    /// The uplink this connection currently is: its identity plus its socket key.
+    pub fn spec(&self) -> UplinkSpec {
+        UplinkSpec {
+            ip: self.local_ip,
+            iface: self.egress.iface().cloned(),
+            link_id: self.link_id.clone(),
+        }
+    }
+
+    /// True while the named interface is gone. Such a link is not reconnected —
+    /// rebinding to a name the kernel does not know only burns the backoff — it
+    /// waits for a reload to name an interface that exists.
+    pub fn is_removed(&self) -> bool {
+        self.egress.state() == LinkState::Removed
+    }
+
+    /// Whether the current socket has been invalidated and must be recreated.
+    pub fn needs_rebind(&self) -> bool {
+        self.egress.needs_rebind()
+    }
+
+    /// Re-resolve the interface and refresh the route invariant.
+    ///
+    /// Read-only with respect to the host: it resolves a name and reads the
+    /// route table, and installs nothing.
+    pub fn poll_egress(&mut self, resolver: &dyn IfaceResolver) -> EgressPoll {
+        let poll = self.egress.poll(resolver);
+        self.route_health = match self.egress.iface() {
+            Some(iface) => route::observe_default_route(iface.as_str()),
+            None => RouteHealth::Unknown,
+        };
+        poll
+    }
+
+    /// Classify an arbitrary I/O error against this link's egress binding.
+    pub fn egress_fault(err: &std::io::Error) -> Option<EgressFault> {
+        classify_egress_fault(err)
     }
 
     /// Datagrams this uplink received from an address other than the resolved
@@ -599,7 +688,21 @@ impl SrtlaConnection {
             }
         }
 
-        let sock = bind_from_ip(self.local_ip, 0)?;
+        // Re-resolve the interface by NAME on every socket recreation. The old
+        // socket's SO_BINDTODEVICE ifindex was frozen at setsockopt time, so a
+        // replugged device would otherwise inherit an index that no longer
+        // names it — the exact stale-ifindex failure this path exists to break.
+        self.egress
+            .resolve_for_bind(&SystemIfaceResolver)
+            .map_err(|fault| {
+                anyhow::anyhow!(
+                    "{}: egress interface unusable: {}",
+                    self.label,
+                    fault.as_str()
+                )
+            })?;
+
+        let sock = bind_for_link(self.local_ip, 0, self.egress.iface().map(IfaceName::as_str))?;
         sock.set_nonblocking(true)?;
         let socket = BatchUdpSocket::new(sock, self.remote)?;
         self.socket = Arc::new(socket);

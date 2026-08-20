@@ -1,5 +1,7 @@
 mod connections;
-mod housekeeping;
+mod egress_tick;
+pub(crate) mod housekeeping;
+mod links;
 pub(crate) mod packet_handler;
 #[cfg(unix)]
 mod reload;
@@ -21,12 +23,15 @@ use anyhow::{Context, Result};
 // Re-export connection management functions for tests
 #[allow(unused_imports)]
 pub use connections::{
-    PendingConnectionChanges, apply_connection_changes, create_connections_from_ips,
+    PendingConnectionChanges, apply_connection_changes, apply_link_changes,
+    create_connections_from_ips, create_connections_from_links, specs_from_effective_links,
+    specs_from_ips,
 };
 // Re-export public items used by tests
 #[allow(unused_imports)]
 pub use housekeeping::GLOBAL_TIMEOUT_MS;
 use housekeeping::handle_housekeeping;
+pub use links::{LinkSource, SenderPaths};
 #[cfg(any(test, feature = "test-internals"))]
 #[allow(unused_imports)]
 pub(crate) use packet_handler::apply_srtla_ack;
@@ -47,6 +52,7 @@ use tracing::{debug, info, warn};
 use uplink::{ConnectionId, ReaderHandle, create_uplink_channel, sync_readers};
 
 use crate::config::DynamicConfig;
+use crate::connection::UplinkSpec;
 use crate::registration::SrtlaRegistrationManager;
 use crate::stats::SharedStats;
 use crate::subscription::SubscriptionManager;
@@ -67,7 +73,7 @@ pub async fn run_sender_with_config(
     local_srt_port: u16,
     receiver_host: &str,
     receiver_port: u16,
-    ips_file: &str,
+    paths: SenderPaths<'_>,
     config: DynamicConfig,
     shared_stats: SharedStats,
     sinks: TelemetrySinks,
@@ -76,6 +82,8 @@ pub async fn run_sender_with_config(
         file: telemetry,
         subscriptions,
     } = sinks;
+    let ips_file = paths.ips_file;
+    let mut link_source = LinkSource::new(&paths);
     info!(
         "starting srtla_send: local_srt_port={}, receiver={}:{}, ips_file={}, mode={}",
         local_srt_port,
@@ -101,8 +109,8 @@ pub async fn run_sender_with_config(
     // uplinks, start with an empty pool, and wait for a SIGHUP reload. CeraUI
     // writes the IP file and signals srtla_send once interfaces appear, so
     // crashing here would crash-loop the device before the first modem is up.
-    let ips = match read_ip_list(ips_file).await {
-        Ok(ips) => ips,
+    let startup_links = match link_source.startup().await {
+        Ok(links) => links,
         Err(e) => {
             warn!(
                 "ips file unreadable at startup ({e}); starting with no uplinks, waiting for \
@@ -113,19 +121,21 @@ pub async fn run_sender_with_config(
     };
     debug!(
         "uplink IPs loaded: {}",
-        ips.iter()
-            .map(|i| i.to_string())
+        startup_links
+            .iter()
+            .map(UplinkSpec::origin)
             .collect::<SmallVec<_, 4>>()
             .join(", ")
     );
-    if ips.is_empty() {
+    if startup_links.is_empty() {
         warn!(
             "no source IPs at startup; starting with an empty uplink pool (send SIGHUP after \
              writing {ips_file})"
         );
     }
 
-    let mut connections = create_connections_from_ips(&ips, receiver_host, receiver_port).await;
+    let mut connections =
+        create_connections_from_links(&startup_links, receiver_host, receiver_port).await;
 
     let mut reg = SrtlaRegistrationManager::new();
 
@@ -192,6 +202,12 @@ pub async fn run_sender_with_config(
     let mut edpf_state = EdpfSchedulerState::default();
     let mut all_failed_at: Option<Instant> = None;
     let mut pending_changes: Option<PendingConnectionChanges> = None;
+
+    // A SIGHUP with `--bind-map` reads the pair on a spawned task and answers
+    // here, so a retried hash mismatch cannot stall packet forwarding.
+    #[cfg(unix)]
+    let (bind_map_tx, mut bind_map_rx) =
+        tokio::sync::mpsc::unbounded_channel::<links::PairReadResult>();
 
     // Prepare SIGHUP stream (Unix only) or a never-completing future (non-Unix)
     #[cfg(unix)]
@@ -315,12 +331,12 @@ pub async fn run_sender_with_config(
                         shared_stats.update(&connections, &config.snapshot());
 
                         if let Some(changes) = pending_changes.take()
-                            && let Some(new_ips) = changes.new_ips
+                            && let Some(new_links) = changes.new_links
                         {
-                            info!("applying queued connection changes: {} IPs", new_ips.len());
-                            apply_connection_changes(
+                            info!("applying queued connection changes: {} IPs", new_links.len());
+                            apply_link_changes(
                                 &mut connections,
-                                &new_ips,
+                                &new_links,
                                 &changes.receiver_host,
                                 changes.receiver_port,
                                 &mut last_selected_idx,
@@ -378,15 +394,38 @@ pub async fn run_sender_with_config(
 
     #[cfg(unix)]
     event_loop! {
+        Some(read) = bind_map_rx.recv() => {
+            // The bounded pair read ran off-loop; resolving it needs the
+            // last-valid mapping, which only this loop owns.
+            let new_links = link_source.adopt(read);
+            if new_links.is_empty() {
+                warn!(
+                    "bind-map reload resolved to no usable uplinks; keeping existing connections"
+                );
+            } else {
+                pending_changes = Some(PendingConnectionChanges {
+                    new_links: Some(new_links),
+                    receiver_host: receiver_host.to_string(),
+                    receiver_port,
+                });
+                info!("uplink changes queued for next processing cycle");
+            }
+        }
         _ = sighup.recv() => {
             info!("received SIGHUP - reloading uplink IP list from {ips_file}");
+            if let Some((ips_path, sidecar, prior)) = link_source.read_args() {
+                let tx = bind_map_tx.clone();
+                tokio::spawn(async move {
+                    let _ = tx.send(links::read_bind_map(ips_path, sidecar, prior).await);
+                });
+            } else {
             match reload::analyze_ip_reload(ips_file) {
                 reload::IpReload::Apply { ips, first_invalid_line } => {
                     if let Some(line) = first_invalid_line {
                         warn!("invalid IP on line {line} in {ips_file}: skipping invalid lines");
                     }
                     pending_changes = Some(PendingConnectionChanges {
-                        new_ips: Some(ips),
+                        new_links: Some(specs_from_ips(&ips)),
                         receiver_host: receiver_host.to_string(),
                         receiver_port,
                     });
@@ -403,6 +442,7 @@ pub async fn run_sender_with_config(
                         "no valid source IPs in {ips_file} (parse error, first invalid line {first_invalid_line}); keeping existing connections"
                     ),
                 },
+            }
             }
             let config_snap = config.snapshot();
             drain_packet_queue(

@@ -60,3 +60,12 @@ pub mod jsonrpc_control_tests;
 
 #[cfg(all(test, unix))]
 pub mod subscription_tests;
+
+#[cfg(test)]
+pub mod egress_binding_tests;
+
+#[cfg(test)]
+pub mod link_identity_tests;
+
+#[cfg(test)]
+pub mod egress_lifecycle_tests;

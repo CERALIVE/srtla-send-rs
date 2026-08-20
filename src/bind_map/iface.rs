@@ -7,7 +7,10 @@
 use std::collections::HashSet;
 
 /// Answers interface-existence questions for bind-map validation.
-pub trait IfaceOracle {
+///
+/// `Sync` so a `&dyn IfaceOracle` can cross an `.await` on a spawned task: a
+/// `SIGHUP` reload runs the bounded pair read off the packet-forwarding loop.
+pub trait IfaceOracle: Sync {
     /// True iff an interface with this exact name exists right now.
     fn exists(&self, iface: &str) -> bool;
 }

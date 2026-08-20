@@ -9,12 +9,14 @@
 //! - [`impairment`]: `tc netem`/`tbf` configuration and application
 //! - [`scenario`]: Deterministic random-walk impairment generator
 //! - [`test_util`]: Privilege checks and unique name generation for tests
+//! - [`twin`]: Duplicate-IP twin-modem topology, bind-map publication, and stack
 
 pub mod harness;
 pub mod impairment;
 pub mod scenario;
 pub mod test_util;
 pub mod topology;
+pub mod twin;
 
 pub use harness::{
     NamespaceProcess, SkipReason, SrtlaTestStack, SrtlaTestTopology, StackOutput, bound_udp_ports,

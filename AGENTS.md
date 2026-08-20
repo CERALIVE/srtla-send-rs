@@ -193,8 +193,45 @@ CeraUI and the device integration depend on these staying stable:
   representative and the rest are excluded **and reported**; on a valid→degraded RELOAD
   the sender **retains the last valid mapped pool** rather than silently un-binding a live
   bond. Full contract: [`docs/adr/ADR-003-bind-map-contract.md`](docs/adr/ADR-003-bind-map-contract.md).
-  This ADR is the **contract + parser only** — `DeviceBinder` is still dormant and no
-  socket is bound to a device yet.
+  The mapping is **acted on**: a mapped link's socket is bound with
+  `SO_BINDTODEVICE` **and** `bind(ip, 0)` (`DeviceBinder`, `src/connection/socket.rs`),
+  so egress leaves the named interface *and* the wire source address is deterministic —
+  neither half substitutes for the other, and an unmapped link still takes the
+  `SourceIpBinder` path verbatim.
+- **Link identity is the sidecar's `link_id`; `(ip, iface)` is only the current socket
+  key.** Registration, stats, and telemetry state attach to `link_id`, which is stable
+  across reloads, reconnects, and interface changes; dedup runs on the socket key, which
+  is what tells two same-IP twin modems apart. A reload that moves a `link_id` onto a
+  different `(ip, iface)` **recreates the socket and the registration** rather than
+  carrying window/packet-log/in-flight state across — every one of those is scoped to the
+  interface it was measured on. `src/connection/spec.rs`, `src/sender/connections.rs`.
+- **The interface is re-resolved by NAME on every socket creation, and a stale socket is
+  never reused.** `SO_BINDTODEVICE` resolves a name to an ifindex **once**, at
+  `setsockopt` time, so a replugged modem leaves the socket holding an index that no
+  longer names it — `sendto` then answers `ENODEV` (gone) or `ENETUNREACH` (down), and
+  neither heals. Housekeeping re-resolves each tick (bounded detection: one interval, not
+  a `CONN_TIMEOUT` wait): a changed ifindex forces a rebind, a vanished interface puts the
+  link in a **`removed`** state that waits for a reload instead of burning the reconnect
+  backoff, and an `ENODEV` send does the same from the data path.
+  `src/connection/egress.rs`, `src/sender/egress_tick.rs`.
+- **Route invariant is link health, and it is DISTINCT from ACK liveness.** A device-bound
+  socket whose interface has lost its default route does not fail: IPv4 assumes the
+  destination is on-link, ARPs for the receiver's public address, and drops the packet
+  while `sendto` reports success. So per-interface default-route presence is **observed**
+  (read-only, `/proc/net/route`) and reported on its own axis in the status log — never
+  inferred from send success, and never merged into the ACTIVE/TIMED_OUT line. **No policy
+  routing is introduced**: nothing installs a rule, a route, or a table.
+  Because the invariant is re-read every housekeeping tick but the status log only prints
+  every 30 s, each **crossing** is additionally announced when it happens: losing the route
+  is a `WARN`, regaining it an `INFO`. A crossing into or out of `Unknown` is deliberately
+  silent — an unreadable route table is not evidence either way, and every link's first
+  observation leaves `Unknown`. `src/connection/route.rs`
+  (`classify_route_transition`), `src/sender/egress_tick.rs`.
+- **A `SIGHUP` with `--bind-map` runs the ADR-003 read protocol off the forwarding loop.**
+  The bounded pair read (hash-coherent pair, or fail-open) is spawned and answered back
+  into the event loop, because a retried hash mismatch would otherwise stall packet
+  forwarding for up to 2 s. Without `--bind-map` the SIGHUP path is the legacy
+  reload guard, unchanged. `src/sender/links.rs`.
 - **`--capabilities-json` is the pre-spawn probe (ADR-003 §7).** One-shot, side-effect
   free, exits `0` with a single-line JSON capability document on stdout (before logging is
   initialized). **The load-bearing half is the caller's:** non-zero exit, unparseable
@@ -340,9 +377,30 @@ without privileges and covers repeated teardown calls. Both namespace and veth n
 the shared PID+atomic-counter uniqueness suffix; do not replace the veth suffix with the
 test-binary PID alone because scenarios inside one integration target run in parallel.
 Never run the privileged targets unbounded: use `scripts/netns_test_gate.sh`, which caps
-each target at 90 s by default. Separately, `stall_deselect_real_starlink_repro` is one
-intentionally ignored hardware-only test; run it with `--ignored` only on the bonded
-Starlink/cellular validation rig.
+each target at 90 s by default. **`netns_twin` is the one exception, at 420 s
+(`NETNS_TWIN_TEST_TIMEOUT_SECONDS`)**: its scenarios wait out real sender timers no other
+target touches — the 15 s `CONN_TIMEOUT` and the 30 s status-log interval — so a shared
+budget would make it flake at exit 124. Separately,
+`stall_deselect_real_starlink_repro` is one intentionally ignored hardware-only test; run
+it with `--ignored` only on the bonded Starlink/cellular validation rig.
+
+**`tests/netns_twin.rs` — duplicate-IP twin-modem scenarios (8 tests).** The only target
+that reproduces two uplinks sharing ONE source address, which is what the bind-map exists
+for. It needs a topology no other target has, built by `crates/network-sim/src/twin/`:
+each twin sits behind its **own NAT carrier namespace**, because a plain veth pair would
+answer both uplinks at the same address and route every reply down one interface, so the
+second device-bound socket would never register — a topology artifact that reads as a
+sender bug. Two settings are load-bearing and were both found the hard way: per-device
+`rp_filter` must be cleared (the effective value is `max(all, dev)`, and strict
+reverse-path silently eats the shared address's ARP replies on the second twin), and the
+receiver answers from the address the sender dialed via a `src` hint on its return routes.
+Scenarios: both twins register and carry simultaneously; the same topology WITHOUT
+`--bind-map` leaves the second twin dead weight (the falsifiability control — without it
+the bonding assertion proves nothing); reload remove/re-add under a stable `link_id`; a
+degraded reload retaining the mapped pool; a file-order swap that recreates no socket; a
+well-formed but unorderable republication refused as `stale-generation`; an
+unplug/replug recovering on a genuinely new ifindex; and a route-removal blackhole
+reported on the route axis, confirmed by ACK timeout, never reading healthy.
 
 **Production subscription-concurrency invariant (BLOCKING, separate target).**
 `tests/subscription_loom.rs` uses Loom to enumerate schedules while racing the real
@@ -537,15 +595,23 @@ src/
   config.rs / config/    runtime config (DynamicConfig, ConfigSnapshot); stdin + Unix-socket control
   mode.rs            SchedulingMode (Classic | Enhanced | RttThreshold | Edpf)
   bind_map/          optional versioned bind-map sidecar (ADR-003): parser, coherence,
-                     bounded retry, fail-open duplicate-safe resolution. Contract only —
-                     binds no sockets.
+                     bounded retry, fail-open duplicate-safe resolution
   capabilities.rs    --capabilities-json pre-spawn probe document
   connection/        SrtlaConnection, bind/resolve, incoming packet handling, RTT (Kalman)
+    socket.rs        SourceIpBinder (legacy) + DeviceBinder (SO_BINDTODEVICE + source bind)
+    spec.rs          UplinkSpec/SocketKey — link_id identity vs (ip, iface) socket key
+    egress.rs        ifindex staleness: re-resolve, re-enumeration, ENODEV -> removed
+    route.rs         read-only per-iface default-route observation (blackhole check)
   protocol.rs        SRTLA protocol constants/structures
   registration.rs    REG1/REG2/REG3 flow + ID propagation
   sender/            packet forwarding + selection/ (BLEST → IoDS → EDPF), status logging
+    links.rs         where the uplink set comes from (legacy ips file, or the bind-map pair)
+    connections.rs   pool rebuild: dedup on socket key, survive on link_id
+    egress_tick.rs   the per-tick egress re-resolution + route observation
   tests/             unit / integration / e2e / protocol / registration suites
 crates/network-sim/  dev-only network simulation harness (workspace member)
+  twin/            duplicate-IP twin topology (NAT carrier per link), bind-map
+                   sidecar publisher, and the twin process stack
 rust-toolchain.toml  pinned nightly (CERALIVE)
 rustfmt.toml         unstable nightly fmt config (edition 2024)
 ci/build-deb.sh      single-source .deb packager (control + filename + glob self-test)
