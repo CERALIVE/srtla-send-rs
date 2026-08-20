@@ -21,6 +21,7 @@
 mod error;
 mod iface;
 mod read;
+mod report;
 mod resolve;
 mod sidecar;
 mod types;
@@ -34,6 +35,7 @@ pub use read::{
     BIND_MAP_RETRY_ATTEMPTS, BIND_MAP_RETRY_BUDGET_MS, BIND_MAP_RETRY_DELAY_MS, BindMapPaths,
     PairRead, read_pair,
 };
+pub use report::{BindMapReport, BindMapStatusRecord, CollisionRecord, DispositionRecord};
 pub use resolve::{
     BindMapDisposition, BindMapStatus, CollisionGroup, EffectiveLink, Resolution, ResolvePhase,
     resolve, resolve_absent,

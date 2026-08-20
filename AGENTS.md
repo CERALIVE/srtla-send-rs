@@ -239,6 +239,16 @@ CeraUI and the device integration depend on these staying stable:
   `--bind-map`. The shipped `3.2.0` binary answers this flag with `error: unexpected
   argument` and exit `2`, which is precisely that signal; callers must treat *any*
   non-zero exit the same way rather than matching on the code or the message.
+- **The runtime `get-capabilities` returns the SAME document, plus `methods`.** The
+  JSON-RPC method on `--control-socket` emits every key of `capability_document()`
+  verbatim and adds an additive `methods` array (the control methods and event topics
+  ADR-001 requires, which previously occupied the `capabilities` key). Pre-spawn probe and
+  live socket must never disagree about what a build can do; pinned by
+  `get_capabilities_matches_the_pre_spawn_probe_document`. **`hello`'s `capabilities`
+  stays a string array** — the TS control binding feature-detects with
+  `hello.capabilities.includes(...)`, so that field is frozen.
+  `get-status` additionally returns `bind_map_status`, `disposition`, and a `links` array
+  of `{conn_id, iface?, link_id?}` in telemetry order.
 - **`-v/--version` IS operator-visible, and its build metadata is OPTIONAL.** CeraUI
   shells out to `srtla_send -v` and renders the raw stdout in Settings → Versions
   (`apps/backend/src/modules/system/revisions.ts`), so this line is read by humans, not
@@ -269,7 +279,49 @@ CeraUI and the device integration depend on these staying stable:
   `in_flight` are **required** by the frozen `@ceralive/srtla` Zod reader. The cadence is
   `--stats-file-interval` ms (default 1000). The live file is unlinked on clean shutdown
   (SIGTERM/SIGINT). `schema_version` is additive over the C producer — the Zod reader
-  strips it. Implemented in `src/telemetry_file.rs`; CeraUI parses this verbatim.
+  strips it. The document model lives in `src/telemetry_doc.rs` (schema, units,
+  serializer) and the publish mechanics in `src/telemetry_file.rs`, which re-exports the
+  model so existing `telemetry_file::` import paths are unchanged; CeraUI parses this
+  verbatim.
+- **ADR-003 telemetry echo — four OPTIONAL additive fields, `schema_version` STAYS 1.**
+  Per connection: `iface` (the interface the socket is bound to) and `link_id` (the
+  sidecar's writer-assigned opaque identity, **echoed** — the sender never mints one).
+  Top level: `bind_map_status` `{state: active|absent|degraded, reason?}` with the seven
+  frozen ADR-003 §6.4 reasons, and `disposition`
+  `{state: mapped|retained_last_valid|legacy_unique_only|startup_collision_excluded,
+  collisions?}`. The two are **orthogonal**: a degraded RELOAD keeps the last valid mapped
+  pool running (`retained_last_valid`) while a degraded STARTUP excludes the ambiguous
+  rows (`startup_collision_excluded`) and publishes the group it broke up — the colliding
+  IP plus the **`BIND_IPS_FILE` line positions** (NOT `conn_id`s) that are effective vs
+  excluded. That startup-exclusion / reload-retention split is now directly observable
+  instead of inferable from log text. Every field is omitted (never `null`, never `""`)
+  when it does not apply, so an unmapped/legacy run's document is byte-identical to the
+  pre-ADR-003 producer's plus the top-level pair. **`schema_version` names the shape of
+  the REQUIRED fields, not the set of fields present** — the schema grows only by
+  addition, added fields are always optional, and the version is reserved for renaming,
+  retyping, or REMOVING a required field or changing a unit. Do not bump it for an
+  additive field. Types come from `src/bind_map/report.rs`, which projects the existing
+  `BindMapStatus`/`BindMapDisposition`/`CollisionGroup` — do NOT introduce a parallel
+  status type. `SharedStats::set_bind_map` holds the mode on its own lock and
+  `SharedStats::get` composes it, because `update` rebuilds the snapshot on every
+  housekeeping tick while the mode changes only on a reload.
+- **`conn_id` is RETAINED but TRANSIENT; UI identity is `link_id`.** `conn_id` is a
+  position in `BIND_IPS_FILE`, so a SIGHUP reorder hands the same modem a different one.
+  It stays in the schema for compatibility and for correlating records within one
+  snapshot. Anything that must survive a reload, reorder, reconnect, lease change, or
+  interface move MUST key on `link_id`. Two twin modems on one source IP are
+  distinguishable only by it. Pinned by the `telemetry-reordered` / `telemetry-reconnect`
+  fixtures on both sides.
+- **Cross-language fixture matrix — Rust writes, TypeScript parses THE SAME BYTES.**
+  Eight fixtures, each committed twice (`tests/fixtures/<name>.json` and
+  `bindings/typescript/tests/fixtures/<name>.json`) and asserted byte-identical by
+  `tests/telemetry_fixture_parity.rs`. The producer half is `tests/telemetry_fixtures.rs`
+  (regenerate deliberately with `UPDATE_GOLDEN=1 cargo test --test telemetry_fixtures`,
+  which rewrites BOTH copies); the consumer half is
+  `bindings/typescript/tests/telemetry-fixtures.test.ts`. `telemetry-legacy-producer.json`
+  is the **frozen** pre-ADR-003 producer document and is NEVER regenerated — it is the
+  old-shape side of the compatibility proof, and a test asserts it contains none of the
+  four additive keys. Do not `biome check --write` any fixture (see TS BINDING TOOLING).
 - **Cumulative session bytes (`bytes_sent_total`, ADR-002).** Additive at BOTH scopes:
   top-level (whole bond) and per-connection. **Unit is BYTES, and no ×8 is applied** —
   it is a count, not a rate, and it sits directly beside `bitrate_bps` (bits/s), which
@@ -596,7 +648,10 @@ src/
   mode.rs            SchedulingMode (Classic | Enhanced | RttThreshold | Edpf)
   bind_map/          optional versioned bind-map sidecar (ADR-003): parser, coherence,
                      bounded retry, fail-open duplicate-safe resolution
+    report.rs        telemetry projection of a Resolution (bind_map_status + disposition)
   capabilities.rs    --capabilities-json pre-spawn probe document
+  telemetry_doc.rs   ADR-001 document model + units + serializer (schema lives here)
+  telemetry_file.rs  opt-in --stats-file publish mechanics (temp -> fsync -> rename)
   connection/        SrtlaConnection, bind/resolve, incoming packet handling, RTT (Kalman)
     socket.rs        SourceIpBinder (legacy) + DeviceBinder (SO_BINDTODEVICE + source bind)
     spec.rs          UplinkSpec/SocketKey — link_id identity vs (ip, iface) socket key
@@ -676,22 +731,27 @@ for the full operator/runtime reference (modes, runtime commands, tuning constan
 ### Task 7 — Telemetry Rust test hardening
 
 Two new integration-level test files complement the in-module unit tests in
-`src/telemetry_file.rs`:
+`src/telemetry_doc.rs` (document model) and `src/telemetry_file.rs` (publish mechanics):
 
 - **`tests/telemetry_edge_cases.rs`** (9 tests): zero connections (`connections:[]`
   idle-not-absent), active link with zero traffic (`bitrate_bps:0` present not absent),
   very-high RTT 5000 ms verbatim, `schema_version==1` pinned (constant + JSON,
   number-not-string, leads the document), `bitrate_bps == wire_bytes*8` on fixed
   inputs (0, 1, 150k, 312.5k, 1M bytes/s).
-- **`tests/telemetry_fixture_parity.rs`** (3 tests): Rust golden
-  `tests/fixtures/telemetry-golden.json` vs TS-binding golden
-  `bindings/typescript/tests/fixtures/telemetry-golden.json` asserted byte-identical
-  + structural (top-level keys, `schema_version==constant`, frozen 7-key per-conn set).
-  Both anchored at `CARGO_MANIFEST_DIR` -- inside the repo, Rule D clean.
+- **`tests/telemetry_fixture_parity.rs`** (5 tests): every fixture in the matrix asserted
+  byte-identical between `tests/fixtures/` and `bindings/typescript/tests/fixtures/`,
+  plus structural parity on the golden (top-level keys, `schema_version==constant`,
+  frozen 7-key per-conn set) and the additivity proof (`telemetry-golden` minus the two
+  top-level ADR-003 keys == `telemetry-legacy-producer` exactly). All paths anchored at
+  `CARGO_MANIFEST_DIR` -- inside the repo, Rule D clean.
+- **`tests/telemetry_fixtures.rs`** (8 tests): the producer half of the cross-language
+  matrix -- legacy / golden / mapped / reordered / reconnect / degraded-startup /
+  degraded-reload / unknown-fields. Regenerate with
+  `UPDATE_GOLDEN=1 cargo test --test telemetry_fixtures` (rewrites BOTH copies).
 
-Key seam: `build_telemetry_json(last_updated_ms, conns)` takes an explicit ms arg.
-Tests call it with a fixed timestamp (`1_749_556_546_000`) -- never `publish()` --
-to stay non-flaky. Do not conflate with the tokio virtual-clock seam
+Key seam: `build_telemetry_json(last_updated_ms, &TelemetryInputs { .. })` takes an
+explicit ms arg. Tests call it with a fixed timestamp (`1_749_556_546_000`) -- never
+`publish()` -- to stay non-flaky. Do not conflate with the tokio virtual-clock seam
 (`advance_test_clock`), which is for timeout/keepalive tests only.
 
 Gate note: `cargo clippy --features test-internals` is NOT a gate command (fails on
@@ -711,6 +771,18 @@ New `bindings/typescript/tests/telemetry-reader.test.ts` (24 tests; 68 binding t
 - `src/telemetry/watch.test.ts` keeps six distinct watcher contracts without
   fixed sleeps: absent, stale-boundary, stop, file-appears, invalid-schema, and
   parsed-payload behavior. Callback/event-loop completion replaces timed windows.
+- `bindings/typescript/tests/telemetry-fixtures.test.ts` (13 tests) is the consumer half
+  of the cross-language matrix: it parses the Rust-written fixtures and asserts
+  old-producer tolerance (every added field reads `undefined`, and `undefined` is NOT
+  conflated with the positive `'absent'` state), twin-modem disambiguation by `link_id`,
+  reorder/reconnect identity stability, both degraded modes, the seven frozen degraded
+  reasons, and forward tolerance of a future producer's unknown keys.
+
+> **`extra_fields_stripped_or_rejected` was ADAPTED, not weakened.** That test used
+> `iface` as its stand-in for "a field a future producer might add"; `iface` has since
+> BECOME a known optional field, so the placeholder moved to a genuinely unknown key and
+> the now-known field is additionally asserted to be PRESERVED. Same contract, read from
+> both sides.
 
 `tsconfig.json` fix: added `tests/**/*` to `include`; moved `rootDir: "src"` into
 `tsconfig.build.json` only. This ensures `pnpm typecheck` typechecks tests (not

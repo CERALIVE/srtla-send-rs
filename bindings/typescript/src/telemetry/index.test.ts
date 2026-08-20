@@ -258,9 +258,14 @@ describe('schema edge cases (T21)', () => {
 	});
 
 	test('extra_fields_stripped_or_rejected', async () => {
-		// Zod's default object semantics strip unknown keys: the parse succeeds and the
-		// extra `iface` field (a conn_id→iface enrichment a future producer might add)
-		// does not leak into the typed result.
+		// Zod's default object semantics strip unknown keys: the parse succeeds and an
+		// unrecognized per-connection field does not leak into the typed result.
+		//
+		// This test originally used `iface` as its stand-in for "a field a future
+		// producer might add". `iface` has since BECOME a known optional field
+		// (ADR-003), so the placeholder moved to a genuinely unknown key and the
+		// now-known field is asserted to be PRESERVED — the same contract, read
+		// from both sides.
 		const withExtra = {
 			schema_version: 1,
 			last_updated_ms: Date.now(),
@@ -274,17 +279,20 @@ describe('schema edge cases (T21)', () => {
 					in_flight: 100,
 					bitrate_bps: 2500000,
 					iface: 'usb0',
+					enrichment_from_a_later_producer: 'usb0',
 				},
 			],
 		};
 		const parsed = telemetrySchema.safeParse(withExtra);
 		expect(parsed.success).toBe(true);
 		if (!parsed.success) return;
-		expect(parsed.data.connections[0]).not.toHaveProperty('iface');
+		expect(parsed.data.connections[0]).not.toHaveProperty('enrichment_from_a_later_producer');
+		expect(parsed.data.connections[0]?.iface).toBe('usb0');
 
 		const p = await writeSnapshot(JSON.stringify(withExtra));
 		const t = await readTelemetry(p);
 		expect(t).not.toBeNull();
-		expect(t?.connections[0]).not.toHaveProperty('iface');
+		expect(t?.connections[0]).not.toHaveProperty('enrichment_from_a_later_producer');
+		expect(t?.connections[0]?.iface).toBe('usb0');
 	});
 });

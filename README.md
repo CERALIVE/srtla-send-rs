@@ -463,16 +463,81 @@ The document is rewritten atomically (`<path>.tmp` → `fsync` → `rename(2)`) 
 write. It is a single newline-free object:
 
 ```json
-{"schema_version":1,"last_updated_ms":1749556546000,"connections":[{"conn_id":"0","rtt_ms":42,"nak_count":3,"weight_percent":85,"window":8192,"in_flight":100,"bitrate_bps":2500000,"bytes_sent_total":812000000}],"bytes_sent_total":1620000000}
+{"schema_version":1,"last_updated_ms":1749556546000,"connections":[{"conn_id":"0","rtt_ms":42,"nak_count":3,"weight_percent":85,"window":8192,"in_flight":100,"bitrate_bps":2500000,"bytes_sent_total":812000000,"iface":"wwan0","link_id":"modem-a"}],"bytes_sent_total":1620000000,"bind_map_status":{"state":"active"},"disposition":{"state":"mapped"}}
 ```
 
-- `conn_id` — the uplink's index in `BIND_IPS_FILE` order, as a string.
+- `conn_id` — the uplink's index in `BIND_IPS_FILE` order, as a string. **Transient** —
+  see [Link identity](#link-identity-conn_id-is-transient-link_id-is-not) below.
 - `rtt_ms` — Kalman-smoothed RTT.
 - `weight_percent` — the link's normalized share of selection weight (0–100).
 - `bitrate_bps` — send rate in **bits per second** (wire bytes/s × 8).
 - `window` / `in_flight` — congestion-window and in-flight packet counts.
 - `bytes_sent_total` — cumulative **bytes** sent this session. Present at two scopes:
   per connection (that uplink) and at the top level (the whole bond).
+- `iface` / `link_id` — **optional**, per connection. The interface the link's socket is
+  bound to, and the bind-map sidecar's writer-assigned identity. Both are absent for an
+  unmapped (legacy) link — the sender only ever *echoes* an identity and never invents one.
+- `bind_map_status` / `disposition` — **optional**, top level. The sender's actual
+  operating mode; see [Operating mode](#operating-mode-bind_map_status--disposition).
+
+### Link identity: `conn_id` is transient, `link_id` is not
+
+`conn_id` is a **position**, not an identity: it is the link's index in `BIND_IPS_FILE`
+order, so a `SIGHUP` reload that reorders the file gives the same physical modem a
+different `conn_id`. It is retained for compatibility and for correlating records *within
+one snapshot*.
+
+**A UI must key on `link_id`.** It is the sidecar's opaque, writer-assigned id, and it
+survives reloads, reorders, reconnects, DHCP lease changes, and moves to a different
+interface. Two twin modems that share one source IP are distinguishable *only* by it.
+A link with no `link_id` is unmapped, and there is nothing stable to key on.
+
+### Operating mode: `bind_map_status` + `disposition`
+
+Two orthogonal fields, so a consumer renders what the sender is *actually* doing instead
+of inferring it from log text (ADR-003 §6.4):
+
+```json
+"bind_map_status": {"state": "degraded", "reason": "hash_mismatch"},
+"disposition": {"state": "retained_last_valid"}
+```
+
+- `bind_map_status.state` — `active` | `absent` | `degraded`. `reason` is present only
+  when degraded, and is one of `hash_mismatch`, `malformed`, `unknown_iface`,
+  `retry_exhausted`, `missing_file`, `unreadable`, `unsupported`.
+- `disposition.state` — `mapped` | `retained_last_valid` | `legacy_unique_only` |
+  `startup_collision_excluded`.
+
+They are orthogonal because a degraded map does not imply a broken bond: a degraded
+**reload** leaves the last valid mapped pool running (`retained_last_valid`), while a
+degraded **startup** has nothing to retain and excludes the ambiguous rows
+(`startup_collision_excluded`). The latter carries the group it broke up:
+
+```json
+"disposition": {"state": "startup_collision_excluded",
+  "collisions": [{"ip": "192.168.8.100", "effective_index": 0, "excluded_indices": [1]}]}
+```
+
+`effective_index` / `excluded_indices` are **`BIND_IPS_FILE` line positions**, not
+`conn_id`s — an excluded line never becomes a connection, so the two numberings diverge
+exactly when this array is present. This is what lets an operator with two modems and one
+visible link be told *why*, from typed data.
+
+### `schema_version` handling
+
+`schema_version` stays **`1`**. It names the shape of the **required** fields, not the set
+of fields present:
+
+- the schema grows **only by addition**, and every added field is **optional**;
+- a consumer therefore keeps parsing a newer document (the Zod reader strips keys it does
+  not know), and a producer that omits an added field — an older build — still validates;
+- the version is reserved for a change no old consumer could survive: renaming, retyping,
+  or **removing** a required field, or changing a unit.
+
+None of `iface`, `link_id`, `bind_map_status`, or `disposition` does any of that, so none
+of them bumps it. The proof is committed: `tests/fixtures/telemetry-golden.json` is
+byte-for-byte `tests/fixtures/telemetry-legacy-producer.json` (the pre-ADR-003 producer's
+own output) plus the additive tail, asserted by `tests/telemetry_fixture_parity.rs`.
 
 With no active links the file still exists with `"connections": []` ("running but idle",
 distinct from "absent"). The live file is removed on clean shutdown (SIGTERM/SIGINT).
@@ -584,6 +649,23 @@ It exists so a supervisor can decide **before spawning a stream** whether to pas
 `--bind-map`. Older binaries do not have the flag and exit non-zero with a usage error —
 that is the intended "no support" answer. Treat **any** non-zero exit, unparseable output,
 or timeout as no support and use the legacy spawn.
+
+The **running** process answers the same question with the same document: the JSON-RPC
+`get-capabilities` method on `--control-socket` returns every key of the probe document
+verbatim, plus an additive `methods` array enumerating the control methods and event
+topics. A supervisor that probed the binary and a consumer that asks the live socket can
+never be told two different things (pinned by
+`get_capabilities_matches_the_pre_spawn_probe_document`). `hello`'s `capabilities` field
+is unchanged — it remains the frozen string array the TS control binding feature-detects
+with.
+
+`get-status` additionally reports the live operating mode and per-link identity:
+
+```json
+{"mode":"enhanced","quality_enabled":true,"exploration_enabled":false,"rtt_delta_ms":30,
+ "bind_map_status":{"state":"active"},"disposition":{"state":"mapped"},
+ "links":[{"conn_id":"0","iface":"wwan0","link_id":"modem-a"}]}
+```
 
 ## Startup Without an IP List (Unix)
 

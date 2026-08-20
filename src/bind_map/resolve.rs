@@ -25,6 +25,30 @@ pub enum BindMapStatus {
     Degraded(DegradedReason),
 }
 
+impl BindMapStatus {
+    /// The snake_case state token (ADR-003 §6.4), without the degraded reason.
+    ///
+    /// This is the one place the three state words are spelled; the log line and
+    /// the telemetry projection both read it, so they can never drift apart.
+    #[must_use]
+    pub const fn state_str(&self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Absent => "absent",
+            Self::Degraded(_) => "degraded",
+        }
+    }
+
+    /// The degraded reason, or `None` for the two non-degraded states.
+    #[must_use]
+    pub const fn reason(&self) -> Option<DegradedReason> {
+        match self {
+            Self::Degraded(reason) => Some(*reason),
+            Self::Active | Self::Absent => None,
+        }
+    }
+}
+
 /// What is the sender actually running?
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BindMapDisposition {
@@ -36,6 +60,19 @@ pub enum BindMapDisposition {
     LegacyUniqueOnly,
     /// Degraded at startup with at least one collision group.
     StartupCollisionExcluded,
+}
+
+impl BindMapDisposition {
+    /// The exact snake_case token published in logs and telemetry (ADR-003 §6.4).
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Mapped => "mapped",
+            Self::RetainedLastValid => "retained_last_valid",
+            Self::LegacyUniqueOnly => "legacy_unique_only",
+            Self::StartupCollisionExcluded => "startup_collision_excluded",
+        }
+    }
 }
 
 /// One uplink the sender should actually run.

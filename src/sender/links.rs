@@ -18,8 +18,8 @@ use tracing::{info, warn};
 
 use super::connections::{specs_from_effective_links, specs_from_ips};
 use crate::bind_map::{
-    BindMapDisposition, BindMapError, BindMapPaths, BindMapStatus, MappedPool, PairRead,
-    ResolvePhase, SystemIfaces, ValidateCtx, read_pair, resolve,
+    BindMapDisposition, BindMapError, BindMapPaths, BindMapReport, BindMapStatus, MappedPool,
+    PairRead, ResolvePhase, SystemIfaces, ValidateCtx, read_pair, resolve,
 };
 use crate::connection::UplinkSpec;
 use crate::sender::read_ip_list;
@@ -69,6 +69,7 @@ pub struct LinkSource {
     ips_file: String,
     sidecar: Option<String>,
     last_valid: Option<MappedPool>,
+    report: BindMapReport,
 }
 
 impl LinkSource {
@@ -78,12 +79,34 @@ impl LinkSource {
             ips_file: paths.ips_file.to_string(),
             sidecar: paths.bind_map.map(ToString::to_string),
             last_valid: None,
+            // A legacy run never resolves, so the default is what it reports for
+            // its whole lifetime: absent, running legacy, nothing excluded.
+            report: BindMapReport::default(),
         }
     }
 
     #[must_use]
     pub fn is_mapped(&self) -> bool {
         self.sidecar.is_some()
+    }
+
+    /// The last resolution's telemetry projection (ADR-003 §6.4).
+    ///
+    /// Read by the event loop on each stats refresh so the snapshot reports the
+    /// sender's *actual* operating mode instead of leaving a UI to infer it.
+    #[must_use]
+    pub fn report(&self) -> &BindMapReport {
+        &self.report
+    }
+
+    /// What a degradation leaves running: a live bond keeps its last valid
+    /// mapped pool, a startup that never had one falls open to legacy.
+    fn retention(&self) -> BindMapDisposition {
+        if self.last_valid.is_some() {
+            BindMapDisposition::RetainedLastValid
+        } else {
+            BindMapDisposition::LegacyUniqueOnly
+        }
     }
 
     /// The arguments a spawned reload read needs.
@@ -112,6 +135,11 @@ impl LinkSource {
             Ok(pair) => pair,
             Err(err) => {
                 warn!("bind-map read failed: {err}");
+                // The outer Err means BIND_IPS_FILE itself was unusable, so no
+                // resolution ran. Report the degradation anyway — leaving the
+                // previous status standing would tell a UI the map is still
+                // active while the sender is running on nothing new.
+                self.report = BindMapReport::degraded(err.reason(), self.retention());
                 return SmallVec::new();
             }
         };
@@ -120,7 +148,8 @@ impl LinkSource {
             None => ResolvePhase::Startup,
         };
         let resolution = resolve(pair.map, &pair.ips, phase);
-        report(&resolution.status, resolution.disposition);
+        self.report = BindMapReport::from(&resolution);
+        log_outcome(&resolution.status, resolution.disposition);
         for group in &resolution.excluded {
             warn!(
                 "bind-map unusable: source IP {} is claimed by {} uplink(s); running line {} and \
@@ -140,13 +169,8 @@ impl LinkSource {
     }
 }
 
-fn report(status: &BindMapStatus, disposition: BindMapDisposition) {
-    let disposition = match disposition {
-        BindMapDisposition::Mapped => "mapped",
-        BindMapDisposition::RetainedLastValid => "retained_last_valid",
-        BindMapDisposition::LegacyUniqueOnly => "legacy_unique_only",
-        BindMapDisposition::StartupCollisionExcluded => "startup_collision_excluded",
-    };
+fn log_outcome(status: &BindMapStatus, disposition: BindMapDisposition) {
+    let disposition = disposition.as_str();
     match status {
         BindMapStatus::Active => info!("bind-map active ({disposition})"),
         BindMapStatus::Absent => info!("bind-map absent ({disposition})"),

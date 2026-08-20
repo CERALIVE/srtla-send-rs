@@ -635,7 +635,7 @@ fn handle_unix_client(
                 run_subscription_loop(&subscriptions, &mut stream);
                 return;
             }
-            Some(crate::jsonrpc::dispatch_jsonrpc(trimmed, &config))
+            Some(crate::jsonrpc::dispatch_jsonrpc(trimmed, &config, &stats))
         } else {
             match apply_cmd(&config, trimmed, Some(&stats)) {
                 CmdResponse::Json(json) => Some(json),

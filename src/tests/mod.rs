@@ -11,6 +11,9 @@ pub mod bind_map_generation_tests;
 pub mod bind_map_resolve_tests;
 
 #[cfg(test)]
+pub mod bind_map_report_tests;
+
+#[cfg(test)]
 pub mod batch_io_tests;
 
 #[cfg(test)]

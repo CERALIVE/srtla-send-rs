@@ -16,8 +16,10 @@
 
 use serde_json::{Value, json};
 
+use crate::capabilities::capability_document;
 use crate::config::DynamicConfig;
 use crate::mode::SchedulingMode;
+use crate::stats::SharedStats;
 
 /// JSON-RPC 2.0 protocol version tag echoed in every response.
 const JSONRPC_VERSION: &str = "2.0";
@@ -59,7 +61,7 @@ const CAPABILITIES: [&str; 6] = [
 /// `id`; valid JSON that is not a request object carrying a string `method`
 /// returns `-32600`; an unrecognized method returns `-32601`. Otherwise the
 /// matching `DynamicConfig` setter runs and a `{"ok":true}` result is returned.
-pub(crate) fn dispatch_jsonrpc(frame: &str, config: &DynamicConfig) -> String {
+pub(crate) fn dispatch_jsonrpc(frame: &str, config: &DynamicConfig, stats: &SharedStats) -> String {
     // A non-JSON / malformed frame is a parse error with a null id.
     let Ok(value) = serde_json::from_str::<Value>(frame) else {
         return error_response(Value::Null, PARSE_ERROR, "Parse error");
@@ -78,14 +80,14 @@ pub(crate) fn dispatch_jsonrpc(frame: &str, config: &DynamicConfig) -> String {
 
     match method {
         "hello" => success_response(id, hello_result()),
-        "get-capabilities" => success_response(id, json!({ "capabilities": CAPABILITIES })),
+        "get-capabilities" => success_response(id, capabilities_result()),
         "set-mode" => set_mode(id, params, config),
         "set-quality" => set_bool(id, params, |enabled| config.set_quality_enabled(enabled)),
         "set-exploration" => set_bool(id, params, |enabled| {
             config.set_exploration_enabled(enabled)
         }),
         "set-rtt-delta" => set_rtt_delta(id, params, config),
-        "get-status" => success_response(id, status_result(config)),
+        "get-status" => success_response(id, status_result(config, stats)),
         _ => error_response(id, METHOD_NOT_FOUND, "Method not found"),
     }
 }
@@ -102,16 +104,63 @@ fn hello_result() -> Value {
     })
 }
 
-/// The `get-status` result: the current `ConfigSnapshot` as JSON (the same
-/// state the text protocol's `status` command prints).
-fn status_result(config: &DynamicConfig) -> Value {
+/// The runtime `get-capabilities` result.
+///
+/// This is the **same document** `--capabilities-json` prints before the process
+/// ever binds a socket, so a supervisor that probed the binary pre-spawn and a
+/// consumer that asks the live control socket can never be told two different
+/// things. `methods` is the additive control-method/event-topic enumeration
+/// ADR-001 requires; everything else is the capability document verbatim.
+fn capabilities_result() -> Value {
+    let mut doc = serde_json::to_value(capability_document())
+        .unwrap_or_else(|e| unreachable!("capability document is always serializable: {e}"));
+    if let Some(obj) = doc.as_object_mut() {
+        obj.insert("methods".to_string(), json!(CAPABILITIES));
+    }
+    doc
+}
+
+/// The `get-status` result: the current `ConfigSnapshot` as JSON (the same state
+/// the text protocol's `status` command prints), plus the ADR-003 operating
+/// mode and the per-link identity echo.
+fn status_result(config: &DynamicConfig, stats: &SharedStats) -> Value {
     let snap = config.snapshot();
+    let live = stats.get();
     json!({
         "mode": snap.mode.to_string(),
         "quality_enabled": snap.quality_enabled,
         "exploration_enabled": snap.exploration_enabled,
         "rtt_delta_ms": snap.rtt_delta_ms,
+        "bind_map_status": live.bind_map.bind_map_status,
+        "disposition": live.bind_map.disposition,
+        "links": link_identities(&live),
     })
+}
+
+/// Per-link identity, in the same order (and therefore the same `conn_id`
+/// numbering) the telemetry document uses.
+///
+/// `iface` and `link_id` are omitted for an unmapped link rather than sent as
+/// null: the sender only ever echoes the sidecar's identity and never invents
+/// one, so "absent" is the honest answer.
+fn link_identities(stats: &crate::stats::StatsSnapshot) -> Value {
+    let links: Vec<Value> = stats
+        .links
+        .iter()
+        .enumerate()
+        .map(|(idx, link)| {
+            let mut record = json!({ "conn_id": idx.to_string() });
+            let obj = record.as_object_mut().expect("just built as an object");
+            if let Some(iface) = link.iface.as_ref() {
+                obj.insert("iface".to_string(), json!(iface));
+            }
+            if let Some(link_id) = link.link_id.as_ref() {
+                obj.insert("link_id".to_string(), json!(link_id));
+            }
+            record
+        })
+        .collect();
+    json!(links)
 }
 
 fn set_mode(id: Value, params: Option<&Value>, config: &DynamicConfig) -> String {

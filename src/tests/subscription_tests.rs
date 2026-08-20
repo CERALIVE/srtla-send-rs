@@ -14,10 +14,11 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+use crate::bind_map::BindMapReport;
 use crate::config::{DynamicConfig, spawn_config_listener};
 use crate::stats::SharedStats;
 use crate::subscription::SubscriptionManager;
-use crate::telemetry_file::{TelemetryConn, build_telemetry_json, write_atomic};
+use crate::telemetry_file::{TelemetryConn, TelemetryInputs, build_telemetry_json, write_atomic};
 
 const SUBSCRIBE_FRAME: &str = r#"{"jsonrpc":"2.0","method":"subscribe-events","id":1}"#;
 
@@ -31,7 +32,22 @@ fn sample_conn() -> TelemetryConn {
         in_flight: 100,
         bitrate_bytes_per_sec: 312_500,
         bytes_sent_total: 0,
+        iface: None,
+        link_id: None,
     }
+}
+
+/// A legacy-shaped snapshot document: the subscription tests care about
+/// delivery, not about the bind-map fields.
+fn snapshot_json(last_updated_ms: u64, conns: &[TelemetryConn]) -> String {
+    build_telemetry_json(
+        last_updated_ms,
+        &TelemetryInputs {
+            conns,
+            session_bytes_sent: 0,
+            bind_map: &BindMapReport::default(),
+        },
+    )
 }
 
 fn spawn_listener_with(
@@ -70,11 +86,7 @@ fn subscribe_events_receives_event_notification() {
     // Given a listener with one already-broadcast snapshot to replay
     let config = DynamicConfig::new();
     let subscriptions = SubscriptionManager::new();
-    subscriptions.broadcast(&build_telemetry_json(
-        1_749_556_546_000,
-        &[sample_conn()],
-        0,
-    ));
+    subscriptions.broadcast(&snapshot_json(1_749_556_546_000, &[sample_conn()]));
     let (path, _dir) = spawn_listener_with(&config, &subscriptions);
 
     // When a client subscribes
@@ -106,7 +118,7 @@ fn subscribe_events_receives_event_notification() {
 fn subscribe_events_replays_last_known_snapshot() {
     // Given a manager with a previously broadcast snapshot
     let subscriptions = SubscriptionManager::new();
-    let snapshot = build_telemetry_json(42, &[sample_conn()], 0);
+    let snapshot = snapshot_json(42, &[sample_conn()]);
     subscriptions.broadcast(&snapshot);
 
     // When a new subscriber joins
@@ -134,7 +146,7 @@ fn slow_subscriber_does_not_block_broadcast() {
     // When many snapshots are broadcast rapidly
     let start = Instant::now();
     for i in 0..10_000u64 {
-        subscriptions.broadcast(&build_telemetry_json(i, &[], 0));
+        subscriptions.broadcast(&snapshot_json(i, &[]));
     }
 
     // Then broadcast returns promptly (capacity-1 channel drops, never blocks)
@@ -157,7 +169,7 @@ fn file_sink_still_writes_during_subscription() {
     let rx = subscriptions.subscribe();
 
     // When one snapshot drives both sinks (the real tick builds it once)
-    let snapshot = build_telemetry_json(7, &[sample_conn()], 0);
+    let snapshot = snapshot_json(7, &[sample_conn()]);
     write_atomic(&path, &snapshot).expect("file sink write");
     subscriptions.broadcast(&snapshot);
 
@@ -184,7 +196,7 @@ fn subscriber_cleanup_on_disconnect() {
 
     // When it disconnects (the receiver is dropped) and a broadcast runs
     drop(rx);
-    subscriptions.broadcast(&build_telemetry_json(1, &[], 0));
+    subscriptions.broadcast(&snapshot_json(1, &[]));
 
     // Then the dead subscriber is removed (no channel accumulation)
     assert_eq!(subscriptions.subscriber_count(), 0);

@@ -23,6 +23,7 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use serde::Serialize;
 
+use crate::bind_map::BindMapReport;
 use crate::config::ConfigSnapshot;
 use crate::connection::SrtlaConnection;
 use crate::sender::calculate_quality_multiplier;
@@ -38,6 +39,15 @@ pub struct LinkStats {
     pub ip: IpAddr,
     /// Human-readable label (e.g., "host:port via ip")
     pub label: String,
+    /// Egress interface this link's socket is bound to (`SO_BINDTODEVICE`).
+    /// `None` for a legacy source-IP-bound link — ADDITIVE, never required.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub iface: Option<String>,
+    /// The sidecar's writer-assigned identity for this link (ADR-003), echoed
+    /// verbatim. `None` for an unmapped link; the sender never invents one.
+    /// ADDITIVE, never required.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link_id: Option<String>,
     /// True if SRTLA registration completed (REG3 received)
     pub connected: bool,
     /// True if no packets received within timeout period
@@ -109,6 +119,12 @@ pub struct StatsSnapshot {
     /// transferred" would go backwards.
     pub session_bytes_sent: u64,
 
+    /// The sender's bind-map operating mode (ADR-003 §6.4), flattened to the
+    /// top-level `bind_map_status` + `disposition` pair so a consumer reads the
+    /// ACTUAL mode from typed data instead of inferring it from log text.
+    #[serde(flatten)]
+    pub bind_map: BindMapReport,
+
     /// Per-link details
     pub links: Vec<LinkStats>,
 }
@@ -124,6 +140,7 @@ impl Default for StatsSnapshot {
             total_window: 0,
             total_in_flight: 0,
             session_bytes_sent: 0,
+            bind_map: BindMapReport::default(),
             links: Vec::new(),
         }
     }
@@ -178,6 +195,7 @@ impl SessionBytes {
 pub struct SharedStats {
     inner: Arc<RwLock<StatsSnapshot>>,
     session_bytes: Arc<Mutex<SessionBytes>>,
+    bind_map: Arc<RwLock<BindMapReport>>,
 }
 
 impl SharedStats {
@@ -185,6 +203,18 @@ impl SharedStats {
         Self {
             inner: Arc::new(RwLock::new(StatsSnapshot::default())),
             session_bytes: Arc::new(Mutex::new(SessionBytes::default())),
+            bind_map: Arc::new(RwLock::new(BindMapReport::default())),
+        }
+    }
+
+    /// Record the sender's current bind-map operating mode.
+    ///
+    /// Held separately from the snapshot because `update` rebuilds the snapshot
+    /// wholesale on every housekeeping tick, while the mode only changes on a
+    /// reload — folding it into the rebuild would drop it on the next tick.
+    pub fn set_bind_map(&self, report: &BindMapReport) {
+        if let Ok(mut guard) = self.bind_map.write() {
+            *guard = report.clone();
         }
     }
 
@@ -223,6 +253,8 @@ impl SharedStats {
             let link = LinkStats {
                 ip: conn.local_ip,
                 label: conn.label.clone(),
+                iface: conn.egress.iface().map(|i| i.as_str().to_string()),
+                link_id: conn.link_id.as_ref().map(|id| id.as_str().to_string()),
                 connected: conn.connected,
                 timed_out,
                 window: conn.window,
@@ -252,11 +284,23 @@ impl SharedStats {
     }
 
     /// Get current stats snapshot.
+    ///
+    /// The bind-map operating mode is composed in here rather than baked into
+    /// the stored snapshot: `update` rebuilds that snapshot on every
+    /// housekeeping tick while the mode changes only on a reload, so this is
+    /// the single point where the two cadences meet.
     pub fn get(&self) -> StatsSnapshot {
-        self.inner
+        let mut snapshot = self
+            .inner
             .read()
             .map(|guard| guard.clone())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        snapshot.bind_map = self
+            .bind_map
+            .read()
+            .map(|guard| guard.clone())
+            .unwrap_or_default();
+        snapshot
     }
 
     /// Serialize to JSON.

@@ -243,6 +243,7 @@ pub async fn run_sender_with_config(
     // subscriber) sees fresh state well before the first cadence tick. Build it
     // once and hand the identical bytes to both sinks.
     {
+        shared_stats.set_bind_map(link_source.report());
         shared_stats.update(&connections, &config.snapshot());
         // `last_updated_ms` is compared against `Date.now()` by the TS watcher,
         // so it must be a real wall-clock reading, not the monotonic `now_ms()`.
@@ -327,7 +328,10 @@ pub async fn run_sender_with_config(
                             warn!("housekeeping failed: {err}");
                         }
 
-                        // Update shared stats for telemetry export
+                        // Update shared stats for telemetry export. The bind-map
+                        // report is refreshed alongside it so a reload's new
+                        // operating mode reaches the next published snapshot.
+                        shared_stats.set_bind_map(link_source.report());
                         shared_stats.update(&connections, &config.snapshot());
 
                         if let Some(changes) = pending_changes.take()

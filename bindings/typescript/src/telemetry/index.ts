@@ -80,6 +80,78 @@ export const connectionTelemetrySchema = z.object({
 	 * never zero.
 	 */
 	bytes_sent_total: z.number().int().min(0).optional(),
+	/**
+	 * Egress interface this uplink's socket is bound to (`SO_BINDTODEVICE`).
+	 *
+	 * OPTIONAL: absent for an unmapped (legacy source-IP-bound) link and for any
+	 * producer predating ADR-003. Absent means UNKNOWN, never "none".
+	 */
+	iface: z.string().min(1).optional(),
+	/**
+	 * The bind-map sidecar's writer-assigned opaque link identity (ADR-003),
+	 * echoed verbatim by the sender — which never invents one.
+	 *
+	 * **This is the identity a UI must key on.** Unlike `conn_id`, it survives a
+	 * SIGHUP reload, a reorder of the IP list, a reconnect, a DHCP lease change,
+	 * and a move to a different interface. Two twin modems that share one source
+	 * IP are distinguishable ONLY by this field.
+	 *
+	 * OPTIONAL: absent for an unmapped link and for any producer predating
+	 * ADR-003.
+	 */
+	link_id: z.string().min(1).optional(),
+});
+
+/**
+ * Why a configured bind-map is not in force (ADR-003 §6.4). Exactly seven
+ * values; the set is frozen.
+ */
+export const bindMapDegradedReasonSchema = z.enum([
+	'hash_mismatch',
+	'malformed',
+	'unknown_iface',
+	'retry_exhausted',
+	'missing_file',
+	'unreadable',
+	'unsupported',
+]);
+
+/**
+ * Is the sender's bind-map in force? `reason` is present only when `state` is
+ * `degraded`.
+ */
+export const bindMapStatusSchema = z.object({
+	state: z.enum(['active', 'absent', 'degraded']),
+	reason: bindMapDegradedReasonSchema.optional(),
+});
+
+/**
+ * One same-IP group a degraded startup could not disambiguate.
+ *
+ * The indices are **`BIND_IPS_FILE` line positions**, not `conn_id`s: an
+ * excluded line never becomes a connection, so the two numberings diverge
+ * exactly when this array is non-empty.
+ */
+export const bindMapCollisionSchema = z.object({
+	ip: z.string().min(1),
+	effective_index: z.number().int().min(0),
+	excluded_indices: z.array(z.number().int().min(0)),
+});
+
+/**
+ * What the sender is ACTUALLY running (ADR-003 §6.4) — orthogonal to
+ * {@link bindMapStatusSchema}, because a degraded map can still leave a bond
+ * interface-pinned (`retained_last_valid`) or leave modems dark
+ * (`startup_collision_excluded`). `collisions` is present only for the latter.
+ */
+export const bindMapDispositionSchema = z.object({
+	state: z.enum([
+		'mapped',
+		'retained_last_valid',
+		'legacy_unique_only',
+		'startup_collision_excluded',
+	]),
+	collisions: z.array(bindMapCollisionSchema).optional(),
 });
 
 /**
@@ -109,10 +181,28 @@ export const telemetrySchema = z.object({
 	 * never zero.
 	 */
 	bytes_sent_total: z.number().int().min(0).optional(),
+	/**
+	 * The sender's bind-map status (ADR-003 §6.4).
+	 *
+	 * OPTIONAL: a producer predating ADR-003 omits it. Absent means UNKNOWN —
+	 * NOT `absent`, which is the positive statement "this sender was started
+	 * without `--bind-map`".
+	 */
+	bind_map_status: bindMapStatusSchema.optional(),
+	/**
+	 * What the sender is actually running (ADR-003 §6.4).
+	 *
+	 * OPTIONAL: a producer predating ADR-003 omits it. Absent means UNKNOWN.
+	 */
+	disposition: bindMapDispositionSchema.optional(),
 });
 
 export type ConnectionTelemetry = z.output<typeof connectionTelemetrySchema>;
 export type Telemetry = z.output<typeof telemetrySchema>;
+export type BindMapDegradedReason = z.output<typeof bindMapDegradedReasonSchema>;
+export type BindMapStatus = z.output<typeof bindMapStatusSchema>;
+export type BindMapCollision = z.output<typeof bindMapCollisionSchema>;
+export type BindMapDisposition = z.output<typeof bindMapDispositionSchema>;
 
 /**
  * Read and validate the sender telemetry snapshot at `path`.
