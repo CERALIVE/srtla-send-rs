@@ -52,29 +52,71 @@ impl UplinkBinder for SourceIpBinder {
     }
 }
 
-/// Optional Linux egress steering via `SO_BINDTODEVICE`.
+/// Linux egress steering via `SO_BINDTODEVICE` **and** a source-address bind.
 ///
-/// Pins egress to a named interface regardless of the routing table, using
-/// [`socket2::Socket::bind_device`]. **Default-off**: nothing in the tree
-/// constructs this today (no CLI flag, no new on-device network surface). It
-/// exists so a device build can opt into interface-pinned bonding without
-/// reworking the bind path — see [`UplinkBinder`].
+/// Selected only for a link the bind-map names (`--bind-map`); an unmapped link
+/// keeps [`SourceIpBinder`] verbatim.
+///
+/// Both halves are load-bearing and neither substitutes for the other:
+///
+/// * `SO_BINDTODEVICE` decides which interface the packet physically leaves by,
+///   overriding the routing table. On its own it leaves the **source address**
+///   to the kernel, which picks one from the chosen interface — so two modems
+///   presenting the same address, or an interface holding several, would put a
+///   non-deterministic source on the wire and the receiver would see the bond's
+///   links blur together.
+/// * `bind(ip, port)` pins that source address. On its own it steers nothing
+///   without host source routing, which is exactly what a modem bond cannot
+///   rely on.
+///
+/// The device binding is applied **first** so the subsequent `bind(2)` is
+/// evaluated against the interface this link is already pinned to.
 #[cfg(target_os = "linux")]
-#[allow(dead_code)] // default-off extension impl: no in-tree consumer by design
 pub struct DeviceBinder {
     pub ifname: String,
+    /// Requested local port; always `0`/ephemeral on the live bind path.
+    pub port: u16,
 }
 
 #[cfg(target_os = "linux")]
 impl UplinkBinder for DeviceBinder {
-    fn bind_egress(&self, socket: &Socket, _source_ip: IpAddr) -> io::Result<()> {
+    fn bind_egress(&self, socket: &Socket, source_ip: IpAddr) -> io::Result<()> {
         // SO_BINDTODEVICE — bind egress to the named interface. The method is
         // `bind_device` (NOT `set_bind_device`); `None` would clear the binding.
-        socket.bind_device(Some(self.ifname.as_bytes()))
+        socket.bind_device(Some(self.ifname.as_bytes()))?;
+        let addr = SocketAddr::new(source_ip, self.port);
+        socket.bind(&addr.into())
     }
 }
 
-pub fn bind_from_ip(ip: IpAddr, port: u16) -> Result<Socket> {
+/// Create an uplink socket for a link the bind-map pins to `iface`.
+///
+/// `iface` is `None` for every unmapped link, and that arm is
+/// [`bind_from_ip`] verbatim — the legacy path is not merely equivalent, it is
+/// the same code.
+pub fn bind_for_link(ip: IpAddr, port: u16, iface: Option<&str>) -> Result<Socket> {
+    match iface {
+        None => bind_from_ip(ip, port),
+        #[cfg(target_os = "linux")]
+        Some(ifname) => {
+            let sock = new_uplink_socket(ip)?;
+            DeviceBinder {
+                ifname: ifname.to_string(),
+                port,
+            }
+            .bind_egress(&sock, ip)
+            .with_context(|| format!("bind socket to {ip} on {ifname}"))?;
+            Ok(sock)
+        }
+        #[cfg(not(target_os = "linux"))]
+        Some(ifname) => Err(anyhow::anyhow!(
+            "per-interface egress binding ({ifname}) requires Linux SO_BINDTODEVICE"
+        )),
+    }
+}
+
+/// An unbound, non-blocking, buffer-tuned UDP socket of `ip`'s family.
+fn new_uplink_socket(ip: IpAddr) -> Result<Socket> {
     let domain = match ip {
         IpAddr::V4(_) => Domain::IPV4,
         IpAddr::V6(_) => Domain::IPV6,
@@ -102,6 +144,12 @@ pub fn bind_from_ip(ip: IpAddr, port: u16) -> Result<Socket> {
             warn!("Effective receive buffer size: {}", actual_size);
         }
     }
+
+    Ok(sock)
+}
+
+pub fn bind_from_ip(ip: IpAddr, port: u16) -> Result<Socket> {
+    let sock = new_uplink_socket(ip)?;
 
     // Egress steering via the default source-IP binder. Byte-identical to the
     // previous inline `sock.bind(&SocketAddr::new(ip, port).into())`.
@@ -198,6 +246,7 @@ mod tests {
         {
             let binder = super::DeviceBinder {
                 ifname: String::from("lo"),
+                port: 0,
             };
             assert_eq!(binder.ifname, "lo");
         }

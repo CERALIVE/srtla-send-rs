@@ -204,6 +204,14 @@ The telemetry layer has hardened integration tests:
 - **`bindings/typescript/src/telemetry/watch.test.ts`** (6 tests): event-driven watcher
   checks for absent, stale-boundary, stop, file-appears, invalid-schema, and payload
   behavior without fixed sleep windows.
+- **`bindings/typescript/tests/telemetry-roundtrip.test.ts`** (14 tests): re-serializing a
+  parsed snapshot reproduces the producer's bytes exactly, for every producer-ordered
+  fixture — so no field the sender emits, `iface` and `link_id` included, is silently
+  dropped by the reader. A Zod schema strips undeclared keys *without erroring*, so a
+  parse-succeeds assertion cannot catch that; comparing bytes can. Includes a
+  falsifiability control that deletes the two identity fields and requires the comparison
+  to fail, plus the old-shape half: a pre-identity payload parses, round-trips byte-stably,
+  and reports both fields `undefined` with no key materialized.
 - **`tests/subscription_loom.rs`** (2 tests): Loom schedule exploration against the
   production manager under `cfg(loom)`, covering concurrent live-or-replay delivery
   and disconnected-subscriber pruning without copying the manager algorithm.
@@ -226,8 +234,19 @@ TERM-then-KILL polling; it does not assume the tracked `sudo` PID is a process-g
 and never blocks on an unbounded child wait. Namespace and veth names both include the
 PID+atomic-counter uniqueness suffix, so parallel scenarios in one test binary cannot
 collide. CI/release test commands remain capped at 300 seconds, and manual privileged runs
-use `scripts/netns_test_gate.sh` (90 seconds per target by default). One separate
-real-Starlink stall reproduction is intentionally `#[ignore]` and runs only on hardware.
+use `./scripts/netns_test_gate.sh` (90 seconds per target by default; `netns_twin` gets
+420 because its scenarios wait out the sender's own 15-second liveness timeout and
+30-second status-log interval). One separate real-Starlink stall reproduction is
+intentionally `#[ignore]` and runs only on hardware.
+
+`tests/netns_twin.rs` covers the duplicate-IP twin case that a single-subnet veth
+topology cannot express: two uplinks on ONE source address, each behind its own NAT
+carrier namespace, exactly as two identical HiLink dongles present themselves. It proves
+that both twins register and carry traffic at the same time — and, as the control, that
+the *same* topology without `--bind-map` leaves the second twin carrying nothing. It also
+covers reload remove/re-add under a stable `link_id`, a file-order swap that recreates no
+socket, an unplug/replug recovering on a new ifindex, and a route-removal blackhole being
+reported rather than read as healthy.
 
 ## Usage
 
@@ -258,6 +277,8 @@ srtla_send [OPTIONS] SRT_LISTEN_PORT SRTLA_HOST SRTLA_PORT BIND_IPS_FILE
 - `--stall-min-in-flight <N>`: `[EXPERIMENTAL]` in-flight threshold that marks a link stall-eligible for `--stall-deselect` (default: 32)
 - `--stall-ack-stale-ms <MS>`: `[EXPERIMENTAL]` earned-ACK/RTT staleness window in ms for `--stall-deselect` (default: 3000)
 - `--stall-reprobe-ms <MS>`: `[EXPERIMENTAL]` re-probe interval in ms for `--stall-deselect` (default: 1000)
+- `--bind-map <PATH>`: Optional versioned bind-map sidecar describing `BIND_IPS_FILE` positionally (see [Bind-map sidecar](#bind-map-sidecar-optional)). Absent means byte-identical legacy behavior
+- `--capabilities-json`: Print a machine-readable capability document and exit `0` (see [Capability probe](#capability-probe))
 - `-v, --version`: Print version and exit (see [Version output](#version-output))
 
 ### Version output
@@ -450,16 +471,81 @@ The document is rewritten atomically (`<path>.tmp` → `fsync` → `rename(2)`) 
 write. It is a single newline-free object:
 
 ```json
-{"schema_version":1,"last_updated_ms":1749556546000,"connections":[{"conn_id":"0","rtt_ms":42,"nak_count":3,"weight_percent":85,"window":8192,"in_flight":100,"bitrate_bps":2500000,"bytes_sent_total":812000000}],"bytes_sent_total":1620000000}
+{"schema_version":1,"last_updated_ms":1749556546000,"connections":[{"conn_id":"0","rtt_ms":42,"nak_count":3,"weight_percent":85,"window":8192,"in_flight":100,"bitrate_bps":2500000,"bytes_sent_total":812000000,"iface":"wwan0","link_id":"modem-a"}],"bytes_sent_total":1620000000,"bind_map_status":{"state":"active"},"disposition":{"state":"mapped"}}
 ```
 
-- `conn_id` — the uplink's index in `BIND_IPS_FILE` order, as a string.
+- `conn_id` — the uplink's index in `BIND_IPS_FILE` order, as a string. **Transient** —
+  see [Link identity](#link-identity-conn_id-is-transient-link_id-is-not) below.
 - `rtt_ms` — Kalman-smoothed RTT.
 - `weight_percent` — the link's normalized share of selection weight (0–100).
 - `bitrate_bps` — send rate in **bits per second** (wire bytes/s × 8).
 - `window` / `in_flight` — congestion-window and in-flight packet counts.
 - `bytes_sent_total` — cumulative **bytes** sent this session. Present at two scopes:
   per connection (that uplink) and at the top level (the whole bond).
+- `iface` / `link_id` — **optional**, per connection. The interface the link's socket is
+  bound to, and the bind-map sidecar's writer-assigned identity. Both are absent for an
+  unmapped (legacy) link — the sender only ever *echoes* an identity and never invents one.
+- `bind_map_status` / `disposition` — **optional**, top level. The sender's actual
+  operating mode; see [Operating mode](#operating-mode-bind_map_status--disposition).
+
+### Link identity: `conn_id` is transient, `link_id` is not
+
+`conn_id` is a **position**, not an identity: it is the link's index in `BIND_IPS_FILE`
+order, so a `SIGHUP` reload that reorders the file gives the same physical modem a
+different `conn_id`. It is retained for compatibility and for correlating records *within
+one snapshot*.
+
+**A UI must key on `link_id`.** It is the sidecar's opaque, writer-assigned id, and it
+survives reloads, reorders, reconnects, DHCP lease changes, and moves to a different
+interface. Two twin modems that share one source IP are distinguishable *only* by it.
+A link with no `link_id` is unmapped, and there is nothing stable to key on.
+
+### Operating mode: `bind_map_status` + `disposition`
+
+Two orthogonal fields, so a consumer renders what the sender is *actually* doing instead
+of inferring it from log text (ADR-003 §6.4):
+
+```json
+"bind_map_status": {"state": "degraded", "reason": "hash_mismatch"},
+"disposition": {"state": "retained_last_valid"}
+```
+
+- `bind_map_status.state` — `active` | `absent` | `degraded`. `reason` is present only
+  when degraded, and is one of `hash_mismatch`, `malformed`, `unknown_iface`,
+  `retry_exhausted`, `missing_file`, `unreadable`, `unsupported`.
+- `disposition.state` — `mapped` | `retained_last_valid` | `legacy_unique_only` |
+  `startup_collision_excluded`.
+
+They are orthogonal because a degraded map does not imply a broken bond: a degraded
+**reload** leaves the last valid mapped pool running (`retained_last_valid`), while a
+degraded **startup** has nothing to retain and excludes the ambiguous rows
+(`startup_collision_excluded`). The latter carries the group it broke up:
+
+```json
+"disposition": {"state": "startup_collision_excluded",
+  "collisions": [{"ip": "192.168.8.100", "effective_index": 0, "excluded_indices": [1]}]}
+```
+
+`effective_index` / `excluded_indices` are **`BIND_IPS_FILE` line positions**, not
+`conn_id`s — an excluded line never becomes a connection, so the two numberings diverge
+exactly when this array is present. This is what lets an operator with two modems and one
+visible link be told *why*, from typed data.
+
+### `schema_version` handling
+
+`schema_version` stays **`1`**. It names the shape of the **required** fields, not the set
+of fields present:
+
+- the schema grows **only by addition**, and every added field is **optional**;
+- a consumer therefore keeps parsing a newer document (the Zod reader strips keys it does
+  not know), and a producer that omits an added field — an older build — still validates;
+- the version is reserved for a change no old consumer could survive: renaming, retyping,
+  or **removing** a required field, or changing a unit.
+
+None of `iface`, `link_id`, `bind_map_status`, or `disposition` does any of that, so none
+of them bumps it. The proof is committed: `tests/fixtures/telemetry-golden.json` is
+byte-for-byte `tests/fixtures/telemetry-legacy-producer.json` (the pre-ADR-003 producer's
+own output) plus the additive tail, asserted by `tests/telemetry_fixture_parity.rs`.
 
 With no active links the file still exists with `"connections": []` ("running but idle",
 distinct from "absent"). The live file is removed on clean shutdown (SIGTERM/SIGINT).
@@ -490,6 +576,104 @@ really do cost the data plan twice); SRTLA control frames — keepalives and reg
 
 Full rationale, the complete reset table, and the consumer contract are in
 [`docs/adr/ADR-002-session-bytes-telemetry.md`](docs/adr/ADR-002-session-bytes-telemetry.md).
+
+## Bind-map sidecar (optional)
+
+`srtla_send` identifies an uplink by its local source IP. Two identical modems in
+HiLink/RNDIS mode both present `192.168.8.100`, so the second one is silently collapsed
+into the first and never carries traffic. `--bind-map` supplies the missing information —
+which interface, and which stable identity, each row of the IP list refers to.
+
+`BIND_IPS_FILE` is **not** changed. The mapping rides a separate JSON sidecar that
+describes it **positionally**: the Nth row describes the Nth accepted IP line, which is
+exactly what tells duplicate IPs apart.
+
+```json
+{"schema_version":1,"generation":7,"ips_file_sha256":"<64 lowercase hex>","links":[
+  {"link_id":"modem-a","ip":"192.168.8.100","iface":"wwan0"},
+  {"link_id":"modem-b","ip":"192.168.8.100","iface":"wwan1"}]}
+```
+
+```bash
+./target/release/srtla_send 6000 rec.example.com 5000 /tmp/srtla_ips \
+  --bind-map /tmp/srtla_bind_map.json
+```
+
+The writer publishes the IP file first and the sidecar second, each by atomic rename; the
+**sidecar rename is the commit point**. A reader landing between the two renames sees new
+IP bytes against an older sidecar — a detectable mismatch that a bounded retry (5 attempts
+over at most 2 s) absorbs.
+
+If the pair never agrees, the sender **fails open without guessing**:
+
+- **at startup**, unique IPs run as usual, and each duplicate-IP group keeps one
+  deterministic representative while the rest are excluded *and reported* — an operator
+  with two modems and one visible link is told why;
+- **on a reload** (SIGHUP) that degrades, the sender keeps the last valid mapping running
+  rather than silently un-binding a live bond.
+
+### What a mapped link does differently
+
+A mapped uplink's socket is bound **to the interface and to the source address**:
+`SO_BINDTODEVICE` decides which interface the packet physically leaves by (overriding the
+routing table, so the host no longer needs source routing), and `bind(ip, 0)` pins the
+source address the receiver sees. Both are needed — the device binding alone would let the
+kernel choose a source address, which is exactly what makes two same-IP modems
+indistinguishable on the wire.
+
+Beyond binding, three things change for a mapped link:
+
+- **Identity outlives the socket.** A link is its `link_id`, not its IP. Reordering the
+  file, changing a modem's DHCP lease, or moving it to another interface does not make it
+  a different link — but a socket key that moves gets a **new socket**, because the
+  window, packet log, and in-flight counts all described the interface it left.
+- **The interface is re-resolved by name every time a socket is created**, and re-checked
+  every second. `SO_BINDTODEVICE` freezes the interface index at bind time, so a modem
+  that is unplugged and replugged leaves a working-looking socket that can only fail. A
+  re-enumeration rebinds; a disappearance marks the link `removed`, and it waits for the
+  next reload rather than retrying against a name the kernel no longer knows.
+- **Losing the default route is reported, not guessed at.** Traffic pinned to an interface
+  with no default route is silently blackholed — IPv4 ARPs for the receiver's public
+  address and `sendto` still succeeds. So default-route presence is read from the routing
+  table and shown per link in the status log, separately from whether the link is still
+  ACKing. Nothing is ever written to the routing table.
+
+**Without `--bind-map` nothing above happens** — no hashing, no sidecar, no device
+binding, no new failure mode. `--dry-run` validates both files and exits non-zero if the
+sidecar is unusable.
+Full contract: [`docs/adr/ADR-003-bind-map-contract.md`](docs/adr/ADR-003-bind-map-contract.md).
+
+## Capability probe
+
+`--capabilities-json` prints one line of JSON describing what this build supports, then
+exits `0`. It binds no sockets, writes no files, and needs no positional arguments.
+
+```bash
+$ ./target/release/srtla_send --capabilities-json
+{"schema_version":1,"binary":"srtla_send","version":"3.2.0","capabilities":{"bind_map":true,...}}
+```
+
+It exists so a supervisor can decide **before spawning a stream** whether to pass
+`--bind-map`. Older binaries do not have the flag and exit non-zero with a usage error —
+that is the intended "no support" answer. Treat **any** non-zero exit, unparseable output,
+or timeout as no support and use the legacy spawn.
+
+The **running** process answers the same question with the same document: the JSON-RPC
+`get-capabilities` method on `--control-socket` returns every key of the probe document
+verbatim, plus an additive `methods` array enumerating the control methods and event
+topics. A supervisor that probed the binary and a consumer that asks the live socket can
+never be told two different things (pinned by
+`get_capabilities_matches_the_pre_spawn_probe_document`). `hello`'s `capabilities` field
+is unchanged — it remains the frozen string array the TS control binding feature-detects
+with.
+
+`get-status` additionally reports the live operating mode and per-link identity:
+
+```json
+{"mode":"enhanced","quality_enabled":true,"exploration_enabled":false,"rtt_delta_ms":30,
+ "bind_map_status":{"state":"active"},"disposition":{"state":"mapped"},
+ "links":[{"conn_id":"0","iface":"wwan0","link_id":"modem-a"}]}
+```
 
 ## Startup Without an IP List (Unix)
 

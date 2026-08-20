@@ -25,6 +25,9 @@ use crate::mode::SchedulingMode;
 /// Default telemetry write cadence in milliseconds (`--stats-file-interval`).
 pub const DEFAULT_STATS_FILE_INTERVAL_MS: u64 = 1000;
 
+/// Flags that answer on their own and therefore excuse the four positionals.
+const SHORT_CIRCUIT_FLAGS: [&str; 2] = ["print_version", "capabilities_json"];
+
 #[derive(Parser, Debug)]
 #[command(
     name = "srtla_send",
@@ -39,20 +42,30 @@ pub struct Cli {
     #[arg(short = 'v', long = "version", action = clap::ArgAction::SetTrue)]
     pub print_version: bool,
 
+    /// Print a machine-readable capability document to stdout and exit 0
+    /// (side-effect free; see ADR-003)
+    #[arg(long = "capabilities-json", action = clap::ArgAction::SetTrue)]
+    pub capabilities_json: bool,
+
     /// Local UDP port to listen for SRT packets (from srt-live-transmit or SRT
     /// app)
-    #[arg(required_unless_present = "print_version")]
+    #[arg(required_unless_present_any = SHORT_CIRCUIT_FLAGS)]
     pub local_srt_port: Option<u16>,
     /// Receiver host (srtla_rec or SRT listener)
-    #[arg(required_unless_present = "print_version")]
+    #[arg(required_unless_present_any = SHORT_CIRCUIT_FLAGS)]
     pub receiver_host: Option<String>,
     /// Receiver UDP port to send SRTLA packets to
-    #[arg(required_unless_present = "print_version")]
+    #[arg(required_unless_present_any = SHORT_CIRCUIT_FLAGS)]
     pub receiver_port: Option<u16>,
     /// Path to file containing newline-separated local source IPs to use for
     /// uplinks
-    #[arg(required_unless_present = "print_version")]
+    #[arg(required_unless_present_any = SHORT_CIRCUIT_FLAGS)]
     pub ips_file: Option<String>,
+
+    /// Optional versioned bind-map sidecar describing BIND_IPS_FILE
+    /// positionally (ADR-003). Absent means byte-identical legacy behavior.
+    #[arg(long = "bind-map")]
+    pub bind_map: Option<String>,
 
     /// Enable verbose (debug-level) logging
     #[arg(long = "verbose")]
@@ -397,6 +410,53 @@ mod tests {
         ])
         .expect("--dry-run should parse");
         assert!(cli.dry_run);
+    }
+
+    #[test]
+    fn bind_map_defaults_absent_and_parses_when_present() {
+        let cli =
+            Cli::try_parse_from(["srtla_send", "5000", "127.0.0.1", "5001", "/tmp/srtla_ips"])
+                .expect("baseline should parse");
+        assert_eq!(
+            cli.bind_map, None,
+            "absent --bind-map is what makes the legacy path byte-identical"
+        );
+        assert!(!cli.capabilities_json);
+
+        let cli = Cli::try_parse_from([
+            "srtla_send",
+            "5000",
+            "127.0.0.1",
+            "5001",
+            "/tmp/srtla_ips",
+            "--bind-map",
+            "/tmp/srtla_bind_map.json",
+        ])
+        .expect("--bind-map should parse");
+        assert_eq!(cli.bind_map.as_deref(), Some("/tmp/srtla_bind_map.json"));
+    }
+
+    #[test]
+    fn capabilities_json_short_circuits_the_required_positionals() {
+        let cli = Cli::try_parse_from(["srtla_send", "--capabilities-json"])
+            .expect("a pre-spawn probe cannot demand a configuration");
+        assert!(cli.capabilities_json);
+        assert_eq!(cli.local_srt_port, None);
+        assert_eq!(cli.ips_file, None);
+    }
+
+    #[test]
+    fn an_unknown_flag_is_rejected_which_is_how_an_old_binary_signals_no_support() {
+        let err = Cli::try_parse_from([
+            "srtla_send",
+            "5000",
+            "127.0.0.1",
+            "5001",
+            "/tmp/srtla_ips",
+            "--a-flag-that-does-not-exist",
+        ])
+        .expect_err("clap must refuse an unknown flag");
+        assert_eq!(err.kind(), ErrorKind::UnknownArgument);
     }
 
     #[test]

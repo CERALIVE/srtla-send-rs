@@ -177,6 +177,78 @@ CeraUI and the device integration depend on these staying stable:
 - **Upstream scheduler/control-socket flags** (`--mode`, `--no-quality`, `--exploration`,
   `--rtt-delta-ms`, `--control-socket`) stay present and functional but are **not**
   surfaced in CeraUI.
+- **Optional bind-map sidecar (`--bind-map <path>`, ADR-003) — ADDITIVE, never required.**
+  `BIND_IPS_FILE` stays **byte-unchanged**; the mapping rides a *separate* versioned JSON
+  sidecar that describes it **positionally** (the Nth row describes the Nth accepted IP
+  line, which is what disambiguates duplicate-IP twin modems). Header carries
+  `{schema_version, generation, ips_file_sha256}`; rows carry
+  `{link_id, ip, iface, id_path?}`. **Absent `--bind-map` ⇒ byte-identical legacy
+  behavior** — the module is not entered at all, pinned by
+  `a_legacy_invocation_without_bind_map_produces_byte_identical_output`
+  (`tests/bind_map_contract.rs`, literal stdout). Coherence is one-directional: the
+  sidecar names the exact ips-file bytes it describes. A mismatch is retried
+  (5 attempts × 400 ms, ≤ 2 s ceiling) because the writer's two-rename publication window
+  produces exactly that transient; a mismatch that outlives the budget **fails open,
+  duplicate-safe** — at STARTUP a same-IP collision group keeps one deterministic
+  representative and the rest are excluded **and reported**; on a valid→degraded RELOAD
+  the sender **retains the last valid mapped pool** rather than silently un-binding a live
+  bond. Full contract: [`docs/adr/ADR-003-bind-map-contract.md`](docs/adr/ADR-003-bind-map-contract.md).
+  The mapping is **acted on**: a mapped link's socket is bound with
+  `SO_BINDTODEVICE` **and** `bind(ip, 0)` (`DeviceBinder`, `src/connection/socket.rs`),
+  so egress leaves the named interface *and* the wire source address is deterministic —
+  neither half substitutes for the other, and an unmapped link still takes the
+  `SourceIpBinder` path verbatim.
+- **Link identity is the sidecar's `link_id`; `(ip, iface)` is only the current socket
+  key.** Registration, stats, and telemetry state attach to `link_id`, which is stable
+  across reloads, reconnects, and interface changes; dedup runs on the socket key, which
+  is what tells two same-IP twin modems apart. A reload that moves a `link_id` onto a
+  different `(ip, iface)` **recreates the socket and the registration** rather than
+  carrying window/packet-log/in-flight state across — every one of those is scoped to the
+  interface it was measured on. `src/connection/spec.rs`, `src/sender/connections.rs`.
+- **The interface is re-resolved by NAME on every socket creation, and a stale socket is
+  never reused.** `SO_BINDTODEVICE` resolves a name to an ifindex **once**, at
+  `setsockopt` time, so a replugged modem leaves the socket holding an index that no
+  longer names it — `sendto` then answers `ENODEV` (gone) or `ENETUNREACH` (down), and
+  neither heals. Housekeeping re-resolves each tick (bounded detection: one interval, not
+  a `CONN_TIMEOUT` wait): a changed ifindex forces a rebind, a vanished interface puts the
+  link in a **`removed`** state that waits for a reload instead of burning the reconnect
+  backoff, and an `ENODEV` send does the same from the data path.
+  `src/connection/egress.rs`, `src/sender/egress_tick.rs`.
+- **Route invariant is link health, and it is DISTINCT from ACK liveness.** A device-bound
+  socket whose interface has lost its default route does not fail: IPv4 assumes the
+  destination is on-link, ARPs for the receiver's public address, and drops the packet
+  while `sendto` reports success. So per-interface default-route presence is **observed**
+  (read-only, `/proc/net/route`) and reported on its own axis in the status log — never
+  inferred from send success, and never merged into the ACTIVE/TIMED_OUT line. **No policy
+  routing is introduced**: nothing installs a rule, a route, or a table.
+  Because the invariant is re-read every housekeeping tick but the status log only prints
+  every 30 s, each **crossing** is additionally announced when it happens: losing the route
+  is a `WARN`, regaining it an `INFO`. A crossing into or out of `Unknown` is deliberately
+  silent — an unreadable route table is not evidence either way, and every link's first
+  observation leaves `Unknown`. `src/connection/route.rs`
+  (`classify_route_transition`), `src/sender/egress_tick.rs`.
+- **A `SIGHUP` with `--bind-map` runs the ADR-003 read protocol off the forwarding loop.**
+  The bounded pair read (hash-coherent pair, or fail-open) is spawned and answered back
+  into the event loop, because a retried hash mismatch would otherwise stall packet
+  forwarding for up to 2 s. Without `--bind-map` the SIGHUP path is the legacy
+  reload guard, unchanged. `src/sender/links.rs`.
+- **`--capabilities-json` is the pre-spawn probe (ADR-003 §7).** One-shot, side-effect
+  free, exits `0` with a single-line JSON capability document on stdout (before logging is
+  initialized). **The load-bearing half is the caller's:** non-zero exit, unparseable
+  output, or a timeout means NO SUPPORT — fall back to the legacy spawn and never pass
+  `--bind-map`. The shipped `3.2.0` binary answers this flag with `error: unexpected
+  argument` and exit `2`, which is precisely that signal; callers must treat *any*
+  non-zero exit the same way rather than matching on the code or the message.
+- **The runtime `get-capabilities` returns the SAME document, plus `methods`.** The
+  JSON-RPC method on `--control-socket` emits every key of `capability_document()`
+  verbatim and adds an additive `methods` array (the control methods and event topics
+  ADR-001 requires, which previously occupied the `capabilities` key). Pre-spawn probe and
+  live socket must never disagree about what a build can do; pinned by
+  `get_capabilities_matches_the_pre_spawn_probe_document`. **`hello`'s `capabilities`
+  stays a string array** — the TS control binding feature-detects with
+  `hello.capabilities.includes(...)`, so that field is frozen.
+  `get-status` additionally returns `bind_map_status`, `disposition`, and a `links` array
+  of `{conn_id, iface?, link_id?}` in telemetry order.
 - **`-v/--version` IS operator-visible, and its build metadata is OPTIONAL.** CeraUI
   shells out to `srtla_send -v` and renders the raw stdout in Settings → Versions
   (`apps/backend/src/modules/system/revisions.ts`), so this line is read by humans, not
@@ -207,7 +279,49 @@ CeraUI and the device integration depend on these staying stable:
   `in_flight` are **required** by the frozen `@ceralive/srtla` Zod reader. The cadence is
   `--stats-file-interval` ms (default 1000). The live file is unlinked on clean shutdown
   (SIGTERM/SIGINT). `schema_version` is additive over the C producer — the Zod reader
-  strips it. Implemented in `src/telemetry_file.rs`; CeraUI parses this verbatim.
+  strips it. The document model lives in `src/telemetry_doc.rs` (schema, units,
+  serializer) and the publish mechanics in `src/telemetry_file.rs`, which re-exports the
+  model so existing `telemetry_file::` import paths are unchanged; CeraUI parses this
+  verbatim.
+- **ADR-003 telemetry echo — four OPTIONAL additive fields, `schema_version` STAYS 1.**
+  Per connection: `iface` (the interface the socket is bound to) and `link_id` (the
+  sidecar's writer-assigned opaque identity, **echoed** — the sender never mints one).
+  Top level: `bind_map_status` `{state: active|absent|degraded, reason?}` with the seven
+  frozen ADR-003 §6.4 reasons, and `disposition`
+  `{state: mapped|retained_last_valid|legacy_unique_only|startup_collision_excluded,
+  collisions?}`. The two are **orthogonal**: a degraded RELOAD keeps the last valid mapped
+  pool running (`retained_last_valid`) while a degraded STARTUP excludes the ambiguous
+  rows (`startup_collision_excluded`) and publishes the group it broke up — the colliding
+  IP plus the **`BIND_IPS_FILE` line positions** (NOT `conn_id`s) that are effective vs
+  excluded. That startup-exclusion / reload-retention split is now directly observable
+  instead of inferable from log text. Every field is omitted (never `null`, never `""`)
+  when it does not apply, so an unmapped/legacy run's document is byte-identical to the
+  pre-ADR-003 producer's plus the top-level pair. **`schema_version` names the shape of
+  the REQUIRED fields, not the set of fields present** — the schema grows only by
+  addition, added fields are always optional, and the version is reserved for renaming,
+  retyping, or REMOVING a required field or changing a unit. Do not bump it for an
+  additive field. Types come from `src/bind_map/report.rs`, which projects the existing
+  `BindMapStatus`/`BindMapDisposition`/`CollisionGroup` — do NOT introduce a parallel
+  status type. `SharedStats::set_bind_map` holds the mode on its own lock and
+  `SharedStats::get` composes it, because `update` rebuilds the snapshot on every
+  housekeeping tick while the mode changes only on a reload.
+- **`conn_id` is RETAINED but TRANSIENT; UI identity is `link_id`.** `conn_id` is a
+  position in `BIND_IPS_FILE`, so a SIGHUP reorder hands the same modem a different one.
+  It stays in the schema for compatibility and for correlating records within one
+  snapshot. Anything that must survive a reload, reorder, reconnect, lease change, or
+  interface move MUST key on `link_id`. Two twin modems on one source IP are
+  distinguishable only by it. Pinned by the `telemetry-reordered` / `telemetry-reconnect`
+  fixtures on both sides.
+- **Cross-language fixture matrix — Rust writes, TypeScript parses THE SAME BYTES.**
+  Eight fixtures, each committed twice (`tests/fixtures/<name>.json` and
+  `bindings/typescript/tests/fixtures/<name>.json`) and asserted byte-identical by
+  `tests/telemetry_fixture_parity.rs`. The producer half is `tests/telemetry_fixtures.rs`
+  (regenerate deliberately with `UPDATE_GOLDEN=1 cargo test --test telemetry_fixtures`,
+  which rewrites BOTH copies); the consumer half is
+  `bindings/typescript/tests/telemetry-fixtures.test.ts`. `telemetry-legacy-producer.json`
+  is the **frozen** pre-ADR-003 producer document and is NEVER regenerated — it is the
+  old-shape side of the compatibility proof, and a test asserts it contains none of the
+  four additive keys. Do not `biome check --write` any fixture (see TS BINDING TOOLING).
 - **Cumulative session bytes (`bytes_sent_total`, ADR-002).** Additive at BOTH scopes:
   top-level (whole bond) and per-connection. **Unit is BYTES, and no ×8 is applied** —
   it is a count, not a rate, and it sits directly beside `bitrate_bps` (bits/s), which
@@ -315,9 +429,30 @@ without privileges and covers repeated teardown calls. Both namespace and veth n
 the shared PID+atomic-counter uniqueness suffix; do not replace the veth suffix with the
 test-binary PID alone because scenarios inside one integration target run in parallel.
 Never run the privileged targets unbounded: use `scripts/netns_test_gate.sh`, which caps
-each target at 90 s by default. Separately, `stall_deselect_real_starlink_repro` is one
-intentionally ignored hardware-only test; run it with `--ignored` only on the bonded
-Starlink/cellular validation rig.
+each target at 90 s by default. **`netns_twin` is the one exception, at 420 s
+(`NETNS_TWIN_TEST_TIMEOUT_SECONDS`)**: its scenarios wait out real sender timers no other
+target touches — the 15 s `CONN_TIMEOUT` and the 30 s status-log interval — so a shared
+budget would make it flake at exit 124. Separately,
+`stall_deselect_real_starlink_repro` is one intentionally ignored hardware-only test; run
+it with `--ignored` only on the bonded Starlink/cellular validation rig.
+
+**`tests/netns_twin.rs` — duplicate-IP twin-modem scenarios (8 tests).** The only target
+that reproduces two uplinks sharing ONE source address, which is what the bind-map exists
+for. It needs a topology no other target has, built by `crates/network-sim/src/twin/`:
+each twin sits behind its **own NAT carrier namespace**, because a plain veth pair would
+answer both uplinks at the same address and route every reply down one interface, so the
+second device-bound socket would never register — a topology artifact that reads as a
+sender bug. Two settings are load-bearing and were both found the hard way: per-device
+`rp_filter` must be cleared (the effective value is `max(all, dev)`, and strict
+reverse-path silently eats the shared address's ARP replies on the second twin), and the
+receiver answers from the address the sender dialed via a `src` hint on its return routes.
+Scenarios: both twins register and carry simultaneously; the same topology WITHOUT
+`--bind-map` leaves the second twin dead weight (the falsifiability control — without it
+the bonding assertion proves nothing); reload remove/re-add under a stable `link_id`; a
+degraded reload retaining the mapped pool; a file-order swap that recreates no socket; a
+well-formed but unorderable republication refused as `stale-generation`; an
+unplug/replug recovering on a genuinely new ifindex; and a route-removal blackhole
+reported on the route axis, confirmed by ACK timeout, never reading healthy.
 
 **Production subscription-concurrency invariant (BLOCKING, separate target).**
 `tests/subscription_loom.rs` uses Loom to enumerate schedules while racing the real
@@ -511,12 +646,27 @@ src/
   lib.rs             library exports
   config.rs / config/    runtime config (DynamicConfig, ConfigSnapshot); stdin + Unix-socket control
   mode.rs            SchedulingMode (Classic | Enhanced | RttThreshold | Edpf)
+  bind_map/          optional versioned bind-map sidecar (ADR-003): parser, coherence,
+                     bounded retry, fail-open duplicate-safe resolution
+    report.rs        telemetry projection of a Resolution (bind_map_status + disposition)
+  capabilities.rs    --capabilities-json pre-spawn probe document
+  telemetry_doc.rs   ADR-001 document model + units + serializer (schema lives here)
+  telemetry_file.rs  opt-in --stats-file publish mechanics (temp -> fsync -> rename)
   connection/        SrtlaConnection, bind/resolve, incoming packet handling, RTT (Kalman)
+    socket.rs        SourceIpBinder (legacy) + DeviceBinder (SO_BINDTODEVICE + source bind)
+    spec.rs          UplinkSpec/SocketKey — link_id identity vs (ip, iface) socket key
+    egress.rs        ifindex staleness: re-resolve, re-enumeration, ENODEV -> removed
+    route.rs         read-only per-iface default-route observation (blackhole check)
   protocol.rs        SRTLA protocol constants/structures
   registration.rs    REG1/REG2/REG3 flow + ID propagation
   sender/            packet forwarding + selection/ (BLEST → IoDS → EDPF), status logging
+    links.rs         where the uplink set comes from (legacy ips file, or the bind-map pair)
+    connections.rs   pool rebuild: dedup on socket key, survive on link_id
+    egress_tick.rs   the per-tick egress re-resolution + route observation
   tests/             unit / integration / e2e / protocol / registration suites
 crates/network-sim/  dev-only network simulation harness (workspace member)
+  twin/            duplicate-IP twin topology (NAT carrier per link), bind-map
+                   sidecar publisher, and the twin process stack
 rust-toolchain.toml  pinned nightly (CERALIVE)
 rustfmt.toml         unstable nightly fmt config (edition 2024)
 ci/build-deb.sh      single-source .deb packager (control + filename + glob self-test)
@@ -581,22 +731,27 @@ for the full operator/runtime reference (modes, runtime commands, tuning constan
 ### Task 7 — Telemetry Rust test hardening
 
 Two new integration-level test files complement the in-module unit tests in
-`src/telemetry_file.rs`:
+`src/telemetry_doc.rs` (document model) and `src/telemetry_file.rs` (publish mechanics):
 
 - **`tests/telemetry_edge_cases.rs`** (9 tests): zero connections (`connections:[]`
   idle-not-absent), active link with zero traffic (`bitrate_bps:0` present not absent),
   very-high RTT 5000 ms verbatim, `schema_version==1` pinned (constant + JSON,
   number-not-string, leads the document), `bitrate_bps == wire_bytes*8` on fixed
   inputs (0, 1, 150k, 312.5k, 1M bytes/s).
-- **`tests/telemetry_fixture_parity.rs`** (3 tests): Rust golden
-  `tests/fixtures/telemetry-golden.json` vs TS-binding golden
-  `bindings/typescript/tests/fixtures/telemetry-golden.json` asserted byte-identical
-  + structural (top-level keys, `schema_version==constant`, frozen 7-key per-conn set).
-  Both anchored at `CARGO_MANIFEST_DIR` -- inside the repo, Rule D clean.
+- **`tests/telemetry_fixture_parity.rs`** (5 tests): every fixture in the matrix asserted
+  byte-identical between `tests/fixtures/` and `bindings/typescript/tests/fixtures/`,
+  plus structural parity on the golden (top-level keys, `schema_version==constant`,
+  frozen 7-key per-conn set) and the additivity proof (`telemetry-golden` minus the two
+  top-level ADR-003 keys == `telemetry-legacy-producer` exactly). All paths anchored at
+  `CARGO_MANIFEST_DIR` -- inside the repo, Rule D clean.
+- **`tests/telemetry_fixtures.rs`** (8 tests): the producer half of the cross-language
+  matrix -- legacy / golden / mapped / reordered / reconnect / degraded-startup /
+  degraded-reload / unknown-fields. Regenerate with
+  `UPDATE_GOLDEN=1 cargo test --test telemetry_fixtures` (rewrites BOTH copies).
 
-Key seam: `build_telemetry_json(last_updated_ms, conns)` takes an explicit ms arg.
-Tests call it with a fixed timestamp (`1_749_556_546_000`) -- never `publish()` --
-to stay non-flaky. Do not conflate with the tokio virtual-clock seam
+Key seam: `build_telemetry_json(last_updated_ms, &TelemetryInputs { .. })` takes an
+explicit ms arg. Tests call it with a fixed timestamp (`1_749_556_546_000`) -- never
+`publish()` -- to stay non-flaky. Do not conflate with the tokio virtual-clock seam
 (`advance_test_clock`), which is for timeout/keepalive tests only.
 
 Gate note: `cargo clippy --features test-internals` is NOT a gate command (fails on
@@ -616,6 +771,53 @@ New `bindings/typescript/tests/telemetry-reader.test.ts` (24 tests; 68 binding t
 - `src/telemetry/watch.test.ts` keeps six distinct watcher contracts without
   fixed sleeps: absent, stale-boundary, stop, file-appears, invalid-schema, and
   parsed-payload behavior. Callback/event-loop completion replaces timed windows.
+-   `bindings/typescript/tests/telemetry-fixtures.test.ts` (13 tests) is the consumer half
+  of the cross-language matrix: it parses the Rust-written fixtures and asserts
+  old-producer tolerance (every added field reads `undefined`, and `undefined` is NOT
+  conflated with the positive `'absent'` state), twin-modem disambiguation by `link_id`,
+  reorder/reconnect identity stability, both degraded modes, the seven frozen degraded
+  reasons, and forward tolerance of a future producer's unknown keys.
+- `bindings/typescript/tests/telemetry-roundtrip.test.ts` (14 tests) is the
+  **byte-parity passthrough proof** — see BYTE-PARITY ROUND TRIP below.
+
+> **`extra_fields_stripped_or_rejected` was ADAPTED, not weakened.** That test used
+> `iface` as its stand-in for "a field a future producer might add"; `iface` has since
+> BECOME a known optional field, so the placeholder moved to a genuinely unknown key and
+> the now-known field is additionally asserted to be PRESERVED. Same contract, read from
+> both sides.
+
+### BYTE-PARITY ROUND TRIP — the identity-passthrough proof
+
+`bindings/typescript/tests/telemetry-roundtrip.test.ts` asserts
+`JSON.stringify(telemetrySchema.parse(bytes)) === bytes` for all seven
+producer-ordered fixtures, so nothing the sender emits — `iface` and `link_id`
+included — is dropped by the reader.
+
+**Why the suite exists at all:** a Zod object strips undeclared keys *silently and
+successfully*. A reader that has never heard of `iface`/`link_id` parses a mapped
+snapshot with no error and hands the consumer a document with both twins' identities
+deleted — which is what the released `@ceralive/srtla-send@2026.6.2` reader did, and
+what no "does it parse?" assertion can see. Re-serializing and comparing bytes does
+see it.
+
+Two properties keep the suite honest and must survive any edit:
+
+- **The schema declares its keys in the producer's own field order**, which is why
+  byte parity (not mere deep-equality) holds. Reordering `connectionTelemetrySchema`
+  or `telemetrySchema` breaks it — that is the intended alarm, not a test bug: fix
+  the order, do not relax the assertion to `toEqual`.
+- **A falsifiability control** (`a stripped identity field falsifies the byte-parity
+  assertion`) deletes exactly what a stripping parser would delete and requires the
+  comparison to FAIL. Without it, byte parity would also pass for a reader that
+  strips fields the producer never emitted.
+
+`telemetry-unknown-fields` is excluded from the byte-parity set by construction (it
+is hand-ordered and carries a future producer's keys); it gets an idempotence
+assertion — one pass reaches the fixed point — plus the known additive fields kept.
+The old-shape half asserts a pre-identity payload parses, round-trips byte-stably,
+and reports both fields as `undefined` with **no key materialized** (no `null`, no
+`""`), because an omitted optional must stay omitted for "absent" to stay
+distinguishable from "empty".
 
 `tsconfig.json` fix: added `tests/**/*` to `include`; moved `rootDir: "src"` into
 `tsconfig.build.json` only. This ensures `pnpm typecheck` typechecks tests (not

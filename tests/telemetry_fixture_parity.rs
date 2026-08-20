@@ -1,14 +1,16 @@
-//! Golden-fixture parity: the Rust producer golden and the TS-binding golden are
-//! a single source kept in lockstep (Task 7).
+//! Golden-fixture parity: the Rust producer fixtures and the TS-binding fixtures
+//! are a single source kept in lockstep (Task 7, extended by the ADR-003
+//! telemetry evolution).
 //!
-//! Two committed fixtures encode the same ADR-001 snapshot:
-//!   * `tests/fixtures/telemetry-golden.json` — the Rust producer's byte-for-byte
-//!     output (round-tripped by `golden_fixture_matches_producer_output` in
-//!     `src/telemetry_file.rs`);
-//!   * `bindings/typescript/tests/fixtures/telemetry-golden.json` — the copy the
-//!     `@ceralive/srtla-send` Zod reader round-trips (`telemetry/index.test.ts`).
+//! Each fixture is committed twice, under the same name:
+//!   * `tests/fixtures/<name>.json` — written by the Rust producer
+//!     (`tests/telemetry_fixtures.rs`, regenerated with `UPDATE_GOLDEN=1`);
+//!   * `bindings/typescript/tests/fixtures/<name>.json` — the copy the
+//!     `@ceralive/srtla-send` Zod reader parses.
 //!
-//! They MUST stay identical. A contract regression that lands in one but not the
+//! They MUST stay identical — that byte-equality is what makes "Rust writes it,
+//! TypeScript parses it" a real cross-language proof rather than two files that
+//! merely started out the same. A contract regression that lands in one but not the
 //! other would silently corrupt the CeraUI console + ingest panel that consume
 //! this telemetry — exactly the drift these assertions exist to catch. Both
 //! paths are anchored at `CARGO_MANIFEST_DIR` and live inside this repo, so the
@@ -45,18 +47,37 @@ const CURRENT_CONN_KEYS: [&str; 8] = [
     "window",
 ];
 
+/// Every fixture in the cross-language matrix. `tests/telemetry_fixtures.rs`
+/// documents what each one proves.
+const FIXTURES: [&str; 8] = [
+    "telemetry-legacy-producer",
+    "telemetry-golden",
+    "telemetry-mapped",
+    "telemetry-reordered",
+    "telemetry-reconnect",
+    "telemetry-degraded-startup",
+    "telemetry-degraded-reload",
+    "telemetry-unknown-fields",
+];
+
+fn rust_fixture_path(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(format!("{name}.json"))
+}
+
+fn ts_fixture_path(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("bindings/typescript/tests/fixtures")
+        .join(format!("{name}.json"))
+}
+
 fn rust_golden_path() -> PathBuf {
-    PathBuf::from(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/telemetry-golden.json"
-    ))
+    rust_fixture_path("telemetry-golden")
 }
 
 fn ts_golden_path() -> PathBuf {
-    PathBuf::from(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/bindings/typescript/tests/fixtures/telemetry-golden.json"
-    ))
+    ts_fixture_path("telemetry-golden")
 }
 
 fn read(path: &PathBuf) -> String {
@@ -128,8 +149,10 @@ fn goldens_share_schema_version_and_top_level_keys() {
     assert_eq!(
         sorted_keys(&rust),
         vec![
+            "bind_map_status",
             "bytes_sent_total",
             "connections",
+            "disposition",
             "last_updated_ms",
             "schema_version"
         ],
@@ -173,4 +196,47 @@ fn goldens_share_per_connection_key_structure() {
             "connection {i} keys drifted from the current producer contract"
         );
     }
+}
+
+// ---- The whole matrix, not just the golden ---------------------------------
+
+#[test]
+fn every_fixture_has_a_byte_identical_binding_copy() {
+    // The cross-language claim is "TypeScript parses the bytes Rust wrote". That
+    // only holds if the two committed copies are the same bytes, for EVERY case
+    // in the matrix — not only the golden.
+    for name in FIXTURES {
+        let rust = read(&rust_fixture_path(name));
+        let ts = read(&ts_fixture_path(name));
+        assert_eq!(
+            rust, ts,
+            "`{name}` has drifted between the two fixture directories; regenerate with \
+             UPDATE_GOLDEN=1 rather than editing one side"
+        );
+        assert!(
+            !rust.contains('\n'),
+            "`{name}` must be the newline-free atomic-publish document"
+        );
+    }
+}
+
+#[test]
+fn the_current_golden_is_the_legacy_document_plus_the_additive_tail() {
+    // The additivity claim, asserted rather than asserted-about: strip the four
+    // keys this change introduced from the current producer's golden and what
+    // remains must be BYTE-for-byte the document the pre-ADR-003 producer wrote.
+    let mut current: serde_json::Value =
+        serde_json::from_str(&read(&rust_golden_path())).expect("golden is valid JSON");
+    let object = current.as_object_mut().expect("golden is an object");
+    object.remove("bind_map_status");
+    object.remove("disposition");
+
+    let legacy: serde_json::Value =
+        serde_json::from_str(&read(&rust_fixture_path("telemetry-legacy-producer")))
+            .expect("legacy fixture is valid JSON");
+
+    assert_eq!(
+        current, legacy,
+        "the golden must differ from the legacy producer document ONLY by the additive tail"
+    );
 }

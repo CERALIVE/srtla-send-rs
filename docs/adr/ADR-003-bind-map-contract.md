@@ -1,0 +1,476 @@
+# ADR-003: Versioned Optional Bind-Map Sidecar (`--bind-map`)
+
+## Status
+
+Accepted
+
+> **Numbering note.** This is the third ADR in `srtla-send-rs`. It defines a **new,
+> additive, fully optional** control channel for the sender. It does **not** redefine
+> the telemetry JSON schema owned by `srtla/docs/adr/ADR-001-telemetry-ipc.md` (the
+> canonical schema, referenced here, never modified), nor the JSON-RPC transport in
+> `srtla-send-rs/docs/adr/ADR-001-control-protocol.md`, nor the cumulative-bytes
+> extension in `ADR-002-session-bytes-telemetry.md`. Telemetry *echoes* of the
+> identifiers defined here are specified separately and land additively on top of the
+> ADR-001 schema.
+
+## Context
+
+`srtla_send` identifies an uplink by its **local source IP**. The four-positional CLI
+contract passes a `BIND_IPS_FILE` holding newline-separated source IPs
+(`src/cli.rs`, `src/sender/mod.rs::read_ip_list`), one bound UDP socket per IP, and
+`SIGHUP` reloads that file in place. That has been the whole of the sender's link
+identity since the C original, and CeraUI's `buildSrtlaSendArgs` emits exactly that
+shape.
+
+Source IP alone is no longer sufficient on a real modem bond:
+
+1. **Duplicate source IPs are normal, not pathological.** Two identical USB
+   modems in HiLink/RNDIS mode both present `192.168.8.100`. The current pool
+   builder dedups by `IpAddr` (`src/sender/connections.rs` —
+   `filter(|ip| seen.insert(*ip))`), so the second modem is **silently collapsed
+   into the first** and never carries traffic. The operator sees one link where two
+   are plugged in, with no diagnostic anywhere.
+2. **The IP is not a stable identity.** DHCP renewal, a modem replug, or a carrier
+   re-attach can change it. Every piece of per-link state the UI shows — telemetry,
+   naming, history — is keyed on a positional `conn_id` that shifts whenever the
+   file is reordered.
+3. **Egress cannot be pinned per interface.** `SourceIpBinder` binds `(ip, 0)` and
+   relies on host source routing. `DeviceBinder` (`SO_BINDTODEVICE`,
+   `src/connection/socket.rs`) exists but is dormant: nothing constructs it, because
+   nothing tells the sender which interface a source IP belongs to.
+
+The missing information is a **mapping**: which interface (and which stable,
+writer-assigned identity) each row of the IP list refers to. The writer — CeraUI's
+modem layer — already knows it. The sender has no channel to receive it.
+
+### Why not change `BIND_IPS_FILE`
+
+The IP-only file is a **load-bearing parity contract** (root `AGENTS.md` → CRITICAL
+CONSTRAINTS; this repo's `AGENTS.md` → PARITY CONTRACT). Stock senders, hand-run
+invocations, BELABOX-shaped tooling, and every already-deployed CeraUI all write and
+read it in its current form. Adding columns, a header line, or a version marker to
+that file breaks all of them at once, and the file has no place to carry a version
+that an old reader would tolerate.
+
+So the mapping goes in a **separate, optional sidecar file**, and the IP-only file
+stays **byte-unchanged**.
+
+## Decision
+
+**Add one optional flag, `--bind-map <path>`, naming a versioned JSON sidecar that
+describes the `BIND_IPS_FILE` positionally. Absent the flag, the sender's behavior is
+byte-identical to today's.**
+
+This ADR fixes the file format, the read protocol, the coherence rules, the
+degradation semantics, and the pre-spawn capability probe. It is a **gate**:
+the `DeviceBinder` activation work, the telemetry echo of `link_id`, and CeraUI's
+writer all implement against exactly what is written here.
+
+### Scope of this ADR
+
+| In scope | Out of scope (separate change) |
+|---|---|
+| Sidecar file format + version | Activating `DeviceBinder` / `SO_BINDTODEVICE` |
+| Coherence + read protocol + retry | Socket lifecycle, reconnect, ifindex staleness |
+| Fail-open degradation semantics | Telemetry field emission (`iface`, `link_id`) |
+| `--capabilities-json` document | Route-invariant health checks |
+
+The parser and the resolution state machine defined here are **pure**: they read
+files and produce a typed decision. They bind no sockets and change no scheduling.
+
+---
+
+## 1. Files
+
+Two files, one directory, one writer.
+
+| File | Owner | Format | Changed by this ADR |
+|---|---|---|---|
+| `BIND_IPS_FILE` (4th positional) | writer | newline-separated IPs | **NO — byte-unchanged** |
+| `--bind-map <path>` sidecar | writer | JSON, versioned | new, optional |
+
+### 1.1 The sidecar document
+
+A single JSON object. Formatting (whitespace, key order, trailing newline) is **not**
+part of the contract — only the parsed value is.
+
+```json
+{
+  "schema_version": 1,
+  "generation": 7,
+  "ips_file_sha256": "5f8d3c1b2a...64 lowercase hex chars total...9e",
+  "links": [
+    {"link_id": "modem-a", "ip": "192.168.8.100", "iface": "wwan0", "id_path": "/sys/devices/platform/usb1/1-1.3/net/wwan0"},
+    {"link_id": "modem-b", "ip": "192.168.8.100", "iface": "wwan1"}
+  ]
+}
+```
+
+#### Header
+
+| Field | Type | Rule |
+|---|---|---|
+| `schema_version` | integer | MUST be `1`. Any other value ⇒ the pair is unusable (`unsupported`). |
+| `generation` | integer | MUST be ≥ 1. See §3. |
+| `ips_file_sha256` | string | 64 **lowercase** hex chars: SHA-256 over the **raw bytes** of the `BIND_IPS_FILE` this document describes. |
+
+#### Row (`links[]`)
+
+| Field | Type | Rule |
+|---|---|---|
+| `link_id` | string | **Opaque, writer-assigned.** 1–64 bytes, printable ASCII `0x21`–`0x7E` (no space, no control chars). Unique within the document. The sender **never parses meaning out of it** and never invents one. |
+| `ip` | string | An IPv4 or IPv6 literal. MUST equal the IP of the correspondingly-positioned `BIND_IPS_FILE` entry (§2). |
+| `iface` | string | A network-interface name: 1–15 bytes, no `/`, no whitespace, no NUL, not `.` or `..`. MUST exist on the host. |
+| `id_path` | string, optional | Writer provenance for the physical device behind `link_id`, e.g. a sysfs path. MUST be absolute and ≤ 4096 bytes when present. The sender treats it as **opaque**: it is never opened, stat-ed, resolved, or used for any decision. It exists so a human debugging a bond can tie a `link_id` back to hardware. |
+
+**Same IP on different interfaces is LEGAL** — that is the entire point. Duplicate
+`(ip, iface)` pairs are not, because they name the same socket key twice.
+
+#### Forward compatibility
+
+Within `schema_version: 1`, a reader **ignores unknown keys** at both the document and
+the row level. Any field added later MUST therefore be optional and ignorable by an
+older reader. A change that an older reader could not safely ignore requires a new
+`schema_version`, which older readers reject outright (`unsupported`) rather than
+misinterpret.
+
+### 1.2 `link_id` is the identity; `(ip, iface)` is only the socket key
+
+`link_id` is stable across reloads, reconnects, IP changes, and interface renames.
+Downstream work attaches registration, statistics, and telemetry state to it.
+`(ip, iface)` is the *current* socket key and nothing more; it may change under a
+stable `link_id`. The positional `conn_id` remains what it has always been — the
+index into the IP list — and remains transient.
+
+---
+
+## 2. The row-correspondence contract
+
+**The sidecar describes the IP file positionally. The Nth `links[]` row describes the
+Nth accepted entry of `BIND_IPS_FILE`.**
+
+This is what disambiguates duplicate IPs: two rows may both say `192.168.8.100`, and
+they are told apart by *position*, exactly as the sender's own pool is.
+
+"Nth accepted entry" is defined by the **legacy parsing rules, unchanged**, i.e. the
+exact behavior of `read_ip_list`:
+
+1. split the file into lines;
+2. trim each line;
+3. skip empty lines;
+4. parse the rest as an IP address; **skip** (with a warning) anything that fails.
+
+The resulting ordered list of accepted IPs — duplicates preserved — is the sequence the
+sidecar must match. A parser divergence here would silently mis-map every row, so the
+implementation shares one definition and a test pins it against `read_ip_list` output
+over a fixture matrix.
+
+Correspondence is valid only when **both** hold:
+
+- `links.len()` equals the number of accepted IPs, and
+- for every index `i`, `links[i].ip` equals accepted IP `i`.
+
+A count mismatch, a reorder, or any single differing IP invalidates the **whole pair**.
+There is no partial acceptance: a mapping that is right for some rows and wrong for
+others is worse than no mapping, because the wrong rows would bind traffic to the wrong
+radio.
+
+---
+
+## 3. `generation`
+
+`generation` is a **monotonic per-writer-session counter**, not a lock, not a token,
+and not an authorization.
+
+**Scope.** One *writer session* = one writer process lifetime. Within a session the
+writer increments `generation` by at least 1 on **every** publication, including a
+publication whose `BIND_IPS_FILE` bytes did not change.
+
+**Reset.** A new writer session restarts at `1`. The reader MUST tolerate this: a
+generation that decreases is indistinguishable from a legitimate writer restart, so a
+decrease alone is **never** a rejection.
+
+**Why it exists.** `ips_file_sha256` cannot detect a **mapping-only** change — moving
+`modem-b` from `wwan1` to `wwan2` leaves the IP list byte-identical. `generation` is the
+only thing that distinguishes "same mapping, re-read" from "new mapping, same IPs".
+
+**Change detection.** A freshly read pair is a *new* mapping iff
+
+```
+sha256 != last_applied.sha256   OR   generation != last_applied.generation
+```
+
+Note `!=`, not `>`. A writer restart (generation back to 1) must still register as a
+change. **Mapping-only change ⇒ same `sha256`, new `generation` ⇒ a VALID pair.**
+
+**Stale generation (a rejection class).** The pair is rejected as `stale-generation`
+when all of the following hold:
+
+- `generation == last_applied.generation`, **and**
+- `sha256 == last_applied.sha256`, **and**
+- the row content **differs** from what was applied.
+
+That combination is a writer-contract violation: the mapping changed without the counter
+moving, so the reader cannot order the two versions and refuses to guess. If all three
+match, the read is a **no-op** — the current pool stays, and that is not an error.
+
+`generation == 0` is malformed. Reserving `0` gives writers an "unset" sentinel that can
+never be mistaken for a real generation.
+
+---
+
+## 4. Read protocol
+
+```
+1. read BIND_IPS_FILE as BYTES (one read)
+     ├─ SHA-256 the bytes                 → computed_sha
+     └─ parse the same bytes (legacy rules) → accepted[]
+2. read the sidecar → parse → validate header
+3. if sidecar.ips_file_sha256 != computed_sha  → TRANSIENT MISMATCH → retry from 1
+4. validate rows (syntax → interfaces → correspondence → uniqueness → generation)
+5. success → mapped pool
+   failure → FAIL OPEN, duplicate-safe (§6)
+```
+
+Step 1 hashes and parses **the same bytes from the same read**. Reading twice would let
+the file change in between and produce a hash that describes content the sender did not
+parse.
+
+### 4.1 Validation order
+
+Deterministic, so the reported reason is reproducible:
+
+| # | Check | Failure |
+|---|---|---|
+| 1 | sidecar present / readable / regular file / not a symlink / not group- or world-writable | `missing-file`, `unreadable` |
+| 2 | valid JSON | `malformed` |
+| 3 | `schema_version == 1` | `unsupported` |
+| 4 | header: `generation ≥ 1`, `ips_file_sha256` is 64 lowercase hex | `malformed` |
+| 5 | **hash coherence** | `hash-mismatch` → **retry** |
+| 6 | per-row syntax (`link_id`, `ip`, `iface`, `id_path`), in index order | `malformed` |
+| 7 | every `iface` exists on the host | `unknown-iface` |
+| 8 | row correspondence: count, then per-index IP (§2) | `malformed` |
+| 9 | uniqueness: `(ip, iface)` and `link_id` | `malformed` |
+| 10 | generation staleness (§3) | `malformed` |
+
+The hash check sits ahead of row validation deliberately: a mismatch means the rows in
+hand may be about to be replaced, so there is no value in validating — or logging about
+— content that is already known to be stale.
+
+### 4.2 Bounded retry
+
+Retry exists for exactly one condition — **hash mismatch** — because that is the only
+failure the writer's own publication window can produce (§5). Every other rejection is a
+genuine content error that re-reading cannot fix, so it is not retried.
+
+| Constant | Value |
+|---|---|
+| `BIND_MAP_RETRY_ATTEMPTS` | `5` (1 initial read + 4 retries) |
+| `BIND_MAP_RETRY_DELAY_MS` | `400` |
+| `BIND_MAP_RETRY_BUDGET_MS` | `2000` (hard ceiling) |
+
+Worst case `4 × 400 ms = 1600 ms`, inside the 2 s budget. Each retry re-reads **both**
+files. A mismatch that survives the budget is reported as `retry-exhausted` and falls
+through to §6.
+
+The budget is bounded because this runs on the startup path and on the `SIGHUP` path:
+an unbounded wait would hold the stream hostage to a writer bug.
+
+---
+
+## 5. Atomic publication and the honest window
+
+### 5.1 Writer rules
+
+1. **Atomic rename.** Each file is written to a **unique** temporary sibling, `fsync`-ed,
+   then `rename(2)`-d into place. Temp names carry the writer's PID and a per-session
+   counter (`<target>.<pid>.<counter>.tmp`) so two writers — which should not exist, but
+   might — cannot clobber one temp. Readers ignore `*.tmp` siblings.
+2. **Publish order: `BIND_IPS_FILE` first, sidecar second.** The sidecar names the sha256
+   of the exact bytes the first rename committed.
+3. **The sidecar rename is the COMMIT POINT.** The mapping is not published until that
+   rename lands.
+4. **`SIGHUP` last**, after both renames.
+5. **At startup, republish both files BEFORE spawning the sender**, so the sender's first
+   read sees a coherent pair rather than leftovers from a previous session.
+6. **Single writer, serialized publication.** Concurrent publication is a writer-side bug.
+   The reader does not attempt to arbitrate it; it defends via the hash + retry protocol
+   and, failing that, degrades safely.
+
+### 5.2 The window, stated honestly
+
+Between the two renames the on-disk state is **NEW `BIND_IPS_FILE` + OLD sidecar**. A
+reader landing there computes a hash that does not match the sidecar's claim.
+
+This is **detectable, not silent**, and it is precisely what the bounded retry absorbs.
+
+The guarantee runs one way, and only one way:
+
+> A reader that sees the **NEW sidecar** is guaranteed the `BIND_IPS_FILE` content it
+> names is already on disk, because the writer committed that content first.
+
+The converse does not hold and is not claimed. Making it hold would need both files in
+one atomic unit — a single combined file (which would break the byte-unchanged IP-file
+contract) or a directory swap (which the writer cannot perform against a caller-chosen
+path). Naming the window and absorbing it with a bounded retry is the honest design;
+pretending it does not exist is not.
+
+### 5.3 Reader safety rules
+
+- The sidecar is opened with `O_NOFOLLOW`: a **symlink at the final path component is
+  refused**, so a sidecar path cannot be redirected at a file the service should not read.
+- The sidecar must be a **regular file**.
+- A sidecar that is **group- or world-writable** is refused. The mapping decides where
+  device traffic egresses; it must be owned by the service that writes it.
+- These checks apply to the **sidecar only**. `BIND_IPS_FILE` keeps its existing,
+  unchanged read path.
+
+---
+
+## 6. Fail-open, duplicate-safe
+
+Fail-open means "keep streaming". It does **not** mean "guess".
+
+The unsafe naive fallback would be: no map ⇒ collapse duplicate IPs and carry on. That
+is exactly the silent-collapse bug this ADR exists to fix, so degradation is
+**duplicate-safe**: legacy IP-only behavior applies to **unique-IP rows only**, and rows
+inside a same-IP collision group are never blindly collapsed.
+
+Two phases, two different correct answers.
+
+### 6.1 STARTUP — no valid map has ever been applied
+
+- Unique-IP rows run exactly as legacy does.
+- Each same-IP **collision group** keeps **one deterministic representative** — the
+  **first occurrence in file order** — and the remaining rows are **excluded and
+  reported**, naming the colliding IP, the effective row, and the excluded rows.
+
+The *effective link set* here equals what legacy would have produced. The difference is
+not which links run; it is that the ambiguity is **named** instead of silently swallowed.
+That is the point: an operator with two modems and one visible link gets told why. No row
+is ever bound to a guessed interface.
+
+### 6.2 RELOAD — a valid map was applied, and the new read is degraded
+
+The sender **rejects the reload and retains the last valid mapped pool**, marked
+degraded, until a coherent pair arrives.
+
+Retention applies to **every** degraded reload, including one where the new IP list
+happens to have no duplicates. Falling back to legacy in that case would silently drop
+per-interface egress pinning from every link of a live, working bond — a worse outcome
+than continuing on the last known-good mapping. A degraded reload changes nothing about
+the running bond except its reported status.
+
+### 6.3 ABSENT — `--bind-map` was not supplied
+
+**Byte-identical legacy behavior.** No hashing, no sidecar read, no exclusion, no new
+failure mode, no new file. The bind-map code path is not entered at all.
+
+### 6.4 Typed outcome
+
+Two orthogonal fields, both consumed by downstream telemetry so the UI renders the
+sender's *actual* operating mode from typed data instead of inferring it.
+
+**Status** — is the map in force?
+
+| Value | Meaning |
+|---|---|
+| `active` | A coherent, valid pair is applied. |
+| `absent` | `--bind-map` was not supplied. |
+| `degraded(reason)` | The map is configured but not in force. |
+
+**Degraded reason** — exactly seven values:
+
+| Value | Cause |
+|---|---|
+| `hash_mismatch` | Coherence check failed (and was not resolved by retry). |
+| `malformed` | Bad JSON, bad header, bad row, bad correspondence, duplicate pair/id, stale generation. |
+| `unknown_iface` | A row names an interface that does not exist on the host. |
+| `retry_exhausted` | Hash mismatch persisted past the retry budget. |
+| `missing_file` | The sidecar path does not exist. |
+| `unreadable` | I/O error, symlink, non-regular file, or unsafe permissions. |
+| `unsupported` | A `schema_version` this build does not implement. |
+
+A build with no bind-map support does not produce a degraded read at all — it has no
+`--bind-map` flag, so it rejects the argument at parse time. That case is signalled ahead
+of spawn by `capabilities.bind_map: false` (§7), never by a status field.
+
+**Disposition** — what is the sender actually running?
+
+| Value | Meaning |
+|---|---|
+| `mapped` | The map is in force. |
+| `retained_last_valid` | A degraded reload was rejected; the last valid mapped pool is still running. |
+| `legacy_unique_only` | Legacy behavior; no collision groups were present. |
+| `startup_collision_excluded` | Degraded at startup with at least one collision group; representatives run, the rest are excluded and reported. |
+
+`startup_collision_excluded` carries the affected groups: the colliding IP, the effective
+row, and the excluded rows.
+
+---
+
+## 7. `--capabilities-json` — the pre-spawn probe
+
+A caller must decide **before spawning a stream** whether the installed binary understands
+`--bind-map`. Passing an unknown flag to an old binary makes it exit non-zero with a usage
+error, which at spawn time is a failed stream, not a graceful downgrade.
+
+**`--capabilities-json` prints one machine-readable capability document to stdout and
+exits `0`.** It is one-shot, side-effect free (no logging init, no sockets, no file
+writes, no positional arguments required), and returns immediately.
+
+```json
+{"schema_version":1,"binary":"srtla_send","version":"3.2.0","capabilities":{"bind_map":true,"bind_map_schema_version":1,"capabilities_json":true,"dry_run":true,"stats_file":true,"control_socket":true}}
+```
+
+| Field | Meaning |
+|---|---|
+| `schema_version` | Version of the **capability document** (currently `1`), independent of the sidecar's. |
+| `binary` | Always `srtla_send`. |
+| `version` | The crate version. |
+| `capabilities.bind_map` | `true` on Linux builds; `false` elsewhere. |
+| `capabilities.bind_map_schema_version` | The sidecar `schema_version` this build reads. |
+| `capabilities.capabilities_json` | Always `true` — self-describing, so a consumer that got a document knows it can ask again. |
+| `capabilities.dry_run` / `stats_file` / `control_socket` | Existing surfaces, declared so a caller can probe once instead of version-sniffing. |
+
+### 7.1 Caller contract (this is the load-bearing half)
+
+> **Non-zero exit, unparseable output, or a timeout ⇒ NO SUPPORT.** The caller MUST NOT
+> pass `--bind-map` and MUST fall back to the legacy spawn.
+
+An old binary — including the currently shipped `3.2.0` — answers `--capabilities-json`
+with `error: unexpected argument`, exit code `2`. That is the intended negative signal.
+A caller MUST treat *any* non-zero exit the same way rather than matching on `2` or on
+the message text.
+
+Consumers ignore unknown fields; `capabilities` is an open map that will gain keys.
+
+---
+
+## 8. Consequences
+
+**Good**
+
+- The IP-only file is untouched, so every existing writer, reader, and deployed device
+  keeps working with no coordination.
+- Duplicate-IP bonds become expressible for the first time, and the failure mode when
+  they are not expressible is *reported* rather than silent.
+- Degradation never loses a stream: startup keeps a deterministic subset running, reload
+  keeps the whole bond running on the last good mapping.
+- The transient publication window is named, bounded, and absorbed rather than denied.
+- `link_id` gives downstream work a stable identity that survives IP churn.
+
+**Costs**
+
+- Two files must be published in the right order. The writer carries that burden; the
+  reader defends against getting it wrong.
+- A `generation` that the writer forgets to increment turns a mapping change into a
+  rejected read. That is deliberate — the alternative is applying an unordered mapping.
+- One new dependency (`sha2`) enters the shipped binary.
+- The reader can only ever be as correct as the writer's `iface` claims; it validates that
+  an interface *exists*, not that the IP is actually configured on it.
+
+**Explicitly not decided here**
+
+Socket binding, reconnect behavior, ifindex staleness, route-invariant health, and the
+telemetry field emission all consume this contract and are specified in their own changes.

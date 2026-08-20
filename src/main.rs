@@ -5,7 +5,9 @@ use clap::Parser;
 #[cfg(not(loom))]
 use srtla_send::cli::{Cli, dry_run_resolve};
 #[cfg(not(loom))]
-use srtla_send::{config, sender, stats, subscription, telemetry_file, version};
+use srtla_send::{
+    bind_map, capabilities, config, sender, stats, subscription, telemetry_file, version,
+};
 #[cfg(not(loom))]
 use tracing::{info, warn};
 #[cfg(not(loom))]
@@ -28,6 +30,13 @@ async fn main() -> Result<()> {
 
     if args.print_version {
         println!("{}", version::version_line());
+        return Ok(());
+    }
+
+    // Answered before logging is initialized so the probe's stdout carries the
+    // document and nothing else (ADR-003 §7).
+    if args.capabilities_json {
+        println!("{}", capabilities::capability_json());
         return Ok(());
     }
 
@@ -64,6 +73,24 @@ async fn main() -> Result<()> {
         println!("source uplink IPs ({}):", report.source_ips.len());
         for ip in &report.source_ips {
             println!("  {ip}");
+        }
+        if let Some(path) = args.bind_map.as_deref() {
+            let pool = bind_map::dry_run_validate(ips_file, path)
+                .await
+                .with_context(|| format!("bind-map sidecar {path} is unusable"))?;
+            println!(
+                "bind-map {path} valid (generation {}, {} link(s)):",
+                pool.generation,
+                pool.rows.len()
+            );
+            for row in &pool.rows {
+                println!(
+                    "  {} -> {} via {}",
+                    row.link_id.as_str(),
+                    row.ip,
+                    row.iface.as_str()
+                );
+            }
         }
         return Ok(());
     }
@@ -110,7 +137,10 @@ async fn main() -> Result<()> {
         local_srt_port,
         receiver_host,
         receiver_port,
-        ips_file,
+        sender::SenderPaths {
+            ips_file,
+            bind_map: args.bind_map.as_deref(),
+        },
         config,
         shared_stats,
         sender::TelemetrySinks {

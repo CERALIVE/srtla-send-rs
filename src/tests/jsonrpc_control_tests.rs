@@ -168,6 +168,7 @@ fn set_rtt_delta_changes_config() {
     let resp_str = dispatch_jsonrpc(
         r#"{"jsonrpc":"2.0","method":"set-rtt-delta","params":{"ms":75},"id":3}"#,
         &config,
+        &SharedStats::new(),
     );
     let resp: Value = serde_json::from_str(&resp_str).expect("valid JSON");
     assert_eq!(resp["result"]["ok"], Value::Bool(true));
@@ -205,6 +206,7 @@ fn whitespace_and_key_order_variants_parse() {
     let resp_str = dispatch_jsonrpc(
         r#"{ "id" : 1, "method" : "hello", "jsonrpc" : "2.0" }"#,
         &config,
+        &SharedStats::new(),
     );
     let resp: Value = serde_json::from_str(&resp_str).expect("valid JSON");
 
@@ -221,7 +223,7 @@ fn whitespace_and_key_order_variants_parse() {
 #[test]
 fn malformed_json_returns_parse_error() {
     let config = DynamicConfig::new();
-    let resp_str = dispatch_jsonrpc("{not valid json", &config);
+    let resp_str = dispatch_jsonrpc("{not valid json", &config, &SharedStats::new());
     let resp: Value = serde_json::from_str(&resp_str).expect("error envelope is valid JSON");
 
     assert_eq!(resp["jsonrpc"], Value::from("2.0"));
@@ -234,7 +236,11 @@ fn malformed_json_returns_parse_error() {
 #[test]
 fn invalid_request_returns_error() {
     let config = DynamicConfig::new();
-    let resp_str = dispatch_jsonrpc(r#"{"jsonrpc":"2.0","foo":"bar","id":4}"#, &config);
+    let resp_str = dispatch_jsonrpc(
+        r#"{"jsonrpc":"2.0","foo":"bar","id":4}"#,
+        &config,
+        &SharedStats::new(),
+    );
     let resp: Value = serde_json::from_str(&resp_str).expect("valid JSON");
 
     assert_eq!(resp["error"]["code"], Value::from(-32600));
@@ -249,6 +255,7 @@ fn unknown_method_returns_error() {
     let resp_str = dispatch_jsonrpc(
         r#"{"jsonrpc":"2.0","method":"nonexistent","id":5}"#,
         &config,
+        &SharedStats::new(),
     );
     let resp: Value = serde_json::from_str(&resp_str).expect("valid JSON");
 
@@ -296,7 +303,11 @@ fn legacy_text_protocol_still_works() {
 #[test]
 fn hello_matches_adr() {
     let config = DynamicConfig::new();
-    let resp_str = dispatch_jsonrpc(r#"{"jsonrpc":"2.0","method":"hello","id":1}"#, &config);
+    let resp_str = dispatch_jsonrpc(
+        r#"{"jsonrpc":"2.0","method":"hello","id":1}"#,
+        &config,
+        &SharedStats::new(),
+    );
     let resp: Value = serde_json::from_str(&resp_str).expect("valid JSON");
     let result = &resp["result"];
 
@@ -330,11 +341,16 @@ fn set_rtt_delta_accepts_delta_ms() {
     let set_str = dispatch_jsonrpc(
         r#"{"jsonrpc":"2.0","method":"set-rtt-delta","params":{"delta_ms":50},"id":1}"#,
         &config,
+        &SharedStats::new(),
     );
     let set: Value = serde_json::from_str(&set_str).expect("valid JSON");
     assert_eq!(set["result"]["ok"], Value::Bool(true));
 
-    let status_str = dispatch_jsonrpc(r#"{"jsonrpc":"2.0","method":"get-status","id":2}"#, &config);
+    let status_str = dispatch_jsonrpc(
+        r#"{"jsonrpc":"2.0","method":"get-status","id":2}"#,
+        &config,
+        &SharedStats::new(),
+    );
     let status: Value = serde_json::from_str(&status_str).expect("valid JSON");
     assert_eq!(status["result"]["rtt_delta_ms"], Value::from(50));
 }
@@ -347,11 +363,16 @@ fn set_rtt_delta_accepts_ms_alias() {
     let set_str = dispatch_jsonrpc(
         r#"{"jsonrpc":"2.0","method":"set-rtt-delta","params":{"ms":50},"id":1}"#,
         &config,
+        &SharedStats::new(),
     );
     let set: Value = serde_json::from_str(&set_str).expect("valid JSON");
     assert_eq!(set["result"]["ok"], Value::Bool(true));
 
-    let status_str = dispatch_jsonrpc(r#"{"jsonrpc":"2.0","method":"get-status","id":2}"#, &config);
+    let status_str = dispatch_jsonrpc(
+        r#"{"jsonrpc":"2.0","method":"get-status","id":2}"#,
+        &config,
+        &SharedStats::new(),
+    );
     let status: Value = serde_json::from_str(&status_str).expect("valid JSON");
     assert_eq!(status["result"]["rtt_delta_ms"], Value::from(50));
 }
@@ -364,6 +385,7 @@ fn set_rtt_delta_missing_param_is_invalid_params() {
     let resp_str = dispatch_jsonrpc(
         r#"{"jsonrpc":"2.0","method":"set-rtt-delta","params":{},"id":1}"#,
         &config,
+        &SharedStats::new(),
     );
     let resp: Value = serde_json::from_str(&resp_str).expect("valid JSON");
     assert_eq!(resp["error"]["code"], Value::from(-32602));
@@ -378,6 +400,7 @@ fn set_mode_accepts_edpf() {
     let resp_str = dispatch_jsonrpc(
         r#"{"jsonrpc":"2.0","method":"set-mode","params":{"mode":"edpf"},"id":1}"#,
         &config,
+        &SharedStats::new(),
     );
     let resp: Value = serde_json::from_str(&resp_str).expect("valid JSON");
     assert_eq!(resp["result"]["ok"], Value::Bool(true));
@@ -402,7 +425,7 @@ fn set_mode_accepts_edpf() {
 #[test]
 fn batch_array_is_invalid_request() {
     let config = DynamicConfig::new();
-    let resp_str = dispatch_jsonrpc("[1,2,3]", &config);
+    let resp_str = dispatch_jsonrpc("[1,2,3]", &config, &SharedStats::new());
     let resp: Value = serde_json::from_str(&resp_str).expect("valid JSON envelope");
 
     assert_eq!(resp["jsonrpc"], Value::from("2.0"));
@@ -440,11 +463,15 @@ fn id_echoed_verbatim_for_each_type() {
     ];
 
     for (frame, expected_id) in cases {
-        let resp_str = dispatch_jsonrpc(frame, &config);
+        let resp_str = dispatch_jsonrpc(frame, &config, &SharedStats::new());
         let resp: Value = serde_json::from_str(&resp_str).expect("valid JSON");
         assert_eq!(resp["id"], expected_id, "id mismatch for frame {frame}");
         // The id echo holds even on an error envelope.
-        let unknown_str = dispatch_jsonrpc(&frame.replace("hello", "no-such-method"), &config);
+        let unknown_str = dispatch_jsonrpc(
+            &frame.replace("hello", "no-such-method"),
+            &config,
+            &SharedStats::new(),
+        );
         let unknown: Value = serde_json::from_str(&unknown_str).expect("valid JSON");
         assert_eq!(
             unknown["id"], expected_id,
@@ -465,7 +492,7 @@ fn non_string_method_is_invalid_request() {
         r#"{"jsonrpc":"2.0","method":["hello"],"id":1}"#,
         r#"{"jsonrpc":"2.0","method":{"name":"hello"},"id":1}"#,
     ] {
-        let resp_str = dispatch_jsonrpc(frame, &config);
+        let resp_str = dispatch_jsonrpc(frame, &config, &SharedStats::new());
         let resp: Value = serde_json::from_str(&resp_str).expect("valid JSON");
         assert_eq!(
             resp["error"]["code"],
@@ -489,7 +516,7 @@ fn malformed_json_variants_return_parse_error() {
         r#"{"jsonrpc":"2.0","method":"hello""#, // truncated (unterminated object)
         "}{",
     ] {
-        let resp_str = dispatch_jsonrpc(frame, &config);
+        let resp_str = dispatch_jsonrpc(frame, &config, &SharedStats::new());
         let resp: Value = serde_json::from_str(&resp_str).expect("error envelope is valid JSON");
         assert_eq!(
             resp["error"]["code"],
@@ -516,7 +543,7 @@ fn set_mode_bad_params_are_invalid_params() {
         // unknown mode string
         r#"{"jsonrpc":"2.0","method":"set-mode","params":{"mode":"bogus"},"id":1}"#,
     ] {
-        let resp_str = dispatch_jsonrpc(frame, &config);
+        let resp_str = dispatch_jsonrpc(frame, &config, &SharedStats::new());
         let resp: Value = serde_json::from_str(&resp_str).expect("valid JSON");
         assert_eq!(
             resp["error"]["code"],
@@ -541,7 +568,7 @@ fn set_quality_bad_params_are_invalid_params() {
         // wrong-typed enabled (string, not boolean)
         r#"{"jsonrpc":"2.0","method":"set-quality","params":{"enabled":"yes"},"id":1}"#,
     ] {
-        let resp_str = dispatch_jsonrpc(frame, &config);
+        let resp_str = dispatch_jsonrpc(frame, &config, &SharedStats::new());
         let resp: Value = serde_json::from_str(&resp_str).expect("valid JSON");
         assert_eq!(
             resp["error"]["code"],
@@ -560,8 +587,119 @@ fn set_rtt_delta_negative_is_invalid_params() {
     let resp_str = dispatch_jsonrpc(
         r#"{"jsonrpc":"2.0","method":"set-rtt-delta","params":{"delta_ms":-5},"id":1}"#,
         &config,
+        &SharedStats::new(),
     );
     let resp: Value = serde_json::from_str(&resp_str).expect("valid JSON");
     assert_eq!(resp["error"]["code"], Value::from(-32602));
     assert_eq!(resp["id"], Value::from(1));
+}
+
+// ---- 16. get-capabilities is the SAME document --capabilities-json prints ---
+
+#[test]
+fn get_capabilities_matches_the_pre_spawn_probe_document() {
+    // Given: a supervisor that probed the binary before spawning it.
+    let probed: Value =
+        serde_json::from_str(&crate::capabilities::capability_json()).expect("probe emits JSON");
+
+    // When: a consumer asks the live control socket the same question.
+    let resp: Value = serde_json::from_str(&dispatch_jsonrpc(
+        r#"{"jsonrpc":"2.0","method":"get-capabilities","id":1}"#,
+        &DynamicConfig::new(),
+        &SharedStats::new(),
+    ))
+    .expect("valid JSON");
+    let result = &resp["result"];
+
+    // Then: every key of the probe document is present and IDENTICAL. Two
+    // answers to "what can this build do?" that disagree would send a
+    // supervisor down the wrong spawn path.
+    for (key, value) in probed.as_object().expect("the probe is an object") {
+        assert_eq!(result[key], *value, "get-capabilities drifted on `{key}`");
+    }
+    assert_eq!(
+        result["capabilities"]["bind_map_schema_version"],
+        Value::from(1)
+    );
+}
+
+#[test]
+fn get_capabilities_still_enumerates_the_control_methods() {
+    // ADR-001 requires the method/topic enumeration; it moved to `methods` when
+    // `capabilities` became the probe document's capability object.
+    let resp: Value = serde_json::from_str(&dispatch_jsonrpc(
+        r#"{"jsonrpc":"2.0","method":"get-capabilities","id":1}"#,
+        &DynamicConfig::new(),
+        &SharedStats::new(),
+    ))
+    .expect("valid JSON");
+
+    let methods = resp["result"]["methods"]
+        .as_array()
+        .expect("methods must be enumerated");
+    assert!(methods.iter().any(|m| m == "get-status"));
+    assert!(methods.iter().any(|m| m == "stats-subscription"));
+}
+
+#[test]
+fn hello_keeps_capabilities_as_the_frozen_method_array() {
+    // The TS control binding feature-detects with `hello.capabilities.includes`,
+    // so this field must stay a string array even though `get-capabilities`
+    // now answers with the richer probe document.
+    let resp: Value = serde_json::from_str(&dispatch_jsonrpc(
+        r#"{"jsonrpc":"2.0","method":"hello","id":1}"#,
+        &DynamicConfig::new(),
+        &SharedStats::new(),
+    ))
+    .expect("valid JSON");
+
+    let caps = resp["result"]["capabilities"]
+        .as_array()
+        .expect("hello.capabilities must remain an array");
+    assert!(caps.iter().any(|c| c == "stats-subscription"));
+}
+
+// ---- 17. get-status carries the ADR-003 operating mode + identity -----------
+
+#[test]
+fn get_status_reports_the_legacy_operating_mode_by_default() {
+    // Given: a sender that never resolved a bind-map.
+    let resp: Value = serde_json::from_str(&dispatch_jsonrpc(
+        r#"{"jsonrpc":"2.0","method":"get-status","id":1}"#,
+        &DynamicConfig::new(),
+        &SharedStats::new(),
+    ))
+    .expect("valid JSON");
+    let result = &resp["result"];
+
+    // Then: it says so in typed data rather than leaving the caller to infer it
+    // from the absence of a field.
+    assert_eq!(result["bind_map_status"]["state"], "absent");
+    assert_eq!(result["disposition"]["state"], "legacy_unique_only");
+    assert_eq!(result["links"], serde_json::json!([]));
+}
+
+#[test]
+fn get_status_echoes_the_link_identity_and_the_degraded_mode() {
+    // Given: a live sender whose reload degraded while a mapped pool runs.
+    let stats = SharedStats::new();
+    stats.set_bind_map(&crate::bind_map::BindMapReport::degraded(
+        crate::bind_map::DegradedReason::HashMismatch,
+        crate::bind_map::BindMapDisposition::RetainedLastValid,
+    ));
+
+    // When: get-status is asked.
+    let resp: Value = serde_json::from_str(&dispatch_jsonrpc(
+        r#"{"jsonrpc":"2.0","method":"get-status","id":1}"#,
+        &DynamicConfig::new(),
+        &stats,
+    ))
+    .expect("valid JSON");
+    let result = &resp["result"];
+
+    // Then: both halves of the operating mode are visible — degraded AND still
+    // interface-pinned, which one field could not express.
+    assert_eq!(result["bind_map_status"]["state"], "degraded");
+    assert_eq!(result["bind_map_status"]["reason"], "hash_mismatch");
+    assert_eq!(result["disposition"]["state"], "retained_last_valid");
 }

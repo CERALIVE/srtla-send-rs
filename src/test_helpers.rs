@@ -13,8 +13,8 @@ use tokio::time::Duration;
 use tokio::time::Instant;
 
 use crate::connection::{
-    BatchSender, BatchUdpSocket, BitrateTracker, CachedQuality, CongestionControl,
-    ReconnectionState, RttTracker, SrtlaConnection,
+    BatchSender, BatchUdpSocket, BitrateTracker, CachedQuality, CongestionControl, EgressLifecycle,
+    ReconnectionState, RouteHealth, RttTracker, SrtlaConnection,
 };
 use crate::protocol::{PKT_LOG_SIZE, WINDOW_DEF, WINDOW_MULT};
 use crate::utils::now_ms;
@@ -48,6 +48,9 @@ fn create_connection_from_socket(
         host: remote.ip().to_string(),
         port: remote.port(),
         local_ip,
+        link_id: None,
+        egress: EgressLifecycle::unmapped(),
+        route_health: RouteHealth::Unknown,
         label,
         connected: true,
         window: WINDOW_DEF * WINDOW_MULT,

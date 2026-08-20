@@ -19,10 +19,11 @@
 
 use std::net::{IpAddr, Ipv4Addr};
 
+use srtla_send::bind_map::BindMapReport;
 use srtla_send::stats::{LinkStats, StatsSnapshot};
 use srtla_send::telemetry_file::{
-    TELEMETRY_SCHEMA_VERSION, TelemetryConn, build_telemetry_json, build_telemetry_json_from_stats,
-    conns_from_stats,
+    TELEMETRY_SCHEMA_VERSION, TelemetryConn, TelemetryInputs, build_telemetry_json,
+    build_telemetry_json_from_stats, conns_from_stats,
 };
 
 /// Fixed publish timestamp fed through the deterministic clock seam. Matches the
@@ -40,7 +41,27 @@ fn base_conn() -> TelemetryConn {
         in_flight: 100,
         bitrate_bytes_per_sec: 312_500,
         bytes_sent_total: 0,
+        iface: None,
+        link_id: None,
     }
+}
+
+/// A legacy-shaped snapshot document. These edge cases predate the ADR-003
+/// operating-mode fields and stay scoped to the ADR-001 contract.
+fn json(last_updated_ms: u64, conns: &[TelemetryConn]) -> String {
+    doc(last_updated_ms, conns, 0)
+}
+
+/// The same, with an explicit bond-level ADR-002 cumulative count.
+fn doc(last_updated_ms: u64, conns: &[TelemetryConn], session_bytes_sent: u64) -> String {
+    build_telemetry_json(
+        last_updated_ms,
+        &TelemetryInputs {
+            conns,
+            session_bytes_sent,
+            bind_map: &BindMapReport::default(),
+        },
+    )
 }
 
 /// One link in the shared stats snapshot, parameterized on the fields the edge
@@ -49,6 +70,8 @@ fn link(connected: bool, bitrate_bytes_per_sec: u32, rtt_ms: u32, base_score: i3
     LinkStats {
         ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
         label: "test".to_string(),
+        iface: None,
+        link_id: None,
         connected,
         timed_out: !connected,
         window: 1000,
@@ -70,8 +93,8 @@ fn link(connected: bool, bitrate_bytes_per_sec: u32, rtt_ms: u32, base_score: i3
 fn last_updated_ms_comes_from_the_argument_seam() {
     // The same input must yield a byte-identical document — proof the serializer
     // reads no wall clock and the suite cannot be flaky on `last_updated_ms`.
-    let a = build_telemetry_json(FIXED_MS, &[base_conn()], 0);
-    let b = build_telemetry_json(FIXED_MS, &[base_conn()], 0);
+    let a = json(FIXED_MS, &[base_conn()]);
+    let b = json(FIXED_MS, &[base_conn()]);
     assert_eq!(
         a, b,
         "build_telemetry_json must be a pure function of its args"
@@ -86,7 +109,7 @@ fn last_updated_ms_comes_from_the_argument_seam() {
 
 #[test]
 fn zero_connections_serialize_to_empty_array() {
-    let json = build_telemetry_json(FIXED_MS, &[], 0);
+    let json = json(FIXED_MS, &[]);
     assert!(json.contains("\"connections\":[]"), "got {json}");
     // Idle is distinct from absent: the version tag + timestamp still ship.
     assert!(json.contains("\"schema_version\":1"), "got {json}");
@@ -102,7 +125,7 @@ fn zero_connections_via_stats_projection() {
     // A live process with no links projects to an empty list, never `null`.
     let conns = conns_from_stats(&StatsSnapshot::default());
     assert!(conns.is_empty(), "no links must project to no connections");
-    let json = build_telemetry_json(FIXED_MS, &conns, 0);
+    let json = json(FIXED_MS, &conns);
     assert!(json.contains("\"connections\":[]"), "got {json}");
 }
 
@@ -116,7 +139,7 @@ fn active_link_with_zero_traffic_reports_zero_bitrate() {
         bitrate_bytes_per_sec: 0,
         ..base_conn()
     };
-    let json = build_telemetry_json(FIXED_MS, &[conn], 0);
+    let json = json(FIXED_MS, &[conn]);
     assert!(json.contains("\"bitrate_bps\":0"), "got {json}");
     assert!(json.contains("\"conn_id\":\"0\""), "got {json}");
 }
@@ -137,7 +160,7 @@ fn zero_traffic_link_stays_active_in_projection() {
         conns[0].weight_percent, 100,
         "sole active link gets full share"
     );
-    let json = build_telemetry_json(FIXED_MS, &conns, 0);
+    let json = json(FIXED_MS, &conns);
     assert!(json.contains("\"bitrate_bps\":0"), "got {json}");
 }
 
@@ -151,7 +174,7 @@ fn very_high_rtt_serializes_intact() {
         rtt_ms: 5000,
         ..base_conn()
     };
-    let json = build_telemetry_json(FIXED_MS, &[conn], 0);
+    let json = json(FIXED_MS, &[conn]);
     assert!(json.contains("\"rtt_ms\":5000"), "got {json}");
 }
 
@@ -166,7 +189,7 @@ fn very_high_rtt_survives_stats_projection() {
         conns[0].rtt_ms, 5000,
         "high RTT must pass through unaltered"
     );
-    let json = build_telemetry_json(FIXED_MS, &conns, 0);
+    let json = json(FIXED_MS, &conns);
     assert!(json.contains("\"rtt_ms\":5000"), "got {json}");
 }
 
@@ -183,7 +206,7 @@ fn schema_version_is_pinned_to_one() {
         "schema_version bump must be deliberate (ADR-001)"
     );
 
-    let json = build_telemetry_json(FIXED_MS, &[], 0);
+    let json = json(FIXED_MS, &[]);
     // Present, an integer, and leading the document.
     assert!(
         json.starts_with("{\"schema_version\":1,"),
@@ -215,7 +238,7 @@ fn bitrate_bps_is_exactly_wire_bytes_times_eight() {
             bitrate_bytes_per_sec: wire_bytes,
             ..base_conn()
         };
-        let json = build_telemetry_json(FIXED_MS, &[conn], 0);
+        let json = json(FIXED_MS, &[conn]);
         let needle = format!("\"bitrate_bps\":{expected_bps}");
         assert!(
             json.contains(&needle),
@@ -224,13 +247,12 @@ fn bitrate_bps_is_exactly_wire_bytes_times_eight() {
     }
 
     // The raw wire-bytes/s value must never leak into the document.
-    let json = build_telemetry_json(
+    let json = json(
         FIXED_MS,
         &[TelemetryConn {
             bitrate_bytes_per_sec: 312_500,
             ..base_conn()
         }],
-        0,
     );
     assert!(!json.contains("312500"), "raw wire bytes/s leaked: {json}");
 }
@@ -247,7 +269,7 @@ fn bytes_sent_total_is_serialized_verbatim_without_the_x8() {
         bytes_sent_total: 312_500,
         ..base_conn()
     };
-    let json = build_telemetry_json(FIXED_MS, &[conn], 312_500);
+    let json = doc(FIXED_MS, &[conn], 312_500);
 
     assert!(json.contains("\"bitrate_bps\":2500000"), "got {json}");
     assert!(json.contains("\"bytes_sent_total\":312500"), "got {json}");
@@ -258,7 +280,7 @@ fn bond_total_is_independent_of_the_per_link_totals() {
     // The doc-level counter is a session accumulator, not a sum of the live
     // links: after a SIGHUP teardown it legitimately EXCEEDS that sum, and the
     // serializer must not "helpfully" recompute it.
-    let json = build_telemetry_json(
+    let json = doc(
         FIXED_MS,
         &[TelemetryConn {
             bytes_sent_total: 100,
@@ -275,7 +297,7 @@ fn bond_total_is_independent_of_the_per_link_totals() {
 fn idle_snapshot_still_reports_the_bond_total() {
     // Every uplink dropped mid-session: `connections` empties, but the operator's
     // "total transferred" must keep reading what was already sent, not reset.
-    let json = build_telemetry_json(FIXED_MS, &[], 4_096);
+    let json = doc(FIXED_MS, &[], 4_096);
 
     assert!(json.contains("\"connections\":[]"), "got {json}");
     assert!(json.contains("\"bytes_sent_total\":4096"), "got {json}");

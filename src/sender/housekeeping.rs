@@ -5,6 +5,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::Instant;
 use tracing::{debug, error, info, warn};
 
+use super::egress_tick::{TickFlow, handle_egress};
 use super::sequence::SequenceTracker;
 use super::uplink::{ConnectionId, ReaderHandle, UplinkPacket, restart_reader_for};
 use crate::connection::{STARTUP_GRACE_MS, SrtlaConnection};
@@ -50,6 +51,10 @@ pub async fn handle_housekeeping(
 
     // housekeeping: drive registration, send keepalives
     for (i, conn) in connections.iter_mut().enumerate() {
+        if handle_egress(conn, reader_handles, packet_tx, seq_tracker).await == TickFlow::Skip {
+            continue;
+        }
+
         // Simple reconnect-on-timeout, then allow reg driver to proceed
         if conn.is_timed_out() {
             if conn.should_attempt_reconnect() {

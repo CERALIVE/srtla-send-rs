@@ -1,4 +1,19 @@
 #[cfg(test)]
+pub mod bind_map_parse_tests;
+
+#[cfg(test)]
+pub mod bind_map_validate_tests;
+
+#[cfg(test)]
+pub mod bind_map_generation_tests;
+
+#[cfg(test)]
+pub mod bind_map_resolve_tests;
+
+#[cfg(test)]
+pub mod bind_map_report_tests;
+
+#[cfg(test)]
 pub mod batch_io_tests;
 
 #[cfg(test)]
@@ -48,3 +63,12 @@ pub mod jsonrpc_control_tests;
 
 #[cfg(all(test, unix))]
 pub mod subscription_tests;
+
+#[cfg(test)]
+pub mod egress_binding_tests;
+
+#[cfg(test)]
+pub mod link_identity_tests;
+
+#[cfg(test)]
+pub mod egress_lifecycle_tests;

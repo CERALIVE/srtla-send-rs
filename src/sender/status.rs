@@ -151,6 +151,23 @@ pub(crate) fn log_connection_status(
             conn.current_bitrate_mbps()
         );
 
+        // Egress health is reported SEPARATELY from the ACTIVE/TIMED_OUT line
+        // above, because they answer different questions: that line is ACK
+        // liveness, this one is whether the interface can still carry traffic
+        // at all. A link can be ACK-live and route-blackholed at the same time.
+        if let Some(iface) = conn.egress.iface() {
+            info!(
+                "        Egress: iface={} link={} route={}",
+                iface.as_str(),
+                if conn.is_removed() {
+                    "REMOVED"
+                } else {
+                    "BOUND"
+                },
+                conn.route_health.as_str()
+            );
+        }
+
         let foreign = conn.foreign_source_datagrams();
         if foreign > 0 {
             info!(
