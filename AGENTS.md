@@ -177,6 +177,31 @@ CeraUI and the device integration depend on these staying stable:
 - **Upstream scheduler/control-socket flags** (`--mode`, `--no-quality`, `--exploration`,
   `--rtt-delta-ms`, `--control-socket`) stay present and functional but are **not**
   surfaced in CeraUI.
+- **Optional bind-map sidecar (`--bind-map <path>`, ADR-003) — ADDITIVE, never required.**
+  `BIND_IPS_FILE` stays **byte-unchanged**; the mapping rides a *separate* versioned JSON
+  sidecar that describes it **positionally** (the Nth row describes the Nth accepted IP
+  line, which is what disambiguates duplicate-IP twin modems). Header carries
+  `{schema_version, generation, ips_file_sha256}`; rows carry
+  `{link_id, ip, iface, id_path?}`. **Absent `--bind-map` ⇒ byte-identical legacy
+  behavior** — the module is not entered at all, pinned by
+  `a_legacy_invocation_without_bind_map_produces_byte_identical_output`
+  (`tests/bind_map_contract.rs`, literal stdout). Coherence is one-directional: the
+  sidecar names the exact ips-file bytes it describes. A mismatch is retried
+  (5 attempts × 400 ms, ≤ 2 s ceiling) because the writer's two-rename publication window
+  produces exactly that transient; a mismatch that outlives the budget **fails open,
+  duplicate-safe** — at STARTUP a same-IP collision group keeps one deterministic
+  representative and the rest are excluded **and reported**; on a valid→degraded RELOAD
+  the sender **retains the last valid mapped pool** rather than silently un-binding a live
+  bond. Full contract: [`docs/adr/ADR-003-bind-map-contract.md`](docs/adr/ADR-003-bind-map-contract.md).
+  This ADR is the **contract + parser only** — `DeviceBinder` is still dormant and no
+  socket is bound to a device yet.
+- **`--capabilities-json` is the pre-spawn probe (ADR-003 §7).** One-shot, side-effect
+  free, exits `0` with a single-line JSON capability document on stdout (before logging is
+  initialized). **The load-bearing half is the caller's:** non-zero exit, unparseable
+  output, or a timeout means NO SUPPORT — fall back to the legacy spawn and never pass
+  `--bind-map`. The shipped `3.2.0` binary answers this flag with `error: unexpected
+  argument` and exit `2`, which is precisely that signal; callers must treat *any*
+  non-zero exit the same way rather than matching on the code or the message.
 - **`-v/--version` IS operator-visible, and its build metadata is OPTIONAL.** CeraUI
   shells out to `srtla_send -v` and renders the raw stdout in Settings → Versions
   (`apps/backend/src/modules/system/revisions.ts`), so this line is read by humans, not
@@ -511,6 +536,10 @@ src/
   lib.rs             library exports
   config.rs / config/    runtime config (DynamicConfig, ConfigSnapshot); stdin + Unix-socket control
   mode.rs            SchedulingMode (Classic | Enhanced | RttThreshold | Edpf)
+  bind_map/          optional versioned bind-map sidecar (ADR-003): parser, coherence,
+                     bounded retry, fail-open duplicate-safe resolution. Contract only —
+                     binds no sockets.
+  capabilities.rs    --capabilities-json pre-spawn probe document
   connection/        SrtlaConnection, bind/resolve, incoming packet handling, RTT (Kalman)
   protocol.rs        SRTLA protocol constants/structures
   registration.rs    REG1/REG2/REG3 flow + ID propagation

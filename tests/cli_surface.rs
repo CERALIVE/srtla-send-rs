@@ -32,8 +32,10 @@ const POSITIONAL_CONTRACT: [&str; 4] = [
 /// `None` means the argument has no default value at all (an `Option<T>` that
 /// is simply absent). Boolean switches render their `SetTrue`/`SetFalse`
 /// default as `"false"`.
-const FLAG_CONTRACT: [(&str, &str, Option<&str>); 15] = [
+const FLAG_CONTRACT: [(&str, &str, Option<&str>); 17] = [
     ("print_version", "version", Some("false")),
+    ("capabilities_json", "capabilities-json", Some("false")),
+    ("bind_map", "bind-map", None),
     ("verbose", "verbose", Some("false")),
     ("dry_run", "dry-run", Some("false")),
     ("stats_file", "stats-file", None),
@@ -143,6 +145,47 @@ fn all_four_positionals_are_required_unless_version_is_requested() {
     command()
         .try_get_matches_from(["srtla_send", "--version"])
         .expect("--version short-circuits the required positionals");
+
+    command()
+        .try_get_matches_from(["srtla_send", "--capabilities-json"])
+        .expect("--capabilities-json is a pre-spawn probe: it cannot demand a configuration");
+}
+
+#[test]
+fn bind_map_is_a_fully_optional_additive_flag() {
+    // The four positionals plus an IP-only file must keep working untouched;
+    // --bind-map may only ever add to that invocation, never alter it.
+    let cmd = command();
+    let arg = cmd
+        .get_arguments()
+        .find(|a| a.get_id().as_str() == "bind_map")
+        .expect("--bind-map must exist");
+    assert!(!arg.is_required_set(), "--bind-map must never be required");
+    assert!(
+        arg.get_default_values().is_empty(),
+        "--bind-map must have no default: absent means legacy behavior"
+    );
+
+    let without = command()
+        .try_get_matches_from(["srtla_send", "5000", "127.0.0.1", "5001", "/tmp/ips"])
+        .expect("the legacy four-positional invocation must still parse");
+    assert_eq!(without.get_one::<String>("bind_map"), None);
+
+    let with = command()
+        .try_get_matches_from([
+            "srtla_send",
+            "5000",
+            "127.0.0.1",
+            "5001",
+            "/tmp/ips",
+            "--bind-map",
+            "/tmp/srtla_bind_map.json",
+        ])
+        .expect("--bind-map is accepted alongside the positionals");
+    assert_eq!(
+        with.get_one::<String>("bind_map").map(String::as_str),
+        Some("/tmp/srtla_bind_map.json")
+    );
 }
 
 #[test]

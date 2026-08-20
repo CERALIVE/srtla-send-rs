@@ -258,6 +258,8 @@ srtla_send [OPTIONS] SRT_LISTEN_PORT SRTLA_HOST SRTLA_PORT BIND_IPS_FILE
 - `--stall-min-in-flight <N>`: `[EXPERIMENTAL]` in-flight threshold that marks a link stall-eligible for `--stall-deselect` (default: 32)
 - `--stall-ack-stale-ms <MS>`: `[EXPERIMENTAL]` earned-ACK/RTT staleness window in ms for `--stall-deselect` (default: 3000)
 - `--stall-reprobe-ms <MS>`: `[EXPERIMENTAL]` re-probe interval in ms for `--stall-deselect` (default: 1000)
+- `--bind-map <PATH>`: Optional versioned bind-map sidecar describing `BIND_IPS_FILE` positionally (see [Bind-map sidecar](#bind-map-sidecar-optional)). Absent means byte-identical legacy behavior
+- `--capabilities-json`: Print a machine-readable capability document and exit `0` (see [Capability probe](#capability-probe))
 - `-v, --version`: Print version and exit (see [Version output](#version-output))
 
 ### Version output
@@ -490,6 +492,60 @@ really do cost the data plan twice); SRTLA control frames — keepalives and reg
 
 Full rationale, the complete reset table, and the consumer contract are in
 [`docs/adr/ADR-002-session-bytes-telemetry.md`](docs/adr/ADR-002-session-bytes-telemetry.md).
+
+## Bind-map sidecar (optional)
+
+`srtla_send` identifies an uplink by its local source IP. Two identical modems in
+HiLink/RNDIS mode both present `192.168.8.100`, so the second one is silently collapsed
+into the first and never carries traffic. `--bind-map` supplies the missing information —
+which interface, and which stable identity, each row of the IP list refers to.
+
+`BIND_IPS_FILE` is **not** changed. The mapping rides a separate JSON sidecar that
+describes it **positionally**: the Nth row describes the Nth accepted IP line, which is
+exactly what tells duplicate IPs apart.
+
+```json
+{"schema_version":1,"generation":7,"ips_file_sha256":"<64 lowercase hex>","links":[
+  {"link_id":"modem-a","ip":"192.168.8.100","iface":"wwan0"},
+  {"link_id":"modem-b","ip":"192.168.8.100","iface":"wwan1"}]}
+```
+
+```bash
+./target/release/srtla_send 6000 rec.example.com 5000 /tmp/srtla_ips \
+  --bind-map /tmp/srtla_bind_map.json
+```
+
+The writer publishes the IP file first and the sidecar second, each by atomic rename; the
+**sidecar rename is the commit point**. A reader landing between the two renames sees new
+IP bytes against an older sidecar — a detectable mismatch that a bounded retry (5 attempts
+over at most 2 s) absorbs.
+
+If the pair never agrees, the sender **fails open without guessing**:
+
+- **at startup**, unique IPs run as usual, and each duplicate-IP group keeps one
+  deterministic representative while the rest are excluded *and reported* — an operator
+  with two modems and one visible link is told why;
+- **on a reload** (SIGHUP) that degrades, the sender keeps the last valid mapping running
+  rather than silently un-binding a live bond.
+
+**Without `--bind-map` nothing above happens** — no hashing, no sidecar, no new failure
+mode. `--dry-run` validates both files and exits non-zero if the sidecar is unusable.
+Full contract: [`docs/adr/ADR-003-bind-map-contract.md`](docs/adr/ADR-003-bind-map-contract.md).
+
+## Capability probe
+
+`--capabilities-json` prints one line of JSON describing what this build supports, then
+exits `0`. It binds no sockets, writes no files, and needs no positional arguments.
+
+```bash
+$ ./target/release/srtla_send --capabilities-json
+{"schema_version":1,"binary":"srtla_send","version":"3.2.0","capabilities":{"bind_map":true,...}}
+```
+
+It exists so a supervisor can decide **before spawning a stream** whether to pass
+`--bind-map`. Older binaries do not have the flag and exit non-zero with a usage error —
+that is the intended "no support" answer. Treat **any** non-zero exit, unparseable output,
+or timeout as no support and use the legacy spawn.
 
 ## Startup Without an IP List (Unix)
 

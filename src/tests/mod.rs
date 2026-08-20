@@ -1,4 +1,16 @@
 #[cfg(test)]
+pub mod bind_map_parse_tests;
+
+#[cfg(test)]
+pub mod bind_map_validate_tests;
+
+#[cfg(test)]
+pub mod bind_map_generation_tests;
+
+#[cfg(test)]
+pub mod bind_map_resolve_tests;
+
+#[cfg(test)]
 pub mod batch_io_tests;
 
 #[cfg(test)]

@@ -43,6 +43,7 @@ mimalloc = { version = "0.1", default-features = false, features = [
 	"secure",
 	"v3",
 ], optional = true }
+sha2 = "0.11"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
