@@ -516,7 +516,7 @@ requires all five filters in BOTH workflows. Install with
 The `@ceralive/srtla-send` TS binding (`bindings/typescript/`) has its own gate:
 
 ```bash
-cd bindings/typescript && pnpm install --frozen-lockfile && pnpm lint && pnpm typecheck && pnpm test && pnpm build
+cd bindings/typescript && bun install --frozen-lockfile && bun run lint && bun run typecheck && bun run test && bun run build
 ```
 
 `tsc --noEmit` typechecks **everything** via `tsconfig.json` (tests included). The
@@ -531,8 +531,8 @@ allowlist, `.npmignore`'s test-source pattern can't strip already-compiled
 
 Three workflows. The two Rust `.deb` workflows build on the **pinned nightly**
 (`setup-rust-toolchain` with no `toolchain` input reads `rust-toolchain.toml`); the
-binding-publish workflow uses pnpm for package management and a pinned Bun runtime for
-the binding's Bun-native tests/API; it shares no triggers with the Rust workflows:
+binding workflows use a pinned **Bun 1.4.0** for both package management and the
+binding's Bun-native tests/API; they share no triggers with the Rust workflows:
 
 - **`ci.yml`** (push/PR) — the gate (`fmt`, `clippy -D warnings` lib+bin, `check`,
   bounded tests with the privileged-netns self-skip boundary, `cargo audit`) plus typed
@@ -544,13 +544,17 @@ the binding's Bun-native tests/API; it shares no triggers with the Rust workflow
   uv contract step uses the published `astral-sh/setup-uv@v8.3.2` release tag because
   setup-uv does not publish a `v8` major alias; do not shorten this ref to `@v8`.
   It also carries the **`bindings` job — the PR-gated TypeScript binding lane**
-  (`pnpm install --frozen-lockfile`, `lint`, `typecheck`, `test`, `build` from
-  `bindings/typescript/`, under **Node 26**, pnpm 10.30.3 and Bun 1.3.14). It is
+  (`bun install --frozen-lockfile`, `bun run lint|typecheck|test|build` from
+  `bindings/typescript/`, under **Bun 1.4.0**). It is
   **REQUIRED, not a canary**: no `continue-on-error`, so a red binding blocks the PR
   like any Rust lane. `publish-bindings.yml` runs the same commands, but only on a
   `bindings-v*` tag — by then a break is already on `main`; this lane moves the gate
-  onto the PR. Node 26 is the CeraLive CI baseline as of 2026-08-14 (root `AGENTS.md`
-  → CI/CD STANDARD); do not pin Node 24 or older in any workflow here.
+  onto the PR. **This job installs no Node at all**, which is deliberate: the root
+  `AGENTS.md` → CI/CD STANDARD's Node 26 baseline exempts binding gates that execute
+  under Bun (the same exemption `cerastream` and `srtla` bindings hold), and every
+  command here does. Do not re-add `setup-node` to this job. Where Node genuinely is
+  required — the `npm pack` tarball guard and the OIDC publish in
+  `publish-bindings.yml` — it stays pinned at 26; never pin Node 24 or older.
 - **`release.yml`** (tag push `v*`) — runs the full Rust gate plus the blocking
   `loom` contract job (production subscription-concurrency invariant) and Miri lane in
   parallel; `build-deb` needs all three before rebuilding both
@@ -563,8 +567,11 @@ the binding's Bun-native tests/API; it shares no triggers with the Rust workflow
   (the `publish` job grants `id-token: write`, `npm publish --access public` — **no `NODE_AUTH_TOKEN`**;
   npm is pinned to `11.18.0`, above the trusted-publishing minimum of 11.5.1; Node is 26).
   Mirrors `@ceralive/cerastream`'s publish flow.
-  The `test-bindings` job uses the committed pnpm lockfile to run lint, typecheck, tests,
-  build, and the tarball guard, then uploads validated `dist/`. The OIDC `publish` job
+  The `test-bindings` job uses the committed `bun.lock` to run lint, typecheck, tests,
+  and build under Bun, then runs the tarball guard and uploads validated `dist/`. Node 26
+  + npm `11.18.0` remain in that job for the guard alone (it parses `npm pack --dry-run
+  --json`, keeping BOTH the npm-11 array and npm-12 object shapes), not to run the gate.
+  The OIDC `publish` job
   needs both that gate and `verify-release-ref`, which accepts only a tag-push event whose
   `bindings-v*` tag, package version, ref, checked-out commit, and event SHA agree. A
   `workflow_dispatch` run can reach only the separate non-OIDC `npm publish --dry-run`
@@ -606,8 +613,8 @@ Cargo gets a chance to rebuild them.
 The CI `test` job runs `uv run scripts/rust_cache_contract_test.py`, which
 locks coverage for all nightly, Loom, Miri, `.deb`, stable, beta, Windows, and
 macOS Rust lanes in both workflows. The Rust cache action is the only cache
-owner for those lanes; the binding workflow separately uses setup-node's pnpm
-cache.
+owner for those lanes; the binding lanes are outside its scope entirely and rely on
+`oven-sh/setup-bun`'s own dependency cache.
 
 **`ci/build-deb.sh` is the single source of truth** for the `.deb` and is called by both
 workflows. It pins the contract the device image depends on:
@@ -689,7 +696,7 @@ scripts/workflow_contract.py  typed semantic GitHub workflow graph/model
 scripts/workflow_yaml.py  typed YAML-node and publication-authority parser
 scripts/release_version_contract_test.sh  manifest-derived tag/package/.deb version contract
 scripts/bindings_release_ref_contract_test.sh  binding tag/ref/version/SHA provenance contract
-scripts/bindings_package_manager_contract_test.sh  root pnpm policy contract
+scripts/bindings_package_manager_contract_test.sh  bun-only package-manager policy contract
 scripts/netns_test_gate.sh  bounded privileged network-namespace test runner
 ```
 
@@ -831,8 +838,8 @@ and reports both fields as `undefined` with **no key materialized** (no `null`, 
 distinguishable from "empty".
 
 `tsconfig.json` fix: added `tests/**/*` to `include`; moved `rootDir: "src"` into
-`tsconfig.build.json` only. This ensures `pnpm typecheck` typechecks tests (not
-just `src/`), while `pnpm build` still emits only `dist/{index,sender/index,
+`tsconfig.build.json` only. This ensures `bun run typecheck` typechecks tests (not
+just `src/`), while `bun run build` still emits only `dist/{index,sender/index,
 telemetry/index}.js` with no test files. Tarball stays clean (`files: ["dist"]`
 allowlist + build-emit excludes `*.test.ts`).
 
@@ -853,14 +860,19 @@ record is `docs/notes/upstream-sync-2026-08-evaluation.md` → `673138d`.
 
 ## TS BINDING TOOLING
 
-The binding package manager is **pnpm**, pinned by `packageManager` and
-`bindings/typescript/pnpm-lock.yaml`. Run package commands from
-`bindings/typescript/` with pnpm (`pnpm install --frozen-lockfile`, `pnpm lint`,
-`pnpm typecheck`, `pnpm test`, `pnpm build`). The package API and tests remain Bun-native,
-so `pnpm test` invokes the pinned Bun test runtime; Bun is not the dependency manager.
-Do not add Bun/npm/yarn lockfiles for this package.
+The binding package manager is **Bun `1.4.0`**, pinned by `packageManager` and locked by
+`bindings/typescript/bun.lock`. Run package commands from `bindings/typescript/` with Bun
+(`bun install --frozen-lockfile`, `bun run lint`, `bun run typecheck`, `bun run test`,
+`bun run build`). Bun is now BOTH the dependency manager and the test runtime — the
+package API and tests were always Bun-native, and the package manager finally matches.
 
-The `bindings/typescript/` package uses Biome **2.5.8** via `@ceralive/biome-config` **2026.8.0** (the workspace canon — keep `biome.json`'s `$schema` on the same Biome patch) as its first linter/formatter. The `biome.json` in `bindings/typescript/` extends `@ceralive/biome-config` (`"extends": ["@ceralive/biome-config"]`). ESLint and Prettier are not used. Run `pnpm lint` from `bindings/typescript/` (check) or `pnpm exec biome check --write .` (apply fixes). The binding gate includes `pnpm lint && pnpm typecheck && pnpm test && pnpm build`.
+**`bun.lock` is the ONLY lockfile.** `pnpm-lock.yaml`, `package-lock.json`, and
+`yarn.lock` are forbidden: a second lockfile resolves a different dependency graph than
+the one CI installs, and it does so silently. `scripts/bindings_package_manager_contract_test.sh`
+enforces this (bun `packageManager`, `bun.lock` present, the other three absent, and no
+pnpm invocation anywhere in `.github/workflows/`) and runs in the `ci.yml` `test` job.
+
+The `bindings/typescript/` package uses Biome **2.5.8** via `@ceralive/biome-config` **2026.8.0** (the workspace canon — keep `biome.json`'s `$schema` on the same Biome patch) as its first linter/formatter. The declared range is `^2.5.8` but the lockfile deliberately HOLDS 2.5.8 rather than floating to the newer published patch, because the canon version is set workspace-wide by `@ceralive/biome-config`, not per-repo; bump it here only when the canon package bumps. The `biome.json` in `bindings/typescript/` extends `@ceralive/biome-config` (`"extends": ["@ceralive/biome-config"]`). ESLint and Prettier are not used. Run `bun run lint` from `bindings/typescript/` (check) or `bunx biome check --write .` (apply fixes). The binding gate includes `bun run lint && bun run typecheck && bun run test && bun run build`.
 
 **Golden fixtures are excluded from Biome** — `biome.json` sets `files.includes` to `["**", "!**/tests/fixtures"]`. `tests/fixtures/telemetry-golden.json` is a deliberately byte-identical copy of the Rust producer golden (`tests/fixtures/telemetry-golden.json` at the crate root): the single-line, newline-free atomic-publish telemetry shape (ADR-001). If Biome pretty-prints it (multi-line + trailing newline), the cross-language parity test (`tests/telemetry_fixture_parity.rs` — `rust_and_ts_goldens_are_byte_identical` plus the newline-free assertion) fails every Rust test job in CI. **Do not remove this exclude, and never `biome check --write` the fixtures** — re-sync the two goldens by editing both byte-for-byte instead.
 

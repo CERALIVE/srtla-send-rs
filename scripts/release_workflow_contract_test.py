@@ -140,12 +140,12 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
 
         for command in (
             ("install", "--frozen-lockfile"),
-            ("lint",),
-            ("typecheck",),
-            ("test",),
-            ("build",),
+            ("run", "lint"),
+            ("run", "typecheck"),
+            ("run", "test"),
+            ("run", "build"),
         ):
-            self.assertTrue(gate.has_command("pnpm", *command))
+            self.assertTrue(gate.has_command("bun", *command))
         self.assertTrue(
             verifier.has_command("bash", "ci/verify-bindings-release-ref.sh")
         )

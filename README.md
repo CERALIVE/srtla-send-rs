@@ -137,8 +137,8 @@ and pull request (`.github/workflows/ci.yml`):
 - Cross-builds for `aarch64-unknown-linux-gnu` (device) and `x86_64-unknown-linux-gnu`,
   each packaged into a `.deb`
 - Cross-platform/cross-channel coverage (Linux/Windows/macOS, stable/beta)
-- A required `bindings` job that runs the TypeScript binding gate (`pnpm install
-  --frozen-lockfile`, lint, typecheck, Bun tests, build) on **Node 26** — a red
+- A required `bindings` job that runs the TypeScript binding gate (`bun install
+  --frozen-lockfile`, lint, typecheck, tests, build) on **Bun 1.4.0** — a red
   binding blocks the PR, so a break no longer waits for a `bindings-v*` tag
 - A `v*` release runs the full Rust gate plus the parallel `loom` contract job
   (a production subscription-concurrency invariant) and Miri lane before either
@@ -182,8 +182,9 @@ The `bindings/typescript/` helper publishes to the **public npm registry** as
 using npm **OIDC trusted publishing** (no `NPM_TOKEN`) — the same flow as
 `@ceralive/cerastream`. It is a **separate** release track from the Rust `.deb`s:
 pushing a `bindings-vYYYY.M.P` tag runs the typecheck + test gate, builds `dist/`, and
-publishes the package with the npm CLI pinned to `11.18.0`. The pnpm gate runs lint,
-typecheck, Bun-native tests, and build; a
+publishes the package with the npm CLI pinned to `11.18.0`. The Bun gate runs lint,
+typecheck, Bun-native tests, and build — Bun is both the package manager and the test
+runtime, so npm appears only in the tarball guard and the publish itself; a
 separate publish job needs both validated `dist/` and exact tag/ref/version/SHA
 provenance. Manual workflow dispatch is dry-run-only and has no path to the OIDC publish
 job. The published version is the committed
@@ -224,7 +225,7 @@ The telemetry layer has hardened integration tests:
   (including a failing attempt), and the port is genuinely held once the listener is
   logged. Unprivileged; needs no reachable receiver.
 
-The binding's `tsconfig.json` was updated to include `tests/**/*` so `pnpm typecheck`
+The binding's `tsconfig.json` was updated to include `tests/**/*` so `bun run typecheck`
 typechecks test files. `rootDir: "src"` moved to `tsconfig.build.json` only, keeping
 the published `dist/` free of compiled test output.
 

@@ -158,7 +158,7 @@ class WorkflowAuthorityContractTests(unittest.TestCase):
         self.assertEqual(setup_uv_actions, (SETUP_UV_ACTION,))
         self.assertTrue(
             any(
-                step.action == "pnpm/action-setup@v6"
+                step.action == "oven-sh/setup-bun@v2"
                 for step in bindings.job("test-bindings").steps
             )
         )

@@ -36,7 +36,7 @@ class ShellCommand:
 
     @property
     def is_dry_run_package_publish(self) -> bool:
-        return self.executable in ("npm", "pnpm") and self.has_arguments(
+        return self.executable in ("npm", "bun") and self.has_arguments(
             "publish", "--dry-run"
         )
 
@@ -119,7 +119,7 @@ class Simulation:
 
 
 def _commands(script: str) -> tuple[ShellCommand, ...]:
-    supported = ("cargo", "npm", "pnpm", "bash", "uv")
+    supported = ("cargo", "npm", "bun", "bash", "uv")
     commands: list[ShellCommand] = []
     for raw_line in script.splitlines():
         line = raw_line.strip().removesuffix("\\").strip()
