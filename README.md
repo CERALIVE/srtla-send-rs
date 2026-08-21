@@ -142,7 +142,9 @@ and pull request (`.github/workflows/ci.yml`):
   binding blocks the PR, so a break no longer waits for a `bindings-v*` tag
 - A `v*` release runs the full Rust gate plus the parallel `loom` contract job
   (a production subscription-concurrency invariant) and Miri lane before either
-  architecture can be packaged or attached to the GitHub release
+  architecture can be packaged or attached to the GitHub release. Both `.deb` builds
+  execute inside Debian 12 (`debian:bookworm-slim`) and reject a final binary importing
+  any GLIBC symbol newer than the device image's `GLIBC_2.36` ceiling
 - Every Rust CI/release lane uses `Swatinem/rust-cache@v2` for Cargo's registry,
   git, and bounded dependency-target cache. Keys separate OS, runner architecture,
   toolchain, source/lockfile state, and `.deb` target architecture; Miri keeps
@@ -169,7 +171,9 @@ package still ships the C `srtla_send`. Pushing a `v*` tag runs
 `.deb`s to the GitHub release. The current source package version is `3.2.0`, producing
 `srtla-send-rs_3.2.0_arm64.deb` and `srtla-send-rs_3.2.0_amd64.deb`; a tag build is
 accepted only when the tag is `v3.2.0`. See `AGENTS.md` → CI / PACKAGING for the full
-contract.
+contract. Release binaries are built against Debian 12 rather than the moving GitHub
+runner userspace, keeping their GLIBC requirements compatible with the Bookworm device
+image on both architectures.
 
 ### TypeScript binding package
 

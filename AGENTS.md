@@ -135,6 +135,13 @@ the fork parent attached when opening a PR. Verify: `git remote -v` must show on
   - linker: `CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc`
   - apt: `gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross binutils-aarch64-linux-gnu pkg-config`
   - `PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig`
+- **Release ABI floor is Debian 12 / GLIBC 2.36 for BOTH architectures.** The tag
+  workflow's `build-deb` matrix runs inside `debian:bookworm-slim`; never move those
+  builds back onto the raw `ubuntu-latest` userspace. The runner label currently maps to
+  Ubuntu 24.04 / glibc 2.39, which produces binaries that cannot start on the Bookworm
+  device image. The job inspects each final ELF's versioned imports and rejects anything
+  above `GLIBC_2.36`. Its Rust target cache key includes `bookworm` so an older raw-runner
+  build script or target artifact cannot be restored into the container.
 
 ## DEPENDENCY PINS
 
@@ -547,7 +554,8 @@ the binding's Bun-native tests/API; it shares no triggers with the Rust workflow
 - **`release.yml`** (tag push `v*`) — runs the full Rust gate plus the blocking
   `loom` contract job (production subscription-concurrency invariant) and Miri lane in
   parallel; `build-deb` needs all three before rebuilding both
-  arches, packaging, and attaching both `.deb`s + `.sha256`s to the GitHub release.
+  arches inside `debian:bookworm-slim`, enforcing a maximum `GLIBC_2.36` import before
+  packaging and attaching both `.deb`s + `.sha256`s to the GitHub release.
   No crates.io publish; no scheduled upstream-sync.
 - **`publish-bindings.yml`** (tag push **`bindings-v*`**) — publishes
   `@ceralive/srtla-send` to the **public npm registry** (`@ceralive` scope,
@@ -591,6 +599,9 @@ removes stale/old target content, and disables incremental artifacts; this
 keeps target reuse bounded instead of accumulating full workspace builds toward
 GitHub's 10 GB cache limit. Miri intentionally caches only registry/git data
 (`cache-targets: false`) because its target artifacts are specialized.
+The release `.deb` matrix additionally keys on `bookworm`; do not remove that ABI
+dimension or it may restore host-built executables that require a newer GLIBC before
+Cargo gets a chance to rebuild them.
 
 The CI `test` job runs `uv run scripts/rust_cache_contract_test.py`, which
 locks coverage for all nightly, Loom, Miri, `.deb`, stable, beta, Windows, and
