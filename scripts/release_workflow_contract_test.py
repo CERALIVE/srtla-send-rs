@@ -140,12 +140,12 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
 
         for command in (
             ("install", "--frozen-lockfile"),
-            ("lint",),
-            ("typecheck",),
-            ("test",),
-            ("build",),
+            ("run", "lint"),
+            ("run", "typecheck"),
+            ("run", "test"),
+            ("run", "build"),
         ):
-            self.assertTrue(gate.has_command("pnpm", *command))
+            self.assertTrue(gate.has_command("bun", *command))
         self.assertTrue(
             verifier.has_command("bash", "ci/verify-bindings-release-ref.sh")
         )
@@ -196,14 +196,6 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         self.assertTrue(
             gate.has_command("bash", "scripts/release_version_contract_test.sh")
         )
-        self.assertTrue(
-            gate.has_command("bash", "scripts/bindings_release_ref_contract_test.sh")
-        )
-        self.assertTrue(
-            gate.has_command(
-                "bash", "scripts/bindings_package_manager_contract_test.sh"
-            )
-        )
         all_features = tuple(
             command
             for command in gate.commands("cargo")
@@ -211,6 +203,46 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         )
         self.assertEqual(len(all_features), 1)
         self.assertTrue(all_features[0].is_bounded)
+
+    def test_binding_contracts_run_under_bun_never_on_an_ambient_node(self) -> None:
+        # Both scripts evaluate JavaScript. The Rust `test` job declares no JS
+        # runtime, so running them there worked only through the GitHub image's
+        # ambient Node — an accident of the image, not a declared dependency.
+        binding_contracts: Final = (
+            "scripts/bindings_release_ref_contract_test.sh",
+            "scripts/bindings_package_manager_contract_test.sh",
+        )
+        workflow = load_workflow(CI)
+        rust_gate = workflow.job("test")
+        bindings = workflow.job("bindings")
+
+        self.assertFalse(
+            any(
+                (step.action or "").startswith("actions/setup-node")
+                for step in (*rust_gate.steps, *bindings.steps)
+            )
+        )
+        setup_bun_index = next(
+            index
+            for index, step in enumerate(bindings.steps)
+            if step.action == "oven-sh/setup-bun@v2"
+        )
+        for script in binding_contracts:
+            with self.subTest(script=script):
+                self.assertFalse(rust_gate.has_command("bash", script))
+                self.assertTrue(bindings.has_command("bash", script))
+                contract_index = next(
+                    index
+                    for index, step in enumerate(bindings.steps)
+                    if any(
+                        command.has_arguments(script) for command in step.commands
+                    )
+                )
+                self.assertGreater(contract_index, setup_bun_index)
+                # Repo-root scripts under a job whose default is bindings/typescript.
+                self.assertEqual(
+                    bindings.steps[contract_index].working_directory, "."
+                )
 
 
 __all__ = ("ReleaseWorkflowContractTests", "WorkflowAuthorityContractTests")

@@ -19,10 +19,10 @@ updates:
       cargo:
         patterns: ["*"]
 
-  - package-ecosystem: "npm"
+  - package-ecosystem: "bun"
     directory: "/bindings/typescript"
     schedule:
       interval: "weekly"
     groups:
-      npm-bindings:
+      bun-bindings:
         patterns: ["*"]
