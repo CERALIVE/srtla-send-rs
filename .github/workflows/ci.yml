@@ -55,11 +55,6 @@ jobs:
       - name: Verify release artifact version contract
         run: bash scripts/release_version_contract_test.sh
 
-      - name: Verify binding release-ref provenance contract
-        run: |
-          bash scripts/bindings_release_ref_contract_test.sh
-          bash scripts/bindings_package_manager_contract_test.sh
-
       - name: Check formatting
         run: cargo fmt --all -- --check
 
@@ -386,6 +381,20 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.0
+
+      # Repo-root scripts, so they override this job's bindings/typescript
+      # default. They live here rather than in the Rust `test` job because both
+      # evaluate JavaScript: the `test` job installs no JS runtime, so there
+      # they ran only on the GitHub image's ambient Node — an accident, not a
+      # declared dependency. This is the first step after setup-bun so a broken
+      # binding contract fails before the install spends any time.
+      - name: Verify binding release-ref provenance contract
+        working-directory: .
+        run: bash scripts/bindings_release_ref_contract_test.sh
+
+      - name: Verify binding package-manager policy contract
+        working-directory: .
+        run: bash scripts/bindings_package_manager_contract_test.sh
 
       - name: Install
         run: bun install --frozen-lockfile

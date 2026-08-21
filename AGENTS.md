@@ -536,7 +536,7 @@ binding's Bun-native tests/API; they share no triggers with the Rust workflows:
 
 - **`ci.yml`** (push/PR) — the gate (`fmt`, `clippy -D warnings` lib+bin, `check`,
   bounded tests with the privileged-netns self-skip boundary, `cargo audit`) plus typed
-  workflow/ref/version contracts and a `build-deb` matrix that
+  workflow/cache/version contracts and a `build-deb` matrix that
   cross-compiles `aarch64-unknown-linux-gnu` (device) and `x86_64-unknown-linux-gnu`
   and packages each `.deb` so a packaging break is caught before any tag. Upstream's
   stable/beta/windows/macOS jobs are kept; under the pin they must call `cargo +<channel>`
@@ -544,8 +544,11 @@ binding's Bun-native tests/API; they share no triggers with the Rust workflows:
   uv contract step uses the published `astral-sh/setup-uv@v8.3.2` release tag because
   setup-uv does not publish a `v8` major alias; do not shorten this ref to `@v8`.
   It also carries the **`bindings` job — the PR-gated TypeScript binding lane**
-  (`bun install --frozen-lockfile`, `bun run lint|typecheck|test|build` from
-  `bindings/typescript/`, under **Bun 1.4.0**). It is
+  (`bindings_release_ref_contract_test.sh` + `bindings_package_manager_contract_test.sh`
+  at `working-directory: .`, then `bun install --frozen-lockfile` and
+  `bun run lint|typecheck|test|build` from `bindings/typescript/`, under **Bun 1.4.0**).
+  The two contract scripts live here, not in the Rust `test` job, because both evaluate
+  JavaScript and `test` declares no JS runtime — see TS BINDING TOOLING. It is
   **REQUIRED, not a canary**: no `continue-on-error`, so a red binding blocks the PR
   like any Rust lane. `publish-bindings.yml` runs the same commands, but only on a
   `bindings-v*` tag — by then a break is already on `main`; this lane moves the gate
@@ -870,11 +873,37 @@ package API and tests were always Bun-native, and the package manager finally ma
 `yarn.lock` are forbidden: a second lockfile resolves a different dependency graph than
 the one CI installs, and it does so silently. `scripts/bindings_package_manager_contract_test.sh`
 enforces this (bun `packageManager`, `bun.lock` present, the other three absent, and no
-pnpm invocation anywhere in `.github/workflows/`) and runs in the `ci.yml` `test` job.
+pnpm invocation anywhere in `.github/workflows/`) and runs in the `ci.yml` **`bindings`**
+job, alongside `scripts/bindings_release_ref_contract_test.sh`.
 
-The `bindings/typescript/` package uses Biome **2.5.8** via `@ceralive/biome-config` **2026.8.0** (the workspace canon — keep `biome.json`'s `$schema` on the same Biome patch) as its first linter/formatter. The declared range is `^2.5.8` but the lockfile deliberately HOLDS 2.5.8 rather than floating to the newer published patch, because the canon version is set workspace-wide by `@ceralive/biome-config`, not per-repo; bump it here only when the canon package bumps. The `biome.json` in `bindings/typescript/` extends `@ceralive/biome-config` (`"extends": ["@ceralive/biome-config"]`). ESLint and Prettier are not used. Run `bun run lint` from `bindings/typescript/` (check) or `bunx biome check --write .` (apply fixes). The binding gate includes `bun run lint && bun run typecheck && bun run test && bun run build`.
+**Both binding contract scripts run in the `bindings` job, NOT the Rust `test` job, and
+both evaluate JavaScript with `bun`.** They used to run in `test`, which installs no JS
+runtime at all — so they executed only on whatever Node the GitHub runner image happened
+to ship. Masking `node` from `PATH` reproduced exit `127` on both. They now run after
+`setup-bun` with `working-directory: .` (the job's default is `bindings/typescript`, but
+these are repo-root scripts). Do NOT move them back, and do NOT add `setup-node` to
+either job. The ONE sanctioned Node island is `ci/verify-bindings-release-ref.sh`, which
+runs in `publish-bindings.yml`'s Node-26 OIDC publish job and keeps its `node`
+invocation verbatim; `bindings_release_ref_contract_test.sh` exercises it through a
+Bun-backed `node` shim. Pinned by
+`test_binding_contracts_run_under_bun_never_on_an_ambient_node`
+(`scripts/release_workflow_contract_test.py`).
 
-**Golden fixtures are excluded from Biome** — `biome.json` sets `files.includes` to `["**", "!**/tests/fixtures"]`. `tests/fixtures/telemetry-golden.json` is a deliberately byte-identical copy of the Rust producer golden (`tests/fixtures/telemetry-golden.json` at the crate root): the single-line, newline-free atomic-publish telemetry shape (ADR-001). If Biome pretty-prints it (multi-line + trailing newline), the cross-language parity test (`tests/telemetry_fixture_parity.rs` — `rust_and_ts_goldens_are_byte_identical` plus the newline-free assertion) fails every Rust test job in CI. **Do not remove this exclude, and never `biome check --write` the fixtures** — re-sync the two goldens by editing both byte-for-byte instead.
+**That shim is prepended to `PATH` UNCONDITIONALLY — never behind an
+`if ! command -v node` guard.** A GitHub runner ships an ambient Node, so a
+conditional shim never fires on the one machine that matters: the contract test would
+resolve the island's `node -p` to an unpinned ambient runtime and go on reporting OK,
+proving nothing about the Bun-only job it now lives in. The script therefore prepends
+the shim every run and then **asserts** the result — `command -v node` must be the shim
+AND `process.versions.bun` must be set, which is a behavioral check no real Node can
+pass — failing closed otherwise. The resolved runtime is echoed on the success line
+(`node-runtime=bun@<version>`) so every CI log carries the proof. The `export` is
+scoped to that process; the production publish job resolves its own real Node 26 and is
+untouched.
+
+The `bindings/typescript/` package uses Biome **2.5.9** via `@ceralive/biome-config` **2026.8.0** (the workspace canon — keep `biome.json`'s `$schema` on the same Biome patch) as its first linter/formatter. The declared range is `^2.5.9` and the lockfile deliberately HOLDS 2.5.9 rather than floating to a newer published patch, because the canon version is set workspace-wide by `@ceralive/biome-config`, not per-repo; bump it here only when the canon package bumps. The `biome.json` in `bindings/typescript/` extends `@ceralive/biome-config` (`"extends": ["@ceralive/biome-config"]`). ESLint and Prettier are not used. Run `bun run lint` from `bindings/typescript/` (check) or `bunx biome check --write .` (apply fixes). The binding gate includes `bun run lint && bun run typecheck && bun run test && bun run build`.
+
+**Golden fixtures are excluded from Biome** — `biome.json` sets `files.includes` to `["**", "!dist", "!**/tests/fixtures"]`. `tests/fixtures/telemetry-golden.json` is a deliberately byte-identical copy of the Rust producer golden (`tests/fixtures/telemetry-golden.json` at the crate root): the single-line, newline-free atomic-publish telemetry shape (ADR-001). If Biome pretty-prints it (multi-line + trailing newline), the cross-language parity test (`tests/telemetry_fixture_parity.rs` — `rust_and_ts_goldens_are_byte_identical` plus the newline-free assertion) fails every Rust test job in CI. **Do not remove this exclude, and never `biome check --write` the fixtures** — re-sync the two goldens by editing both byte-for-byte instead.
 
 ## EXPERIMENTAL SCHEDULER-HARDENING FLAGS (consolidated-flows-and-satellite, Todos 14-15)
 

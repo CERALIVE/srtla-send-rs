@@ -2,6 +2,10 @@
 # Pins the binding package-manager policy: Bun is the ONE package manager for
 # bindings/typescript. A second lockfile is the failure this guards against —
 # it resolves a different dependency graph than the one CI installs, silently.
+#
+# Runs in ci.yml's Bun-only `bindings` job, so every runtime call is `bun`. It
+# must never reach for `node`: no CI job that runs this installs one, and the
+# ambient Node on a GitHub runner is an accident of the image, not a contract.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -9,7 +13,7 @@ BINDINGS_ROOT="${REPO_ROOT}/bindings/typescript"
 WORKFLOWS_ROOT="${REPO_ROOT}/.github/workflows"
 FORBIDDEN_LOCKFILES=(pnpm-lock.yaml package-lock.json yarn.lock)
 
-PACKAGE_MANAGER="$(node -p "require('${BINDINGS_ROOT}/package.json').packageManager")"
+PACKAGE_MANAGER="$(bun -e "console.log(require('${BINDINGS_ROOT}/package.json').packageManager)")"
 
 [[ "${PACKAGE_MANAGER}" == bun@* ]] || {
   echo "bindings-package-manager-contract: packageManager must pin bun, got ${PACKAGE_MANAGER}" >&2

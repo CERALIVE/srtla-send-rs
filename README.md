@@ -139,7 +139,10 @@ and pull request (`.github/workflows/ci.yml`):
 - Cross-platform/cross-channel coverage (Linux/Windows/macOS, stable/beta)
 - A required `bindings` job that runs the TypeScript binding gate (`bun install
   --frozen-lockfile`, lint, typecheck, tests, build) on **Bun 1.4.0** — a red
-  binding blocks the PR, so a break no longer waits for a `bindings-v*` tag
+  binding blocks the PR, so a break no longer waits for a `bindings-v*` tag. The two
+  binding contract scripts (`bindings_release_ref_contract_test.sh`,
+  `bindings_package_manager_contract_test.sh`) run here too, right after Bun is
+  installed: both evaluate JavaScript, and this is the only CI job with a JS runtime
 - A `v*` release runs the full Rust gate plus the parallel `loom` contract job
   (a production subscription-concurrency invariant) and Miri lane before either
   architecture can be packaged or attached to the GitHub release. Both `.deb` builds

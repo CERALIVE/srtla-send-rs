@@ -47,6 +47,7 @@ class Step:
     action: str | None
     commands: tuple[ShellCommand, ...]
     environment: tuple[tuple[str, str], ...]
+    working_directory: str | None
 
     def environment_value(self, key: str) -> str | None:
         return next((value for name, value in self.environment if name == key), None)
@@ -146,6 +147,7 @@ def _step(node: Node) -> Step:
         action=optional_scalar(node_map, "uses") or None,
         commands=_commands(run),
         environment=string_pairs(node_map.get("env")),
+        working_directory=optional_scalar(node_map, "working-directory") or None,
     )
 
 
