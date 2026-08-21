@@ -12,6 +12,8 @@ import unittest
 from pathlib import Path
 from typing import Final
 
+import yaml
+
 from workflow_authority_contract_test import WorkflowAuthorityContractTests
 from workflow_contract import JobStatus, load_workflow, simulate, transitive_needs
 
@@ -23,6 +25,31 @@ BINDINGS: Final = ROOT / ".github/workflows/publish-bindings.yml"
 
 
 class ReleaseWorkflowContractTests(unittest.TestCase):
+    def test_release_debs_build_against_bookworm_glibc(self) -> None:
+        with RELEASE.open(encoding="utf-8") as workflow_file:
+            workflow = yaml.safe_load(workflow_file)
+
+        build_deb = workflow["jobs"]["build-deb"]
+        self.assertEqual(build_deb["container"]["image"], "debian:bookworm-slim")
+        matrix = build_deb["strategy"]["matrix"]["include"]
+        self.assertEqual(
+            {entry["arch"]: entry["objdump"] for entry in matrix},
+            {"arm64": "aarch64-linux-gnu-objdump", "amd64": "objdump"},
+        )
+        steps = {step["name"]: step for step in build_deb["steps"]}
+        self.assertIn(
+            "build-essential", steps["Install Bookworm build dependencies"]["run"]
+        )
+        compatibility_check = steps["Verify device GLIBC compatibility"]["run"]
+        self.assertIn('"${{ matrix.objdump }}" -T', compatibility_check)
+        self.assertIn('dpkg --compare-versions "${required_glibc#GLIBC_}" gt "2.36"', compatibility_check)
+        cache = next(
+            step
+            for step in build_deb["steps"]
+            if step.get("uses") == "Swatinem/rust-cache@v2"
+        )
+        self.assertIn("bookworm", cache["with"]["shared-key"])
+
     def test_release_publication_needs_every_rust_gate(self) -> None:
         workflow = load_workflow(RELEASE)
         gate = workflow.job("test")

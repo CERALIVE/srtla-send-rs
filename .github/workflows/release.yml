@@ -149,6 +149,10 @@ jobs:
     name: Build .deb (${{ matrix.arch }})
     needs: [test, loom, miri]
     runs-on: ubuntu-latest
+    # The runner host may advance independently of the Debian 12 device ABI.
+    # Execute every build/package step against Bookworm's glibc 2.36 instead.
+    container:
+      image: debian:bookworm-slim
     strategy:
       fail-fast: false
       matrix:
@@ -156,10 +160,18 @@ jobs:
           - arch: arm64
             target: aarch64-unknown-linux-gnu
             cross: true
+            objdump: aarch64-linux-gnu-objdump
           - arch: amd64
             target: x86_64-unknown-linux-gnu
             cross: false
+            objdump: objdump
     steps:
+      - name: Install Bookworm build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential ca-certificates curl git pkg-config binutils dpkg-dev zstd
+
       - name: Checkout code
         uses: actions/checkout@v7
 
@@ -174,7 +186,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
-          shared-key: "srtla-send-rs-${{ runner.os }}-${{ runner.arch }}-nightly-${{ matrix.arch }}-${{ matrix.target }}-${{ hashFiles('rust-toolchain.toml') }}"
+          shared-key: "srtla-send-rs-${{ runner.os }}-${{ runner.arch }}-bookworm-nightly-${{ matrix.arch }}-${{ matrix.target }}-${{ hashFiles('rust-toolchain.toml') }}"
           key: "source-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'rustfmt.toml', 'build.rs', 'src/**/*.rs', 'crates/**/*.rs', 'tests/**/*.rs') }}"
           add-job-id-key: false
           cache-targets: true
@@ -184,8 +196,8 @@ jobs:
       - name: Install aarch64 cross toolchain
         if: matrix.cross
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          apt-get update
+          apt-get install -y --no-install-recommends \
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
             libc6-dev-arm64-cross binutils-aarch64-linux-gnu pkg-config
 
@@ -194,6 +206,17 @@ jobs:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig
         run: cargo build --release --target ${{ matrix.target }} --verbose
+
+      - name: Verify device GLIBC compatibility
+        run: |
+          binary="target/${{ matrix.target }}/release/srtla_send"
+          required_glibc="$("${{ matrix.objdump }}" -T "${binary}" | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -n 1)"
+          test -n "${required_glibc}"
+          echo "${{ matrix.arch }} requires at most ${required_glibc}; device ceiling is GLIBC_2.36"
+          if dpkg --compare-versions "${required_glibc#GLIBC_}" gt "2.36"; then
+            echo "ERROR: ${required_glibc} exceeds the device GLIBC_2.36 ceiling" >&2
+            exit 1
+          fi
 
       # ci/build-deb.sh emits srtla-send-rs_<ver>_<arch>.deb and asserts the
       # control metadata (Package, Architecture, Conflicts), the /usr/bin/srtla_send
