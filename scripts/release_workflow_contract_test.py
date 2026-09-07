@@ -87,7 +87,10 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
             with self.subTest(workflow=path.name):
                 loom = load_workflow(path).job("loom")
                 self.assertEqual(loom.name, "Loom model (subscription manager)")
-                self.assertFalse(loom.needs)
+                # Parallel with the main Rust gate, never serialized behind it.
+                # `changes` is the seconds-long docs-only detector every CI job
+                # hangs off; depending on it is not a serialization.
+                self.assertFalse(loom.needs - {"changes"})
                 command_steps = tuple(
                     (step, command)
                     for step in loom.steps
@@ -116,7 +119,8 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         for path in (CI, RELEASE):
             with self.subTest(workflow=path.name):
                 miri = load_workflow(path).job("miri")
-                self.assertFalse(miri.needs)
+                # Same parallelism rule as the loom lane above.
+                self.assertFalse(miri.needs - {"changes"})
                 for test_filter in required_filters:
                     self.assertTrue(
                         miri.has_command("cargo", "miri", "test", test_filter),
