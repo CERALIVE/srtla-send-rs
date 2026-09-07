@@ -531,7 +531,7 @@ allowlist, `.npmignore`'s test-source pattern can't strip already-compiled
 
 Three workflows. The two Rust `.deb` workflows build on the **pinned nightly**
 (`setup-rust-toolchain` with no `toolchain` input reads `rust-toolchain.toml`); the
-binding workflows use a pinned **Bun 1.4.0** for both package management and the
+binding workflows use a pinned **Bun 1.4.2** for both package management and the
 binding's Bun-native tests/API; they share no triggers with the Rust workflows:
 
 - **`ci.yml`** (push/PR) — the gate (`fmt`, `clippy -D warnings` lib+bin, `check`,
@@ -546,7 +546,7 @@ binding's Bun-native tests/API; they share no triggers with the Rust workflows:
   It also carries the **`bindings` job — the PR-gated TypeScript binding lane**
   (`bindings_release_ref_contract_test.sh` + `bindings_package_manager_contract_test.sh`
   at `working-directory: .`, then `bun install --frozen-lockfile` and
-  `bun run lint|typecheck|test|build` from `bindings/typescript/`, under **Bun 1.4.0**).
+`bun run lint|typecheck|test|build` from `bindings/typescript/`, under **Bun 1.4.2**).
   The two contract scripts live here, not in the Rust `test` job, because both evaluate
   JavaScript and `test` declares no JS runtime — see TS BINDING TOOLING. It is
   **REQUIRED, not a canary**: no `continue-on-error`, so a red binding blocks the PR
@@ -863,7 +863,7 @@ record is `docs/notes/upstream-sync-2026-08-evaluation.md` → `673138d`.
 
 ## TS BINDING TOOLING
 
-The binding package manager is **Bun `1.4.0`**, pinned by `packageManager` and locked by
+The binding package manager is **Bun `1.4.2`**, pinned by `packageManager` and locked by
 `bindings/typescript/bun.lock`. Run package commands from `bindings/typescript/` with Bun
 (`bun install --frozen-lockfile`, `bun run lint`, `bun run typecheck`, `bun run test`,
 `bun run build`). Bun is now BOTH the dependency manager and the test runtime — the

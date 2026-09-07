@@ -61,7 +61,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.2
 
       # Node + npm are NOT the gate runner here — Bun is. They exist solely for
       # the tarball guard below, which parses `npm pack --dry-run --json`.
