@@ -138,7 +138,7 @@ and pull request (`.github/workflows/ci.yml`):
   each packaged into a `.deb`
 - Cross-platform/cross-channel coverage (Linux/Windows/macOS, stable/beta)
 - A required `bindings` job that runs the TypeScript binding gate (`bun install
-  --frozen-lockfile`, lint, typecheck, tests, build) on **Bun 1.4.0** — a red
+  --frozen-lockfile`, lint, typecheck, tests, build) on **Bun 1.4.2** — a red
   binding blocks the PR, so a break no longer waits for a `bindings-v*` tag. The two
   binding contract scripts (`bindings_release_ref_contract_test.sh`,
   `bindings_package_manager_contract_test.sh`) run here too, right after Bun is
