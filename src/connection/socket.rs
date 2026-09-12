@@ -1,9 +1,70 @@
 use std::io;
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use anyhow::{Context, Result};
 use socket2::{Domain, Protocol, Socket, Type};
-use tracing::warn;
+use tokio::sync::oneshot;
+use tokio::task::JoinHandle;
+use tokio::time::{Duration, timeout};
+use tracing::{debug, warn};
+
+const DNS_DRIFT_WARN_INTERVAL_MS: u64 = 60_000;
+const DNS_DRIFT_RESULT_WAIT_TIMEOUT: Duration = Duration::from_secs(3);
+
+struct ReceiverDnsDiagnostics {
+    check_in_flight: AtomicBool,
+    last_warning_ms: AtomicU64,
+}
+
+impl ReceiverDnsDiagnostics {
+    const fn new() -> Self {
+        Self {
+            check_in_flight: AtomicBool::new(false),
+            last_warning_ms: AtomicU64::new(0),
+        }
+    }
+
+    fn try_acquire(&'static self) -> Option<ReceiverDnsCheckPermit> {
+        self.check_in_flight
+            .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+            .then(|| ReceiverDnsCheckPermit(self))
+    }
+
+    fn claim_warning(&self, now_ms: u64) -> bool {
+        loop {
+            let last = self.last_warning_ms.load(Ordering::Relaxed);
+            if last != 0 && now_ms.saturating_sub(last) < DNS_DRIFT_WARN_INTERVAL_MS {
+                return false;
+            }
+            match self.last_warning_ms.compare_exchange_weak(
+                last,
+                now_ms.max(1),
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return true,
+                Err(_) => continue,
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn is_check_in_flight(&self) -> bool {
+        self.check_in_flight.load(Ordering::Relaxed)
+    }
+}
+
+struct ReceiverDnsCheckPermit(&'static ReceiverDnsDiagnostics);
+
+impl Drop for ReceiverDnsCheckPermit {
+    fn drop(&mut self) {
+        self.0.check_in_flight.store(false, Ordering::Relaxed);
+    }
+}
+
+static RECEIVER_DNS_DIAGNOSTICS: ReceiverDnsDiagnostics = ReceiverDnsDiagnostics::new();
 
 /// Egress-steering strategy for a freshly created uplink UDP socket: how the
 /// socket is pinned to a particular network egress *before* it is connected.
@@ -175,7 +236,95 @@ pub async fn resolve_remote_all(host: &str, port: u16) -> io::Result<Vec<SocketA
 }
 
 pub(crate) fn remote_drift(answers: &[SocketAddr], current: &SocketAddr) -> bool {
-    !answers.contains(current)
+    !answers.is_empty() && !answers.contains(current)
+}
+
+/// Start a detect-only receiver DNS drift check without delaying socket recovery.
+///
+/// Reconnect runs on the housekeeping loop, so diagnostic DNS must never be
+/// awaited there. One detached standard thread may resolve at a time, while a
+/// Tokio task waits up to three seconds for its result. A slow system resolver
+/// keeps the process-wide permit until it really returns, preventing overlapping
+/// lookups without joining Tokio's shutdown path. This never changes the cached
+/// peer: moving one uplink would split the SRTLA receiver identity.
+pub(crate) fn spawn_receiver_dns_drift_check(host: &str, port: u16, current: SocketAddr) {
+    let resolver_host = host.to_string();
+    let log_host = resolver_host.clone();
+    let _ = spawn_receiver_dns_drift_check_with(
+        &RECEIVER_DNS_DIAGNOSTICS,
+        log_host,
+        current,
+        DNS_DRIFT_RESULT_WAIT_TIMEOUT,
+        move || {
+            (resolver_host.as_str(), port)
+                .to_socket_addrs()
+                .map(Iterator::collect)
+        },
+    );
+}
+
+fn spawn_receiver_dns_drift_check_with<R>(
+    state: &'static ReceiverDnsDiagnostics,
+    host: String,
+    current: SocketAddr,
+    result_wait_timeout: Duration,
+    resolve: R,
+) -> Option<JoinHandle<()>>
+where
+    R: FnOnce() -> io::Result<Vec<SocketAddr>> + Send + 'static,
+{
+    let permit = state.try_acquire()?;
+    let (result_tx, result_rx) = oneshot::channel();
+    if let Err(error) = std::thread::Builder::new()
+        .name("srtla-dns-drift".to_string())
+        .spawn(move || {
+            let _permit = permit;
+            let _ = result_tx.send(resolve());
+        })
+    {
+        debug!("failed to spawn receiver DNS diagnostic thread: {error}");
+        return None;
+    }
+
+    Some(tokio::spawn(async move {
+        match timeout(result_wait_timeout, result_rx).await {
+            Ok(Ok(Ok(answers))) if remote_drift(&answers, &current) => {
+                if state.claim_warning(crate::utils::now_ms()) {
+                    let answers = answers
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    warn!(
+                        "receiver DNS drift: {host} no longer resolves to {current} (now \
+                         {answers}); keeping the current peer because the bond is registered \
+                         against this receiver instance"
+                    );
+                }
+            }
+            Ok(Ok(Ok(answers))) if answers.is_empty() => {
+                debug!("receiver DNS lookup for {host} returned no addresses; keeping {current}");
+            }
+            Ok(Ok(Ok(_))) => {}
+            Ok(Ok(Err(error))) => {
+                debug!(
+                    "receiver DNS lookup failed during reconnect; keeping current peer {current}: \
+                     {error}"
+                );
+            }
+            Ok(Err(_)) => {
+                debug!("receiver DNS diagnostic ended without a result; keeping {current}");
+            }
+            Err(_) => {
+                debug!(
+                    "receiver DNS diagnostic result wait timed out after {:?}; keeping current \
+                     peer {current}; the detached resolver retains the single-flight slot until \
+                     it returns",
+                    result_wait_timeout
+                );
+            }
+        }
+    }))
 }
 
 #[cfg(test)]
@@ -184,7 +333,7 @@ mod tests {
 
     use socket2::{Domain, Protocol, Socket, Type};
 
-    use super::{SourceIpBinder, UplinkBinder, remote_drift};
+    use super::*;
 
     #[test]
     fn remote_drift_is_false_when_current_peer_is_resolved() {
@@ -211,6 +360,211 @@ mod tests {
 
         // Then: the missing current peer is reported as drift.
         assert!(drifted);
+    }
+
+    #[test]
+    fn remote_drift_is_false_when_dns_returns_no_answers() {
+        let current = SocketAddr::from(([127, 0, 0, 1], 8080));
+
+        assert!(
+            !remote_drift(&[], &current),
+            "an empty answer is inconclusive, not evidence that the receiver moved"
+        );
+    }
+
+    #[test]
+    fn dns_drift_warning_is_shared_and_rate_limited() {
+        let state = ReceiverDnsDiagnostics::new();
+        let first = 1_000;
+
+        assert!(state.claim_warning(first), "the first drift must warn");
+        assert!(
+            !state.claim_warning(first + DNS_DRIFT_WARN_INTERVAL_MS - 1),
+            "another uplink inside the process-wide interval must stay quiet"
+        );
+        assert!(
+            state.claim_warning(first + DNS_DRIFT_WARN_INTERVAL_MS),
+            "the warning becomes eligible at the interval boundary"
+        );
+    }
+
+    async fn wait_for_dns_check_to_finish(state: &ReceiverDnsDiagnostics) {
+        timeout(Duration::from_secs(2), async {
+            while state.is_check_in_flight() {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("the controlled resolver thread must release its permit");
+    }
+
+    #[tokio::test]
+    async fn dns_result_timeout_does_not_release_the_active_resolver_slot() {
+        let state = Box::leak(Box::new(ReceiverDnsDiagnostics::new()));
+        let current = SocketAddr::from(([127, 0, 0, 1], 8080));
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let blocking_lookup = move || {
+            let _ = started_tx.send(());
+            release_rx.recv().expect("test releases the resolver");
+            Ok(Vec::new())
+        };
+
+        let first = spawn_receiver_dns_drift_check_with(
+            state,
+            "receiver.example".to_string(),
+            current,
+            Duration::from_millis(10),
+            blocking_lookup,
+        )
+        .expect("the first check must start");
+        started_rx.await.expect("the detached resolver must start");
+        first.await.expect("the result waiter must time out");
+
+        assert!(
+            spawn_receiver_dns_drift_check_with(
+                state,
+                "receiver.example".to_string(),
+                current,
+                Duration::from_millis(10),
+                || Ok(Vec::new()),
+            )
+            .is_none(),
+            "a timed-out waiter must not permit overlapping resolver work"
+        );
+        assert!(state.is_check_in_flight());
+        assert!(
+            spawn_receiver_dns_drift_check_with(
+                state,
+                "receiver.example".to_string(),
+                current,
+                Duration::from_millis(10),
+                || Ok(Vec::new()),
+            )
+            .is_none(),
+            "repeated rejected claims must leave the original resolver in flight"
+        );
+        assert!(state.is_check_in_flight());
+
+        release_tx
+            .send(())
+            .expect("release the controlled resolver");
+        wait_for_dns_check_to_finish(state).await;
+
+        let next = spawn_receiver_dns_drift_check_with(
+            state,
+            "receiver.example".to_string(),
+            current,
+            Duration::from_secs(1),
+            || Ok(Vec::new()),
+        )
+        .expect("resolver completion must release the process-wide slot");
+        next.await.expect("the replacement check must finish");
+        wait_for_dns_check_to_finish(state).await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn abort_before_first_waiter_poll_keeps_the_resolver_owned_permit() {
+        let state = Box::leak(Box::new(ReceiverDnsDiagnostics::new()));
+        let current = SocketAddr::from(([127, 0, 0, 1], 8080));
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+
+        let waiter = spawn_receiver_dns_drift_check_with(
+            state,
+            "receiver.example".to_string(),
+            current,
+            Duration::from_secs(1),
+            move || {
+                let _ = started_tx.send(());
+                release_rx.recv().expect("test releases the resolver");
+                Ok(Vec::new())
+            },
+        )
+        .expect("the resolver must start");
+        waiter.abort();
+        started_rx.await.expect("the resolver thread must start");
+
+        assert!(state.is_check_in_flight());
+        assert!(
+            spawn_receiver_dns_drift_check_with(
+                state,
+                "receiver.example".to_string(),
+                current,
+                Duration::from_millis(10),
+                || Ok(Vec::new()),
+            )
+            .is_none(),
+            "waiter cancellation must not release active resolver ownership"
+        );
+        assert!(state.is_check_in_flight());
+        assert!(
+            spawn_receiver_dns_drift_check_with(
+                state,
+                "receiver.example".to_string(),
+                current,
+                Duration::from_millis(10),
+                || Ok(Vec::new()),
+            )
+            .is_none(),
+            "repeated rejected claims must not clear the resolver-owned permit"
+        );
+        assert!(state.is_check_in_flight());
+
+        release_tx
+            .send(())
+            .expect("release the controlled resolver");
+        wait_for_dns_check_to_finish(state).await;
+    }
+
+    #[test]
+    fn detached_dns_worker_does_not_block_process_exit() {
+        const CHILD_ENV: &str = "SRTLA_DNS_EXIT_TEST_CHILD";
+        const TEST_NAME: &str =
+            "connection::socket::tests::detached_dns_worker_does_not_block_process_exit";
+
+        if std::env::var_os(CHILD_ENV).is_some() {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()
+                .expect("child runtime");
+            runtime.block_on(async {
+                let state = Box::leak(Box::new(ReceiverDnsDiagnostics::new()));
+                let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+                let _ = spawn_receiver_dns_drift_check_with(
+                    state,
+                    "receiver.example".to_string(),
+                    SocketAddr::from(([127, 0, 0, 1], 8080)),
+                    Duration::from_secs(60),
+                    move || {
+                        let _ = started_tx.send(());
+                        std::thread::sleep(Duration::from_secs(60));
+                        Ok(Vec::new())
+                    },
+                );
+                started_rx.await.expect("child resolver thread must start");
+            });
+            return;
+        }
+
+        let mut child = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args(["--exact", TEST_NAME, "--nocapture"])
+            .env(CHILD_ENV, "1")
+            .spawn()
+            .expect("spawn DNS shutdown child");
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(status) = child.try_wait().expect("poll DNS shutdown child") {
+                assert!(status.success(), "DNS shutdown child failed: {status}");
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("detached DNS resolver thread blocked process shutdown");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     #[test]

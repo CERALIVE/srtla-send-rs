@@ -369,12 +369,19 @@ mod tests {
         conn.process_packet(0, &mut reg, &listener, &instant_tx, None, &reg_err)
             .await
             .unwrap();
+        conn.process_packet(0, &mut reg, &listener, &instant_tx, None, &reg_err)
+            .await
+            .unwrap();
 
         assert!(
             conn.connected,
             "an out-of-phase REG_ERR must not disconnect an established uplink"
         );
-        assert_eq!(reg.out_of_phase_reg_err(), 1);
+        assert_eq!(
+            reg.out_of_phase_reg_err(),
+            2,
+            "every rejected frame remains counted after WARN output is demoted"
+        );
         assert_eq!(
             reg.pending_reg2_idx(),
             None,
@@ -503,11 +510,16 @@ mod tests {
         let reg3 = [(SRTLA_TYPE_REG3 >> 8) as u8, (SRTLA_TYPE_REG3 & 0xff) as u8];
 
         reg.process_registration_packet(0, &reg3);
+        reg.process_registration_packet(0, &reg3);
         assert!(
             !reg.has_connected,
             "REG3 on an uplink that was never sent a REG2 must not connect it"
         );
-        assert_eq!(reg.out_of_phase_reg3(), 1);
+        assert_eq!(
+            reg.out_of_phase_reg3(),
+            2,
+            "every rejected frame remains counted after WARN output is demoted"
+        );
 
         reg.arm_reg3_gate(0);
         reg.process_registration_packet(0, &reg3);
@@ -515,7 +527,7 @@ mod tests {
             reg.has_connected,
             "an in-phase REG3 still connects the link"
         );
-        assert_eq!(reg.out_of_phase_reg3(), 1);
+        assert_eq!(reg.out_of_phase_reg3(), 2);
     }
 
     #[tokio::test]

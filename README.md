@@ -15,6 +15,13 @@ This Rust implementation builds upon several open source projects and ideas:
 - **[Moblin](https://github.com/eerimoq/moblin)** - Inspired by ideas and algorithms
 - **[Original SRTLA](https://github.com/BELABOX/srtla)** - The foundational SRTLA protocol and reference implementation by Belabox
 
+Upstream history is merged through
+`df0b3938791ff24eced4aed8b29e3d49d0efb639`. The seven commits after the previous sync
+were compatibility-reviewed: existing fork-native protocol/recovery/registration fixes
+remain authoritative, three narrow diagnostic improvements were adapted, and upstream's
+default-on receiver re-home plus automatic `4.0.1` bump were not imported. See
+[`docs/notes/upstream-sync-2026-09-evaluation.md`](docs/notes/upstream-sync-2026-09-evaluation.md).
+
 ## Features
 
 ### Core SRTLA Functionality
@@ -158,7 +165,7 @@ and pull request (`.github/workflows/ci.yml`):
   gate to verify every publication-capable job is skipped
 - `uv run scripts/rust_cache_contract_test.py` verifies the cache action, key dimensions,
   bounded-target settings, and failure-propagation shape across both Rust workflows
-- `bash scripts/release_version_contract_test.sh` proves `v3.2.0` selects 3.2.0 package
+- `bash scripts/release_version_contract_test.sh` proves `v3.3.0` selects 3.3.0 package
   metadata/artifact names and rejects a tag that differs from `Cargo.toml`
 - `bash scripts/deb_version_ordering_test.sh` derives the package version from `Cargo.toml`,
   proves a patch bump sorts newer under Debian ordering, and reports whether the known stale
@@ -171,9 +178,9 @@ and pull request (`.github/workflows/ci.yml`):
 `arm64`/`amd64`), and declares `Conflicts: srtla (<< <cutover>)` because the `srtla`
 package still ships the C `srtla_send`. Pushing a `v*` tag runs
 `.github/workflows/release.yml`, which rebuilds both architectures and attaches the
-`.deb`s to the GitHub release. The current source package version is `3.2.0`, producing
-`srtla-send-rs_3.2.0_arm64.deb` and `srtla-send-rs_3.2.0_amd64.deb`; a tag build is
-accepted only when the tag is `v3.2.0`. See `AGENTS.md` → CI / PACKAGING for the full
+`.deb`s to the GitHub release. The current source package version is `3.3.0`, producing
+`srtla-send-rs_3.3.0_arm64.deb` and `srtla-send-rs_3.3.0_amd64.deb`; a tag build is
+accepted only when the tag is `v3.3.0`. See `AGENTS.md` → CI / PACKAGING for the full
 contract. Release binaries are built against Debian 12 rather than the moving GitHub
 runner userspace, keeping their GLIBC requirements compatible with the Bookworm device
 image on both architectures.
@@ -296,7 +303,7 @@ parenthetical, and the package name:
 
 ```bash
 $ ./target/release/srtla_send -v
-3.2.0 (main@974c8b9) [srtla_send]
+3.3.0 (main@974c8b9) [srtla_send]
 ```
 
 The parenthetical is emitted only when the build could resolve a commit. Building
@@ -306,10 +313,10 @@ is omitted entirely rather than filled with a placeholder:
 
 ```bash
 $ ./target/release/srtla_send -v
-3.2.0 [srtla_send]
+3.3.0 [srtla_send]
 ```
 
-A tag build (detached HEAD) reports the bare hash, `3.2.0 (974c8b9) [srtla_send]`,
+A tag build (detached HEAD) reports the bare hash, `3.3.0 (974c8b9) [srtla_send]`,
 and a build from a modified working tree suffixes the hash with `-dirty`.
 
 ### Configuration check
@@ -658,7 +665,7 @@ exits `0`. It binds no sockets, writes no files, and needs no positional argumen
 
 ```bash
 $ ./target/release/srtla_send --capabilities-json
-{"schema_version":1,"binary":"srtla_send","version":"3.2.0","capabilities":{"bind_map":true,...}}
+{"schema_version":1,"binary":"srtla_send","version":"3.3.0","capabilities":{"bind_map":true,...}}
 ```
 
 It exists so a supervisor can decide **before spawning a stream** whether to pass
@@ -719,16 +726,17 @@ Normal registration:
 - The local `SRT_LISTEN_PORT` listener is bound before the IP list is read and before any uplink is dialed, so a local SRT producer that connects the instant the process starts is never rejected while the bond is still coming up. Uplink setup is sequential (one resolve + bind + connect per link), so on a multi-modem bond this ordering is what keeps startup latency off the local listener.
 - For each IP in `BIND_IPS_FILE`, the sender binds a UDP socket **without connecting it** to `SRTLA_HOST:SRTLA_PORT`; the resolved peer is named on every send instead. This is deliberate, not an oversight — it matches the C `srtla_send`/`_rec` reference pair and BELABOX, and tolerates a NAT/multi-homed receiver replying from a source address other than the one dialed. The tradeoff: any host that can reach an uplink's ephemeral port can inject traffic that reaches protocol state. The mitigation is defense in depth, not filtering — a `foreign_source_datagrams` counter plus a rate-limited (1/s) debug log on source mismatch, never a silent drop and never in the telemetry JSON.
 - Incoming SRT UDP packets are read on `SRT_LISTEN_PORT` and forwarded over the currently selected uplink based on the score `window / (in_flight + 1)`. Outgoing DATA is flushed in batches of up to 32 datagrams via `sendmmsg(2)` on Linux (a sequential fallback on other platforms); a batch flush commits only the kernel-accepted prefix, in order, so a partial send can neither duplicate nor drop a packet, and any flush error is routed through the same connection-recovery path the rest of the send loop uses.
+- A successful socket reconnect keeps using its cached receiver peer and never waits on diagnostic DNS. The blocking system resolver runs on one detached standard thread at a time; a Tokio task waits up to 3 seconds for the result, while the resolver keeps the process-wide permit until it actually returns so timeout or waiter cancellation cannot overlap another lookup. Detached resolver work does not join Tokio runtime shutdown. Empty answers are inconclusive, and drift warnings are limited to one per minute across the bond. The check never repoints one uplink independently; coordinated whole-bond receiver migration remains deferred.
 - Internal timing (NAK decay, window recovery, liveness) reads a monotonic clock, so it survives a wall-clock step (NTP correction, manual clock change) without a spurious jump. The `--stats-file` telemetry's `last_updated_ms` deliberately stays wall-clock instead, because a telemetry reader compares it against its own `Date.now()`.
 - The SRT NAK loss list is parsed starting at the correct wire offset (16 bytes into the control frame), with wrap-safe 31-bit sequence-number handling and a truncation warning if a single NAK frame names more loss entries than the per-packet cap.
 - ACKs are applied to all uplinks to reduce in-flight counts; NAKs are attributed to the uplink that originally sent the sequence (tracked), falling back to the receiver uplink if unknown.
 - RTT measured from an ACK is attributed the same way. An SRT cumulative ACK is broadcast to every uplink, but only the uplink the sequence tracker says carried the acknowledged sequence turns it into an RTT sample — the others would otherwise report a latency they never observed. If the sequence can no longer be attributed (the tracking entry expired), no uplink samples it. An SRTLA ACK names one specific sequence, so a packet-log hit is itself the attribution and it feeds the smoothed RTT directly.
 - Sequence-number comparisons are 31-bit modular (RFC 1982), so ACK processing keeps advancing across the `0x7FFFFFFF → 0` wrap instead of stalling behind a numerically larger stale value. An ACK that is exactly half the sequence space away carries no ordering information and is ignored rather than guessed at.
 - **Burst NAK Detection**: The system tracks NAK bursts (multiple NAKs within 1 second) per connection. When quality scoring is enabled, connections with recent NAK bursts (≥5 NAKs in burst, within last 3 seconds) receive an additional 0.7x multiplier (30% reduction) to their quality score, helping avoid connections experiencing packet loss issues.
-- Keepalives are sent when idle, and periodically for RTT measurement; the RTT is smoothed via a Kalman filter. The Kalman output is clamped to ≥0 before use. Keepalive and ACK RTT samples share one plausibility gate: a sample of exactly 0 (a reply within the same millisecond, or a clock that moved backwards) and anything above 10 s are both discarded, so neither biases the filter. A genuine sub-millisecond round trip on a LAN or loopback link also measures 0 and is therefore not sampled. Window recovery is conservative and time-based when there are no recent NAKs.
+- Keepalives are sent when idle, and periodically for RTT measurement; the RTT is smoothed via a Kalman filter, whose velocity diagnostics are milliseconds per sample (`ms/sample`), not per second. The Kalman output is clamped to ≥0 before use. Keepalive and ACK RTT samples share one plausibility gate: a sample of exactly 0 (a reply within the same millisecond, or a clock that moved backwards) and anything above 10 s are both discarded, so neither biases the filter. A genuine sub-millisecond round trip on a LAN or loopback link also measures 0 and is therefore not sampled. Window recovery is conservative and time-based when there are no recent NAKs.
 - Small control packets (keepalive, REG1/REG2) are zero-padded to a 32-byte minimum on the wire (`MIN_CONTROL_PKT_LEN`), matching the C `pad_sendto` behavior, so cellular/carrier NAT keepalive thresholds don't silently drop tiny control frames. DATA packets are never padded.
 - A REG3 only registers an uplink the sender actually sent a REG2 on, and the authorization is one-shot: a duplicate or replayed REG3 is counted and ignored instead of resetting a live uplink's window and in-flight state. A REG2 broadcast retry skips uplinks that are already registered or already awaiting their REG3. A SIGHUP reload that reorders the pool drops only *incomplete* registration attempts — established uplinks keep their socket, registration, and window.
-- A REG_ERR is honored only for an uplink that is actually mid-registration (awaiting its REG2, or awaiting its REG3); one arriving on an established link is counted and ignored rather than disconnecting it, and an in-phase REG_ERR clears only the handshake state that uplink owns, never another uplink's concurrent attempt.
+- A REG_ERR is honored only for an uplink that is actually mid-registration (awaiting its REG2, or awaiting its REG3); one arriving on an established link is counted and ignored rather than disconnecting it, and an in-phase REG_ERR clears only the handshake state that uplink owns, never another uplink's concurrent attempt. Every out-of-phase REG3/REG_ERR remains counted, but only the first of each kind logs at `WARN`; repeats are `DEBUG` so spoofed traffic cannot flood default-level logs.
 - Each uplink's reader task is monitored on every housekeeping tick. If a reader exits unexpectedly (e.g. due to a socket error), it is restarted within one tick rather than waiting for the 15 s liveness timeout.
 - The all-uplinks-failed global timeout measures time elapsed since the failure, not process uptime. A transient all-down blip on a long-running session no longer triggers an immediate fatal exit.
 

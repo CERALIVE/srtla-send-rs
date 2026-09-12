@@ -194,8 +194,8 @@ impl RttTracker {
             if let Some(rtt) = self.record_round_trip(ts, now) {
                 self.waiting_for_keepalive_response = false;
                 debug!(
-                    "{}: RTT from keepalive: {}ms (kalman: {:.1}ms, velocity: {:.2}ms/s, jitter: \
-                     {:.1}ms)",
+                    "{}: RTT from keepalive: {}ms (kalman: {:.1}ms, velocity: {:.2}ms/sample, \
+                     jitter: {:.1}ms)",
                     label,
                     rtt,
                     self.kalman_rtt.value(),

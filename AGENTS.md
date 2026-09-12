@@ -12,7 +12,7 @@ RTT). On the device it is driven by CeraUI and feeds the bonded path into
 `irl-srt-server`. Canonical branch `main`; sibling checkout under the workspace root
 (see CRITICAL CONSTRAINTS below).
 
-> **Status:** current source v3.2.0; CeraLive parity milestone v1.0.0 complete. Fork created from upstream HEAD;
+> **Status:** current source v3.3.0; CeraLive parity milestone v1.0.0 complete. Fork created from upstream HEAD;
 > nightly pinned; full gate green on the pinned toolchain. Landed: CLI parity contract
 > (Task 9: `--verbose`/`--dry-run`/`--stats-file`/`--stats-file-interval`), the opt-in
 > ADR-001 telemetry sink (Task 10: `src/telemetry_file.rs`), signal/startup parity
@@ -47,6 +47,16 @@ RTT). On the device it is driven by CeraUI and feeds the bonded path into
 > coordinated whole-bond receiver migration is DEFERRED (see ROBUSTNESS FIXES).
 > Two candidate perf changes (switch-cooldown removal, flush-on-switch removal)
 > were measured via a real A/B harness and REJECTED — see the triage doc.
+> **Upstream sync landed (2026-09): 0 commits behind `irlserver/srtla_send` at
+> `df0b3938791ff24eced4aed8b29e3d49d0efb639`.** All seven commits in
+> `c9f6bb2..df0b393` were evaluated
+> (`docs/notes/upstream-sync-2026-09-evaluation.md`) and merged with a true
+> two-parent merge commit. NAK/ACK wrap safety, recovery, and registration gates were
+> already stronger in the fork; the remaining RTT unit labels, DNS diagnostic liveness,
+> and registration-log amplification fixes were adapted in fork-native follow-ups.
+> Upstream's default-on whole-bond receiver re-home remains DEFERRED after review found
+> socket-coherence and stale-reader-generation gaps, and its `4.0.1` bump was not imported:
+> the published fork release stays `3.3.0`.
 > CeraUI integration lands in follow-up tasks.
 
 **Relationship to `srtla/`:** this is the **sender** engine (Rust). The existing
@@ -101,11 +111,12 @@ the fork parent attached when opening a PR. Verify: `git remote -v` must show on
   licensing at the workspace/distribution layer, not by stripping upstream notices.
 - **Fork start point:** upstream `80cd0c4` ("feat: use Kalman-smoothed RTT in EDPF
   arrival time prediction").
-- **Last-merged upstream SHA (2026-08 sync):** `c9f6bb2296f236d60802f2ec3b79d9da4dac6e28`.
-  Merged history-only via `-s ours` (see `docs/notes/upstream-sync-2026-08-evaluation.md`
-  for why); the next sync's merge base is computed from this SHA. Full 138-commit triage
-  table and the EXACT-SET VALIDATION proving no commit in the range was missed or
-  double-counted live in that same doc.
+- **Last-merged upstream SHA (2026-09 sync):** `df0b3938791ff24eced4aed8b29e3d49d0efb639`.
+  Merged with a normal two-parent merge commit after compatibility resolution; the next
+  sync's merge base is computed from this SHA. The seven-commit verdict table, exact-set
+  validation, selective adaptations, and explicit re-home/version exclusions are in
+  `docs/notes/upstream-sync-2026-09-evaluation.md`. The prior 138-commit sync remains
+  documented in `docs/notes/upstream-sync-2026-08-evaluation.md`.
 
 ### Upstream-merge policy — MANUAL & COMPAT-GATED
 
@@ -261,7 +272,7 @@ CeraUI and the device integration depend on these staying stable:
   (`apps/backend/src/modules/system/revisions.ts`), so this line is read by humans, not
   only by scripts. Shape: `<version> [(<branch>@<hash>[-dirty>])] [<package>]` — the
   parenthetical is emitted ONLY when `build.rs` resolved a commit, so a build with no
-  git context prints a bare `3.2.0 [srtla_send]`.
+  git context prints a bare `3.3.0 [srtla_send]`.
   **A build outside a git checkout is NORMAL, not broken** — an exported source tarball,
   a container that copies only `src/`, a vendored crate. The retired `build.rs` answered
   that case with the literal string `"unknown"` for both branch and hash, and — because
@@ -637,16 +648,17 @@ workflows. It pins the contract the device image depends on:
 `srtla-send-rs` is the one first-party component that does NOT follow the CeraLive
 CalVer (`YYYY.MINOR.PATCH`) scheme. Its `.deb` version comes directly from
 `Cargo.toml` `[package] version`, which tracks upstream irlserver semver.
-Current source package version: `3.2.0`. The workspace `versions.yaml` remains pinned at
-the last published release, `v3.1.0`, until the 3.2.0 release is published and adopted.
+Current source package version: `3.3.0`. The workspace `versions.yaml` and the latest
+published GitHub release are both pinned at `v3.3.0`.
 
 Rationale: this repo is a fork of `irlserver/srtla_send`; keeping the upstream semver
-line in `Cargo.toml` preserves direct traceability to upstream releases.
+line in `Cargo.toml` preserves direct traceability to upstream releases. An upstream
+version-only commit is still a deliberate fork release decision, not an automatic bump.
 
 The GitHub release **tag** namespace is `v<package-version>`. A tag-triggered package
 build must match the committed `Cargo.toml` version; `ci/build-deb.sh` rejects a tag ref
 whose `GITHUB_REF_NAME` differs from `v<package-version>`. For this source version, the
-only valid release tag is `v3.2.0`.
+only valid release tag is `v3.3.0`.
 
 The `@ceralive/srtla-send` npm binding ships on its own `bindings-vYYYY.M.P` tag
 namespace and uses CalVer independently of the Rust crate version.
@@ -1181,20 +1193,27 @@ constant as a proven improvement until validated on real bond hardware.
 
 ### DNS drift detection on reconnect (todo 12, ported from upstream, MEDIUM-4 of `c9f6bb2`'s bug list) — single-uplink swap DEFERRED
 
-Reconnect now re-resolves the receiver hostname (`resolve_remote_all`) instead of
-reusing the previously-resolved `SocketAddr` forever (the pre-sync tree had the
-identical flaw upstream also carried). The existing peer is kept when re-resolution
-fails, when it remains among the fresh answers, or when drift simply omits it from
-the answer set without another candidate being clearly preferred; a genuine drift
-emits a rate-limited (at most once/minute) receiver-identity warning. **DEFERRED,
-not implemented: coordinated whole-bond receiver migration.** SRTLA's
+After rebuilding a reconnecting socket against its cached peer, the sender starts a
+detect-only DNS diagnostic off the housekeeping loop. The blocking system resolver runs
+on one detached standard thread at a time; a Tokio task waits up to 3 seconds for its
+result, while the actual resolver retains the process-wide permit until it returns even if
+that wait times out or is cancelled. This prevents overlapping resolver work without
+joining Tokio runtime shutdown. An empty or failed answer is inconclusive rather than
+drift. The existing peer is kept when it remains among fresh
+answers; a genuine drift emits at most one receiver-identity warning per minute across the
+whole process. **DEFERRED, not implemented: coordinated whole-bond receiver migration.** SRTLA's
 receiver-generated full ID makes swapping a single uplink to a different receiver
 instance unsafe — it would split the bond, with some uplinks registered against one
 receiver identity and some against another. `apply_connection_changes` deliberately
 preserves surviving sockets/registrations across a SIGHUP reload, so SIGHUP is not a
 substitute mechanism either. A later, separately-scoped change must specify and
 implement any coordinated multi-uplink migration; do not add a single-uplink swap in
-the meantime. `src/connection/mod.rs` (`host`/`port` fields alongside `remote`).
+the meantime. Upstream `171ddc1` was explicitly deferred because its metadata-first
+socket replacement can leave an old-peer socket live after a rebuild failure, reload
+additions do not share one authoritative bond endpoint, and queued old-reader traffic has
+no generation guard. Full acceptance requirements are recorded in
+`docs/notes/upstream-sync-2026-09-evaluation.md`. `src/connection/socket.rs`,
+`src/connection/mod.rs`.
 
 ### Partial-send prefix-commit invariant + foreign-source counter (todo 9, alongside unconnected sockets — see ANTI-PATTERNS)
 
@@ -1213,7 +1232,7 @@ is ever dropped. `src/connection/batch_send.rs`, `src/connection/mod.rs`.
 
 ### REG3 authorization is one-shot; index-scoped registration state resets on SIGHUP (Final Verification Wave, `eaced59` + this round)
 
-Five registration-hardening bugfixes, all found by the post-merge verification wave.
+Six registration-hardening bugfixes, found by the post-merge verification waves.
 None alters the parity contract.
 
 - **REG3 is a ONE-SHOT grant.** `handle_reg3` consumes the uplink's `awaiting_reg3`
@@ -1255,6 +1274,10 @@ None alters the parity contract.
   authorization alive for a socket generation that was never re-armed. The `Err` branch
   now removes the entry, so "armed only by a send that left the host" holds for the
   current generation.
+- **Out-of-phase control logging is bounded without weakening accounting (2026-09 sync).**
+  Every rejected REG3/REG_ERR still increments its diagnostic counter and returns the
+  explicit no-op event. The first rejection of each kind logs at `WARN`; later rejections
+  are `DEBUG`, so a spoof flood cannot amplify default-level logs.
 
 Pinned by `replayed_reg3_does_not_wipe_a_live_connection`,
 `reg2_broadcast_retry_skips_already_connected_uplinks`,

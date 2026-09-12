@@ -178,7 +178,7 @@ pub(crate) fn log_connection_status(
 
         if conn.rtt.estimated_rtt_ms > 0.0 {
             info!(
-                "        RTT: kalman={:.1}ms, velocity={:.2}ms/s, jitter={:.1}ms, stable={} \
+                "        RTT: kalman={:.1}ms, velocity={:.2}ms/sample, jitter={:.1}ms, stable={} \
                  (last: {:.1}s ago)",
                 conn.get_smooth_rtt_ms(),
                 conn.get_rtt_velocity(),
@@ -194,5 +194,60 @@ pub(crate) fn log_connection_status(
         warn!("No active connections available!");
     } else if active_connections < total_connections / 2 {
         warn!("Less than half of connections are active");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{self, Write};
+    use std::sync::{Arc, Mutex};
+
+    use tracing_subscriber::fmt::MakeWriter;
+
+    use super::*;
+    use crate::test_helpers::create_test_connection;
+
+    #[derive(Clone, Default)]
+    struct CapturedLogs(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for CapturedLogs {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> MakeWriter<'a> for CapturedLogs {
+        type Writer = Self;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    #[tokio::test]
+    async fn status_renders_rtt_velocity_in_milliseconds_per_sample() {
+        let logs = CapturedLogs::default();
+        let output = logs.0.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::INFO)
+            .with_writer(logs)
+            .finish();
+        let mut conn = create_test_connection().await;
+        conn.rtt.estimated_rtt_ms = 42.0;
+
+        tracing::subscriber::with_default(subscriber, || {
+            log_connection_status(&[conn], None, &DynamicConfig::new());
+        });
+
+        let rendered = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        assert!(rendered.contains("velocity=0.00ms/sample"));
+        assert!(!rendered.contains("velocity=0.00ms/s,"));
     }
 }
