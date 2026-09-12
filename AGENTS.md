@@ -52,7 +52,7 @@ RTT). On the device it is driven by CeraUI and feeds the bonded path into
 > `c9f6bb2..df0b393` were evaluated
 > (`docs/notes/upstream-sync-2026-09-evaluation.md`) and merged with a true
 > two-parent merge commit. NAK/ACK wrap safety, recovery, and registration gates were
-> already stronger in the fork; the remaining RTT unit label, DNS diagnostic liveness,
+> already stronger in the fork; the remaining RTT unit labels, DNS diagnostic liveness,
 > and registration-log amplification fixes were adapted in fork-native follow-ups.
 > Upstream's default-on whole-bond receiver re-home remains DEFERRED after review found
 > socket-coherence and stale-reader-generation gaps, and its `4.0.1` bump was not imported:
@@ -1194,9 +1194,12 @@ constant as a proven improvement until validated on real bond hardware.
 ### DNS drift detection on reconnect (todo 12, ported from upstream, MEDIUM-4 of `c9f6bb2`'s bug list) — single-uplink swap DEFERRED
 
 After rebuilding a reconnecting socket against its cached peer, the sender starts a
-detect-only `resolve_remote_all` diagnostic off the housekeeping loop. At most one lookup
-runs process-wide, it is bounded to 3 seconds, and an empty or failed answer is
-inconclusive rather than drift. The existing peer is kept when it remains among fresh
+detect-only DNS diagnostic off the housekeeping loop. The blocking system resolver runs
+on one detached standard thread at a time; a Tokio task waits up to 3 seconds for its
+result, while the actual resolver retains the process-wide permit until it returns even if
+that wait times out or is cancelled. This prevents overlapping resolver work without
+joining Tokio runtime shutdown. An empty or failed answer is inconclusive rather than
+drift. The existing peer is kept when it remains among fresh
 answers; a genuine drift emits at most one receiver-identity warning per minute across the
 whole process. **DEFERRED, not implemented: coordinated whole-bond receiver migration.** SRTLA's
 receiver-generated full ID makes swapping a single uplink to a different receiver

@@ -15,10 +15,10 @@ copy upstream's split-crate architecture into this fork. Existing fork-native fi
 authoritative. Three narrow improvements that were not yet complete here are adapted in
 follow-up commits on the same integration branch:
 
-1. correct the remaining Kalman RTT velocity log unit from `ms/s` to `ms/sample`;
-2. move detect-only receiver DNS drift diagnostics off the housekeeping loop, bound the
-   lookup, prevent concurrent checks, treat an empty answer as inconclusive, and share the
-   warning throttle across the process;
+1. correct the remaining Kalman RTT velocity log units from `ms/s` to `ms/sample`;
+2. move detect-only receiver DNS drift diagnostics off the housekeeping loop, wait at most
+   three seconds for a result, prevent concurrent resolver work, treat an empty answer as
+   inconclusive, and share the warning throttle across the process;
 3. keep counting every out-of-phase REG3/REG_ERR while emitting only the first rejection
    of each kind at `WARN` and subsequent rejections at `DEBUG`.
 
@@ -46,7 +46,7 @@ The exact ordered set is:
 | # | Commit | Subject | Verdict |
 |---|---|---|---|
 | 1 | `d3fe9df` | `fix(srtla-protocol): validate SRT NAK range endpoints and stop wrap-safely` | Already stronger in fork; no direct port |
-| 2 | `83ca832` | `docs(srtla-core): label the kalman RTT velocity as ms/sample, not ms/s` | Adapt remaining log label |
+| 2 | `83ca832` | `docs(srtla-core): label the kalman RTT velocity as ms/sample, not ms/s` | Adapt remaining log labels |
 | 3 | `21fc289` | `fix(srtla-core): compare ACK sequences with 31-bit serial arithmetic` | Already stronger in fork; no direct port |
 | 4 | `8f8823b` | `fix(srtla_send): harden the uplink recovery path` | Recovery already stronger; adapt DNS diagnostics |
 | 5 | `4fb3079` | `fix(srtla-core): harden registration against spoofed control packets` | Gates already stronger; adapt bounded logging |
@@ -76,8 +76,9 @@ The relevant tests include `test_parse_srt_nak_range_at_domain_max_emits_one`,
 ### `83ca832`: Kalman RTT velocity unit
 
 The fork's thresholds and documentation already use milliseconds per Kalman update/sample,
-not milliseconds per second. One keepalive diagnostic still printed `ms/s`; the integration
-adapts that remaining label to `ms/sample` without changing the filter or thresholds.
+not milliseconds per second. The keepalive diagnostic and periodic INFO status report still
+printed `ms/s`; the integration adapts both labels to `ms/sample` without changing the filter
+or thresholds.
 
 ### `21fc289`: wrap-safe cumulative ACK handling
 
@@ -98,9 +99,12 @@ The send/recovery portion is already stronger here:
 
 The DNS diagnostic still needed adaptation. Before this sync, `SrtlaConnection::reconnect`
 awaited `lookup_host` on the housekeeping loop, an empty answer counted as drift, and every
-uplink owned an independent warning timer. The adapted shape is detached and bounded,
-permits at most one process-wide lookup at a time, treats empty results as inconclusive,
-and emits at most one drift warning per minute for the whole bond. Socket recreation keeps
+uplink owned an independent warning timer. The adapted shape runs the blocking system
+resolver on a detached standard thread and lets a Tokio task wait up to three seconds for
+its result. The actual resolver owns the process-wide permit until it returns, even after
+the result wait times out or is cancelled, so resolver work cannot overlap. Detached
+standard threads do not join Tokio runtime shutdown. Empty results are inconclusive, and
+at most one drift warning is emitted per minute for the whole bond. Socket recreation keeps
 using the cached peer and does not wait on diagnostic DNS.
 
 ### `4fb3079`: registration spoof hardening
