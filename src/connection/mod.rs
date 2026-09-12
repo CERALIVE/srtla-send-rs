@@ -27,7 +27,7 @@ pub use reconnection::ReconnectionState;
 pub use route::RouteHealth;
 pub use rtt::RttTracker;
 use rustc_hash::FxHashMap;
-use socket::remote_drift;
+use socket::spawn_receiver_dns_drift_check;
 pub use socket::{bind_for_link, bind_from_ip, resolve_remote, resolve_remote_all};
 pub use spec::{SocketKey, UplinkSpec};
 use tokio::time::Instant;
@@ -158,8 +158,6 @@ pub struct SrtlaConnection {
     /// is rate limited to one per second per connection to keep a degraded link
     /// from flooding the log. `0` = never warned, so the first one always fires.
     pub(crate) last_trunc_warn_ms: u64,
-    /// `now_ms()` of the last receiver-DNS drift warning; limited to one per minute.
-    pub(crate) last_dns_drift_warn_ms: u64,
     // Sub-structs for organized state management
     #[cfg(feature = "test-internals")]
     pub rtt: RttTracker,
@@ -240,7 +238,6 @@ impl SrtlaConnection {
             last_ack_or_rtt_sample_ms: 0,
             last_stall_reprobe_ms: 0,
             last_trunc_warn_ms: 0,
-            last_dns_drift_warn_ms: 0,
             rtt: RttTracker::default(),
             congestion: CongestionControl::default(),
             bitrate: BitrateTracker::default(),
@@ -665,29 +662,6 @@ impl SrtlaConnection {
     }
 
     pub async fn reconnect(&mut self) -> Result<()> {
-        match resolve_remote_all(&self.host, self.port).await {
-            Ok(answers) if remote_drift(&answers, &self.remote) => {
-                let now = now_ms();
-                if self.last_dns_drift_warn_ms == 0
-                    || now.saturating_sub(self.last_dns_drift_warn_ms) >= 60_000
-                {
-                    self.last_dns_drift_warn_ms = now;
-                    warn!(
-                        "receiver DNS answers no longer include {}; keeping current peer — moving \
-                         the bond to a new receiver requires a process restart",
-                        self.remote
-                    );
-                }
-            }
-            Ok(_) => {}
-            Err(error) => {
-                debug!(
-                    "{}: receiver DNS lookup failed during reconnect; keeping current peer {}: {}",
-                    self.label, self.remote, error
-                );
-            }
-        }
-
         // Re-resolve the interface by NAME on every socket recreation. The old
         // socket's SO_BINDTODEVICE ifindex was frozen at setsockopt time, so a
         // replugged device would otherwise inherit an index that no longer
@@ -706,6 +680,11 @@ impl SrtlaConnection {
         sock.set_nonblocking(true)?;
         let socket = BatchUdpSocket::new(sock, self.remote)?;
         self.socket = Arc::new(socket);
+
+        // DNS drift is diagnostic-only and may block in the system resolver.
+        // Keep it detached from this housekeeping-owned recovery path; the
+        // socket continues using the receiver identity it registered against.
+        spawn_receiver_dns_drift_check(&self.host, self.port, self.remote);
 
         self.reset_state();
 

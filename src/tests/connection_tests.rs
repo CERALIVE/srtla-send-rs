@@ -264,64 +264,19 @@ mod tests {
         assert_eq!(conn.congestion.last_nak_time_ms, 0);
     }
 
-    #[test]
-    fn reconnect_detects_dns_drift_but_keeps_existing_peer() {
-        // Given: the receiver hostname resolves elsewhere than this uplink's current peer.
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let mut conn = rt.block_on(create_test_connection());
-        conn.host = "127.0.0.1".to_string();
-        conn.port = 8080;
-        conn.remote = "127.0.0.2:8080".parse().unwrap();
-
-        // When: the connection rebuilds its unconnected socket.
-        rt.block_on(conn.reconnect()).unwrap();
-
-        // Then: DNS drift is detected, but the old receiver peer is retained.
-        assert_eq!(conn.remote, "127.0.0.2:8080".parse().unwrap());
-        assert_eq!(conn.socket.peer_addr(), conn.remote);
-        assert!(conn.last_dns_drift_warn_ms > 0);
-    }
-
-    #[test]
-    fn reconnect_dns_failure_keeps_peer_and_rebuilds_socket() {
-        // Given: the stored receiver hostname cannot be resolved.
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let mut conn = rt.block_on(create_test_connection());
+    #[tokio::test]
+    async fn reconnect_keeps_the_cached_peer_without_waiting_for_dns() {
+        let mut conn = create_test_connection().await;
         let old_remote = conn.remote;
         conn.host = "invalid.invalid".to_string();
 
-        // When: reconnect attempts DNS validation and rebuilds the socket.
-        rt.block_on(conn.reconnect()).unwrap();
+        tokio::time::timeout(Duration::from_secs(1), conn.reconnect())
+            .await
+            .expect("diagnostic DNS must not delay reconnect")
+            .expect("the cached-peer socket rebuild must succeed");
 
-        // Then: the old peer remains on the newly rebuilt socket.
         assert_eq!(conn.remote, old_remote);
         assert_eq!(conn.socket.peer_addr(), old_remote);
-        assert_eq!(conn.last_dns_drift_warn_ms, 0);
-    }
-
-    #[test]
-    fn reconnect_dns_drift_warning_is_rate_limited() {
-        // Given: a connection whose DNS answers omit its current peer.
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let mut conn = rt.block_on(create_test_connection());
-        conn.host = "127.0.0.1".to_string();
-        conn.port = 8080;
-        conn.remote = "127.0.0.2:8080".parse().unwrap();
-
-        // When: reconnect runs twice within the one-minute warning window.
-        rt.block_on(conn.reconnect()).unwrap();
-        let first_warning = conn.last_dns_drift_warn_ms;
-        rt.block_on(conn.reconnect()).unwrap();
-
-        // Then: the second drift keeps the original warning timestamp.
-        assert_eq!(conn.last_dns_drift_warn_ms, first_warning);
-
-        // When: the one-minute warning window has elapsed.
-        conn.last_dns_drift_warn_ms = first_warning.saturating_sub(60_000);
-        rt.block_on(conn.reconnect()).unwrap();
-
-        // Then: the next eligible drift advances the warning timestamp.
-        assert!(conn.last_dns_drift_warn_ms > first_warning.saturating_sub(60_000));
     }
 
     #[test]

@@ -1,9 +1,68 @@
+use std::future::Future;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use anyhow::{Context, Result};
 use socket2::{Domain, Protocol, Socket, Type};
-use tracing::warn;
+use tokio::task::JoinHandle;
+use tokio::time::{Duration, timeout};
+use tracing::{debug, warn};
+
+const DNS_DRIFT_WARN_INTERVAL_MS: u64 = 60_000;
+const DNS_DRIFT_LOOKUP_TIMEOUT: Duration = Duration::from_secs(3);
+
+struct ReceiverDnsDiagnostics {
+    check_in_flight: AtomicBool,
+    last_warning_ms: AtomicU64,
+}
+
+impl ReceiverDnsDiagnostics {
+    const fn new() -> Self {
+        Self {
+            check_in_flight: AtomicBool::new(false),
+            last_warning_ms: AtomicU64::new(0),
+        }
+    }
+
+    fn try_start_check(&self) -> bool {
+        self.check_in_flight
+            .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+    }
+
+    fn finish_check(&self) {
+        self.check_in_flight.store(false, Ordering::Relaxed);
+    }
+
+    fn claim_warning(&self, now_ms: u64) -> bool {
+        loop {
+            let last = self.last_warning_ms.load(Ordering::Relaxed);
+            if last != 0 && now_ms.saturating_sub(last) < DNS_DRIFT_WARN_INTERVAL_MS {
+                return false;
+            }
+            match self.last_warning_ms.compare_exchange_weak(
+                last,
+                now_ms.max(1),
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return true,
+                Err(_) => continue,
+            }
+        }
+    }
+}
+
+struct ReceiverDnsCheckGuard(&'static ReceiverDnsDiagnostics);
+
+impl Drop for ReceiverDnsCheckGuard {
+    fn drop(&mut self) {
+        self.0.finish_check();
+    }
+}
+
+static RECEIVER_DNS_DIAGNOSTICS: ReceiverDnsDiagnostics = ReceiverDnsDiagnostics::new();
 
 /// Egress-steering strategy for a freshly created uplink UDP socket: how the
 /// socket is pinned to a particular network egress *before* it is connected.
@@ -175,7 +234,71 @@ pub async fn resolve_remote_all(host: &str, port: u16) -> io::Result<Vec<SocketA
 }
 
 pub(crate) fn remote_drift(answers: &[SocketAddr], current: &SocketAddr) -> bool {
-    !answers.contains(current)
+    !answers.is_empty() && !answers.contains(current)
+}
+
+/// Start a detect-only receiver DNS drift check without delaying socket recovery.
+///
+/// Reconnect runs on the housekeeping loop, so diagnostic DNS must never be
+/// awaited there. One process-wide check may run at a time, every lookup is
+/// bounded, and warnings are shared across the bond. This never changes the
+/// cached peer: moving one uplink would split the SRTLA receiver identity.
+pub(crate) fn spawn_receiver_dns_drift_check(host: &str, port: u16, current: SocketAddr) {
+    let lookup_host = host.to_string();
+    let log_host = lookup_host.clone();
+    let lookup = async move { resolve_remote_all(&lookup_host, port).await };
+    let _ =
+        spawn_receiver_dns_drift_check_with(&RECEIVER_DNS_DIAGNOSTICS, log_host, current, lookup);
+}
+
+fn spawn_receiver_dns_drift_check_with<F>(
+    state: &'static ReceiverDnsDiagnostics,
+    host: String,
+    current: SocketAddr,
+    lookup: F,
+) -> Option<JoinHandle<()>>
+where
+    F: Future<Output = io::Result<Vec<SocketAddr>>> + Send + 'static,
+{
+    if !state.try_start_check() {
+        return None;
+    }
+
+    Some(tokio::spawn(async move {
+        let _guard = ReceiverDnsCheckGuard(state);
+        match timeout(DNS_DRIFT_LOOKUP_TIMEOUT, lookup).await {
+            Ok(Ok(answers)) if remote_drift(&answers, &current) => {
+                if state.claim_warning(crate::utils::now_ms()) {
+                    let answers = answers
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    warn!(
+                        "receiver DNS drift: {host} no longer resolves to {current} (now \
+                         {answers}); keeping the current peer because the bond is registered \
+                         against this receiver instance"
+                    );
+                }
+            }
+            Ok(Ok(answers)) if answers.is_empty() => {
+                debug!("receiver DNS lookup for {host} returned no addresses; keeping {current}");
+            }
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => {
+                debug!(
+                    "receiver DNS lookup failed during reconnect; keeping current peer {current}: \
+                     {error}"
+                );
+            }
+            Err(_) => {
+                debug!(
+                    "receiver DNS lookup timed out after {:?}; keeping current peer {current}",
+                    DNS_DRIFT_LOOKUP_TIMEOUT
+                );
+            }
+        }
+    }))
 }
 
 #[cfg(test)]
@@ -184,7 +307,7 @@ mod tests {
 
     use socket2::{Domain, Protocol, Socket, Type};
 
-    use super::{SourceIpBinder, UplinkBinder, remote_drift};
+    use super::*;
 
     #[test]
     fn remote_drift_is_false_when_current_peer_is_resolved() {
@@ -211,6 +334,77 @@ mod tests {
 
         // Then: the missing current peer is reported as drift.
         assert!(drifted);
+    }
+
+    #[test]
+    fn remote_drift_is_false_when_dns_returns_no_answers() {
+        let current = SocketAddr::from(([127, 0, 0, 1], 8080));
+
+        assert!(
+            !remote_drift(&[], &current),
+            "an empty answer is inconclusive, not evidence that the receiver moved"
+        );
+    }
+
+    #[test]
+    fn dns_drift_warning_is_shared_and_rate_limited() {
+        let state = ReceiverDnsDiagnostics::new();
+        let first = 1_000;
+
+        assert!(state.claim_warning(first), "the first drift must warn");
+        assert!(
+            !state.claim_warning(first + DNS_DRIFT_WARN_INTERVAL_MS - 1),
+            "another uplink inside the process-wide interval must stay quiet"
+        );
+        assert!(
+            state.claim_warning(first + DNS_DRIFT_WARN_INTERVAL_MS),
+            "the warning becomes eligible at the interval boundary"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn dns_drift_checks_are_detached_bounded_and_single_flight() {
+        let state = Box::leak(Box::new(ReceiverDnsDiagnostics::new()));
+        let current = SocketAddr::from(([127, 0, 0, 1], 8080));
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let delayed_lookup = async move {
+            let _ = started_tx.send(());
+            std::future::pending::<io::Result<Vec<SocketAddr>>>().await
+        };
+
+        let first = spawn_receiver_dns_drift_check_with(
+            state,
+            "receiver.example".to_string(),
+            current,
+            delayed_lookup,
+        )
+        .expect("the first check must start");
+        started_rx
+            .await
+            .expect("the detached lookup must be polled");
+
+        assert!(
+            spawn_receiver_dns_drift_check_with(
+                state,
+                "receiver.example".to_string(),
+                current,
+                async { Ok(Vec::new()) },
+            )
+            .is_none(),
+            "a delayed resolver must not accumulate another process-wide task"
+        );
+
+        tokio::time::advance(DNS_DRIFT_LOOKUP_TIMEOUT).await;
+        first.await.expect("the bounded lookup task must finish");
+
+        let next = spawn_receiver_dns_drift_check_with(
+            state,
+            "receiver.example".to_string(),
+            current,
+            async { Ok(Vec::new()) },
+        )
+        .expect("the timeout must release the process-wide check slot");
+        next.await.expect("the replacement check must finish");
     }
 
     #[test]
