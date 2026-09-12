@@ -281,10 +281,7 @@ impl SrtlaRegistrationManager {
     fn handle_reg3(&mut self, conn_idx: usize) -> bool {
         if !self.awaiting_reg3.contains(&conn_idx) {
             self.out_of_phase_reg3 = self.out_of_phase_reg3.saturating_add(1);
-            warn!(
-                "REG3 for uplink #{} ignored: no REG2 was sent on it ({} out-of-phase so far)",
-                conn_idx, self.out_of_phase_reg3
-            );
+            Self::log_out_of_phase("REG3", conn_idx, self.out_of_phase_reg3);
             return false;
         }
         // The grant is ONE-SHOT: consume it here so a duplicate or replayed
@@ -313,11 +310,7 @@ impl SrtlaRegistrationManager {
 
         if !awaiting_reg2 && !awaiting_reg3 {
             self.out_of_phase_reg_err = self.out_of_phase_reg_err.saturating_add(1);
-            warn!(
-                "REG_ERR for uplink #{} ignored: no registration in flight on it ({} out-of-phase \
-                 so far)",
-                conn_idx, self.out_of_phase_reg_err
-            );
+            Self::log_out_of_phase("REG_ERR", conn_idx, self.out_of_phase_reg_err);
             return false;
         }
 
@@ -335,6 +328,21 @@ impl SrtlaRegistrationManager {
 
         warn!("registration failed for connection {}", conn_idx);
         true
+    }
+
+    fn log_out_of_phase(kind: &str, conn_idx: usize, count: u64) {
+        if count == 1 {
+            warn!(
+                "{} for uplink #{} ignored: no matching registration in flight (further \
+                 out-of-phase frames logged at debug)",
+                kind, conn_idx
+            );
+        } else {
+            debug!(
+                "{} for uplink #{} ignored: no matching registration in flight ({} so far)",
+                kind, conn_idx, count
+            );
+        }
     }
 
     pub async fn try_send_reg1_immediately(&mut self, conn_idx: usize, conn: &mut SrtlaConnection) {
