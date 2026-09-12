@@ -29,7 +29,7 @@ impl ReceiverDnsDiagnostics {
         self.check_in_flight
             .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
             .is_ok()
-            .then_some(ReceiverDnsCheckPermit(self))
+            .then(|| ReceiverDnsCheckPermit(self))
     }
 
     fn claim_warning(&self, now_ms: u64) -> bool {
@@ -432,6 +432,19 @@ mod tests {
             .is_none(),
             "a timed-out waiter must not permit overlapping resolver work"
         );
+        assert!(state.is_check_in_flight());
+        assert!(
+            spawn_receiver_dns_drift_check_with(
+                state,
+                "receiver.example".to_string(),
+                current,
+                Duration::from_millis(10),
+                || Ok(Vec::new()),
+            )
+            .is_none(),
+            "repeated rejected claims must leave the original resolver in flight"
+        );
+        assert!(state.is_check_in_flight());
 
         release_tx
             .send(())
@@ -484,6 +497,19 @@ mod tests {
             .is_none(),
             "waiter cancellation must not release active resolver ownership"
         );
+        assert!(state.is_check_in_flight());
+        assert!(
+            spawn_receiver_dns_drift_check_with(
+                state,
+                "receiver.example".to_string(),
+                current,
+                Duration::from_millis(10),
+                || Ok(Vec::new()),
+            )
+            .is_none(),
+            "repeated rejected claims must not clear the resolver-owned permit"
+        );
+        assert!(state.is_check_in_flight());
 
         release_tx
             .send(())
