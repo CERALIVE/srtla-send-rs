@@ -101,9 +101,7 @@ impl DeliveryLedger {
         }
         let len = entry.send.len;
         self.remove(ack.seq);
-        self.last_data_proof_ms = now_ms;
-        self.proof_anchor_ms = Some(now_ms);
-        self.attempts_since_proof = 0;
+        self.record_probe_proof(now_ms);
         while self
             .delivered_bytes_window
             .front()
@@ -145,6 +143,17 @@ impl DeliveryLedger {
         self.proof_anchor_ms = None;
         self.delivered_bytes_window.clear();
         self.socket_generation = self.socket_generation.wrapping_add(1);
+    }
+
+    /// Probe proof refreshes health, but is not original delivered goodput.
+    pub(crate) fn record_probe_proof(&mut self, now_ms: u64) {
+        self.last_data_proof_ms = now_ms;
+        self.proof_anchor_ms = Some(now_ms);
+        self.attempts_since_proof = 0;
+    }
+
+    pub(crate) fn contains(&self, seq: i32) -> bool {
+        self.entries.contains_key(&seq)
     }
 
     fn expire(&mut self, now_ms: u64) {
