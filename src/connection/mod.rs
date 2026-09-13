@@ -21,6 +21,9 @@ mod probe_io_tests;
 mod probe_log_tests;
 #[cfg(test)]
 mod probe_tests;
+pub mod rate_cap;
+#[cfg(test)]
+mod rate_cap_tests;
 mod reconnection;
 pub mod route;
 mod rtt;
