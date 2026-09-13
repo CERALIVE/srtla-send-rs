@@ -38,6 +38,12 @@ pub mod earned_ack_tests;
 pub mod stall_deselect_tests;
 
 #[cfg(test)]
+pub mod health_delivery_tests;
+
+#[cfg(test)]
+pub mod health_delivery_batch_tests;
+
+#[cfg(test)]
 pub mod protocol_tests;
 
 #[cfg(test)]

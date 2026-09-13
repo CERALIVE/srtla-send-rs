@@ -97,10 +97,17 @@ impl SrtlaConnection {
     /// a cumulative SRT ACK, a miss simply means another link owns it.
     #[inline]
     pub fn handle_srtla_ack_specific(&mut self, seq: i32, classic_mode: bool) -> bool {
+        let now = now_ms();
+        self.delivery.acknowledge(
+            super::delivery::DeliveryAck {
+                seq,
+                socket_generation: self.delivery.socket_generation,
+            },
+            now,
+        );
         if let Some(sent_ms) = self.packet_log.remove(&seq) {
             self.in_flight_packets = self.packet_log.len() as i32;
 
-            let now = now_ms();
             self.rtt.record_round_trip(sent_ms, now);
 
             // Stall signal (EXPERIMENTAL `stall_deselect`): this link EARNED the

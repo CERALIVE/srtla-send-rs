@@ -72,7 +72,7 @@ mod tests {
             "one flush commits at most BATCH_SEND_SIZE datagrams"
         );
         assert_eq!(
-            outcome.accepted.first().copied(),
+            outcome.accepted.first().map(|&(seq, time, _)| (seq, time)),
             Some((Some(0), 1_000)),
             "the committed records are the queue-order prefix"
         );
@@ -86,7 +86,7 @@ mod tests {
         assert!(second.error.is_none());
         assert_eq!(second.accepted.len(), overflow, "the suffix drains next");
         assert_eq!(
-            second.accepted.first().copied(),
+            second.accepted.first().map(|&(seq, time, _)| (seq, time)),
             Some((
                 Some(BATCH_SEND_SIZE as u32 as i32),
                 1_000 + BATCH_SEND_SIZE as u64

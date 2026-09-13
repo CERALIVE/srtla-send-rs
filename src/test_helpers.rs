@@ -56,6 +56,7 @@ fn create_connection_from_socket(
         window: WINDOW_DEF * WINDOW_MULT,
         in_flight_packets: 0,
         packet_log: FxHashMap::with_capacity_and_hasher(PKT_LOG_SIZE, Default::default()),
+        delivery: crate::connection::delivery::DeliveryLedger::default(),
         highest_acked_seq: None,
         last_received: Some(Instant::now()),
         last_sent: None,
@@ -78,8 +79,12 @@ fn create_connection_from_socket(
 }
 
 pub async fn create_test_connection() -> SrtlaConnection {
-    let socket = create_test_socket();
     let remote = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080);
+    create_test_connection_to(remote).await
+}
+
+pub async fn create_test_connection_to(remote: SocketAddr) -> SrtlaConnection {
+    let socket = create_test_socket();
     let local_ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
 
     create_connection_from_socket(socket, remote, local_ip, "test-connection".to_string())

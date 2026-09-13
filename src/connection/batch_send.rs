@@ -39,7 +39,8 @@ const FLUSH_INTERVAL_MS: u64 = 15;
 /// accounting. The unsent suffix stays queued.
 #[derive(Debug, Default)]
 pub struct FlushOutcome {
-    pub accepted: SmallVec<(Option<i32>, u64), 4>,
+    /// Queue-order (sequence, queue timestamp in ms, accepted wire length in bytes).
+    pub accepted: SmallVec<(Option<i32>, u64, usize), 4>,
     pub error: Option<std::io::Error>,
 }
 
@@ -134,12 +135,13 @@ impl BatchSender {
             socket.send_batch(&packets).await
         };
 
-        let accepted: SmallVec<(Option<i32>, u64), 4> = self
+        let accepted: SmallVec<(Option<i32>, u64, usize), 4> = self
             .sequences
             .iter()
             .zip(self.queue_times.iter())
+            .zip(self.queue.iter())
             .take(sent_count)
-            .map(|(&seq, &time)| (seq.map(|s| s as i32), time))
+            .map(|((&seq, &time), packet)| (seq.map(|s| s as i32), time, packet.len()))
             .collect();
 
         self.queue.drain(..sent_count);

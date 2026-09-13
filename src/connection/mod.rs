@@ -13,6 +13,7 @@ pub mod route;
 mod rtt;
 mod socket;
 mod spec;
+mod transmit;
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
@@ -33,7 +34,7 @@ use socket::spawn_receiver_dns_drift_check;
 pub use socket::{bind_for_link, bind_from_ip, resolve_remote, resolve_remote_all};
 pub use spec::{SocketKey, UplinkSpec};
 use tokio::time::Instant;
-use tracing::{debug, warn};
+use tracing::debug;
 
 use crate::bind_map::{IfaceName, LinkId};
 use crate::protocol::*;
@@ -118,6 +119,7 @@ pub struct SrtlaConnection {
     pub packet_log: FxHashMap<i32, u64>,
     #[cfg(not(feature = "test-internals"))]
     pub(crate) packet_log: FxHashMap<i32, u64>,
+    pub(crate) delivery: delivery::DeliveryLedger,
     /// Highest sequence number that has been cumulatively ACKed, under 31-bit
     /// serial (wrap-aware) ordering. `None` = nothing ACKed yet on this link.
     ///
@@ -232,6 +234,7 @@ impl SrtlaConnection {
             window: WINDOW_DEF * WINDOW_MULT,
             in_flight_packets: 0,
             packet_log: FxHashMap::with_capacity_and_hasher(PKT_LOG_SIZE, Default::default()),
+            delivery: delivery::DeliveryLedger::default(),
             highest_acked_seq: None,
             last_received: None,
             last_sent: None,
@@ -308,45 +311,6 @@ impl SrtlaConnection {
     #[inline]
     pub fn has_queued_packets(&self) -> bool {
         self.batch_sender.has_queued_packets()
-    }
-
-    /// Flush the batch queue, committing exactly the datagrams that went out.
-    ///
-    /// The accepted prefix is registered for in-flight tracking even when the
-    /// transmit ended in a hard error — those packets are genuinely on the wire.
-    /// An `Err` return means the caller must recover the link (mark it for
-    /// recovery and drop its sequence-tracker entries); the unsent suffix stays
-    /// queued and is discarded by that reset.
-    pub async fn flush_batch(&mut self) -> Result<()> {
-        if !self.batch_sender.has_queued_packets() {
-            return Ok(());
-        }
-
-        let outcome = self.batch_sender.flush(&self.socket).await;
-        let transmitted = !outcome.accepted.is_empty();
-        for (seq, send_time_ms) in outcome.accepted {
-            if let Some(s) = seq {
-                self.register_packet(s, send_time_ms);
-            }
-        }
-        if transmitted {
-            self.last_sent = Some(Instant::now());
-        }
-        match outcome.error {
-            Some(e) => {
-                if let Some(fault) = self.egress.note_send_error(&e) {
-                    warn!(
-                        "{}: egress fault {} on {}; the socket's interface binding is dead and \
-                         will not be reused",
-                        self.label,
-                        fault.as_str(),
-                        self.egress.iface().map_or("-", IfaceName::as_str)
-                    );
-                }
-                Err(anyhow::anyhow!("batch flush failed: {}", e))
-            }
-            None => Ok(()),
-        }
     }
 
     /// The uplink this connection currently is: its identity plus its socket key.
@@ -562,6 +526,7 @@ impl SrtlaConnection {
     /// Reset core connection state (window, packet tracking, batch queue).
     /// Used by both mark_for_recovery and reset_state.
     fn reset_core_state(&mut self) {
+        self.delivery.reset();
         self.connected = false;
         self.window = WINDOW_DEF * WINDOW_MULT;
         self.in_flight_packets = 0;
