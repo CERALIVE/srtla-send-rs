@@ -109,6 +109,7 @@ pub async fn apply_link_changes(
             .and_then(|id| survivors.by_link_id.get(id.as_str()))
         {
             conn.priority_override_link = previous.priority_override_link;
+            conn.delivery.socket_generation = previous.delivery.socket_generation.wrapping_add(1);
         }
     }
     let added = fresh.len();
@@ -196,7 +197,7 @@ impl Survivors {
             });
         };
         let existing = self.by_link_id.get(id.as_str())?;
-        (existing.spec().socket_key() == key)
+        (existing.spec().socket_key() == key && !existing.is_removed() && !existing.needs_rebind())
             .then(|| self.by_link_id.remove(id.as_str()))
             .flatten()
     }
