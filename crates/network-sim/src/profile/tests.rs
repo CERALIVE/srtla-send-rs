@@ -1,5 +1,119 @@
+use std::time::Duration;
+
 use super::*;
+use crate::bond::CarrierMode;
 use crate::impairment::ImpairmentConfig;
+
+fn profile(events: Vec<TimedEvent>, seconds: u64) -> Profile {
+    Profile {
+        links: vec![LinkProfile {
+            base: ImpairmentConfig::default(),
+            carrier: CarrierMode::Nat,
+        }],
+        events,
+        duration: Duration::from_secs(seconds),
+    }
+}
+
+fn periodic() -> TimedEvent {
+    TimedEvent::new(
+        Duration::from_secs(10),
+        Some(0),
+        Action::Periodic {
+            every: Duration::from_secs(15),
+            action: Box::new(Action::DataBlackhole { on: true }),
+            hold: Duration::from_secs(2),
+            until: Duration::from_secs(54),
+        },
+    )
+}
+
+#[test]
+fn periodic_expands_until_not_duration() {
+    // Given: until=54 is between actual onsets 40 and 55; duration is longer.
+    let p = profile(vec![periodic()], 75);
+    // When: expanding the profile.
+    let events = p.expanded_events().unwrap();
+    // Then: only the three actual onsets and their restorations are emitted.
+    assert_eq!(
+        events.iter().map(|e| e.at.as_secs()).collect::<Vec<_>>(),
+        [10, 12, 25, 27, 40, 42]
+    );
+    assert!(matches!(
+        events[5].action,
+        Action::DataBlackhole { on: false }
+    ));
+}
+
+#[test]
+fn validate_rejects_horizon_past_duration() {
+    // Given: final actual onset=40, hold=2, default periodic tail=5.
+    let p = profile(vec![periodic()], 46);
+    // When/Then: 47 seconds is required, not 54+2+5 or merely 42.
+    assert!(p.validate().is_err());
+    assert!(profile(vec![periodic()], 47).validate().is_ok());
+}
+
+#[test]
+fn one_shot_observation_starts_after_restore() {
+    // Given: a 10-second obstruction with a 30-second post-restore tail.
+    let events = vec![
+        TimedEvent::new(
+            Duration::from_secs(5),
+            Some(0),
+            Action::DataBlackhole { on: true },
+        ),
+        TimedEvent::new(
+            Duration::from_secs(15),
+            Some(0),
+            Action::DataBlackhole { on: false },
+        ),
+    ];
+    // When/Then: a window ending at 44 is too short; 45 is sufficient.
+    assert!(profile(events.clone(), 44).validate().is_err());
+    assert!(profile(events, 45).validate().is_ok());
+}
+
+#[test]
+fn events_sorted_and_applied_once() {
+    // Given: deliberately unordered events, including a same-time pair.
+    let mut later = TimedEvent::new(Duration::from_millis(2), Some(0), Action::LinkUp(true));
+    later.horizon = Duration::ZERO;
+    let mut early = later.clone();
+    early.at = Duration::ZERO;
+    early.action = Action::LinkUp(false);
+    let p = profile(vec![later.clone(), early.clone(), later], 0);
+    let p = Profile {
+        duration: Duration::from_millis(3),
+        ..p
+    };
+    let mut scheduler = Scheduler::new(&p).unwrap();
+    let mut applied = Vec::new();
+    // When: running twice on the same scheduler.
+    scheduler
+        .run(&mut |e: &TimedEvent| {
+            applied.push(e.clone());
+            Ok(())
+        })
+        .unwrap();
+    scheduler
+        .run(&mut |e: &TimedEvent| {
+            applied.push(e.clone());
+            Ok(())
+        })
+        .unwrap();
+    // Then: stable time ordering, no re-application, and actual monotonic timestamps.
+    assert_eq!(applied.len(), 3);
+    assert_eq!(applied[0].at, Duration::ZERO);
+    assert_eq!(scheduler.log().entries.len(), 3);
+    assert!(
+        scheduler
+            .log()
+            .entries
+            .windows(2)
+            .all(|w| w[0].t_actual_ms <= w[1].t_actual_ms)
+    );
+}
 
 #[test]
 fn blackhole_chain_commands_match_spike() {
