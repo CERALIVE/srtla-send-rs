@@ -677,6 +677,39 @@ then the separate unchanged `cargo test --lib ack_rtt` and `cargo test --lib bat
 suites. Coverage uses real loopback UDP and deterministic clocks, not bonded-hardware
 performance measurements.
 
+### Delivered-rate controller (not yet integrated)
+
+`src/connection/rate_cap.rs` is a pure per-link controller designed against the
+[audited congestion-controller defects](docs/notes/strata-port-evaluation.md).
+**No send loop, selection path, housekeeping task or CLI mode invokes it yet.**
+Existing enhanced-mode time-based window recovery is unchanged and independent.
+
+Each future one-second housekeeping tick reads the link's `DeliveryLedger` directly:
+the input rate is SRTLA-ACK-credited DATA bits/s over two seconds, not transmitted
+bitrate, probe traffic or keepalive proof. Bootstrap seeds `max(1 Mbps, first delivery)`.
+Normal climb adds 2% per tick; stable RTT permits 6% (absolute Kalman velocity
+≤0.1 ms/update, jitter ≤10% of sRTT, and zero queue delay). Recovery after loss
+backoff or Drain gets five full 4% growth ticks; holding/idle does not spend them.
+
+RTT above 1.5×baseline holds the target. At least 2×baseline with known zero loss
+enters Drain, cutting once by 25%, with a ten-tick guard between cuts on different
+episodes. Loss ≥1.5% can back off only while delivered rate is ≥30% of target:
+`next = max(0.85 * previous, min(delivered, previous))`. After three completed
+backoff ticks, loss that has not fallen below 80% of entry suppresses further cuts
+for thirty ticks, including delay-only cuts. This avoids repeatedly cutting for
+loss that the rate reduction does not improve.
+
+Zero delivered rate holds the target indefinitely. Starting at the tenth consecutive
+idle tick the BDP cap is suspended; renewed delivery restores it without reseeding.
+Otherwise the cap is `max(32, floor(target_bps * rtt_min_ms / 1000 / 8 * 1.5 / 1316))`.
+Above-cap load multiplies the ranking score by `cap / in_flight`, never by zero;
+below-cap and suspended paths use 1.0. There are no share-based admission verdicts.
+
+Run `cargo test --lib rate_cap`. Deterministic ledger-backed tests include the
+120-idle-tick audit trace, five exact-named defect regressions, thirty-tick loss
+latching and recovery boundaries. These are policy tests, not live-bond or
+hardware-performance evidence; runtime/lifecycle integration remains later work.
+
 ### Duplicate-DATA receiver spike (test builds only)
 
 `tests/netns_dup_spike.rs` is an ignored, privileged experiment using two registered
