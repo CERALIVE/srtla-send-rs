@@ -763,6 +763,48 @@ aarch64 cross-build env (mirrors the PINNED TOOLCHAIN note): linker
 `gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross binutils-aarch64-linux-gnu pkg-config`,
 `PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig`.
 
+## BENCHMARK METRICS (network-sim)
+
+`crates/network-sim/src/metrics/` owns the dev-only benchmark collectors and serde
+`RunRecord` v1. The authoritative definitions and runner integration contract are
+[`docs/notes/bench-scenarios.md#metrics`](docs/notes/bench-scenarios.md#metrics).
+The JSON fixture includes BOTH `episodes` and `load_intervals`; its summaries are
+recomputed from embedded evidence by tests. Never omit load intervals from reports.
+
+- CSV wire names are `pktRecv`, `pktRecvUnique`, `pktRcvLoss`, `pktRcvDrop`,
+  `pktRcvRetrans`, `byteRecv`, and `pktRcvBelated`. Use the SECOND header-position
+  `Time` column, not SocketID. `pktReorderDistance` is genuinely absent on host
+  libsrt 1.5.5 and must stay optional.
+- Default `SrtStats::parse` implements the frozen cumulative-packet/interval-belated
+  contract. The later live smoke proved the current non-fullstats listener emits
+  interval counters; its runner MUST choose `CaptureSemantics::Interval` explicitly.
+  This normalizes packet counters before delta windowing while preserving raw rows.
+  No auto-detection, no saturating counter resets, no assumptions about outage cadence.
+- Sink and event clocks are aligned explicitly; signed ms retain warm-up. Episodes
+  use each originating event's horizon, 100 ms impact/outage detection, and complete
+  post-impact one-second recovery buckets. An unfinished, buffered-but-unimpacted
+  episode cannot report zero failover. A completed unimpacted episode can.
+- Source-load intervals have positive capacity-clamped targets, never an idle
+  baseline. Explicit ungraded fault holds/restart gaps are excluded from no-collapse;
+  zero-tail restores do not exclude the following healthy interval.
+- Optional control metrics skip unsupported candidates. Process-owned future
+  adaptive configuration is preserved opaquely as `effective_config`, included in
+  the fingerprint, and never guessed from flags. Telemetry health/priority remain
+  optional; existing producer JSON is not changed.
+- CPU uses proc ticks with explicit CLK_TCK, PID/start-time coherence and VmHWM.
+  Link counters retain ifindex generations; periodic sampling cannot recover bytes
+  lost with an unsampled destroyed netdev. Final-before-replug sampling is the
+  campaign runner's responsibility.
+- Gate: `cargo test -p network-sim --lib metrics` and
+  `cargo clippy -p network-sim -- -D warnings`. Tests are unprivileged; they include
+  real ephemeral UDP/Unix-socket boundaries. No packet capture or new unsafe code.
+
+Profile event/impairment types derive serde for the result's actual event log. Shared
+initial-state/channel helpers are crate-visible so restore inference uses the
+scheduler's definitions, not a duplicate set of defaults. Scenario C/D waveform
+fixtures include both the 215 ms delay spike and full 500 ms capacity dip; whole
+property holds cannot overlap, so their combined waveform uses adjacent updates.
+
 ## CODEBASE (inherited from upstream)
 
 ```
