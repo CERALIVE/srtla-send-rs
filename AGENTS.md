@@ -881,6 +881,60 @@ and uses geometric target-median ratios. Target sets are explicit per invocation
 campaign execution and feature/constant publication remain separate tasks. Neither
 script changes Rust code or proves that a scheduler should actually be retired.
 
+## ADAPTIVE SELECTION (scheduler evaluation, Todo 22) [PARTIAL]
+
+`SchedulingMode::Adaptive` is additive (`adaptive`, atomic value 4); Enhanced stays
+the default and existing encodings/spellings remain unchanged. The send loop owns
+`AdaptiveState::new(shared_stats.clone())` beside `EdpfSchedulerState`. Its six-argument
+`adaptive::select(conns, last_idx, last_switch_ms, now_ms, cfg, state)` mutates only
+admission/election history and quality caches, never health/rate ticks. The live
+dispatcher `select_connection_idx_with_state` takes both persistent stores. Test-only
+six-argument adapters keep the frozen legacy traces unmodified on that same dispatcher;
+the old inline selection tests now live in `selection/tests.rs` without changed assertions.
+
+`AdaptiveState` carries public `features`, `sole_carrier: Option<(usize,u64)>`,
+`probe: ProbeScheduler`, and reused `targets: SmallVec<ProbeTarget,4>`, plus private
+SharedStats and `(internal conn_id, socket_generation)` sole identity. The internal
+random u64 connection ID is NOT telemetry's positional conn_id. Resolve that identity
+after reorders; do not restart the incumbent's hold just because its index moved.
+`AdaptiveFeatures` is a u8 bitset with STALL/LOSS/QUEUE/DEADLINE/REJOIN/SOLE/PREF/RATECAP,
+ALL/NONE, `contains`, `bits`, subtraction and union; Default is ALL.
+
+Eligibility requires connected, not timed out, not Down. Stalled/Degraded are held;
+Rejoining is admitted with ramp. Loss ablation uses `HealthMachine::loss_latched()`,
+not stale EWMA inference. QUEUE also gates queue delay in the deadline prediction.
+The deadline reads the bond atomic directly (unknown →500ms), holds above 0.5L and
+releases only continuously below 0.4L for τ. Socket-owned `AdaptiveLinkState` keeps
+deadline dwell, failure mark, last election and observed proof; a generation change
+invalidates that history on its next observation. `latest_data_proof_ms()->Option<u64>`
+distinguishes real DATA proof at clock zero from the first-attempt age anchor.
+
+Rank = existing get_score × cached quality × ramp × Healthy-only preference × soft cap.
+Cooldown 15ms / hysteresis 1.10 apply ONLY to an admitted incumbent. Empty admission
+elects an eligible sole carrier by ascending measured sRTT (unknown last), holds ≥2000ms,
+and switches only for a measured ≤0.5× challenger, hard failure, or expired DATA proof.
+After max(2000,τ) without recent proof, mark `sole_failed_until_proof`, force another
+eligible link when possible, and rank failed incumbents last with oldest election first.
+Only new DATA proof clears the mark. Two unknown RTTs do NOT prove a faster challenger.
+No eligible links → highest base among connected, even timed-out/Down links.
+
+`ProbeTarget::eligible` is soft-health OR deadline hold, with hard/sole vetoes.
+The packet handler invokes `state.probe.maybe_emit` after selection/forwarding:
+only a due probe can force primary flushing; a failure or queued suffix prevents its
+copy. Primary and alternate flush errors both return the failed internal conn_id for
+normal recovery + SequenceTracker removal. Probes never alter switch history or probe
+the elected carrier. **`stall_deselect` is a strict no-op in adaptive**, and adaptive
+ACK attribution uses the existing generation-fenced arrival-scoped policy regardless
+of the legacy earned-ACK flag.
+
+Remaining boundary: health initializes Down; Todo 23 owns health/rate housekeeping,
+registration/recovery state resets and lifecycle status. Until then fresh runtime
+adaptive pools use the connected fallback, not live health adaptation. Todo 24 owns
+the intentionally failing four-value CLI contract test and expanded control surface;
+Todo 25 owns telemetry echoes. No default, wire format, frozen trace, or hardware
+performance claim changes here. Tests: `cargo test --lib adaptive` and the real-binary
+`cargo test --test adaptive_cli`, including the ALL−STALL scenario-D control.
+
 ## PRIORITY PLUMBING (scheduler evaluation, Todo 21)
 
 `bind_map::Priority` is a private-field `f64` newtype, constructed by
@@ -908,16 +962,16 @@ remain Todo 24; do not merge the two override slots when implementing them.
 
 `sender::preference_multiplier(priority, window, health)` (implemented in
 `sender::selection::adaptive::preference`) is
-pure, allocation-free and **not called by any selector yet** (Todo 22 wires it).
+pure, allocation-free and called only by adaptive ranking.
 Healthy uses `1 + p * clamp((window−10000)/10000, 0, 1)`; all other health states
 return 1.0. Convert the signed window before subtraction to avoid integer overflow.
 No CLI, telemetry, capabilities, ADR document, or legacy-byte contract edits here.
 Tests remain in the existing bind-map parse/validate and link-identity homes, plus
-the pure multiplier's local table. README carries the matching dormant-status note.
+the pure multiplier's local table. README carries the matching integration boundary.
 
 ## PURE LINK HEALTH (scheduler evaluation, Todo 15)
 
-`connection::health` is a production-compiled but **unwired**, allocation-free policy
+`connection::health` is a production-compiled, allocation-free policy
 module. Todo 15 added only `pub mod health;` to the connection implementation;
 Todo 16 separately adds the DATA evidence ledger below, not runtime health calls,
 scheduling modes, flags or telemetry. Policy tests are test-only companion modules in
@@ -1018,7 +1072,8 @@ sends, five real keepalive-handler replies at 10–14s, and three NAK frames rem
 `utils::test_clock` is a cfg(test)-only, scoped, thread-local !Send override for these
 current-thread tests; production/test-internals-only builds retain the real monotonic
 clock. No sleeps or global clock replacement; existing frozen flag tests are unchanged.
-HealthMachine runtime wiring, probe selection and hardware validation remain later work.
+HealthMachine housekeeping wiring and hardware validation remain later work; adaptive
+selection/probe integration is described above.
 
 ## LOSS / QUEUE EVIDENCE (scheduler evaluation, Todo 17)
 
@@ -1107,16 +1162,16 @@ production handle propagation, not a second live-libsrt capture or hardware gate
 
 ## DUPLICATE DATA PROBES (scheduler evaluation, Todo 19)
 
-`connection::probe::ProbeScheduler` is owned per future send loop, never global.
+`connection::probe::ProbeScheduler` is owned per adaptive send loop, never global.
 `next(targets, now_ms)` uses a one-token bucket capped at `PROBE_MAX_PPS=10`:
 no idle burst, `with_rate(0)` disables emission, overrides cannot exceed the cap.
 Ten-slot trains (`PROBE_TRAIN_LEN=10`) rotate by stable connection ID; a generation
 change or eligibility loss abandons the current train. `ProbeTarget` explicitly
 carries `{conn_id, socket_generation, health, deadline_held, sole_carrier, srtt_ms}`.
-Only Stalled/Degraded AND deadline-held, non-sole-carrier targets are eligible.
-There is still **no adaptive CLI mode or selection-pipeline call**. Todo 22 owns
-the decision to invoke `emit(connections, ProbeOpportunity { primary_conn_id,
-packet, targets })` after the original DATA send succeeds. Skipped opportunities
+Stalled/Degraded OR deadline-held targets are eligible, never Down or sole carrier.
+Adaptive calls `maybe_emit(connections, ProbeOpportunity { primary_conn_id,
+packet, targets })`, which establishes primary acceptance before invoking `emit`.
+Skipped opportunities
 consume pacing slots conservatively; incomplete trains never qualify for recovery.
 
 Production emission reuses the spike's wire-copy primitive in
@@ -1153,8 +1208,8 @@ sites capture the generation at spawn, and sync/restart pass it explicitly.
 rejects a stale token, then consumes ONLY the arrival link's probe log or original
 delivery ledger. Probe proof refreshes DATA health but never original delivered
 bitrate, window, packet_log or in-flight. No cross-link scan exists in this arm.
-`AckPolicy::from_config` exhaustively maps all four current modes to the unchanged
-legacy first-match/global-growth arm; adding a mode must explicitly extend it.
+`AckPolicy::from_config` maps the four established modes to the unchanged legacy
+first-match/global-growth arm and Adaptive to the arrival-scoped arm.
 Test-only adapters preserve the frozen ACK-RTT, batch-I/O and earned-ACK suites
 byte-for-byte while calling the same production implementations.
 
@@ -1169,8 +1224,8 @@ Gate: `cargo test --lib probe`; separate `cargo test --lib ack_rtt` and
 ## PURE DELIVERED-RATE CONTROLLER (scheduler evaluation, Todo 20)
 
 `connection::rate_cap::{RateCap, RateState, ClimbMode, RateSignals}` is a standalone
-policy module. No connection field, sender/housekeeping call, selector, CLI or
-telemetry change is wired yet; `connection/congestion/enhanced.rs` is untouched.
+policy module. Adaptive now owns a connection field and reads its ranking multiplier;
+housekeeping ticks/resets and telemetry remain pending. `connection/congestion/enhanced.rs` is untouched.
 `RateCap::default()` belongs to one socket lifetime. The later lifecycle owner must
 reconstruct it alongside that link's delivery ledger on recovery/socket replacement.
 
@@ -1232,7 +1287,7 @@ src/
   main.rs            CLI entry point (clap)
   lib.rs             library exports
   config.rs / config/    runtime config (DynamicConfig, ConfigSnapshot); stdin + Unix-socket control
-  mode.rs            SchedulingMode (Classic | Enhanced | RttThreshold | Edpf)
+  mode.rs            SchedulingMode (Classic | Enhanced | RttThreshold | Edpf | Adaptive)
   bind_map/          optional versioned bind-map sidecar (ADR-003): parser, coherence,
                      bounded retry, fail-open duplicate-safe resolution
     report.rs        telemetry projection of a Resolution (bind_map_status + disposition)
@@ -1271,8 +1326,8 @@ scripts/netns_test_gate.sh  bounded privileged network-namespace test runner
 
 Conventions (enforced by the gate): edition 2024, `anyhow::Result`, `tracing` macros,
 Tokio async, imports grouped std → external → crate (module granularity), constants
-`SCREAMING_SNAKE_CASE`. Four scheduling modes (classic, enhanced, rtt-threshold,
-edpf); enhanced (default) adds NAK-decay quality scoring + optional exploration.
+`SCREAMING_SNAKE_CASE`. Four established modes plus the partial adaptive integration
+above; enhanced (default) adds NAK-decay quality scoring + optional exploration.
 EDPF (`--mode edpf`) is Earliest Delivery Path First — a BLEST (static-OWD HoL
 guard) → IoDS (bounded in-order constraint) → EDPF (lowest predicted arrival)
 pipeline with per-loop owned scheduler state (no thread-local). See `README.md`
@@ -1515,6 +1570,7 @@ bond hardware — see the HARDWARE-VALIDATION GATE below. Full operator-facing d
   shared by production and tests, so flag-off is byte-identical to pre-flag behavior (proven
   by a golden-trace test). Tests: `src/tests/earned_ack_tests.rs` (16 tests).
 - **`stall_deselect`** (`--stall-deselect`, Todo 15) — a selection-time-only penalty (never
+  applied in adaptive mode, which owns its stall handling; also never
   touches `CONN_TIMEOUT`/housekeeping/re-registration) that excludes a link from selection
   for one tick when its in-flight count exceeds `--stall-min-in-flight` (default 32,
   `STALL_MIN_IN_FLIGHT_PACKETS`) AND it has no earned ACK/RTT sample within
