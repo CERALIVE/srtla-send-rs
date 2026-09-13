@@ -16,6 +16,20 @@ use tokio::time::Instant;
 use tracing::debug;
 
 use super::batch_recv::BatchUdpSocket;
+use super::probe::ProbeTrain;
+
+#[derive(Clone, Copy, Debug)]
+enum QueuedKind {
+    Normal(Option<u32>),
+    Probe(i32, ProbeTrain),
+}
+
+#[derive(Debug)]
+pub struct AcceptedProbe {
+    pub seq: i32,
+    pub train: ProbeTrain,
+    pub len: usize,
+}
 
 /// Maximum number of packets to buffer before flushing (Moblin uses 15+1=16)
 pub const BATCH_SIZE_THRESHOLD: usize = 16;
@@ -41,6 +55,7 @@ const FLUSH_INTERVAL_MS: u64 = 15;
 pub struct FlushOutcome {
     /// Queue-order (sequence, queue timestamp in ms, accepted wire length in bytes).
     pub accepted: SmallVec<(Option<i32>, u64, usize), 4>,
+    pub probes: SmallVec<AcceptedProbe, 4>,
     pub error: Option<std::io::Error>,
 }
 
@@ -51,10 +66,11 @@ pub struct BatchSender {
     queue: Vec<SmallVec<u8, 1500>>,
 
     /// Sequence numbers for queued packets (parallel to queue)
-    sequences: Vec<Option<u32>>,
+    sequences: Vec<QueuedKind>,
 
     /// Timestamps when packets were queued (parallel to queue)
     queue_times: Vec<u64>,
+    normal_queued: usize,
 
     /// Last time the queue was flushed
     last_flush_time: Instant,
@@ -73,6 +89,7 @@ impl BatchSender {
             queue: Vec::with_capacity(BATCH_SIZE_THRESHOLD),
             sequences: Vec::with_capacity(BATCH_SIZE_THRESHOLD),
             queue_times: Vec::with_capacity(BATCH_SIZE_THRESHOLD),
+            normal_queued: 0,
             last_flush_time: Instant::now(),
         }
     }
@@ -83,10 +100,17 @@ impl BatchSender {
     #[inline]
     pub fn queue_packet(&mut self, data: &[u8], seq: Option<u32>, current_time_ms: u64) -> bool {
         self.queue.push(SmallVec::from_slice_copy(data));
-        self.sequences.push(seq);
+        self.sequences.push(QueuedKind::Normal(seq));
         self.queue_times.push(current_time_ms);
+        self.normal_queued += 1;
 
         self.queue.len() >= BATCH_SIZE_THRESHOLD
+    }
+
+    pub(crate) fn queue_probe(&mut self, data: &[u8], seq: i32, train: ProbeTrain) {
+        self.queue.push(SmallVec::from_slice_copy(data));
+        self.sequences.push(QueuedKind::Probe(seq, train));
+        self.queue_times.push(train.started_ms);
     }
 
     /// Check if the queue needs flushing based on time
@@ -107,7 +131,7 @@ impl BatchSender {
     /// matching the C behaviour where `reg_pkt()` increments in_flight per packet.
     #[inline]
     pub fn queued_count(&self) -> i32 {
-        self.queue.len() as i32
+        self.normal_queued as i32
     }
 
     /// Transmit up to [`BATCH_SEND_SIZE`] queued packets, then commit.
@@ -135,16 +159,29 @@ impl BatchSender {
             socket.send_batch(&packets).await
         };
 
-        let accepted: SmallVec<(Option<i32>, u64, usize), 4> = self
+        let mut accepted = SmallVec::new();
+        let mut probes = SmallVec::new();
+        for ((&kind, &time), packet) in self
             .sequences
             .iter()
             .zip(self.queue_times.iter())
             .zip(self.queue.iter())
             .take(sent_count)
-            .map(|((&seq, &time), packet)| (seq.map(|s| s as i32), time, packet.len()))
-            .collect();
+        {
+            match kind {
+                QueuedKind::Normal(seq) => {
+                    accepted.push((seq.map(|s| s as i32), time, packet.len()))
+                }
+                QueuedKind::Probe(seq, train) => probes.push(AcceptedProbe {
+                    seq,
+                    train,
+                    len: packet.len(),
+                }),
+            }
+        }
 
         self.queue.drain(..sent_count);
+        self.normal_queued -= accepted.len();
         self.sequences.drain(..sent_count);
         self.queue_times.drain(..sent_count);
         self.last_flush_time = Instant::now();
@@ -160,7 +197,11 @@ impl BatchSender {
             debug!("Batch flush: sent {} packets in one batch", sent_count);
         }
 
-        FlushOutcome { accepted, error }
+        FlushOutcome {
+            accepted,
+            probes,
+            error,
+        }
     }
 
     /// Reset the batch sender state (for reconnection)
@@ -168,6 +209,7 @@ impl BatchSender {
         self.queue.clear();
         self.sequences.clear();
         self.queue_times.clear();
+        self.normal_queued = 0;
         self.last_flush_time = Instant::now();
     }
 }

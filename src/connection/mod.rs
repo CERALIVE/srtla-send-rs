@@ -12,6 +12,15 @@ pub mod loss;
 mod packet_io;
 #[cfg(test)]
 mod packet_io_tests;
+pub mod probe;
+#[cfg(test)]
+mod probe_ack_tests;
+#[cfg(test)]
+mod probe_io_tests;
+#[cfg(test)]
+mod probe_log_tests;
+#[cfg(test)]
+mod probe_tests;
 mod reconnection;
 pub mod route;
 mod rtt;
@@ -125,6 +134,7 @@ pub struct SrtlaConnection {
     pub(crate) packet_log: FxHashMap<i32, u64>,
     pub(crate) delivery: delivery::DeliveryLedger,
     pub(crate) loss: loss::LossTracker,
+    pub(crate) probes: probe::ProbeLog,
     /// Highest sequence number that has been cumulatively ACKed, under 31-bit
     /// serial (wrap-aware) ordering. `None` = nothing ACKed yet on this link.
     ///
@@ -241,6 +251,7 @@ impl SrtlaConnection {
             packet_log: FxHashMap::with_capacity_and_hasher(PKT_LOG_SIZE, Default::default()),
             delivery: delivery::DeliveryLedger::default(),
             loss: loss::LossTracker::new(now_ms()),
+            probes: probe::ProbeLog::default(),
             highest_acked_seq: None,
             last_received: None,
             last_sent: None,
@@ -533,6 +544,7 @@ impl SrtlaConnection {
     /// Used by both mark_for_recovery and reset_state.
     fn reset_core_state(&mut self) {
         self.delivery.reset();
+        self.probes.reset();
         self.loss = loss::LossTracker::new(now_ms());
         self.connected = false;
         self.window = WINDOW_DEF * WINDOW_MULT;

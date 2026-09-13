@@ -7,6 +7,7 @@ use tokio::net::UdpSocket;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tracing::{debug, warn};
 
+pub(crate) use super::ack::{AckContext, AckPolicy, apply_srtla_ack};
 use super::selection::{EdpfSchedulerState, select_connection_idx};
 use super::sequence::SequenceTracker;
 use super::uplink::UplinkPacket;
@@ -19,53 +20,19 @@ use crate::stats::SharedStats;
 /// Type alias for instant ACK forwarding: (client_addr, packet_data)
 pub type InstantForwarder = UnboundedSender<(SocketAddr, SmallVec<u8, 64>)>;
 
-/// Apply one broadcast SRTLA ACK across the link pool.
-///
-/// The earner index is captured at the point of packet-log removal (returned by
-/// `handle_srtla_ack_specific`): after removal the sequence is gone and can no
-/// longer be attributed. With `earned_ack_window` off (default) every eligible
-/// link takes the baseline global `+1`, byte-for-byte as before the valve
-/// existed; on, only the earner keeps the full `+1` (`now_ms` is read on that
-/// branch alone, keeping the default path unchanged).
-pub(crate) fn apply_srtla_ack(
-    connections: &mut [SrtlaConnection],
-    srtla_ack: i32,
-    classic: bool,
-    earned_ack_window: bool,
-) {
-    let mut earned_idx: Option<usize> = None;
-    for (i, c) in connections.iter_mut().enumerate() {
-        if c.handle_srtla_ack_specific(srtla_ack, classic) {
-            earned_idx = Some(i);
-            break;
-        }
-    }
-    if earned_ack_window {
-        let now_ms = crate::utils::now_ms();
-        for (i, c) in connections.iter_mut().enumerate() {
-            c.handle_srtla_ack_earned(Some(i) == earned_idx, now_ms);
-        }
-    } else {
-        for c in connections.iter_mut() {
-            c.handle_srtla_ack_global();
-        }
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
-pub async fn process_connection_events(
-    idx: usize,
+pub async fn process_connection_events_at(
+    context: AckContext,
     connections: &mut [SrtlaConnection],
     reg: &mut SrtlaRegistrationManager,
     instant_tx: &InstantForwarder,
     last_client_addr: Option<SocketAddr>,
     local_listener: &UdpSocket,
     seq_tracker: &SequenceTracker,
-    classic: bool,
-    earned_ack_window: bool,
     incoming_override: Option<SrtlaIncoming>,
     stats: &SharedStats,
 ) -> Result<()> {
+    let idx = context.arrival_idx;
     if idx >= connections.len() {
         return Ok(());
     }
@@ -111,10 +78,25 @@ pub async fn process_connection_events(
     }
 
     for srtla_ack in incoming.srtla_ack_numbers.iter() {
-        apply_srtla_ack(connections, *srtla_ack as i32, classic, earned_ack_window);
+        apply_srtla_ack(connections, *srtla_ack as i32, context);
     }
 
     for nak in incoming.nak_numbers.iter() {
+        match context.policy {
+            AckPolicy::Adaptive => {
+                let seq = *nak as i32;
+                if connections
+                    .iter()
+                    .any(|c| c.probes.probe_log.contains_key(&seq))
+                    && !connections
+                        .iter()
+                        .any(|c| c.packet_log.contains_key(&seq) || c.delivery.contains(seq))
+                {
+                    continue;
+                }
+            }
+            AckPolicy::Legacy { .. } => {}
+        }
         // Deliberately not the per-connection nak_count: that one is reset by
         // the congestion controller, so a window delta across it is not a count.
         crate::ab_metrics::record_nak();
@@ -175,16 +157,18 @@ pub async fn handle_uplink_packet(
             .await
         {
             Ok(incoming) => {
-                if let Err(err) = process_connection_events(
-                    idx,
+                if let Err(err) = process_connection_events_at(
+                    AckContext {
+                        arrival_idx: idx,
+                        reader_generation: packet.reader_generation,
+                        policy: AckPolicy::from_config(config_snap),
+                    },
                     connections,
                     reg,
                     instant_tx,
                     last_client_addr,
                     local_listener,
                     seq_tracker,
-                    config_snap.mode.is_classic(),
-                    config_snap.earned_ack_window,
                     Some(incoming),
                     stats,
                 )
@@ -199,6 +183,39 @@ pub async fn handle_uplink_packet(
             ),
         }
     }
+}
+
+// Preserve the original drain-test surface; production carries captured reader tokens.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub async fn process_connection_events(
+    idx: usize,
+    connections: &mut [SrtlaConnection],
+    reg: &mut SrtlaRegistrationManager,
+    instant_tx: &InstantForwarder,
+    last_client_addr: Option<SocketAddr>,
+    local_listener: &UdpSocket,
+    seq_tracker: &SequenceTracker,
+    classic: bool,
+    earned_ack_window: bool,
+    incoming_override: Option<SrtlaIncoming>,
+    stats: &SharedStats,
+) -> Result<()> {
+    let generation = connections
+        .get(idx)
+        .map_or(0, |conn| conn.delivery.socket_generation);
+    process_connection_events_at(
+        AckContext::legacy((idx, generation), classic, earned_ack_window),
+        connections,
+        reg,
+        instant_tx,
+        last_client_addr,
+        local_listener,
+        seq_tracker,
+        incoming_override,
+        stats,
+    )
+    .await
 }
 
 /// Maximum number of packets to process per drain call.

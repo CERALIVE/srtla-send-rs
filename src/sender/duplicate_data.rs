@@ -1,18 +1,22 @@
-//! Test-only duplicate DATA emission; deliberately outside all ownership tracking.
+//! Duplicate DATA wire form, outside normal sequence ownership.
 
+#[cfg(feature = "test-internals")]
 use std::sync::OnceLock;
+#[cfg(any(test, feature = "test-internals"))]
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use smallvec::SmallVec;
 
 use crate::connection::SrtlaConnection;
 
+#[cfg(any(test, feature = "test-internals"))]
 struct DuplicateHook {
     every: u64,
     retransmit: bool,
     count: AtomicU64,
 }
 
+#[cfg(any(test, feature = "test-internals"))]
 impl DuplicateHook {
     const fn new(every: u64, retransmit: bool) -> Self {
         Self {
@@ -45,6 +49,7 @@ impl DuplicateHook {
     }
 }
 
+#[cfg(feature = "test-internals")]
 pub(super) fn target(
     connections: &[SrtlaConnection],
     primary: usize,
@@ -70,15 +75,13 @@ pub(super) fn target(
 
 /// Bypass queue, packet log, in-flight, bitrate and sequence ownership. An immutable
 /// connection borrow makes sender-side bookkeeping mutations impossible here.
+#[cfg(any(test, feature = "test-internals"))]
 pub(super) async fn send_copy(
     conn: &SrtlaConnection,
     packet: &[u8],
     retransmit: bool,
 ) -> std::io::Result<()> {
-    let mut copy: SmallVec<u8, 1500> = SmallVec::from_slice_copy(packet);
-    // draft-sharabayko-srt-01 §3.1: |PP|O|KK|R|message(26)|.
-    // R = word 1 bit 26 = SRT byte offset 4, LSB bit 2 (mask 0x04).
-    copy[4] = (copy[4] & !0x04) | if retransmit { 0x04 } else { 0 };
+    let copy = wire_copy(packet, retransmit);
     let sent = conn.socket.send(&copy).await?;
     if sent != copy.len() {
         return Err(std::io::Error::new(
@@ -87,6 +90,47 @@ pub(super) async fn send_copy(
         ));
     }
     Ok(())
+}
+
+fn wire_copy(packet: &[u8], retransmit: bool) -> SmallVec<u8, 1500> {
+    let mut copy = SmallVec::from_slice_copy(packet);
+    // draft-sharabayko-srt-01 §3.1: |PP|O|KK|R|message(26)|.
+    // R = word 1 bit 26 = SRT byte offset 4, LSB bit 2 (mask 0x04).
+    copy[4] = (copy[4] & !0x04) | if retransmit { 0x04 } else { 0 };
+    copy
+}
+
+impl SrtlaConnection {
+    /// Queue an already-forwarded DATA copy with probe-only accepted-prefix metadata.
+    /// The caller owns pacing/eligibility; a stale dispatch or local sequence collision
+    /// is refused rather than making ACK attribution ambiguous on this socket.
+    pub fn queue_probe_packet(
+        &mut self,
+        packet: &[u8],
+        dispatch: crate::connection::probe::ProbeDispatch,
+    ) -> bool {
+        if packet.len() < 16
+            || packet[0] & 0x80 != 0
+            || dispatch.conn_id != self.conn_id
+            || dispatch.socket_generation != self.delivery.socket_generation
+        {
+            return false;
+        }
+        let Some(seq) = crate::protocol::get_srt_sequence_number(packet)
+            .and_then(|seq| i32::try_from(seq).ok())
+        else {
+            return false;
+        };
+        if self.delivery.contains(seq)
+            || self.packet_log.contains_key(&seq)
+            || self.probes.has_seen(seq)
+        {
+            return false;
+        }
+        let copy = wire_copy(packet, false);
+        self.batch_sender.queue_probe(&copy, seq, dispatch.train);
+        true
+    }
 }
 
 #[cfg(test)]

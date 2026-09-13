@@ -169,6 +169,13 @@ pub(crate) fn log_connection_status(
         }
 
         let foreign = conn.foreign_source_datagrams();
+        if conn.probes.probes_sent > 0 {
+            info!(
+                conn_id = conn.conn_id,
+                probes_sent = conn.probes.probes_sent,
+                "Duplicate DATA probe status"
+            );
+        }
         if foreign > 0 {
             info!(
                 "        Foreign-source datagrams: {} (processed, not dropped)",

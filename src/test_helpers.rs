@@ -58,6 +58,7 @@ fn create_connection_from_socket(
         packet_log: FxHashMap::with_capacity_and_hasher(PKT_LOG_SIZE, Default::default()),
         delivery: crate::connection::delivery::DeliveryLedger::default(),
         loss: crate::connection::loss::LossTracker::new(now_ms()),
+        probes: crate::connection::probe::ProbeLog::default(),
         highest_acked_seq: None,
         last_received: Some(Instant::now()),
         last_sent: None,

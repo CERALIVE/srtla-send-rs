@@ -25,7 +25,7 @@ impl SrtlaConnection {
         }
 
         let outcome = self.batch_sender.flush(&self.socket).await;
-        let transmitted = !outcome.accepted.is_empty();
+        let transmitted = !outcome.accepted.is_empty() || !outcome.probes.is_empty();
         let accepted_at_ms = now_ms();
         for (seq, send_time_ms, len) in outcome.accepted {
             if let Some(s) = seq {
@@ -40,6 +40,12 @@ impl SrtlaConnection {
                 self.loss.record_send(accepted_at_ms);
             }
         }
+        for probe in outcome.probes {
+            self.probes
+                .record_sent(probe.seq, probe.train, accepted_at_ms);
+            self.bitrate.update_on_send(u64::try_from(probe.len)?);
+        }
+        self.advance_probes(accepted_at_ms);
         if transmitted {
             self.last_sent = Some(Instant::now());
         }
@@ -58,5 +64,10 @@ impl SrtlaConnection {
             }
             None => Ok(()),
         }
+    }
+
+    pub fn advance_probes(&mut self, now_ms: u64) {
+        self.probes.advance(now_ms);
+        self.loss.probe_loss = self.probes.probe_loss();
     }
 }

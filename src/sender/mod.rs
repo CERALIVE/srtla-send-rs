@@ -1,11 +1,13 @@
 // allow: SIZE_OK — existing cross-platform select-loop façade; keep all event arms visible while threading the shared observation.
+pub mod ack;
 mod connections;
-#[cfg(feature = "test-internals")]
-mod duplicate_data;
+pub(crate) mod duplicate_data;
 mod egress_tick;
 pub(crate) mod housekeeping;
 mod links;
 pub(crate) mod packet_handler;
+#[cfg(test)]
+mod probe_reader_tests;
 #[cfg(unix)]
 mod reload;
 #[cfg(any(test, feature = "test-internals"))]
@@ -22,6 +24,9 @@ use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use ack::legacy_test_ack as apply_srtla_ack;
 use anyhow::{Context, Result};
 // Re-export connection management functions for tests
 #[allow(unused_imports)]
@@ -35,9 +40,6 @@ pub use connections::{
 pub use housekeeping::GLOBAL_TIMEOUT_MS;
 use housekeeping::handle_housekeeping;
 pub use links::{LinkSource, SenderPaths};
-#[cfg(any(test, feature = "test-internals"))]
-#[allow(unused_imports)]
-pub(crate) use packet_handler::apply_srtla_ack;
 use packet_handler::{
     drain_packet_queue, flush_all_batches, handle_srt_packet, handle_uplink_packet,
 };
