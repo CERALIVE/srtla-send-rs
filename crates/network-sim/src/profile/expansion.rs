@@ -182,7 +182,7 @@ impl Profile {
         Ok(())
     }
 
-    fn initial_states(&self) -> Vec<TimedEvent> {
+    pub(crate) fn initial_states(&self) -> Vec<TimedEvent> {
         let mut states = vec![
             TimedEvent::new(
                 std::time::Duration::ZERO,

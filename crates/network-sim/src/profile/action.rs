@@ -14,7 +14,7 @@ impl Action {
         }
     }
 
-    pub(super) fn same_channel(&self, other: &Self) -> bool {
+    pub(crate) fn same_channel(&self, other: &Self) -> bool {
         std::mem::discriminant(self) == std::mem::discriminant(other)
     }
 
