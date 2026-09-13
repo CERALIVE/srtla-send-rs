@@ -880,6 +880,57 @@ and uses geometric target-median ratios. Target sets are explicit per invocation
 campaign execution and feature/constant publication remain separate tasks. Neither
 script changes Rust code or proves that a scheduler should actually be retired.
 
+## PURE LINK HEALTH (scheduler evaluation, Todo 15)
+
+`connection::health` is a production-compiled but **unwired**, allocation-free policy
+module. Only `pub mod health;` was added to the existing connection implementation;
+no fields, calls, scheduling modes, runtime flags, telemetry, or clock/I/O reads were
+added. Tests are test-only companion modules in `src/tests/health_*_tests.rs`, loaded
+by `health.rs` without changing `src/lib.rs` or its existing `not(loom)` gate.
+
+API: `HealthState::{Healthy, Degraded, Stalled, Rejoining, Down}` with lowercase
+`as_str()`, `HealthSignals`, `HealthConstants`, `HealthMachine::new(state, now_ms)`,
+`step(&signals, &constants) -> Option<Transition { from, to, at_ms }>`, and
+`ramp_multiplier(now_ms, held_links)`. State/timestamps/dwell have read-only getters;
+`step` exclusively owns transitions and maintains dwell in 1..=16.
+
+Defaults: stall_attempts=32; τ=clamp(4×sRTT,1000,3000) ms, unknown=3000;
+loss_enter=0.10, loss_clear=0.05, loss_cohort_min_sends=100,
+loss_stale_after_ms=10_000; queue enter=max(10,0.25×slow_min),
+clear=max(5,0.125×slow_min) ms; rejoin_rounds=2; probe_train_len=10;
+probe_max_pps=10 bond-wide; dwell_backoff_max=16. Formula-valued defaults are public
+methods `stall_tau`, `queue_enter`, `queue_clear`; `train_period_ms` and `rejoin_span`
+expose the cadence calculations to future probe consumers.
+
+Integration obligations:
+- Pass normalized finite/nonnegative timing observations and loss fractions in [0,1]
+  in one monotonic-ms domain. `proof_age_ms=None` means unknown, not infinite;
+  before first DATA proof pass elapsed-since-registration/first-attempt instead.
+- `loss_cohort_ok` means a qualifying normal-DATA cohort, never a probe cohort.
+  `last_cohort_ms: Option<u64>` dates the last qualifying EWMA. Fresh retained EWMA
+  can clear loss even if this tick's cohort is below the floor. Stale (age ≥10s),
+  absent, or undated EWMA requires `probe_loss`; supply it only after the last two
+  complete trains. Loss demotion latches its cause; queue-only demotion with unknown
+  loss does not invent a loss requirement. Either detector can reset clear dwell.
+- `probe_rounds_started_ms: Option<u64>` is the start of the oldest train counted
+  by `probe_rounds_ok`; expire the pair together. This additional timestamp is
+  necessary to enforce the plan's freshness requirement from a pure snapshot.
+  Stalled accepts two rounds only within max(2τ,rounds×train_period+sRTT), inclusive,
+  with a start not preceding this Stalled entry or lying in the future. This is a
+  rolling evidence window, NOT a deadline measured from initial failure.
+- Fresh runtime machines start Down; restored eligibility takes Down→Rejoining.
+  Explicit Degraded initialization conservatively requires loss clearance; normal
+  transitions record the actual loss cause. Direct Rejoining initialization uses
+  default unknown-RTT timing; runtime rejoin captures the supplied entry RTT/tuning.
+- Ramp multiplier and Healthy promotion share one effective-span calculation:
+  max(2τ,train_period)×dwell. Entry RTT/tuning stay fixed during a ramp, held count
+  stays live. Rejoining→Stalled/Degraded doubles dwell, never Down; Healthy resets
+  it. Do not substitute a shorter promotion timer after a relapse.
+
+Run `cargo test --lib health`, `cargo fmt --all -- --check`, and the real lib+bin
+`cargo clippy -- -D warnings`. This is policy coverage only; later delivery/probe
+tracking and housekeeping integration must establish the live behavior separately.
+
 ## CODEBASE (inherited from upstream)
 
 ```
