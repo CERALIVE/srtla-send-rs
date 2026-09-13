@@ -15,8 +15,50 @@ pub struct ProbeEmission {
 }
 
 impl ProbeScheduler {
-    /// Offer DATA only after its normal send succeeded. No production selector
-    /// calls this yet; Todo 22 owns the health/deadline/sole-carrier snapshot.
+    /// Flush the primary only for a due probe, then require full acceptance before copying.
+    /// The returned error identifies either the primary or alternate for caller recovery.
+    pub async fn maybe_emit(
+        &mut self,
+        connections: &mut [SrtlaConnection],
+        offer: ProbeOpportunity<'_>,
+    ) -> Option<ProbeEmission> {
+        let now = crate::utils::now_ms();
+        let credit = self.credit.saturating_add(self.last_ms.map_or(0, |last| {
+            now.saturating_sub(last)
+                .saturating_mul(u64::from(self.rate))
+        }));
+        if self.rate == 0
+            || credit < 1000
+            || offer.packet.len() < 16
+            || offer.packet[0] & 0x80 != 0
+            || !offer
+                .targets
+                .iter()
+                .any(|t| t.eligible() && t.conn_id != offer.primary_conn_id)
+        {
+            return None;
+        }
+        let primary = connections
+            .iter_mut()
+            .find(|c| c.conn_id == offer.primary_conn_id)?;
+        if !primary.connected || primary.is_timed_out() {
+            return None;
+        }
+        if primary.has_queued_packets() {
+            if let Err(error) = primary.flush_batch().await {
+                return Some(ProbeEmission {
+                    conn_id: primary.conn_id,
+                    outcome: Err(error),
+                });
+            }
+            if primary.has_queued_packets() {
+                return None;
+            }
+        }
+        self.emit(connections, offer).await
+    }
+
+    /// Offer DATA only after its normal send succeeded, using the admission snapshot.
     pub async fn emit(
         &mut self,
         connections: &mut [SrtlaConnection],
