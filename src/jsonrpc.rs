@@ -9,16 +9,22 @@
 //! frame returns a structured error (`-32700`/`-32600`) — it never silently
 //! falls through to the text parser.
 //!
-//! The control methods map onto the existing `DynamicConfig` setters (the same
-//! runtime state the text protocol mutates), so the two dialects stay in lock
-//! step. This module owns only the JSON-RPC framing/dispatch; the socket
-//! transport and the text protocol live in `config.rs`.
+//! Config setters share the text protocol's state. Priority writes instead await
+//! the sender-owned pool channel; enqueue success alone is never application.
+//! Socket transport and text parsing live in `config.rs`.
+
+// allow: SIZE_OK — the scoped control lane cannot add module files; framing and
+// the bounded priority adapter remain together without moving the shared transport.
+
+use std::time::Duration;
 
 use serde_json::{Value, json};
 
+use crate::bind_map::{LinkId, Priority};
 use crate::capabilities::capability_document;
 use crate::config::DynamicConfig;
 use crate::mode::SchedulingMode;
+use crate::sender::pool_control::{LinkKey, PoolControlError, PoolControlRequest};
 use crate::stats::SharedStats;
 
 /// JSON-RPC 2.0 protocol version tag echoed in every response.
@@ -42,9 +48,7 @@ const INVALID_REQUEST: i64 = -32600;
 const METHOD_NOT_FOUND: i64 = -32601;
 const INVALID_PARAMS: i64 = -32602;
 
-/// Control methods + event topics this sender build supports, advertised by
-/// `hello` and `get-capabilities` so a consumer can feature-detect before
-/// driving it.
+/// Frozen legacy `hello` array. New methods belong only in `get-capabilities`.
 const CAPABILITIES: [&str; 6] = [
     "stats-subscription",
     "set-mode",
@@ -60,7 +64,9 @@ const CAPABILITIES: [&str; 6] = [
 /// A frame that is not valid JSON returns a `-32700` parse error with a null
 /// `id`; valid JSON that is not a request object carrying a string `method`
 /// returns `-32600`; an unrecognized method returns `-32601`. Otherwise the
-/// matching `DynamicConfig` setter runs and a `{"ok":true}` result is returned.
+/// matching operation runs. Priority application waits at most two seconds.
+/// Call only on a blocking/control thread, never a Tokio worker: the priority
+/// adapter drives its reply future locally while the sender runtime keeps forwarding.
 pub(crate) fn dispatch_jsonrpc(frame: &str, config: &DynamicConfig, stats: &SharedStats) -> String {
     // A non-JSON / malformed frame is a parse error with a null id.
     let Ok(value) = serde_json::from_str::<Value>(frame) else {
@@ -82,6 +88,7 @@ pub(crate) fn dispatch_jsonrpc(frame: &str, config: &DynamicConfig, stats: &Shar
         "hello" => success_response(id, hello_result()),
         "get-capabilities" => success_response(id, capabilities_result()),
         "set-mode" => set_mode(id, params, config),
+        "set-link-priority" => set_link_priority(id, params, stats),
         "set-quality" => set_bool(id, params, |enabled| config.set_quality_enabled(enabled)),
         "set-exploration" => set_bool(id, params, |enabled| {
             config.set_exploration_enabled(enabled)
@@ -115,7 +122,12 @@ fn capabilities_result() -> Value {
     let mut doc = serde_json::to_value(capability_document())
         .unwrap_or_else(|e| unreachable!("capability document is always serializable: {e}"));
     if let Some(obj) = doc.as_object_mut() {
-        obj.insert("methods".to_string(), json!(CAPABILITIES));
+        let methods: Vec<_> = CAPABILITIES
+            .iter()
+            .copied()
+            .chain(["set-link-priority"])
+            .collect();
+        obj.insert("methods".to_string(), json!(methods));
     }
     doc
 }
@@ -165,6 +177,43 @@ mod negotiated_latency_tests {
         let parsed: Value = serde_json::from_str(&response).unwrap();
         assert_eq!(parsed["result"]["negotiated_latency_ms"], 2000);
     }
+
+    #[tokio::test]
+    async fn status_link_observations_are_optional_and_preserve_zero_priority() {
+        // Given a real link snapshot, When observations appear, Then emit only known values.
+        let stats = SharedStats::new();
+        let conn = crate::test_helpers::create_test_connection().await;
+        stats.update(&[conn], &DynamicConfig::new().snapshot());
+        let mut snapshot = stats.get();
+        assert!(link_identities(&snapshot)[0].get("health").is_none());
+        assert!(link_identities(&snapshot)[0].get("priority").is_none());
+        snapshot.links[0].health = Some("healthy");
+        snapshot.links[0].priority = Some(0.0);
+        let links = link_identities(&snapshot);
+        assert_eq!(links[0]["health"], "healthy");
+        assert_eq!(links[0]["priority"], 0.0);
+    }
+
+    #[test]
+    fn pool_errors_have_distinct_typed_wire_codes() {
+        // Given each owner error, When projected, Then preserve its retry-relevant distinction.
+        for (error, code, kind) in [
+            (
+                PoolControlError::UnknownLink(LinkKey::ConnId(8)),
+                -32001,
+                "unknown_link",
+            ),
+            (PoolControlError::Unavailable, -32002, "unavailable"),
+            (PoolControlError::Busy, -32003, "busy"),
+            (PoolControlError::PoolReloaded, -32004, "pool_reloaded"),
+        ] {
+            let response: Value =
+                serde_json::from_str(&pool_error_response(json!(24), error)).unwrap();
+            assert_eq!(response["error"]["code"], code);
+            assert_eq!(response["error"]["data"]["kind"], kind);
+            assert_eq!(response["id"], 24);
+        }
+    }
 }
 
 /// Per-link identity, in the same order (and therefore the same `conn_id`
@@ -187,6 +236,12 @@ fn link_identities(stats: &crate::stats::StatsSnapshot) -> Value {
             if let Some(link_id) = link.link_id.as_ref() {
                 obj.insert("link_id".to_string(), json!(link_id));
             }
+            if let Some(health) = link.health {
+                obj.insert("health".to_string(), json!(health));
+            }
+            if let Some(priority) = link.priority {
+                obj.insert("priority".to_string(), json!(priority));
+            }
             record
         })
         .collect();
@@ -205,7 +260,7 @@ fn set_mode(id: Value, params: Option<&Value>, config: &DynamicConfig) -> String
         Err(_) => error_response(
             id,
             INVALID_PARAMS,
-            "invalid mode; use classic, enhanced, rtt-threshold, or edpf",
+            "invalid mode; use classic, enhanced, rtt-threshold, edpf, or adaptive",
         ),
     }
 }
@@ -243,6 +298,100 @@ fn set_rtt_delta(id: Value, params: Option<&Value>, config: &DynamicConfig) -> S
 
 fn ok_result() -> Value {
     json!({ "ok": true })
+}
+
+fn parse_priority_request(params: Option<&Value>) -> Result<PoolControlRequest, &'static str> {
+    let params = params
+        .and_then(Value::as_object)
+        .ok_or("params must be an object")?;
+    let key = match (params.get("link_id"), params.get("conn_id")) {
+        (Some(Value::String(id)), None) => LinkKey::LinkId(
+            LinkId::parse(id)
+                .map_err(|_| "link_id must be 1-64 printable ASCII bytes without spaces")?,
+        ),
+        (None, Some(Value::String(id)))
+            if !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()) =>
+        {
+            LinkKey::ConnId(id.parse().map_err(|_| "conn_id position is too large")?)
+        }
+        _ => return Err("provide exactly one of link_id or conn_id (string)"),
+    };
+    let priority = match params.get("priority") {
+        Some(Value::Null) => None,
+        Some(Value::Number(value)) => Some(Priority::try_from(
+            value.as_f64().ok_or("priority must be a finite number")?,
+        )?),
+        _ => return Err("priority is required: number in -0.20..=0.20 or null"),
+    };
+    Ok(PoolControlRequest::SetLinkPriority { key, priority })
+}
+
+fn set_link_priority(id: Value, params: Option<&Value>, stats: &SharedStats) -> String {
+    let request = match parse_priority_request(params) {
+        Ok(request) => request,
+        Err(message) => return error_response(id, INVALID_PARAMS, message),
+    };
+    let Some(handle) = stats.pool_control() else {
+        return pool_error_response(id, PoolControlError::Unavailable);
+    };
+    // This timer-only runtime lives on the existing std control thread: no new
+    // worker, no polling sleeps, and no wait on the sender's forwarding thread.
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            tracing::warn!(%error, "could not initialize priority reply timer");
+            return error_response(id, -32603, "could not initialize priority reply timer");
+        }
+    };
+    let reply = match handle.submit(request) {
+        Ok(reply) => reply,
+        Err(error) => return pool_error_response(id, error),
+    };
+    let applied =
+        runtime.block_on(async { tokio::time::timeout(Duration::from_secs(2), reply).await });
+    match applied {
+        Ok(Ok(Ok(reply))) => {
+            let key = match reply.key {
+                LinkKey::LinkId(_) => "link_id",
+                LinkKey::ConnId(_) => "conn_id",
+            };
+            let mut result = json!({
+                "applied": reply.applied, "key": key, "conn_id": reply.conn_id.to_string(),
+                "priority": reply.priority.map(Priority::get),
+                "effective_priority": reply.effective_priority.map(Priority::get),
+            });
+            if let Some(link_id) = reply.link_id {
+                result["link_id"] = json!(link_id.as_str());
+            }
+            success_response(id, result)
+        }
+        Ok(Ok(Err(error))) => pool_error_response(id, error),
+        Ok(Err(_)) => pool_error_response(id, PoolControlError::Unavailable),
+        // Dropping the reply cancels queued work, but cannot undo an application
+        // racing the deadline. Report uncertainty; never retry across a pool epoch.
+        Err(_) => error_response(
+            id,
+            -32005,
+            "priority reply timed out; application outcome unknown",
+        ),
+    }
+}
+
+fn pool_error_response(id: Value, error: PoolControlError) -> String {
+    let (code, kind) = match &error {
+        PoolControlError::UnknownLink(_) => (-32001, "unknown_link"),
+        PoolControlError::Unavailable => (-32002, "unavailable"),
+        PoolControlError::Busy => (-32003, "busy"),
+        PoolControlError::PoolReloaded => (-32004, "pool_reloaded"),
+    };
+    json!({
+        "jsonrpc": JSONRPC_VERSION, "id": id,
+        "error": {"code": code, "message": error.to_string(), "data": {"kind": kind}},
+    })
+    .to_string()
 }
 
 fn success_response(id: Value, result: Value) -> String {
