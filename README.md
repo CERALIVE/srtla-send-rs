@@ -518,6 +518,37 @@ the geometric mean of target median-goodput ratios to the baseline; failures app
 different feature/sweep target sets separately. This scoring tool does not itself
 change scheduler defaults, retire modes, or establish real-hardware performance.
 
+### Pure link-health policy (not yet integrated)
+
+`src/connection/health.rs` provides `HealthState`, `HealthSignals`, `HealthConstants`,
+`HealthMachine::step`, and `Transition { from, to, at_ms }`. It is an isolated,
+allocation-free policy module: all evidence and timestamps are passed in; it does not
+read clocks, perform I/O, or change the running sender. No adaptive CLI mode, probe
+transmission, housekeeping integration, or telemetry field is enabled by this module.
+
+Hard failures enter Down; restored connections enter Rejoining rather than skipping
+the ramp. Stalling requires both 32 attempts without DATA proof and proof age ≥τ,
+where τ = clamp(4×sRTT, 1000, 3000) ms (3000 ms without a sample). Degradation uses
+qualifying normal-loss EWMA ≥10% or queue delay ≥max(10, 0.25×slow-min-RTT) ms.
+Recovery requires continuous clearance for τ: loss ≤5% and queue delay
+≤max(5, 0.125×slow-min-RTT) ms. A loss-triggered demotion retains its evidence
+requirement; after 10 seconds without a valid normal cohort, only complete probe-train
+loss evidence can clear it. A queue-only demotion needs no invented normal-loss sample.
+
+Probe recovery assumes two 10-copy trains sharing a bond-wide 10-probes/s budget.
+For `m` held links, train period is `m×1000` ms and the rejoin evidence window is
+`max(2×τ, 2×train_period+sRTT)`; the caller supplies the oldest contributing train's
+start timestamp so expired evidence cannot rejoin a link. Three held links at 40ms
+RTT therefore get 6040ms, enough for trains at 3000/6000ms. Time spent stalled is not
+a permanent recovery deadline. Rejoining ramps linearly from 5% to 100% over
+`max(2×τ, train_period)×dwell_multiplier`; the exact same span gates Healthy entry.
+The ramp freezes entry-time RTT/tuning but accepts the current held-link count.
+Soft relapse doubles dwell up to 16; reaching Healthy resets it to 1.
+
+Run `cargo test --lib health`. The table/property tests cover all edges, threshold
+gaps, stale-loss probe recovery, feasible cadence, and repeated relapse. These are
+pure policy tests, not evidence of a live obstruction fix or hardware performance.
+
 ### Duplicate-DATA receiver spike (test builds only)
 
 `tests/netns_dup_spike.rs` is an ignored, privileged experiment using two registered
