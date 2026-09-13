@@ -881,6 +881,40 @@ and uses geometric target-median ratios. Target sets are explicit per invocation
 campaign execution and feature/constant publication remain separate tasks. Neither
 script changes Rust code or proves that a scheduler should actually be retired.
 
+## PRIORITY PLUMBING (scheduler evaluation, Todo 21)
+
+`bind_map::Priority` is a private-field `f64` newtype, constructed by
+`TryFrom<f64>` only for finite −0.20..=+0.20; `get()` exposes the numeric bias.
+Raw sidecar rows use `#[serde(default)] Option<f64>`; after hash coherence,
+`validate::parse_rows` maps conversion failure into the existing
+`BindMapError::InvalidRow { index, field: "priority", detail }`. No new degraded
+reason, retry rule, partial acceptance, or schema-version change. The validated
+`Option<Priority>` flows through `BindMapRow`, `EffectiveLink`, and `UplinkSpec`.
+
+`SrtlaConnection` owns THREE independent `Option<Priority>` fields:
+`priority_baseline`, `priority_override_link`, `priority_override_conn`.
+`effective_priority()` reads conn > link > baseline. The methods
+`clear_priority_override_conn()` and `clear_priority_override_link()` clear ONLY
+their own layer; a conn clear must expose a remaining link override, not jump to
+baseline. `connect` initializes baseline from the spec and both overrides to None;
+`spec()` projects the baseline, never an effective override back into a sidecar value.
+
+The pool rebuild refreshes survivors' baseline (including None) and clears only
+their conn layer, keeping the persistent link layer attached to identity through
+reorders. A fresh socket under the same `link_id` copies the old link override before
+retiring the old connection; transport history is still discarded. Ordinary
+recovery/reconnect resets do not clear priority fields. Runtime override commands
+remain Todo 24; do not merge the two override slots when implementing them.
+
+`sender::preference_multiplier(priority, window, health)` (implemented in
+`sender::selection::adaptive::preference`) is
+pure, allocation-free and **not called by any selector yet** (Todo 22 wires it).
+Healthy uses `1 + p * clamp((window−10000)/10000, 0, 1)`; all other health states
+return 1.0. Convert the signed window before subtraction to avoid integer overflow.
+No CLI, telemetry, capabilities, ADR document, or legacy-byte contract edits here.
+Tests remain in the existing bind-map parse/validate and link-identity homes, plus
+the pure multiplier's local table. README carries the matching dormant-status note.
+
 ## PURE LINK HEALTH (scheduler evaluation, Todo 15)
 
 `connection::health` is a production-compiled but **unwired**, allocation-free policy

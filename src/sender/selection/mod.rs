@@ -38,6 +38,7 @@
 //! - Per-loop owned scheduler state (no thread-local), threaded through the
 //!   send path so selection is deterministic and allocation-free on the hot path
 
+pub mod adaptive;
 pub mod blest;
 mod classic;
 pub mod edpf;

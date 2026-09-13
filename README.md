@@ -519,6 +519,28 @@ the geometric mean of target median-goodput ratios to the baseline; failures app
 different feature/sweep target sets separately. This scoring tool does not itself
 change scheduler defaults, retire modes, or establish real-hardware performance.
 
+### Per-link preference plumbing (selection integration pending)
+
+Bind-map rows accept optional `priority` in the finite range **−0.20..=+0.20**.
+An absent value means no preference. Out-of-range values invalidate the row through
+the existing `malformed` path, with its zero-based row index: startup remains
+duplicate-safe and degraded reload retains the last valid mapped pool. Hash coherence
+still precedes row validation; unknown additive keys remain ignored. A priority-only
+edit must advance the generation when the IP-file digest is unchanged.
+
+Connections retain three independent layers: sidecar baseline, persistent `link_id`
+override, and reload-volatile `conn_id` override, in that increasing precedence.
+Applied reloads update the baseline, preserve the link override through reorder or
+same-identity socket replacement, and clear the conn override. Clearing either
+override affects only that layer, exposing the next remaining value.
+
+The pure `preference_multiplier` returns `1 + p * clamp((window−10000)/10000, 0, 1)`
+only for Healthy links, and `1.0` otherwise (including Rejoining). **No current
+selector calls it**; priority control commands and telemetry echoes are not yet added.
+The four scheduling modes and legacy invocation output remain unchanged.
+Run `cargo test --lib bind_map`, `cargo test --lib preference`,
+`cargo test --lib link_identity`, and `cargo test --test bind_map_contract`.
+
 ### Pure link-health policy (not yet integrated)
 
 `src/connection/health.rs` provides `HealthState`, `HealthSignals`, `HealthConstants`,

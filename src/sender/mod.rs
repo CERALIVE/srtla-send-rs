@@ -43,6 +43,7 @@ pub use links::{LinkSource, SenderPaths};
 use packet_handler::{
     drain_packet_queue, flush_all_batches, handle_srt_packet, handle_uplink_packet,
 };
+pub use selection::adaptive::preference_multiplier;
 #[allow(unused_imports)]
 pub use selection::{EdpfSchedulerState, calculate_quality_multiplier, select_connection_idx};
 #[allow(unused_imports)]

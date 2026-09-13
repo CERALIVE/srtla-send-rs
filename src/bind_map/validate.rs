@@ -12,7 +12,7 @@ use std::str::FromStr;
 use super::error::BindMapError;
 use super::iface::IfaceOracle;
 use super::sidecar::BindMapDoc;
-use super::types::{BindMapRow, IfaceName, IpsFile, LinkId, MappedPool, parse_id_path};
+use super::types::{BindMapRow, IfaceName, IpsFile, LinkId, MappedPool, Priority, parse_id_path};
 
 /// Everything validation needs beyond the two files themselves.
 #[derive(Clone, Copy)]
@@ -69,6 +69,11 @@ fn parse_rows(doc: &BindMapDoc, ifaces: &dyn IfaceOracle) -> Result<Vec<BindMapR
             .map(parse_id_path)
             .transpose()
             .map_err(|e| invalid("id_path", e))?;
+        let priority = raw
+            .priority
+            .map(Priority::try_from)
+            .transpose()
+            .map_err(|e| invalid("priority", e.to_string()))?;
 
         if !ifaces.exists(iface.as_str()) {
             return Err(BindMapError::UnknownIface {
@@ -82,6 +87,7 @@ fn parse_rows(doc: &BindMapDoc, ifaces: &dyn IfaceOracle) -> Result<Vec<BindMapR
             ip,
             iface,
             id_path,
+            priority,
         });
     }
     Ok(rows)

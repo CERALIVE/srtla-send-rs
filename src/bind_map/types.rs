@@ -79,6 +79,32 @@ impl IfaceName {
     }
 }
 
+/// A finite, bounded ranking bias, never an eligibility override.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Priority(f64);
+
+// NaN is unconstructable, so equality is reflexive despite the f64 storage.
+impl Eq for Priority {}
+
+impl TryFrom<f64> for Priority {
+    type Error = &'static str;
+
+    fn try_from(value: f64) -> Result<Self, Self::Error> {
+        if value.is_finite() && (-0.20..=0.20).contains(&value) {
+            Ok(Self(value))
+        } else {
+            Err("must be finite and within -0.20..=0.20")
+        }
+    }
+}
+
+impl Priority {
+    #[must_use]
+    pub const fn get(self) -> f64 {
+        self.0
+    }
+}
+
 /// One validated sidecar row: an identity, its current socket key, and optional
 /// writer provenance.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,6 +114,7 @@ pub struct BindMapRow {
     pub iface: IfaceName,
     /// Opaque writer provenance. Never opened, stat-ed, or resolved.
     pub id_path: Option<String>,
+    pub priority: Option<Priority>,
 }
 
 /// Parse the optional `id_path` provenance field.

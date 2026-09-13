@@ -52,7 +52,7 @@ pub use spec::{SocketKey, UplinkSpec};
 use tokio::time::Instant;
 use tracing::debug;
 
-use crate::bind_map::{IfaceName, LinkId};
+use crate::bind_map::{IfaceName, LinkId, Priority};
 use crate::protocol::*;
 use crate::utils::now_ms;
 
@@ -111,6 +111,10 @@ pub struct SrtlaConnection {
     /// for an unmapped link. Registration, stats, and telemetry state belong to
     /// this — never to `local_ip`, which is only the current socket key.
     pub link_id: Option<LinkId>,
+    /// Sidecar baseline < persistent link override < reload-volatile conn override.
+    pub priority_baseline: Option<Priority>,
+    pub priority_override_link: Option<Priority>,
+    pub priority_override_conn: Option<Priority>,
     /// Egress-interface binding lifecycle. Inert for an unmapped link.
     pub egress: EgressLifecycle,
     /// Per-interface default-route observation, refreshed by housekeeping.
@@ -245,6 +249,9 @@ impl SrtlaConnection {
             port,
             local_ip: ip,
             link_id: spec.link_id.clone(),
+            priority_baseline: spec.priority,
+            priority_override_link: None,
+            priority_override_conn: None,
             egress,
             route_health: RouteHealth::Unknown,
             label: spec.label(host, port),
@@ -273,6 +280,23 @@ impl SrtlaConnection {
             quality_cache: CachedQuality::default(),
             batch_sender: BatchSender::new(),
         })
+    }
+
+    #[must_use]
+    pub fn effective_priority(&self) -> Option<Priority> {
+        self.priority_override_conn
+            .or(self.priority_override_link)
+            .or(self.priority_baseline)
+    }
+
+    /// Clear only the temporary layer, exposing a link override before the baseline.
+    pub const fn clear_priority_override_conn(&mut self) {
+        self.priority_override_conn = None;
+    }
+
+    /// Clear only the persistent layer; an active temporary override still wins.
+    pub const fn clear_priority_override_link(&mut self) {
+        self.priority_override_link = None;
     }
 
     #[inline(always)]
@@ -339,6 +363,7 @@ impl SrtlaConnection {
             ip: self.local_ip,
             iface: self.egress.iface().cloned(),
             link_id: self.link_id.clone(),
+            priority: self.priority_baseline,
         }
     }
 

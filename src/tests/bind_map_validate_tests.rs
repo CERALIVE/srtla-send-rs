@@ -62,7 +62,15 @@ fn twin_sha() -> String {
 #[test]
 fn a_malformed_row_is_rejected_with_its_index_and_field() {
     let sha = twin_sha();
-    let cases: [(&str, &str); 6] = [
+    let cases: [(&str, &str); 8] = [
+        (
+            r#"{"link_id":"a","ip":"192.168.8.100","iface":"wwan0","priority":0.5}"#,
+            "priority",
+        ),
+        (
+            r#"{"link_id":"a","ip":"192.168.8.100","iface":"wwan0","priority":-0.200001}"#,
+            "priority",
+        ),
         (
             r#"{"link_id":"","ip":"192.168.8.100","iface":"wwan0"}"#,
             "link_id",
@@ -253,7 +261,7 @@ fn hash_coherence_is_checked_before_row_validation() {
     let sha = "0".repeat(64);
     let body = format!(
         r#"{{"schema_version":1,"generation":1,"ips_file_sha256":"{sha}","links":[
-            {{"link_id":"a","ip":"10.9.9.9","iface":"nonexistent0"}}]}}"#
+            {{"link_id":"a","ip":"10.9.9.9","iface":"nonexistent0","priority":0.5}}]}}"#
     );
     assert_matches!(
         validate_twin(&body, None).expect_err("stale content"),
