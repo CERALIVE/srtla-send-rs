@@ -36,7 +36,7 @@ default-on receiver re-home plus automatic `4.0.1` bump were not imported. See
 
 ### Scheduling Modes
 
-The sender supports four mutually exclusive scheduling modes:
+The sender supports four established scheduling modes and an experimental adaptive pipeline:
 
 #### Enhanced Mode (Default)
 
@@ -75,6 +75,34 @@ The scheduler state (BLEST + IoDS) is owned per send-loop (no thread-local), so 
 - **Enable via**: `--mode edpf`
 - **Tradeoffs**: minimizes end-to-end reordering and latency on heterogeneous links by modeling delivery time directly, at the cost of more per-packet computation than capacity-only Classic mode. Quality scoring and exploration do not apply.
 - **Use Case**: Bonding links with differing bandwidth *and* latency where keeping the SRT stream in order with minimal added delay matters more than raw capacity packing.
+
+#### Adaptive Mode [PARTIAL]
+
+`--mode adaptive` selects the health/deadline-gated capacity pipeline. It ranks
+admitted links by the existing queued-load score and cached quality, multiplied by
+rejoin ramp, Healthy-only preference, and the delivered-rate controller's soft cap.
+Its 15ms switch cooldown and 10% hysteresis cannot retain a link outside admission.
+`--stall-deselect` is deliberately a **no-op** here: adaptive owns stall handling.
+
+The deadline budget is the last observed negotiated receiver latency, or 500ms when
+unknown. A link is held when `sRTT/2 + queue_delay > 0.5 × budget`; release needs
+continuous prediction below `0.4 × budget` for τ (clamp(4×sRTT,1000,3000) ms).
+With no admitted link, one eligible sole carrier is held for at least two seconds.
+A carrier without recent DATA proof rotates after max(2000,τ) ms and stays behind
+other candidates until it earns proof; keepalive RTT does not rehabilitate it.
+If no eligible link remains, the highest-base-score connected link is the fallback.
+
+Held-out links receive globally paced duplicate DATA, never the elected sole carrier.
+Only a due probe forces its primary batch to flush; no copy precedes primary
+acceptance, and neither probe selection nor emission changes switch history.
+
+**This is not yet a complete runtime health controller.** Health starts Down, and
+housekeeping health/rate ticks, registration/recovery resets, and lifecycle status
+integration remain Todo 23. Until that lands, a freshly started adaptive sender uses
+the connected-pool fallback rather than live health adaptation. Control/capability
+and telemetry extensions remain subsequent work. Do not deploy it as a proven
+improvement: the policy and packet-handler UDP tests are not bonded-hardware evidence.
+Run `cargo test --lib adaptive` and `cargo test --test adaptive_cli`.
 
 ### Optional Smart Exploration (Enhanced Mode Only)
 
@@ -519,7 +547,7 @@ the geometric mean of target median-goodput ratios to the baseline; failures app
 different feature/sweep target sets separately. This scoring tool does not itself
 change scheduler defaults, retire modes, or establish real-hardware performance.
 
-### Per-link preference plumbing (selection integration pending)
+### Per-link preference plumbing
 
 Bind-map rows accept optional `priority` in the finite range **−0.20..=+0.20**.
 An absent value means no preference. Out-of-range values invalidate the row through
@@ -535,9 +563,9 @@ same-identity socket replacement, and clear the conn override. Clearing either
 override affects only that layer, exposing the next remaining value.
 
 The pure `preference_multiplier` returns `1 + p * clamp((window−10000)/10000, 0, 1)`
-only for Healthy links, and `1.0` otherwise (including Rejoining). **No current
-selector calls it**; priority control commands and telemetry echoes are not yet added.
-The four scheduling modes and legacy invocation output remain unchanged.
+only for Healthy links, and `1.0` otherwise (including Rejoining). The adaptive
+selector consumes it; priority control commands and telemetry echoes are not yet added.
+The four established scheduling modes and legacy invocation output remain unchanged.
 Run `cargo test --lib bind_map`, `cargo test --lib preference`,
 `cargo test --lib link_identity`, and `cargo test --test bind_map_contract`.
 
@@ -546,8 +574,8 @@ Run `cargo test --lib bind_map`, `cargo test --lib preference`,
 `src/connection/health.rs` provides `HealthState`, `HealthSignals`, `HealthConstants`,
 `HealthMachine::step`, and `Transition { from, to, at_ms }`. It is an isolated,
 allocation-free policy module: all evidence and timestamps are passed in; it does not
-read clocks, perform I/O, or change the running sender. No adaptive CLI mode, probe
-transmission, housekeeping integration, or telemetry field is enabled by this module.
+read clocks or perform I/O. Adaptive selection now reads a connection-owned machine,
+but housekeeping transitions and lifecycle reset integration remain separate work.
 
 Hard failures enter Down; restored connections enter Rejoining rather than skipping
 the ramp. Stalling requires both 32 attempts without DATA proof and proof age ≥τ,
@@ -602,9 +630,9 @@ This is local stale-reader fencing, not a wire authentication guarantee.
 Run `cargo test --lib health_delivery`. The scenario-D fixture sends 40 DATA packets,
 processes five keepalive RTT replies over four deterministic seconds, and drains the
 packet log with three NAK frames. Its ledger-fed health step is Stalled while the
-preserved legacy predicate control is **not stalled**. This proves the detection
-gap, not a running-scheduler fix: HealthMachine wiring and probe recovery remain
-separate work, and no real bonded-hardware improvement is claimed.
+preserved legacy predicate control is **not stalled**. Adaptive tests additionally
+drive exclusion, actual duplicate probes, and Rejoining selection on that fixture.
+Housekeeping wiring remains separate; no real bonded-hardware improvement is claimed.
 
 ### Loss and queue evidence (health integration pending)
 
@@ -656,7 +684,7 @@ not authenticated and has no stream/socket-generation freshness guarantee.
 
 `SharedStats::negotiated_latency_ms() -> Option<u32>` reads a shared atomic directly,
 without snapshot locks, configuration reads or awaiting housekeeping. This is
-plumbing for a future adaptive deadline gate, **not a scheduler behavior change**.
+the observation consumed by the adaptive deadline gate; other modes ignore it.
 The frozen stats-file telemetry shape and TypeScript bindings are unchanged.
 
 Run `cargo test --lib srt_handshake`, `cargo test --lib packet_io`, and
@@ -665,15 +693,15 @@ the real binary against a loopback UDP test peer and queries its Unix control so
 Tests use the committed real 2000ms capture,
 including a one-byte extension-type failure control and unchanged forwarding bytes.
 
-### Duplicate DATA probes (selection integration pending)
+### Duplicate DATA probes
 
 The production-ready mechanism in `src/connection/probe.rs` supplies an owned,
 bond-wide token bucket capped at **10 probes/s**, with no accumulated idle burst.
-Ten-copy trains rotate across Stalled/Degraded links explicitly held by the future
-deadline policy, never Down/Healthy/Rejoining or the elected sole carrier.
-**No scheduler invokes this mechanism yet, and no adaptive CLI mode is added.**
-The later selection integration supplies eligible targets and DATA already sent
-successfully on its normal carrier; probes do not change switch/cooldown history.
+Ten-copy trains rotate across Stalled/Degraded links or deadline-held
+Healthy/Rejoining links, never Down or the elected sole carrier. Adaptive selection
+supplies targets, and the packet handler calls `maybe_emit` after normal forwarding.
+That method flushes the primary only for a due copy and requires full acceptance;
+probes do not change switch/cooldown history. Housekeeping recovery remains pending.
 
 Copies use the alternate's normal unpadded batch path, preserving every byte except
 clearing SRT byte 4's retransmit mask `0x04`, as measured by the receiver spike.
@@ -699,11 +727,12 @@ then the separate unchanged `cargo test --lib ack_rtt` and `cargo test --lib bat
 suites. Coverage uses real loopback UDP and deterministic clocks, not bonded-hardware
 performance measurements.
 
-### Delivered-rate controller (not yet integrated)
+### Delivered-rate controller (housekeeping integration pending)
 
 `src/connection/rate_cap.rs` is a pure per-link controller designed against the
 [audited congestion-controller defects](docs/notes/strata-port-evaluation.md).
-**No send loop, selection path, housekeeping task or CLI mode invokes it yet.**
+Adaptive ranking now reads its soft-cap multiplier from the connection-owned controller;
+the one-second housekeeping `tick` and lifecycle resets remain pending.
 Existing enhanced-mode time-based window recovery is unchanged and independent.
 
 Each future one-second housekeeping tick reads the link's `DeliveryLedger` directly:
@@ -782,8 +811,8 @@ srtla_send [OPTIONS] SRT_LISTEN_PORT SRTLA_HOST SRTLA_PORT BIND_IPS_FILE
 
 - `--verbose`: Enable verbose (debug-level) logging
 - `--dry-run`: Validate the IP list and resolve the receiver, print them, then exit without binding any socket (non-zero exit if the IP list is unusable)
-- `--mode <MODE>`: Scheduling mode: `classic`, `enhanced` (default), `rtt-threshold`, `edpf`
-- `--no-quality`: Disable quality scoring (enhanced/rtt-threshold only)
+- `--mode <MODE>`: Scheduling mode: `classic`, `enhanced` (default), `rtt-threshold`, `edpf`, `adaptive` (experimental; lifecycle integration pending)
+- `--no-quality`: Disable quality scoring (enhanced/rtt-threshold/adaptive)
 - `--exploration`: Enable connection exploration (enhanced only)
 - `--rtt-delta-ms <N>`: RTT delta threshold in ms (default: 30, rtt-threshold only)
 - `--control-socket <PATH>`: Unix domain socket path for remote control (e.g., `/tmp/srtla.sock`)
@@ -934,7 +963,7 @@ echo 'status' | socat - UNIX-CONNECT:/tmp/srtla.sock
 
 ## Experimental Scheduler-Hardening Flags
 
-Two flags, gated behind their own CLI switches, harden the default `enhanced` mode against a specific satellite/LAN failure signature (a link that keeps a high scheduling weight while it silently degrades). Both are **default OFF** and mode-agnostic (they apply on top of whichever `--mode` is active). Neither has been validated against real bond hardware yet; treat every behavior claim below as a hypothesis pending that validation.
+Two flags, gated behind their own CLI switches, harden the default `enhanced` mode against a specific satellite/LAN failure signature (a link that keeps a high scheduling weight while it silently degrades). Both are **default OFF** and apply across the four established modes. Adaptive bypasses `stall-deselect` and selects its own arrival-scoped ACK policy regardless of `earned-ack-window`. Neither flag has been validated against real bond hardware yet; treat every behavior claim below as a hypothesis pending that validation.
 
 ### `--earned-ack-window`
 
@@ -1085,7 +1114,7 @@ really do cost the data plan twice); SRTLA control frames — keepalives and reg
 The duplicate-probe mechanism also counts accepted DATA copies at full wire length
 in both fields. It adds these bytes at accepted-prefix processing rather than
 queueing, so an unsent probe suffix is excluded; normal DATA queue-time accounting
-is unchanged. Probes remain unwired to selection until the adaptive integration.
+is unchanged. Only adaptive mode invokes the production probe scheduler.
 
 **It resets only when the sender process does**, which is once per streaming session:
 
