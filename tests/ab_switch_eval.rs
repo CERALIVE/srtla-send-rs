@@ -58,7 +58,6 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::thread::sleep;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -66,6 +65,10 @@ use network_sim::{
     ImpairmentConfig, NamespaceProcess, SrtlaTestTopology, check_binary, check_privileges,
     wait_for_registered_uplinks, wait_for_udp_listener,
 };
+
+#[path = "support/measurement_lock.rs"]
+mod measurement;
+use measurement::measurement_lock;
 
 const LINKS: usize = 3;
 const DELAYS_MS: [u32; LINKS] = [20, 60, 120];
@@ -100,16 +103,6 @@ fn now() -> f64 {
         .duration_since(UNIX_EPOCH)
         .expect("system clock before epoch")
         .as_secs_f64()
-}
-
-/// Measurement runs must never overlap: CPU contention between two live
-/// namespaces silently corrupts throughput numbers while both runs still
-/// "succeed".
-fn measurement_lock() -> MutexGuard<'static, ()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 fn deps_ok(step: &str) -> bool {
