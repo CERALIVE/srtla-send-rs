@@ -204,3 +204,27 @@ fn stale_entry_generation_is_rejected_even_with_current_token() {
     assert!(!proved);
     assert_eq!(ledger.last_data_proof_ms, 0);
 }
+#[test]
+fn data_proof_timestamp_distinguishes_clock_zero_from_an_attempt() {
+    // Given a fresh ledger with a send at clock zero.
+    let mut ledger = crate::connection::delivery::DeliveryLedger::default();
+    ledger.record_sent(
+        7,
+        crate::connection::delivery::DataSend {
+            sent_ms: 0,
+            len: 16,
+        },
+    );
+    assert_eq!(ledger.latest_data_proof_ms(), None);
+    // When that DATA is acknowledged at zero, then zero is real proof, not missing.
+    assert!(ledger.acknowledge(
+        crate::connection::delivery::DeliveryAck {
+            seq: 7,
+            socket_generation: 0
+        },
+        0
+    ));
+    assert_eq!(ledger.latest_data_proof_ms(), Some(0));
+    ledger.reset();
+    assert_eq!(ledger.latest_data_proof_ms(), None);
+}

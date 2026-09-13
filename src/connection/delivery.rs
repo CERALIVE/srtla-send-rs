@@ -37,6 +37,7 @@ pub struct DeliveryLedger {
     newest: Option<i32>,
     pub(crate) attempts_since_proof: u32,
     pub(crate) last_data_proof_ms: u64,
+    has_data_proof: bool,
     proof_anchor_ms: Option<u64>,
     delivered_bytes_window: VecDeque<(u64, u64)>,
     pub(crate) socket_generation: u32,
@@ -50,6 +51,7 @@ impl Default for DeliveryLedger {
             newest: None,
             attempts_since_proof: 0,
             last_data_proof_ms: 0,
+            has_data_proof: false,
             proof_anchor_ms: None,
             delivered_bytes_window: VecDeque::with_capacity(2000),
             socket_generation: 0,
@@ -125,6 +127,15 @@ impl DeliveryLedger {
             .map(|anchor| now_ms.saturating_sub(anchor))
     }
 
+    /// Unlike proof_age_ms, this never mistakes an initial attempt for DATA proof.
+    pub const fn latest_data_proof_ms(&self) -> Option<u64> {
+        if self.has_data_proof {
+            Some(self.last_data_proof_ms)
+        } else {
+            None
+        }
+    }
+
     /// ACK-credited wire bits/s over (now-2000ms, now], with a fixed 2s denominator.
     pub fn delivered_bps(&self, now_ms: u64) -> f64 {
         self.delivered_bytes_window.iter()
@@ -140,6 +151,7 @@ impl DeliveryLedger {
         self.newest = None;
         self.attempts_since_proof = 0;
         self.last_data_proof_ms = 0;
+        self.has_data_proof = false;
         self.proof_anchor_ms = None;
         self.delivered_bytes_window.clear();
         self.socket_generation = self.socket_generation.wrapping_add(1);
@@ -147,6 +159,7 @@ impl DeliveryLedger {
 
     /// Probe proof refreshes health, but is not original delivered goodput.
     pub(crate) fn record_probe_proof(&mut self, now_ms: u64) {
+        self.has_data_proof = true;
         self.last_data_proof_ms = now_ms;
         self.proof_anchor_ms = Some(now_ms);
         self.attempts_since_proof = 0;
