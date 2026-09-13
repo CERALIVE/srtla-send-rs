@@ -265,7 +265,8 @@ byte-identical forwarding from the uplink to sender loopback. Explicit runs fail
 on missing prerequisites rather than silently passing. `UPDATE_GOLDEN=1` deliberately
 regenerates `tests/fixtures/srt-hsrsp-latency2000.bin` (raw SRT UDP payload, 80 bytes);
 `HSRSP_CAPTURE_DIR` optionally names an existing directory in which unique capture
-subdirectories and process logs are retained. No production handshake parser is added.
+subdirectories and process logs are retained. The captured fixture now also pins the
+production HSRSP parser described below.
 
 `tests/netns_twin.rs` covers the duplicate-IP twin case that a single-subnet veth
 topology cannot express: two uplinks on ONE source address, each behind its own NAT
@@ -612,6 +613,33 @@ Run `cargo test --lib loss`, `cargo test --lib queue_delay`, and
 `cargo test --lib rtt`. Coverage includes the load guard, stale evidence, EWMA
 convergence, synthetic ramp/jitter, actual partial UDP sends, unique attribution,
 and the unchanged legacy RTT behavior. No bonded-hardware improvement is claimed.
+
+### Negotiated SRT latency (passive observation)
+
+The receive path sniffs SRT v5 conclusion handshakes for the HSRSP extension and
+records its **receiver TSBPD delay in milliseconds**. The parser starts extensions
+at byte 64 and walks each descriptor's body-word count; HSRSP need not come first.
+Non-handshakes, other handshake versions/phases, missing HSRSP and truncated frames
+silently yield no observation. Every packet retains the same forwarding behavior
+and bytes, whether decoding succeeds or fails.
+
+JSON-RPC `get-status` includes optional `negotiated_latency_ms` once a nonzero
+delay is observed; unknown is omitted, never reported as zero or null. The 30-second
+status log also prints this observation (`None` when unknown). It is a bond-wide,
+last-observed value: housekeeping, uplink reconnection and SIGHUP do not clear it;
+a subsequent valid handshake replaces it, including zero meaning unknown. It is
+not authenticated and has no stream/socket-generation freshness guarantee.
+
+`SharedStats::negotiated_latency_ms() -> Option<u32>` reads a shared atomic directly,
+without snapshot locks, configuration reads or awaiting housekeeping. This is
+plumbing for a future adaptive deadline gate, **not a scheduler behavior change**.
+The frozen stats-file telemetry shape and TypeScript bindings are unchanged.
+
+Run `cargo test --lib srt_handshake`, `cargo test --lib packet_io`, and
+`cargo test --test parser_proptest`. `cargo test --test negotiated_latency` runs
+the real binary against a loopback UDP test peer and queries its Unix control socket.
+Tests use the committed real 2000ms capture,
+including a one-byte extension-type failure control and unchanged forwarding bytes.
 
 ### Duplicate-DATA receiver spike (test builds only)
 
@@ -1073,6 +1101,9 @@ with.
  "links":[{"conn_id":"0","iface":"wwan0","link_id":"modem-a"}]}
 ```
 
+It also includes `negotiated_latency_ms` when a nonzero receiver delay has been
+sniffed from HSRSP; see [Negotiated SRT latency](#negotiated-srt-latency-passive-observation).
+
 ## Startup Without an IP List (Unix)
 
 A missing, empty, or all-invalid `BIND_IPS_FILE` at startup is not fatal. The
@@ -1163,6 +1194,7 @@ With properly configured connections, you should observe:
 - Window sizes and in-flight packet counts
 - RTT measurements and connection quality metrics
 - Current mode and configuration
+- Last observed negotiated SRT receiver latency in milliseconds (unknown before HSRSP)
 
 **Debug logs** (when `RUST_LOG=debug`) show:
 
