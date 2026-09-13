@@ -586,6 +586,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "rand 0.10.2",
+ "serde",
+ "serde_json",
  "sha2",
  "tempfile",
  "tracing",
