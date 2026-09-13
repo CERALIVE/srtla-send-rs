@@ -573,8 +573,9 @@ bits over `(now−2000ms, now]`, divided by two seconds. It is not viewer goodpu
 existing send-rate telemetry. Equal-ms credits share a bucket, bounding the ring at
 2000 buckets. Recovery and socket replacement clear evidence and advance its generation.
 Explicit old-generation ACK tokens cannot consume even a reused sequence. Wire ACKs
-themselves have no generation; queued reader-event generation propagation remains
-an integration obligation, not a wire authentication guarantee.
+themselves have no generation. Reader events now capture a generation token that
+the new adaptive ACK policy checks; legacy modes retain their previous behavior.
+This is local stale-reader fencing, not a wire authentication guarantee.
 
 Run `cargo test --lib health_delivery`. The scenario-D fixture sends 40 DATA packets,
 processes five keepalive RTT replies over four deterministic seconds, and drains the
@@ -598,7 +599,8 @@ cohorts, not retrospective send-cohort attribution.
 original cohort-end timestamp; late polling cannot make stale evidence fresh.
 `loss_cohort_ok(now, stale_after_ms)` rejects sub-floor/stale cohorts, while retained
 evidence remains readable for clearance. Recovery/socket replacement resets it.
-`probe_loss()` remains unknown (`None`) until probe-train tracking is implemented.
+`probe_loss()` remains unknown (`None`) until two completed probe trains provide
+evidence; the probe mechanism below supplies it independently of normal cohorts.
 
 The independent queue detector compares raw RTT minima over the last **1 second**
 and **30 seconds**: `queue_delay_ms = max(0, (fast_min - slow_min) / 2)`.
@@ -640,6 +642,40 @@ Run `cargo test --lib srt_handshake`, `cargo test --lib packet_io`, and
 the real binary against a loopback UDP test peer and queries its Unix control socket.
 Tests use the committed real 2000ms capture,
 including a one-byte extension-type failure control and unchanged forwarding bytes.
+
+### Duplicate DATA probes (selection integration pending)
+
+The production-ready mechanism in `src/connection/probe.rs` supplies an owned,
+bond-wide token bucket capped at **10 probes/s**, with no accumulated idle burst.
+Ten-copy trains rotate across Stalled/Degraded links explicitly held by the future
+deadline policy, never Down/Healthy/Rejoining or the elected sole carrier.
+**No scheduler invokes this mechanism yet, and no adaptive CLI mode is added.**
+The later selection integration supplies eligible targets and DATA already sent
+successfully on its normal carrier; probes do not change switch/cooldown history.
+
+Copies use the alternate's normal unpadded batch path, preserving every byte except
+clearing SRT byte 4's retransmit mask `0x04`, as measured by the receiver spike.
+Only kernel-accepted copies enter the separate, 256-entry LRU probe log. They never
+enter the sequence tracker, normal packet log, original delivery ledger or in-flight
+accounting. Five ACKs from ten distinct copies within `2*m seconds + sRTT` make a
+train OK, where m is the number of eligible held links. Expired/incomplete trains
+contribute losses; two finished trains provide probe-loss evidence. Idle history
+expires, and the future health sampler must advance it before reading.
+
+Adaptive ACK attribution checks the reader's captured socket generation, then looks
+only in the **arrival link's** probe log and original ledger. An ACK arriving on A
+cannot consume B's probe or vice versa, even with the same sequence and either
+arrival order. Replayed/expired probe ACKs cannot fall back to another link's
+original. Probe proof refreshes health only: no window growth or original delivered
+bitrate credit. All four existing modes retain their legacy attribution and growth.
+
+Accepted probe bytes count in `bytes_sent_total` and `bitrate_bps` because duplicate
+DATA costs wire capacity too; their unsent suffixes do not count. `probes_sent` is
+status-log-only, not a new telemetry JSON field. The original feature-only spike
+hook retains its direct-send/no-accounting behavior. Run `cargo test --lib probe`,
+then the separate unchanged `cargo test --lib ack_rtt` and `cargo test --lib batch_io`
+suites. Coverage uses real loopback UDP and deterministic clocks, not bonded-hardware
+performance measurements.
 
 ### Duplicate-DATA receiver spike (test builds only)
 
@@ -990,6 +1026,11 @@ the same kind of number as `bitrate_bps` sitting next to it:
 It counts SRT DATA at full wire length, so SRT-level retransmits are included (they
 really do cost the data plan twice); SRTLA control frames — keepalives and registration
 — are excluded, matching `bitrate_bps`.
+
+The duplicate-probe mechanism also counts accepted DATA copies at full wire length
+in both fields. It adds these bytes at accepted-prefix processing rather than
+queueing, so an unsent probe suffix is excluded; normal DATA queue-time accounting
+is unchanged. Probes remain unwired to selection until the adaptive integration.
 
 **It resets only when the sender process does**, which is once per streaming session:
 
