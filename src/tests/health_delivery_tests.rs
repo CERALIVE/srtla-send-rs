@@ -30,6 +30,7 @@ fn health(conn: &SrtlaConnection) -> HealthState {
             connected: conn.connected,
             socket_valid: true,
             iface_present: true,
+            route_health: crate::connection::route::RouteHealth::Unknown,
             attempts_since_proof: conn.delivery.attempts_since_proof,
             proof_age_ms: conn.delivery.proof_age_ms(now_ms()),
             srtt_ms: conn.has_rtt_sample().then(|| conn.get_smooth_rtt_ms()),

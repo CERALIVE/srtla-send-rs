@@ -9,6 +9,7 @@ pub(super) fn signals(now_ms: u64) -> HealthSignals {
         connected: true,
         socket_valid: true,
         iface_present: true,
+        route_health: crate::connection::route::RouteHealth::Unknown,
         attempts_since_proof: 0,
         proof_age_ms: Some(0),
         srtt_ms: Some(40.0),
