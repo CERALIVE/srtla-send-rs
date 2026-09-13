@@ -580,11 +580,18 @@ but housekeeping transitions and lifecycle reset integration remain separate wor
 Hard failures enter Down; restored connections enter Rejoining rather than skipping
 the ramp. Stalling requires both 32 attempts without DATA proof and proof age ≥τ,
 where τ = clamp(4×sRTT, 1000, 3000) ms (3000 ms without a sample). Degradation uses
-qualifying normal-loss EWMA ≥10% or queue delay ≥max(10, 0.25×slow-min-RTT) ms.
+qualifying normal-loss EWMA ≥10%, queue delay ≥max(10, 0.25×slow-min-RTT) ms,
+or an independently observed `RouteHealth::NoDefaultRoute`.
 Recovery requires continuous clearance for τ: loss ≤5% and queue delay
 ≤max(5, 0.125×slow-min-RTT) ms. A loss-triggered demotion retains its evidence
 requirement; after 10 seconds without a valid normal cohort, only complete probe-train
 loss evidence can clear it. A queue-only demotion needs no invented normal-loss sample.
+Route-only degradation likewise creates no loss/queue evidence. Missing routes
+block clearance even after those measurements recover. Unknown route observations
+neither degrade a previously unobserved link nor clear a latched absence; a known
+default route must return, followed by the same uninterrupted τ clearance dwell.
+`HealthMachine::route_latched()` exposes that distinct cause. HealthConstants retain
+all existing values; route recovery reuses τ instead of adding a new tuning knob.
 
 Probe recovery assumes two 10-copy trains sharing a bond-wide 10-probes/s budget.
 For `m` held links, train period is `m×1000` ms and the rejoin evidence window is
