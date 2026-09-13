@@ -549,6 +549,39 @@ Run `cargo test --lib health`. The table/property tests cover all edges, thresho
 gaps, stale-loss probe recovery, feasible cadence, and repeated relapse. These are
 pure policy tests, not evidence of a live obstruction fix or hardware performance.
 
+### DATA delivery evidence (health integration pending)
+
+Each connection owns an independent `DeliveryLedger` (`src/connection/delivery.rs`).
+Only kernel-accepted DATA enters it: `SrtlaConnection::flush_batch`, implemented in
+`src/connection/transmit.rs`, records the accepted prefix's sequence, acceptance
+time and actual wire length, including a prefix sent before a later transmit error.
+Queueing, failed sends, keepalive RTT, cumulative SRT ACKs and NAKs are not proof.
+Existing telemetry byte accounting stays at queue time.
+
+A link-specific SRTLA ACK consumes its ledger entry, resets attempts without proof,
+stamps DATA proof time and credits the wire bytes. Cumulative ACKs and NAKs may have
+already removed that sequence from the congestion packet log; they cannot erase
+its independent delivery evidence. Legacy ACK return values, window growth and RTT
+handling remain tied to the original packet log, independently of the ledger.
+
+The ledger retains at most 4096 entries, expiring ages greater than 6000ms and
+otherwise evicting the least recently used sequence (retransmission refreshes it).
+`proof_age_ms(now_ms)` measures from first acceptance until initial proof, then from
+last proof; idle/reset returns unknown. `delivered_bps(now_ms)` counts credited wire
+bits over `(now−2000ms, now]`, divided by two seconds. It is not viewer goodput or the
+existing send-rate telemetry. Equal-ms credits share a bucket, bounding the ring at
+2000 buckets. Recovery and socket replacement clear evidence and advance its generation.
+Explicit old-generation ACK tokens cannot consume even a reused sequence. Wire ACKs
+themselves have no generation; queued reader-event generation propagation remains
+an integration obligation, not a wire authentication guarantee.
+
+Run `cargo test --lib health_delivery`. The scenario-D fixture sends 40 DATA packets,
+processes five keepalive RTT replies over four deterministic seconds, and drains the
+packet log with three NAK frames. Its ledger-fed health step is Stalled while the
+preserved legacy predicate control is **not stalled**. This proves the detection
+gap, not a running-scheduler fix: HealthMachine wiring and probe recovery remain
+separate work, and no real bonded-hardware improvement is claimed.
+
 ### Duplicate-DATA receiver spike (test builds only)
 
 `tests/netns_dup_spike.rs` is an ignored, privileged experiment using two registered
