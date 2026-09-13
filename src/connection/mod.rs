@@ -3,6 +3,7 @@ pub mod batch_recv;
 pub mod batch_send;
 mod bitrate;
 mod congestion;
+pub mod delivery;
 pub mod egress;
 pub mod health;
 mod incoming;
