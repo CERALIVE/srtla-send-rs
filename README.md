@@ -317,6 +317,77 @@ isolation/restoration, and Direct/NAT replug. These are kernel wire-carriage tes
 not useful-SRT-goodput or hardware-performance claims. The pre-existing A/B runner
 now calls `network_sim::bond::configure_bond_routing` rather than owning that setup.
 
+### Temporal network profiles
+
+`network_sim::profile` supplies `Profile`, `LinkProfile`, `TimedEvent`, `Action`,
+`Scheduler`, `EventLog`, and the `BondRuntime` adapter. Create the bond and stack,
+construct `BondRuntime::new(&profile, &topology, ProcessEndpoints { sender,
+receiver, offered_rate })`, then run `Scheduler::new(&profile)?.run(&mut |event|
+runtime.apply(event))`. The offered-rate callback must update the actual source;
+it is not a simulated throughput counter. The adapter uses stack receiver port 5000.
+
+`TimedEvent::new` defaults observation tails to 30 seconds for impairment,
+obstruction, restart, flap, route and reorder events, and 5 seconds for periodic
+events. Offered-rate/cross-traffic edges default to zero. `graded` labels events
+for later metrics; it does not bypass validation. Explicit short smoke tests can
+set their own horizon. One-shot state changes have zero hold unless an explicit
+later event restores their previous state on the same link/property; that restore
+ends the hold. Irreversible restart/replug operations have zero one-shot hold.
+
+`Periodic { every, action, hold, until }` emits onsets at `at + n*every <= until`,
+not until the run's duration. State-changing actions restore their pre-onset value
+after `hold`; restart/replug execute once per onset without an artificial inverse.
+Validation requires each actual onset + hold + horizon to fit the duration.
+Nested periodic declarations, zero intervals/holds, overlapping writes to a held
+property, invalid link scopes/permutations and expansion above one million events
+are rejected. Equal-time restores precede new onsets; other equal-time events keep
+declaration order. `Profile::from_random_walk(ScenarioConfig)` preserves seeded
+samples, clips the legacy generator's overshooting final frame, and marks updates
+ungraded with zero horizons.
+
+The synchronous runner anchors `std::time::Instant` on its first run, waits through
+the full duration, and logs each successfully applied event with its actual elapsed
+milliseconds. Running it again cannot repeat events. Application failure stops the
+run, preserves prior successful log entries, and prevents a partial action retry.
+
+Every generic bond owns a composed `LinkQdisc`: root `prio` handle `1:` with all
+sixteen priomap entries zero; band `1:1` has netem `10:` or TBF `10:` → netem `11:`;
+band `1:2` has `netem loss 100%` handle `20:`. `DataBlackhole` toggles only the
+priority-10 IPv4 u32 filter `match u16 0x0400 0xfc00 at 2 flowid 1:2` (IP lengths
+1024–2047, **not** all larger packets). Thus 1316B UDP DATA drops while 38B
+keepalives pass. Impairment updates replace only band one; a qdisc-kind change
+detaches only that band, never the root or classifier. The legacy free
+`apply_impairment` still clears its root and must not be used on generic bonds.
+
+`ImpairmentConfig` additionally supports `queue_limit` (netem packets),
+`delay_distribution: Normal | Pareto` (requires positive jitter), and
+`tbf_latency_ms` (default 1s). Composed netem defaults to 1000 packets. With a netem
+child, that child's packet limit governs backlog; TBF's emitted latency parameter
+is not an independent end-to-end latency guarantee. Link-up reinstalls source
+routes removed by Linux on link-down. Runtime replug reapplies the configured
+impairment/blackhole and preserves explicit route/link state.
+
+Cross-traffic runs `iperf3 -u -b <mbit>M`, or a paced Python UDP fallback, bound to
+both the selected source IP and device. Its server runs in the receiver namespace;
+its handles use process-only teardown. `NamespaceProcess::pid()` reports the exact
+inner PID discovered from namespace PID differences plus wrapper ancestry, never
+the sudo PID. `restart_process_only()` rejects exited processes with typed
+`ProcessControlError::AlreadyExited`, otherwise TERM→KILLs only that process and
+respawns the same argv/environment. `SrtlaTestStack::restart_receiver()` exposes it
+on the legacy stack. Ordinary handles retain namespace-wide final teardown.
+`SighupReorder` publishes the requested topology-index order, advances mapped
+sidecar generation coherently, then signals only the sender with HUP.
+
+The `netns_bond` target includes real DATA/keepalive probes before, during and after
+mid-blackhole updates, a ten-second live profile, receiver-only restart isolation,
+both cross-traffic backends, and topology/control dispatch. Run bounded:
+
+```bash
+cargo test -p network-sim --lib profile
+cargo clippy -p network-sim -- -D warnings
+timeout --foreground --kill-after=10s 120s cargo test --test netns_bond -- --nocapture
+```
+
 ### Duplicate-DATA receiver spike (test builds only)
 
 `tests/netns_dup_spike.rs` is an ignored, privileged experiment using two registered
