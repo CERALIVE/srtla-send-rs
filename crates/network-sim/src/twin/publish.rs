@@ -22,6 +22,7 @@ use sha2::{Digest, Sha256};
 pub struct TwinRow {
     pub link_id: String,
     pub iface: String,
+    pub priority: Option<f64>,
 }
 
 impl TwinRow {
@@ -29,6 +30,14 @@ impl TwinRow {
         Self {
             link_id: link_id.to_string(),
             iface: iface.to_string(),
+            priority: None,
+        }
+    }
+
+    pub fn with_priority(link_id: &str, iface: &str, priority: f64) -> Self {
+        Self {
+            priority: Some(priority),
+            ..Self::new(link_id, iface)
         }
     }
 }
@@ -119,9 +128,13 @@ fn sidecar_json(generation: u64, digest: &str, ip: &str, rows: &[TwinRow]) -> St
     let links = rows
         .iter()
         .map(|row| {
+            let priority = match row.priority {
+                Some(value) => format!(r#","priority":{value}"#),
+                None => String::new(),
+            };
             format!(
-                r#"{{"link_id":"{}","ip":"{}","iface":"{}"}}"#,
-                row.link_id, ip, row.iface
+                r#"{{"link_id":"{}","ip":"{}","iface":"{}"{priority}}}"#,
+                row.link_id, ip, row.iface,
             )
         })
         .collect::<Vec<_>>()
@@ -152,4 +165,35 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
         .with_context(|| format!("tighten {}", temp.display()))?;
     std::fs::rename(&temp, path).with_context(|| format!("commit {}", path.display()))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_sidecar_bytes_unchanged_without_priority() {
+        // Given: the legacy two-row publisher input.
+        let rows = [TwinRow::new("twin-a", "ts0"), TwinRow::new("twin-b", "ts1")];
+        // When: serializing without priorities.
+        let actual = sidecar_json(7, "digest", "10.30.9.1", &rows);
+        // Then: the exact pre-extension bytes, not just equivalent JSON.
+        assert_eq!(actual.as_bytes(), br#"{"schema_version":1,"generation":7,"ips_file_sha256":"digest","links":[{"link_id":"twin-a","ip":"10.30.9.1","iface":"ts0"},{"link_id":"twin-b","ip":"10.30.9.1","iface":"ts1"}]}"#);
+    }
+
+    #[test]
+    fn priority_is_emitted_only_for_the_row_that_supplies_it() {
+        // Given: one prioritized row and one legacy row.
+        let rows = [
+            TwinRow::with_priority("a", "ts0", 0.5),
+            TwinRow::new("b", "ts1"),
+        ];
+        // When: serializing the mixed pair.
+        let actual = sidecar_json(1, "digest", "10.30.9.1", &rows);
+        // Then: priority is additive and absent stays absent.
+        assert_eq!(
+            actual,
+            r#"{"schema_version":1,"generation":1,"ips_file_sha256":"digest","links":[{"link_id":"a","ip":"10.30.9.1","iface":"ts0","priority":0.5},{"link_id":"b","ip":"10.30.9.1","iface":"ts1"}]}"#
+        );
+    }
 }
