@@ -582,6 +582,37 @@ preserved legacy predicate control is **not stalled**. This proves the detection
 gap, not a running-scheduler fix: HealthMachine wiring and probe recovery remain
 separate work, and no real bonded-hardware improvement is claimed.
 
+### Loss and queue evidence (health integration pending)
+
+Each connection now tracks normal-DATA loss in 1000ms cohorts. Only kernel-accepted
+sends count as load; only unique NAK hits in that link's normal packet log count as
+loss. Cohorts with at least **100 sends** feed `NAKs / sends` into an alpha-0.2
+EWMA. Smaller cohorts are discarded, so a starved link's 50 sends and 50 NAKs do
+not create or change its loss estimate. Duplicate/foreign NAKs, unsent suffixes,
+control frames and direct probe copies are excluded. These are observation-time
+cohorts, not retrospective send-cohort attribution.
+
+`LossTracker::advance(now_ms)` closes elapsed cohorts, including on idle reads.
+`last_value()` and `last_cohort_ms()` preserve the last qualifying estimate and its
+original cohort-end timestamp; late polling cannot make stale evidence fresh.
+`loss_cohort_ok(now, stale_after_ms)` rejects sub-floor/stale cohorts, while retained
+evidence remains readable for clearance. Recovery/socket replacement resets it.
+`probe_loss()` remains unknown (`None`) until probe-train tracking is implemented.
+
+The independent queue detector compares raw RTT minima over the last **1 second**
+and **30 seconds**: `queue_delay_ms = max(0, (fast_min - slow_min) / 2)`.
+`RttTracker::slow_min_rtt_ms()` supplies its time-based slow floor. Both reads
+exclude expired observations even without new samples; absent evidence returns 0.
+Monotonic minimum candidates and same-millisecond coalescing bound storage without
+changing the time-window result. **Legacy sample-count RTT minima and BLEST/EDPF
+selection are untouched.** These trackers do not yet drive HealthMachine or change
+telemetry, CLI options, or scheduler decisions.
+
+Run `cargo test --lib loss`, `cargo test --lib queue_delay`, and
+`cargo test --lib rtt`. Coverage includes the load guard, stale evidence, EWMA
+convergence, synthetic ramp/jitter, actual partial UDP sends, unique attribution,
+and the unchanged legacy RTT behavior. No bonded-hardware improvement is claimed.
+
 ### Duplicate-DATA receiver spike (test builds only)
 
 `tests/netns_dup_spike.rs` is an ignored, privileged experiment using two registered
