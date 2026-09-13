@@ -283,7 +283,7 @@ pub enum CmdResponse {
 /// Apply a runtime command to the configuration.
 ///
 /// Commands:
-/// - `mode classic|enhanced|rtt-threshold|edpf` - switch scheduling mode
+/// - `mode classic|enhanced|rtt-threshold|edpf|adaptive` - switch scheduling mode
 /// - `quality on|off` - toggle quality scoring
 /// - `explore on|off` - toggle exploration
 /// - `rtt-delta <ms>` - set RTT delta threshold
@@ -309,7 +309,7 @@ pub fn apply_cmd(config: &DynamicConfig, cmd: &str, stats: Option<&SharedStats>)
     match parts[0] {
         "mode" => {
             if parts.len() != 2 {
-                warn!("usage: mode classic|enhanced|rtt-threshold|edpf");
+                warn!("usage: mode classic|enhanced|rtt-threshold|edpf|adaptive");
                 return CmdResponse::None;
             }
             match parts[1] {
@@ -329,9 +329,14 @@ pub fn apply_cmd(config: &DynamicConfig, cmd: &str, stats: Option<&SharedStats>)
                     config.set_mode(SchedulingMode::Edpf);
                     info!("mode: edpf");
                 }
+                "adaptive" => {
+                    config.set_mode(SchedulingMode::Adaptive);
+                    info!("mode: adaptive");
+                }
                 other => {
                     warn!(
-                        "unknown mode '{}': use classic, enhanced, rtt-threshold, or edpf",
+                        "unknown mode '{}': use classic, enhanced, rtt-threshold, edpf, or \
+                         adaptive",
                         other
                     );
                 }
