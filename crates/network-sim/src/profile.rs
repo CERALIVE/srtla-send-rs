@@ -3,10 +3,13 @@
 mod action;
 mod expansion;
 pub mod qdisc;
+mod runtime;
 mod scheduler;
+pub mod traffic;
 use std::time::Duration;
 
 use anyhow::{Result, ensure};
+pub use runtime::{BondRuntime, ProcessEndpoints};
 pub use scheduler::{EventLog, EventRecord, Scheduler};
 
 use crate::bond::CarrierMode;

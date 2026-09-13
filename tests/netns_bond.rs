@@ -1,5 +1,9 @@
 //! Real kernel coverage for mixed and shared-IP bonds. Wire carriage is not SRT goodput.
 
+#[path = "netns_bond/controls.rs"]
+mod controls;
+#[path = "netns_bond/profile.rs"]
+mod profile;
 #[path = "netns_bond/stack.rs"]
 mod stack;
 

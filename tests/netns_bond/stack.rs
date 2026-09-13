@@ -31,7 +31,7 @@ pub fn available() -> bool {
 // Handles precede the topology: NamespaceProcess kills exact namespace PIDs on drop.
 pub struct Stack {
     pub sender: NamespaceProcess,
-    processes: Vec<NamespaceProcess>,
+    pub processes: Vec<NamespaceProcess>,
     pub topo: BondTopology,
 }
 
