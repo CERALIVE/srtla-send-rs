@@ -344,8 +344,9 @@ CeraUI and the device integration depend on these staying stable:
   top-level (whole bond) and per-connection. **Unit is BYTES, and no ×8 is applied** —
   it is a count, not a rate, and it sits directly beside `bitrate_bps` (bits/s), which
   is the one place a consumer is most likely to introduce a factor-of-8 bug. Counted at
-  the same call site as `bitrate_bps` (`queue_data_packet`), so DATA and SRT-level
-  retransmits are IN and control frames are OUT, by construction. **Monotonic for the
+  the same call site as `bitrate_bps` (`queue_data_packet` for originals and SRT-level
+  retransmits; accepted-prefix processing for duplicate probes). Both DATA forms are
+  IN and control frames are OUT, by construction. **Monotonic for the
   process lifetime:** it does NOT reset on a per-link socket replacement
   (`BitrateTracker::reset` rebases the rate window instead of zeroing the total) and
   does NOT regress when a SIGHUP reload drops a link — the bond figure is a delta-banking
@@ -957,7 +958,7 @@ socket_generation }` hit stamps proof, resets attempts and credits its length ev
 if a cumulative ACK or NAK already pruned `packet_log`. Its existing bool return,
 RTT sampling, legacy stamp and window growth remain packet-log-dependent. Never
 make these legacy effects depend on the new ledger, or require a packet-log hit
-for DATA proof. Keepalive, cumulative ACK and NAK never stamp DATA proof. Future
+for DATA proof. Keepalive, cumulative ACK and NAK never stamp DATA proof. Duplicate
 probe hits must use the probe log rather than inserting copies into this ledger.
 
 `proof_age_ms(now_ms)` returns elapsed since first accepted attempt before first
@@ -970,10 +971,10 @@ so the retained ring is bounded by 2000 buckets without losing high-PPS samples.
 `reset_core_state` clears all evidence and wrapping-increments generation for both
 `mark_for_recovery` and successful socket replacement. Ledger lookups check BOTH the
 caller token and entry generation. An old token cannot consume a reused current
-sequence. **Reader-event generation propagation is still an integration obligation:**
-the legacy sequence-only ACK handler supplies the current connection generation;
-SRTLA wire ACKs carry no generation and cannot authenticate one. Do not confuse
-ledger invalidation/token checking with completed stale-reader queue fencing.
+sequence. Todo 19 propagates captured reader generations through `UplinkPacket`
+and fences them in the adaptive ACK policy. The legacy sequence-only handler still
+supplies the current generation intentionally. SRTLA wire ACKs carry no generation:
+local reader fencing is not wire authentication.
 
 Tests: `cargo test --lib health_delivery` includes the seven required named cases,
 the permanent `legacy_stall_predicate_misses_scenario_d` control, expiry/LRU/rate/token
@@ -983,7 +984,7 @@ sends, five real keepalive-handler replies at 10–14s, and three NAK frames rem
 `utils::test_clock` is a cfg(test)-only, scoped, thread-local !Send override for these
 current-thread tests; production/test-internals-only builds retain the real monotonic
 clock. No sleeps or global clock replacement; existing frozen flag tests are unchanged.
-HealthMachine runtime wiring, probe production and hardware validation remain later work.
+HealthMachine runtime wiring, probe selection and hardware validation remain later work.
 
 ## LOSS / QUEUE EVIDENCE (scheduler evaluation, Todo 17)
 
@@ -1007,8 +1008,8 @@ The future health sampler must call `advance(now)` even for idle links, then rea
 and `is_stale(now, stale_after_ms)` (unknown or age >= threshold). Discarding a
 cohort disables qualification without deleting a retained clearance estimate.
 Recovery/socket replacement reconstruct loss state at `reset_core_state`.
-`probe_loss() -> Option<f64>` reads a default-None `pub(crate)` field reserved for
-Todo 19's unacknowledged-copy fraction over the last `rejoin_rounds` trains.
+`probe_loss() -> Option<f64>` reads the default-None `pub(crate)` field populated by
+Todo 19's `advance_probes(now_ms)` from the last two finished probe trains.
 
 `RttTracker` adds separate `rtt_obs_fast` / `rtt_obs_slow` time windows over raw RTT
 observations. `queue_delay_ms() -> f64` is `max(0, (fast_min - slow_min) / 2)`
@@ -1069,6 +1070,67 @@ registration with a loopback UDP test peer, checking the returned datagram verba
 and querying the live Unix `get-status`. Both captured-HSRSP and flipped-type cases
 are bounded to ten seconds; temporary paths and ports are per test. This exercises
 production handle propagation, not a second live-libsrt capture or hardware gate.
+
+## DUPLICATE DATA PROBES (scheduler evaluation, Todo 19)
+
+`connection::probe::ProbeScheduler` is owned per future send loop, never global.
+`next(targets, now_ms)` uses a one-token bucket capped at `PROBE_MAX_PPS=10`:
+no idle burst, `with_rate(0)` disables emission, overrides cannot exceed the cap.
+Ten-slot trains (`PROBE_TRAIN_LEN=10`) rotate by stable connection ID; a generation
+change or eligibility loss abandons the current train. `ProbeTarget` explicitly
+carries `{conn_id, socket_generation, health, deadline_held, sole_carrier, srtt_ms}`.
+Only Stalled/Degraded AND deadline-held, non-sole-carrier targets are eligible.
+There is still **no adaptive CLI mode or selection-pipeline call**. Todo 22 owns
+the decision to invoke `emit(connections, ProbeOpportunity { primary_conn_id,
+packet, targets })` after the original DATA send succeeds. Skipped opportunities
+consume pacing slots conservatively; incomplete trains never qualify for recovery.
+
+Production emission reuses the spike's wire-copy primitive in
+`sender/duplicate_data.rs`, clearing **SRT byte 4 mask 0x04** and changing no other
+byte. `queue_probe_packet` inserts a distinct probe kind into the normal unpadded
+BatchSender. It rejects stale dispatches and same-link original/probe sequence
+collisions. Queued probes do not enter `queued_count()`'s congestion load. Normal
+`FlushOutcome.accepted` stays unchanged; new `probes` metadata reports only the
+kernel-accepted probe prefix. Probe sends never call `register_packet`, insert
+into DeliveryLedger/SequenceTracker, or modify selector switch history. The emitter
+refuses a queued suffix and rebases pacing after I/O to avoid delayed-send bursts.
+`ProbeEmission { conn_id, outcome }` identifies the link the caller must recover
+and remove from SequenceTracker on an error, exactly as for normal flush errors.
+
+Each connection owns `probes: ProbeLog`, containing `probe_log: FxHashMap<i32,u64>`
+(sequence → acceptance ms), a bounded 256-entry LRU, and at most 32 train records
+with inline ten-sequence lists. A train's inclusive ACK deadline is its start plus
+`2000*m + srtt_ms`, with m captured from eligible held links. Only ten distinct
+accepted sequences with at least five ACKs qualify as OK; replays cannot re-credit
+a train. Expired trains fail when below that threshold. Loss is missing slots /20
+over the last two finished (all-ACKed or expired) trains; incomplete trains count
+their missing slots as losses. Dividing the integer loss count avoids rounding
+5% just above the clearance threshold. `rounds_ok()` returns the consecutive
+count and oldest contributing start. History expires after twice its train timeout;
+HealthSignals must still enforce its own rejoin-span age bound. Todo 23 must call
+`advance_probes(now)` on idle links before reading loss/rounds. Recovery and socket
+replacement clear logs/trains with the delivery generation; `probes_sent` remains
+cumulative for the connection lifetime.
+
+`UplinkPacket` is now `{conn_id, reader_generation: u32, bytes}`; both reader send
+sites capture the generation at spawn, and sync/restart pass it explicitly.
+`packet_handler::apply_srtla_ack` re-exports the implementation in `sender/ack.rs`:
+`AckContext { arrival_idx, reader_generation, policy: AckPolicy }`. Adaptive first
+rejects a stale token, then consumes ONLY the arrival link's probe log or original
+delivery ledger. Probe proof refreshes DATA health but never original delivered
+bitrate, window, packet_log or in-flight. No cross-link scan exists in this arm.
+`AckPolicy::from_config` exhaustively maps all four current modes to the unchanged
+legacy first-match/global-growth arm; adding a mode must explicitly extend it.
+Test-only adapters preserve the frozen ACK-RTT, batch-I/O and earned-ACK suites
+byte-for-byte while calling the same production implementations.
+
+Probe-only NAKs never enter normal loss accounting. Accepted probe bytes DO update
+BitrateTracker's total and rate, including an accepted prefix before a flush error
+(ADR-002); unsent probe suffixes do not. `probes_sent` appears only as a structured
+field in the existing 30s status log when nonzero. No telemetry JSON keys, schema
+version, runtime flags, selection policy or hardware-performance claim are added.
+Gate: `cargo test --lib probe`; separate `cargo test --lib ack_rtt` and
+`cargo test --lib batch_io`; `cargo clippy -- -D warnings`.
 
 ## CODEBASE (inherited from upstream)
 
