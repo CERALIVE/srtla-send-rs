@@ -28,6 +28,7 @@ use crate::bind_map::BindMapReport;
 use crate::config::ConfigSnapshot;
 use crate::connection::SrtlaConnection;
 use crate::sender::calculate_quality_multiplier;
+use crate::sender::pool_control::{PoolControlHandle, PoolControlReceiver};
 use crate::utils::now_ms;
 
 /// Per-link statistics.
@@ -204,6 +205,7 @@ pub struct SharedStats {
     session_bytes: Arc<Mutex<SessionBytes>>,
     bind_map: Arc<RwLock<BindMapReport>>,
     negotiated_latency_ms: Arc<AtomicU32>,
+    pool_control: Arc<RwLock<Option<PoolControlHandle>>>,
 }
 
 impl SharedStats {
@@ -213,7 +215,24 @@ impl SharedStats {
             session_bytes: Arc::new(Mutex::new(SessionBytes::default())),
             bind_map: Arc::new(RwLock::new(BindMapReport::default())),
             negotiated_latency_ms: Arc::new(AtomicU32::new(0)),
+            pool_control: Arc::default(),
         }
+    }
+
+    pub fn pool_control(&self) -> Option<PoolControlHandle> {
+        self.pool_control
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    pub(crate) fn attach_pool_control(&self) -> PoolControlReceiver {
+        let (handle, receiver) = PoolControlReceiver::channel();
+        *self
+            .pool_control
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = Some(handle);
+        receiver
     }
 
     /// Last observed receiver TSBPD delay; zero denotes unknown. Never takes a snapshot lock.

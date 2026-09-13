@@ -6,6 +6,11 @@ mod egress_tick;
 pub(crate) mod housekeeping;
 mod links;
 pub(crate) mod packet_handler;
+pub mod pool_control;
+#[cfg(test)]
+mod pool_control_runtime_tests;
+#[cfg(test)]
+mod pool_control_tests;
 #[cfg(test)]
 mod probe_reader_tests;
 #[cfg(unix)]
@@ -248,6 +253,8 @@ pub async fn run_sender_with_config(
         }
     }
 
+    let mut pool_control = shared_stats.attach_pool_control();
+
     // Emit an initial snapshot immediately so a consumer (stats file or event
     // subscriber) sees fresh state well before the first cadence tick. Build it
     // once and hand the identical bytes to both sinks.
@@ -269,6 +276,9 @@ pub async fn run_sender_with_config(
         ($($sighup_branch:tt)*) => {
             loop {
                 tokio::select! {
+                    Some(request) = pool_control.recv() => {
+                        request.apply(&mut connections);
+                    }
                     res = local_listener.recv_from(&mut recv_buf) => {
                         let config_snap = config.snapshot();
                         handle_srt_packet(
@@ -351,6 +361,7 @@ pub async fn run_sender_with_config(
                             && let Some(new_links) = changes.new_links
                         {
                             info!("applying queued connection changes: {} IPs", new_links.len());
+                            pool_control.close_for_reload();
                             apply_link_changes(
                                 &mut connections,
                                 &new_links,
@@ -360,6 +371,7 @@ pub async fn run_sender_with_config(
                                 &mut seq_tracker,
                                 &mut reg,
                             ).await;
+                            pool_control = shared_stats.attach_pool_control();
                             info!("connection changes applied successfully");
                             sync_readers(&connections, &mut reader_handles, &packet_tx);
                             // Bootstrap registration if we empty-started: start_probing
