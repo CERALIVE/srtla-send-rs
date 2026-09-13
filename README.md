@@ -275,6 +275,39 @@ covers reload remove/re-add under a stable `link_id`, a file-order swap that rec
 socket, an unplug/replug recovering on a new ifindex, and a route-removal blackhole being
 reported rather than read as healthy.
 
+### Duplicate-DATA receiver spike (test builds only)
+
+`tests/netns_dup_spike.rs` is an ignored, privileged experiment using two registered
+uplinks, the **CeraLive** receiver from `SRTLA_REPO/build-pkg/srtla_rec` (or
+`build/srtla_rec`), real `srt-live-transmit`, and a Python UDP sink. Build that
+receiver first; a PATH-only receiver is deliberately not accepted. Run with:
+
+```bash
+SRTLA_REPO=/absolute/path/to/ceralive-srtla \
+  timeout --foreground --kill-after=10s 180s \
+  cargo test --features test-internals --test netns_dup_spike -- --ignored --nocapture
+```
+
+Optional `DUP_SPIKE_OUTPUT` retains the pcap, full stats CSV, process logs, byte
+streams, JSON results and decision in a fresh output directory. Each variant sends
+3000 × 1316-byte messages over 15 seconds (200 pps), with receiver
+`latency=2000&lossmaxttl=40`. A/B require at least 250 duplicate sequences at the
+receiver's **loopback SRT input**, exact source/sink bytes, and full unique-packet
+coverage. A fresh unregistered UDP port must put 50 replays on the receiver's
+external interface and **zero** duplicates on loopback. Captures must have zero
+kernel drops. The wire decision minimizes `belated + retransmitted` receiver events
+(equal weights; ties choose clear), rather than prioritizing one counter lexically.
+
+Only `test-internals` builds recognize `SRTLA_TEST_DUP_EVERY=<positive n>` and
+`SRTLA_TEST_DUP_RETX_BIT=0|1`. Both must be valid to activate the hook. Every nth
+complete DATA frame is selected for copying to another registered, non-timed-out
+uplink. The primary batch is flushed first; an error or retained partial-send suffix
+suppresses the copy. The alternate's own bound socket sends directly, bypassing
+batch queue, packet log, in-flight, bitrate and sequence ownership. Only the copy's
+SRT byte **4**, bit **2** (`0x04`, second header word bit 26) is changed. No hook code
+or environment names are compiled into ordinary release builds. This is an isolated
+receiver-dedup experiment, not a production scheduler or hardware-validation claim.
+
 ## Usage
 
 ```bash

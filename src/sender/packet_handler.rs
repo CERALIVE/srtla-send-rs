@@ -391,6 +391,11 @@ pub async fn forward_via_connection(
         seq_tracker.insert(s, conn_id, packet_time_ms);
     }
 
+    #[cfg(feature = "test-internals")]
+    let duplicate = super::duplicate_data::target(connections, sel_idx, pkt);
+    #[cfg(feature = "test-internals")]
+    let needs_flush = needs_flush || duplicate.is_some();
+
     // Flush if batch threshold reached
     if needs_flush {
         let conn = &mut connections[sel_idx];
@@ -401,7 +406,17 @@ pub async fn forward_via_connection(
             );
             conn.mark_for_recovery();
             seq_tracker.remove_connection(conn_id);
+            #[cfg(feature = "test-internals")]
+            return;
         }
+    }
+    #[cfg(feature = "test-internals")]
+    if let Some((idx, retransmit)) = duplicate
+        && !connections[sel_idx].has_queued_packets()
+        && let Err(error) =
+            super::duplicate_data::send_copy(&connections[idx], pkt, retransmit).await
+    {
+        warn!(%error, "test duplicate DATA send failed");
     }
 }
 

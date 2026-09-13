@@ -889,6 +889,34 @@ is `ADOPTED: sendmmsg(2) batch send (was: DEFERRED)`), not a deferred-item point
 do not cite it as an example of an unimplemented/deferred feature. The triage row of
 record is `docs/notes/upstream-sync-2026-08-evaluation.md` → `673138d`.
 
+### Test-only duplicate-DATA receiver experiment
+
+`src/sender/duplicate_data.rs` and its forwarding call site are compiled ONLY with
+`test-internals`. `SRTLA_TEST_DUP_EVERY=<positive n>` plus
+`SRTLA_TEST_DUP_RETX_BIT=0|1` enable a per-process cadence; absent/invalid settings
+disable it. The hook selects every nth complete DATA header, flushes the original
+batch, and sends a copy only if that flush succeeded and left no unsent suffix.
+The alternate must be registered and not timed out. `send_copy` borrows the
+connection immutably and calls its existing bound socket directly: NO batch queue,
+packet-log, in-flight, bitrate or `SequenceTracker` insert. Preserve this bypass
+when reusing the primitive for future probe work; single-owner tracker semantics
+are unchanged. Only byte 4 bit 2 (`0x04`, second word bit 26) is changed on the copy,
+per `draft-sharabayko-srt-01` §3.1.
+
+`tests/netns_dup_spike.rs` is explicitly ignored and requires real sudo/netns,
+tcpdump, Python, libsrt's `srt-live-transmit`, and a built CeraLive receiver under
+`SRTLA_REPO` (never an ambient PATH receiver). Its A/B/control runs use classic mode,
+200 pps × 15 s, 1316-byte messages, latency 2000 ms and lossmaxttl 40. Loopback pcap
+duplicates prove libsrt admission; the fresh-port control separately proves 50
+replays arrived at SRTLA while none reached libsrt. Source/sink bytes must match.
+`-fullstats` disables counter clearing, so all four end-minus-zero counters,
+including belated, are cumulative even though CSV names omit `Total`. Wire choice
+minimizes the sum of belated and retransmitted events (tie → clear). Use the bounded
+command in README; `DUP_SPIKE_OUTPUT` retains artifacts. `DUP_SPIKE_EXPECT_DAMAGE=1`
+is solely for the scratch sequence-corruption falsifiability run and is not a
+passing substitute for the normal three-variant spike. Non-feature release binaries
+must contain no `SRTLA_TEST_DUP` strings. No CLI/telemetry contract changes.
+
 ## TS BINDING TOOLING
 
 The binding package manager is **Bun `1.4.2`**, pinned by `packageManager` and locked by

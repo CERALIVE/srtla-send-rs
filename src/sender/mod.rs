@@ -1,4 +1,6 @@
 mod connections;
+#[cfg(feature = "test-internals")]
+mod duplicate_data;
 mod egress_tick;
 pub(crate) mod housekeeping;
 mod links;
