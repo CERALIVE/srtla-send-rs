@@ -126,7 +126,7 @@ fn capabilities_result() -> Value {
 fn status_result(config: &DynamicConfig, stats: &SharedStats) -> Value {
     let snap = config.snapshot();
     let live = stats.get();
-    json!({
+    let mut result = json!({
         "mode": snap.mode.to_string(),
         "quality_enabled": snap.quality_enabled,
         "exploration_enabled": snap.exploration_enabled,
@@ -134,7 +134,37 @@ fn status_result(config: &DynamicConfig, stats: &SharedStats) -> Value {
         "bind_map_status": live.bind_map.bind_map_status,
         "disposition": live.bind_map.disposition,
         "links": link_identities(&live),
-    })
+    });
+    if let Some(ms) = stats.negotiated_latency_ms() {
+        result["negotiated_latency_ms"] = json!(ms);
+    }
+    result
+}
+
+#[cfg(test)]
+mod negotiated_latency_tests {
+    use super::*;
+
+    #[test]
+    fn get_status_omits_unknown_negotiated_latency() {
+        // Given no handshake observation, When queried, Then the optional key is absent.
+        let result = status_result(&DynamicConfig::new(), &SharedStats::new());
+        assert!(result.get("negotiated_latency_ms").is_none());
+    }
+
+    #[test]
+    fn get_status_reports_negotiated_latency_without_housekeeping() {
+        // Given a received delay with no snapshot update, When queried, Then expose ms.
+        let stats = SharedStats::new();
+        stats.set_negotiated_latency_ms(2000);
+        let response = dispatch_jsonrpc(
+            r#"{"jsonrpc":"2.0","id":1,"method":"get-status"}"#,
+            &DynamicConfig::new(),
+            &stats,
+        );
+        let parsed: Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(parsed["result"]["negotiated_latency_ms"], 2000);
+    }
 }
 
 /// Per-link identity, in the same order (and therefore the same `conn_id`
