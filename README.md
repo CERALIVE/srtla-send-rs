@@ -447,6 +447,77 @@ changes, bounded worker processes, and the A/B runner's shared host measurement 
 Live campaign validation remains separate from the unprivileged gate; no hardware
 performance claim is implied.
 
+### Statistical reports and retention decisions
+
+The standalone Python tools use uv inline dependencies (`numpy==2.*`, `pydantic==2.*`):
+
+```bash
+uv run scripts/bench/report.py --results results/shard-1 results/shard-2 \
+  --manifest manifest.json --out report.md --json summary.json
+uv run scripts/bench/decide.py --summary summary.json --rule d1 \
+  --candidates adaptive,classic,enhanced,rtt-threshold,edpf \
+  --scenarios A,B1,B2,C,D,E,F,G,H,I,K --n 10 --out verdict.json
+uv run scripts/bench/report.py --self-test
+uv run scripts/bench/decide.py --self-test
+```
+
+Result directories are shards of **one manifest campaign**, not pooled campaigns.
+Only current `status: "ok"` records count. The manifest's explicit `cells[].runs`
+and zero-based run indices are authoritative; optional top-level summary arrays/counts
+do not generate cells. Missing cells/indices, insufficient counts, duplicate successes,
+malformed records or identity mismatches fail reporting. Failed attempts remain warnings,
+and `stale/`, `artifacts/`, `raw/` and `manifest.json` are excluded from result discovery.
+Keep unrelated JSON outputs outside the result directories. Reporting invalidates the
+previous `--json` output before loading; failure cannot leave an old successful summary.
+Successful outputs are published by same-filesystem rename, with the summary last.
+
+Statistics contain n, missing count, mean, median, sample SD and a percentile **median**
+95% CI: **10,000** resamples, fixed seed **20260913**. Pairwise comparisons bootstrap
+the **ratio of medians**, resampling matched `run_index` rows together. Viewer-loss
+delta is the difference of medians ×100 (percentage points). Recovery compares matching
+graded, positive-horizon episodes: `recovery_ms` after a restoration, otherwise
+`failover_ms`. Failed/incomplete episodes contribute +∞, never disappear from the
+denominator. A pair with an infinite candidate recovery and finite reference recovery
+cannot cover, even if the overall median would conceal it. Both-infinite recovery ratios
+remain +∞; 0/0 for two genuinely zero-duration recoveries is 1. JSON encodes infinite
+statistics as `"+inf"`, undefined statistics as `null`; decision ratios with nonfinite
+medians are `null`. CPU cost uses useful sink **decimal MB**, not wire bytes or megabits.
+
+`summary.json` schema 1 contains bootstrap metadata, `groups` and `warnings`. Each group
+is `{campaign, scenario, receiver, profile, cells: {candidate: evidence}}`. Evidence
+contains scalar medians, n/run indices, metric distributions, per-event/per-load
+distributions, non-recovery rates, fingerprints, integrity errors, checks and all-pairs
+`comparisons`. Receiver names come from manifest cell IDs, not just receiver dialects.
+No receiver/profile/campaign groups are averaged together.
+
+D-1 chooses best by median useful goodput among the requested candidates with exactly
+N records. Coverage requires paired goodput CI lower ≥0.95, viewer loss delta ≤0.1 pp,
+and, where graded episodes exist, median recovery ratio ≤1.10 with no greater
+non-recovery rate. Missing pairs, mismatched configuration/episodes and unavailable
+required evidence cannot cover. Every requested candidate/scenario cell must have N
+records. Every campaign/receiver/profile group must be covered independently. The
+smallest covering set wins; ties prefer adaptive, fewer tunables, then fewer switches
+(missing switch counters rank as unknown/infinite, never zero).
+
+`verdict.json` contains per-group `scenarios` keyed by
+`campaign/scenario/receiver/profile`, each with `best`, `covered_by`, and candidate maps
+for `ci_lower`, `viewer_loss_delta_pp`, `recovery_ratio`, `nonrecovered_rate`.
+A successful `verdict: "d1"` adds `shipped_modes`, `retired_modes`, `default_candidate`.
+Failure exits nonzero with `verdict: null`, `reason: "insufficient_evidence"`, errors
+and uncovered scenarios, **omitting all retirement/default fields**.
+J/L are excluded from set coverage and retained in `reported_checks`: J's post-restore
+recovered rate; L's overload no-collapse and post-idle burst recovered rates. Positive
+but sub-target burst traffic remains a failure; idle creates no obligation.
+
+For a homogeneous ablation/sweep target set, use `--rule ablation --baseline adaptive-all
+--candidates <configuration-labels> --scenarios <targets> --n 5`. Every configuration
+needs its **own** A control in each campaign/receiver/profile context. The predeclared
+C2 A guard requires CI lower ≥0.98. Accepted configurations receive `objectives`:
+the geometric mean of target median-goodput ratios to the baseline; failures appear in
+`rejected_configurations`. No accepted configuration means a nonzero exit. Evaluate
+different feature/sweep target sets separately. This scoring tool does not itself
+change scheduler defaults, retire modes, or establish real-hardware performance.
+
 ### Duplicate-DATA receiver spike (test builds only)
 
 `tests/netns_dup_spike.rs` is an ignored, privileged experiment using two registered

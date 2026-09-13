@@ -858,6 +858,28 @@ Gate: `cargo test --features test-internals --test bench_scheduler` and
 Live `campaign`/`smoke` are intentionally ignored and require separate privileged
 validation; the unit gate does not establish live performance or hardware behavior.
 
+### Statistical reporting and D-1 retention
+
+`scripts/bench/report.py` and `scripts/bench/decide.py` are executable, standalone uv
+scripts with inline `numpy==2.*`/`pydantic==2.*` dependencies and embedded unittest
+gates (`uv run scripts/bench/<script>.py --self-test`). The [operator/schema contract](README.md#statistical-reports-and-retention-decisions)
+defines their JSON artifacts. The explicit manifest cells and per-cell run counts
+are authoritative: no missing-cell pass, duplicate-success inflation, stale archive
+reuse, or campaign/receiver/profile pooling. Reporter failures invalidate the previous
+summary; successful publication puts the summary last. Bootstrap is exactly 10,000
+paired resamples at seed 20260913, with median-based percentile CIs. Failed episode
+durations remain +infinity, represented as `"+inf"`, not silently discarded.
+
+D-1 is fail-closed at 0.95 goodput CI lower / 0.1 pp viewer loss / 1.10 recovery ratio
+and no worse non-recovery rate. Any requested N-mismatched cell blocks a verdict;
+pair/configuration/episode defects block coverage. Insufficient evidence returns a
+nonzero exit with `verdict: null` and **no retirement/default fields**. J/L pass rates
+are reported separately; forced outage/idle cannot erase post-restore/burst failures.
+Ablation scoring requires each configuration's own A control (C2 lower-CI guard 0.98)
+and uses geometric target-median ratios. Target sets are explicit per invocation;
+campaign execution and feature/constant publication remain separate tasks. Neither
+script changes Rust code or proves that a scheduler should actually be retired.
+
 ## CODEBASE (inherited from upstream)
 
 ```
