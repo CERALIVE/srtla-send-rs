@@ -564,7 +564,20 @@ override affects only that layer, exposing the next remaining value.
 
 The pure `preference_multiplier` returns `1 + p * clamp((window−10000)/10000, 0, 1)`
 only for Healthy links, and `1.0` otherwise (including Rejoining). The adaptive
-selector consumes it; priority control commands and telemetry echoes are not yet added.
+selector consumes it; priority control commands and runtime telemetry echoes are not yet added.
+Internally, `sender::pool_control::PoolControlRequest::SetLinkPriority` addresses
+either a typed `LinkId` or a telemetry-position `ConnId`. `submit` returns a oneshot
+reply: enqueue success alone is not application. The sender's event loop resolves
+the live pool and replies with the addressed value and actual effective priority,
+or a typed unknown-link error. The queue holds at most 64 requests and reports Busy
+on overflow; callers must bound their reply wait. A dropped reply cancels work not
+yet applied, but cannot undo an application racing with cancellation.
+
+Before every applied reload, the sender closes the old channel and rejects queued
+requests as PoolReloaded, then publishes a new handle after rebuilding the pool.
+Old handles remain closed: a positional request cannot silently target a different
+modem after reorder. Requests during reload fail unavailable; fetch the current
+handle for a new operation. Sender shutdown disconnects outstanding replies.
 The four established scheduling modes and legacy invocation output remain unchanged.
 Run `cargo test --lib bind_map`, `cargo test --lib preference`,
 `cargo test --lib link_identity`, and `cargo test --test bind_map_contract`.
