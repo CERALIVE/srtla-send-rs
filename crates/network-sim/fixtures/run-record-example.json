@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "campaign": "example",
+  "cell_id": "example-enhanced",
+  "run_id": "f2870e52-f63c-4acf-9228-d78692b3bf11",
+  "scenario": {"id": "example", "family": "D", "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+  "candidate": {"label": "fork-enhanced", "bin_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "args": ["--mode", "enhanced"], "env": {}},
+  "receiver": {"kind": "ceralive", "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
+  "srt_profile": {"latency_ms": 2000, "lossmaxttl": 40, "name": "production"},
+  "fingerprint": "28cfbc372215a9e370c5374e4c645d6e28d88a58d48610bc7ab614172f7abdb0",
+  "run_index": 0,
+  "seed": 42,
+  "order_index": 0,
+  "started_at": "2026-09-13T12:00:00Z",
+  "status": "ok",
+  "window": {"start_ms": 0, "end_ms": 40000},
+  "useful_goodput_bps": 7600.0,
+  "offered_bps": 8000,
+  "viewer_loss_ratio": 0.05,
+  "no_traffic": false,
+  "diagnostics": {"pkt_belated_sum": 3, "loss_ratio": 0.05, "retrans_ratio": 0.02631578947368421, "reorder_distance_max": null, "ms_rtt_median": 10.0, "mbps_recv_rate_mean": 0.0076},
+  "per_link": [{"iface": "veth0", "tx_bytes": 40000, "tx_packets": 4000, "share": 1.0}],
+  "sender": {
+    "switch_count": 2, "nak_count": 200, "cpu_ms": 100.0, "peak_rss_kb": 8192,
+    "stats_file_samples": [{"t_ms": 1000, "document": {"schema_version": 1, "last_updated_ms": 1789300801000, "connections": [{"conn_id": "0", "weight_percent": 100, "window": 100, "in_flight": 5}]}}]
+  },
+  "events": [
+    {"t_ms": 0, "event": {"at": {"secs": 0, "nanos": 0}, "link": null, "action": {"OfferedRate": {"bps": 8000}}, "horizon": {"secs": 0, "nanos": 0}, "graded": true}},
+    {"t_ms": 10000, "event": {"at": {"secs": 10, "nanos": 0}, "link": 0, "action": {"DataBlackhole": {"on": true}}, "horizon": {"secs": 30, "nanos": 0}, "graded": true}}
+  ],
+  "episodes": [{"event_index": 1, "onset_ms": 10000, "restore_ms": null, "baseline_bps": 8000.0, "horizon_ms": 30000, "end_ms": 40000, "graded": true, "impacted": true, "failover_ms": 5000, "recovery_ms": null, "outage_ms": 2000, "recovered": true, "complete": true}],
+  "load_intervals": [{"start_ms": 0, "end_ms": 40000, "offered_bps": 8000, "target_bps": 7200.0, "graded": true, "no_collapse": true, "reached_ms": 1000, "recovered": true}],
+  "loadavg_1m": 0.5,
+  "raw": {
+    "stats_csv_path": "raw/example/stats.csv",
+    "sink_series_path": "raw/example/sink.csv",
+    "stats_csv": {
+      "capture_semantics": "cumulative_packets_interval_belated",
+      "header": ["Timepoint", "Time", "SocketID", "Time", "pktRecv", "pktRecvUnique", "pktRcvLoss", "pktRcvDrop", "pktRcvRetrans", "pktRcvBelated", "byteRecv", "msRTT", "mbpsRecvRate"],
+      "clock_offset_ms": 0,
+      "rows": [
+        {"t_ms": 0, "socket_id": 999, "pkt_recv_total": 0, "pkt_recv_unique": 0, "pkt_loss_total": 0, "pkt_drop_total": 0, "pkt_retrans_total": 0, "pkt_belated": 0, "byte_recv": 0, "reorder_distance": null, "ms_rtt": 10.0, "mbps_recv_rate": 0.008, "raw": "stamp,0,999,0,0,0,0,0,0,0,0,10,0.008"},
+        {"t_ms": 40000, "socket_id": 999, "pkt_recv_total": 3800, "pkt_recv_unique": 3800, "pkt_loss_total": 200, "pkt_drop_total": 200, "pkt_retrans_total": 100, "pkt_belated": 3, "byte_recv": 38000, "reorder_distance": null, "ms_rtt": 10.0, "mbps_recv_rate": 0.0076, "raw": "stamp,40000,999,40000,3800,3800,200,200,100,3,38000,10,0.0076"}
+      ]
+    },
+    "sink_series": [
+      {"t_ms": 1000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 2000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 3000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 4000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 5000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 6000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 7000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 8000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 9000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 10000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 11000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 12000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 13000, "duration_ms": 1000, "bytes": 0, "pkts": 0},
+      {"t_ms": 14000, "duration_ms": 1000, "bytes": 0, "pkts": 0},
+      {"t_ms": 15000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 16000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 17000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 18000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 19000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 20000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 21000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 22000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 23000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 24000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 25000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 26000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 27000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 28000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 29000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 30000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 31000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 32000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 33000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 34000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 35000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 36000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 37000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 38000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 39000, "duration_ms": 1000, "bytes": 1000, "pkts": 100},
+      {"t_ms": 40000, "duration_ms": 1000, "bytes": 1000, "pkts": 100}
+    ],
+    "link_counters": [
+      {"t_ms": 0, "iface": "veth0", "ifindex": 2, "tx_bytes": 100, "tx_packets": 10},
+      {"t_ms": 40000, "iface": "veth0", "ifindex": 2, "tx_bytes": 40100, "tx_packets": 4010}
+    ],
+    "control_metrics": [
+      {"t_ms": 0, "metrics": {"switch_count": 1, "nak_count": 2, "cooldown_hold_count": 0}},
+      {"t_ms": 40000, "metrics": {"switch_count": 3, "nak_count": 202, "cooldown_hold_count": 0}}
+    ],
+    "cpu": {"cpu_ms": 100.0, "peak_rss_kb": 8192, "ticks_per_second": 100,
+      "start": {"t_ms": 0, "pid": 42, "start_ticks": 12345, "cpu_ticks": 10, "peak_rss_kb": 4096, "loadavg_1m": 0.5},
+      "end": {"t_ms": 40000, "pid": 42, "start_ticks": 12345, "cpu_ticks": 20, "peak_rss_kb": 8192, "loadavg_1m": 0.5}}
+  },
+  "warnings": ["Synthetic schema fixture; binary/scenario hashes are illustrative, not measurements."]
+}
