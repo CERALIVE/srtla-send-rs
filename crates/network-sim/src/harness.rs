@@ -5,6 +5,8 @@
 //! and [`SrtlaTestStack`] for the full 3-process test pipeline
 //! (srt-live-transmit + srtla_rec + srtla_send).
 
+// allow: SIZE_OK — Todo 8 explicitly confines launch plumbing and its tests to this existing harness.
+
 use std::collections::{HashSet, VecDeque};
 use std::io::Read;
 use std::path::PathBuf;
@@ -39,6 +41,7 @@ pub enum SkipReason {
     NotRoot,
     MissingBinary(String),
     MissingTool(String),
+    InvalidConfiguration(String),
     NoNetem,
 }
 
@@ -48,6 +51,7 @@ impl std::fmt::Display for SkipReason {
             SkipReason::NotRoot => write!(f, "requires root / passwordless sudo"),
             SkipReason::MissingBinary(b) => write!(f, "{b} not found in PATH"),
             SkipReason::MissingTool(t) => write!(f, "system tool '{t}' not found"),
+            SkipReason::InvalidConfiguration(message) => f.write_str(message),
             SkipReason::NoNetem => write!(
                 f,
                 "sch_netem kernel module not available (try: sudo modprobe sch_netem)"
@@ -67,11 +71,16 @@ pub fn check_integration_deps() -> std::result::Result<(), SkipReason> {
     }
 
     // External binaries
-    for bin in &["srtla_rec", "srt-live-transmit"] {
-        if check_binary(bin).is_none() {
-            return Err(SkipReason::MissingBinary(bin.to_string()));
-        }
+    for (key, bin) in [
+        ("SRTLA_REC_BIN", "srtla_rec"),
+        ("SRT_LIVE_TRANSMIT_BIN", "srt-live-transmit"),
+    ] {
+        let resolved = resolve_external_binary(key, bin)
+            .map_err(|error| SkipReason::InvalidConfiguration(error.to_string()))?;
+        tracing::info!(binary = bin, path = %resolved.display(), "resolved integration dependency");
     }
+    ReceiverKind::from_env()
+        .map_err(|error| SkipReason::InvalidConfiguration(error.to_string()))?;
 
     // System tools
     for tool in &["ip", "tc", "ss"] {
@@ -670,6 +679,53 @@ fn registered_uplink_count(log: &[String]) -> usize {
 // SrtlaTestStack
 // ---------------------------------------------------------------------------
 
+/// Receiver CLI dialect; selected by `SRTLA_REC_KIND` (default `ceralive`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReceiverKind {
+    CeraLive,
+    Irlserver,
+    Belabox,
+}
+
+impl ReceiverKind {
+    pub fn from_env() -> Result<Self> {
+        Self::parse(std::env::var_os("SRTLA_REC_KIND").as_deref())
+    }
+
+    fn parse(value: Option<&std::ffi::OsStr>) -> Result<Self> {
+        match value {
+            None => Ok(Self::CeraLive),
+            Some(value) => match value.to_str() {
+                Some("ceralive") => Ok(Self::CeraLive),
+                Some("irlserver") => Ok(Self::Irlserver),
+                Some("belabox") => Ok(Self::Belabox),
+                Some(_) | None => bail!(
+                    "invalid SRTLA_REC_KIND {value:?}; expected ceralive, irlserver or belabox"
+                ),
+            },
+        }
+    }
+
+    /// The three endpoint values follow each receiver's native CLI contract.
+    pub fn argv(&self, srtla_port: u16, srt_host: &str, srt_port: u16) -> Vec<String> {
+        match self {
+            Self::CeraLive | Self::Irlserver => vec![
+                "--srtla_port".into(),
+                srtla_port.to_string(),
+                "--srt_hostname".into(),
+                srt_host.into(),
+                "--srt_port".into(),
+                srt_port.to_string(),
+            ],
+            Self::Belabox => vec![
+                srtla_port.to_string(),
+                srt_host.into(),
+                srt_port.to_string(),
+            ],
+        }
+    }
+}
+
 /// Full 3-process SRTLA test stack: srt-live-transmit + srtla_rec + srtla_send.
 pub struct SrtlaTestStack {
     pub topo: SrtlaTestTopology,
@@ -954,6 +1010,183 @@ pub fn inject_udp_stream(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Resolve an explicit receiver path, or the `srtla_rec` PATH entry when unset.
+pub fn find_srtla_rec_binary() -> Result<PathBuf> {
+    resolve_external_binary("SRTLA_REC_BIN", "srtla_rec")
+}
+
+/// Resolve an explicit SRT tool path, or `srt-live-transmit` when unset.
+pub fn find_srt_live_transmit_binary() -> Result<PathBuf> {
+    resolve_external_binary("SRT_LIVE_TRANSMIT_BIN", "srt-live-transmit")
+}
+
+fn resolve_external_binary(key: &str, fallback: &str) -> Result<PathBuf> {
+    match std::env::var_os(key) {
+        Some(explicit) => {
+            let path = PathBuf::from(explicit);
+            if !path.is_file() {
+                bail!("{key}={} is not a file", path.display());
+            }
+            std::fs::canonicalize(&path)
+                .with_context(|| format!("resolve {key}={}", path.display()))
+        }
+        None => check_binary(fallback)
+            .with_context(|| format!("{fallback} not found in PATH ({key} unset)")),
+    }
+}
+
+#[cfg(test)]
+mod launch_policy_tests {
+    use super::*;
+
+    #[test]
+    fn belabox_argv_is_positional() {
+        // Given a BELABOX receiver and distinct listener/forwarding ports.
+        let receiver = ReceiverKind::Belabox;
+        // When composing its invocation.
+        let args = receiver.argv(15000, "127.0.0.2", 15001);
+        // Then only the three ordered positionals are emitted.
+        assert_eq!(args, ["15000", "127.0.0.2", "15001"]);
+    }
+
+    #[test]
+    fn ceralive_and_irlserver_argv_use_flags() {
+        for receiver in [ReceiverKind::CeraLive, ReceiverKind::Irlserver] {
+            // Given either flags-based receiver; when composing its invocation.
+            let args = receiver.argv(15000, "127.0.0.2", 15001);
+            // Then the receiver's own CLI names and order are preserved.
+            assert_eq!(
+                args,
+                [
+                    "--srtla_port",
+                    "15000",
+                    "--srt_hostname",
+                    "127.0.0.2",
+                    "--srt_port",
+                    "15001"
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn receiver_kind_parses_known_values_and_legacy_default() {
+        for (value, expected) in [
+            (None, ReceiverKind::CeraLive),
+            (Some("ceralive"), ReceiverKind::CeraLive),
+            (Some("irlserver"), ReceiverKind::Irlserver),
+            (Some("belabox"), ReceiverKind::Belabox),
+        ] {
+            // Given a supported environment value; when parsing it.
+            let kind = ReceiverKind::parse(value.map(std::ffi::OsStr::new));
+            // Then it selects the corresponding CLI dialect.
+            assert_eq!(kind.expect("known receiver kind"), expected);
+        }
+    }
+
+    #[test]
+    fn receiver_kind_rejects_unknown_values() {
+        // Given a typo rather than a supported dialect; when parsing it.
+        let error = ReceiverKind::parse(Some(std::ffi::OsStr::new("belaboxx"))).unwrap_err();
+        // Then the environment setting is diagnosed instead of silently defaulted.
+        assert!(error.to_string().contains("SRTLA_REC_KIND"));
+    }
+
+    #[test]
+    fn env_override_wins_over_path() {
+        // Given isolated child-process environment overrides (no global env mutation).
+        let executable = std::env::current_exe().expect("test executable");
+        if std::env::var_os("NETWORK_SIM_OVERRIDE_CHILD").is_some() {
+            // When resolving the real environment boundary.
+            let rec = find_srtla_rec_binary().expect("receiver override");
+            let srt = find_srt_live_transmit_binary().expect("SRT tool override");
+            let kind = ReceiverKind::from_env().expect("receiver kind override");
+            // Then explicit paths win even with no usable PATH.
+            assert_eq!(rec, executable);
+            assert_eq!(srt, executable);
+            assert_eq!(kind, ReceiverKind::Belabox);
+            return;
+        }
+        let output = Command::new(&executable)
+            .args([
+                "--exact",
+                "harness::launch_policy_tests::env_override_wins_over_path",
+            ])
+            .env("NETWORK_SIM_OVERRIDE_CHILD", "1")
+            .env("SRTLA_REC_BIN", &executable)
+            .env("SRT_LIVE_TRANSMIT_BIN", &executable)
+            .env("SRTLA_REC_KIND", "belabox")
+            .env("PATH", "")
+            .output()
+            .expect("run isolated override test");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
+
+    #[test]
+    fn env_override_missing_file_is_reported() {
+        // Given a missing explicit path and an otherwise available fallback.
+        let dir = tempfile::tempdir().expect("isolated missing binary path");
+        let missing = dir.path().join("missing-receiver");
+        if let Some(path) = std::env::var_os("NETWORK_SIM_MISSING_CHILD") {
+            // When resolving, no PATH fallback is allowed for an explicit override.
+            let error = resolve_external_binary("SRTLA_REC_BIN", "sh").unwrap_err();
+            // Then diagnostics retain both the environment key and missing filename.
+            let message = error.to_string();
+            assert!(message.contains("SRTLA_REC_BIN"), "{message}");
+            assert!(
+                message.contains(&path.to_string_lossy().to_string()),
+                "{message}"
+            );
+            assert!(message.contains("not a file"), "{message}");
+            return;
+        }
+        let output = Command::new(std::env::current_exe().expect("test executable"))
+            .args([
+                "--exact",
+                "harness::launch_policy_tests::env_override_missing_file_is_reported",
+            ])
+            .env("NETWORK_SIM_MISSING_CHILD", &missing)
+            .env("SRTLA_REC_BIN", &missing)
+            .output()
+            .expect("run isolated missing override test");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
+
+    #[test]
+    fn absent_override_resolves_path_binary() {
+        // Given an isolated environment without the override.
+        if std::env::var_os("NETWORK_SIM_PATH_CHILD").is_some() {
+            // When resolving a standard tool through the same resolver.
+            let binary = resolve_external_binary("SRTLA_REC_BIN", "sh").expect("PATH fallback");
+            // Then the normal PATH resolution is retained.
+            assert_eq!(Some(binary), check_binary("sh"));
+            return;
+        }
+        let output = Command::new(std::env::current_exe().expect("test executable"))
+            .args([
+                "--exact",
+                "harness::launch_policy_tests::absent_override_resolves_path_binary",
+            ])
+            .env("NETWORK_SIM_PATH_CHILD", "1")
+            .env_remove("SRTLA_REC_BIN")
+            .output()
+            .expect("run isolated PATH fallback test");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
+}
 
 /// Locate the srtla_send binary from a cargo build.
 pub(crate) fn find_srtla_send_binary() -> Result<PathBuf> {
