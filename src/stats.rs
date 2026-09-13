@@ -19,6 +19,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use serde::Serialize;
@@ -196,6 +197,7 @@ pub struct SharedStats {
     inner: Arc<RwLock<StatsSnapshot>>,
     session_bytes: Arc<Mutex<SessionBytes>>,
     bind_map: Arc<RwLock<BindMapReport>>,
+    negotiated_latency_ms: Arc<AtomicU32>,
 }
 
 impl SharedStats {
@@ -204,7 +206,20 @@ impl SharedStats {
             inner: Arc::new(RwLock::new(StatsSnapshot::default())),
             session_bytes: Arc::new(Mutex::new(SessionBytes::default())),
             bind_map: Arc::new(RwLock::new(BindMapReport::default())),
+            negotiated_latency_ms: Arc::new(AtomicU32::new(0)),
         }
+    }
+
+    /// Last observed receiver TSBPD delay; zero denotes unknown. Never takes a snapshot lock.
+    pub fn negotiated_latency_ms(&self) -> Option<u32> {
+        let ms = self.negotiated_latency_ms.load(Ordering::Relaxed);
+        (ms != 0).then_some(ms)
+    }
+
+    /// Publish from the receive path without coupling to housekeeping or configuration.
+    pub(crate) fn set_negotiated_latency_ms(&self, ms: u32) {
+        // The atomic is the entire observation; no other memory is published with it.
+        self.negotiated_latency_ms.store(ms, Ordering::Relaxed);
     }
 
     /// Record the sender's current bind-map operating mode.
@@ -310,129 +325,5 @@ impl SharedStats {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::mode::SchedulingMode;
-
-    #[test]
-    fn test_shared_stats_new() {
-        let stats = SharedStats::new();
-        let snapshot = stats.get();
-        assert_eq!(snapshot.active_links, 0);
-        assert_eq!(snapshot.total_links, 0);
-    }
-
-    #[test]
-    fn test_shared_stats_empty_update() {
-        let stats = SharedStats::new();
-        let config = ConfigSnapshot {
-            mode: SchedulingMode::Enhanced,
-            quality_enabled: true,
-            exploration_enabled: false,
-            rtt_delta_ms: 30,
-            earned_ack_window: false,
-            stall_deselect: false,
-            stall_min_in_flight: 32,
-            stall_ack_stale_ms: 3000,
-            stall_reprobe_ms: 1000,
-        };
-        stats.update(&[], &config);
-        let snapshot = stats.get();
-        assert_eq!(snapshot.mode, "enhanced");
-        assert!(snapshot.quality_enabled);
-    }
-
-    #[test]
-    fn test_to_json_contains_expected_fields() {
-        let stats = SharedStats::new();
-        let json = stats.to_json();
-        assert!(json.contains("\"mode\""));
-        assert!(json.contains("\"active_links\""));
-        assert!(json.contains("\"total_window\""));
-        assert!(json.contains("\"links\""));
-        assert!(json.contains("\"session_bytes_sent\""));
-    }
-
-    // ---- ADR-002 session-bytes accumulator --------------------------------
-
-    #[test]
-    fn session_bytes_sums_live_links() {
-        let mut acc = SessionBytes::default();
-        assert_eq!(acc.observe_totals([(7, 1_000), (9, 500)]), 1_500);
-    }
-
-    #[test]
-    fn session_bytes_banks_only_the_delta_between_observations() {
-        let mut acc = SessionBytes::default();
-        acc.observe_totals([(7, 1_000)]);
-        assert_eq!(
-            acc.observe_totals([(7, 1_600)]),
-            1_600,
-            "a link's own counter is cumulative, so re-observing it must add 600, not 1600"
-        );
-    }
-
-    #[test]
-    fn session_bytes_survives_a_link_teardown() {
-        // A SIGHUP reload that drops an uplink must not take its bytes with it —
-        // this is the regression a naive `links.map(total).sum()` would ship.
-        let mut acc = SessionBytes::default();
-        acc.observe_totals([(7, 1_000), (9, 500)]);
-
-        assert_eq!(acc.observe_totals([(7, 1_000)]), 1_500);
-    }
-
-    #[test]
-    fn session_bytes_counts_a_readded_link_from_zero() {
-        // A re-added IP comes back as a NEW connection (fresh conn_id, counter at
-        // 0). Its bytes must accrue on top of the banked total, never replace it.
-        let mut acc = SessionBytes::default();
-        acc.observe_totals([(7, 1_000)]);
-        acc.observe_totals([]);
-
-        assert_eq!(acc.observe_totals([(11, 300)]), 1_300);
-    }
-
-    #[test]
-    fn session_bytes_never_regresses_on_a_backwards_link_counter() {
-        // Per-link counters are monotonic by construction; if one ever went
-        // backwards the bond total must still refuse to shrink.
-        let mut acc = SessionBytes::default();
-        acc.observe_totals([(7, 1_000)]);
-
-        assert_eq!(acc.observe_totals([(7, 400)]), 1_000);
-    }
-
-    #[test]
-    fn session_bytes_forgets_departed_links() {
-        // Bookkeeping for a link that is gone must not accumulate across a long
-        // session of SIGHUP churn.
-        let mut acc = SessionBytes::default();
-        acc.observe_totals([(1, 10), (2, 10), (3, 10)]);
-        acc.observe_totals([(3, 10)]);
-
-        assert_eq!(acc.last_seen.len(), 1);
-        assert_eq!(acc.total, 30);
-    }
-
-    #[test]
-    fn empty_update_reports_zero_session_bytes() {
-        let stats = SharedStats::new();
-        stats.update(&[], &test_config());
-        assert_eq!(stats.get().session_bytes_sent, 0);
-    }
-
-    fn test_config() -> ConfigSnapshot {
-        ConfigSnapshot {
-            mode: SchedulingMode::Enhanced,
-            quality_enabled: true,
-            exploration_enabled: false,
-            rtt_delta_ms: 30,
-            earned_ack_window: false,
-            stall_deselect: false,
-            stall_min_in_flight: 32,
-            stall_ack_stale_ms: 3000,
-            stall_reprobe_ms: 1000,
-        }
-    }
-}
+#[path = "stats_tests.rs"]
+mod tests;
