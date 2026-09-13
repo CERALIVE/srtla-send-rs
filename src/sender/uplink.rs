@@ -14,6 +14,7 @@ pub type ConnectionId = u64;
 
 pub struct UplinkPacket {
     pub conn_id: ConnectionId,
+    pub reader_generation: u32,
     pub bytes: SmallVec<u8, 64>,
 }
 
@@ -27,12 +28,13 @@ pub struct ReaderHandle {
 /// per syscall, significantly reducing syscall overhead at high packet rates.
 ///
 /// On non-Unix: Falls back to tokio's async recv_from (one packet per call).
-pub fn spawn_reader(
-    conn_id: ConnectionId,
+pub fn spawn_reader_generation(
+    identity: (ConnectionId, u32),
     label: String,
     socket: Arc<BatchUdpSocket>,
     packet_tx: UnboundedSender<UplinkPacket>,
 ) -> ReaderHandle {
+    let (conn_id, reader_generation) = identity;
     let handle = tokio::spawn(async move {
         // Allocate batch receive buffer on heap (large structure ~50KB on Unix)
         let mut recv_buffer = RecvMmsgBuffer::new();
@@ -66,6 +68,7 @@ pub fn spawn_reader(
                         if packet_tx
                             .send(UplinkPacket {
                                 conn_id,
+                                reader_generation,
                                 bytes: packet,
                             })
                             .is_err()
@@ -83,6 +86,7 @@ pub fn spawn_reader(
                     if packet_tx
                         .send(UplinkPacket {
                             conn_id,
+                            reader_generation,
                             bytes: SmallVec::new(),
                         })
                         .is_err()
@@ -109,8 +113,8 @@ pub fn sync_readers(
     for conn in connections {
         active_ids.insert(conn.conn_id);
         readers.entry(conn.conn_id).or_insert_with(|| {
-            spawn_reader(
-                conn.conn_id,
+            spawn_reader_generation(
+                (conn.conn_id, conn.delivery.socket_generation),
                 conn.label.clone(),
                 conn.socket.clone(),
                 packet_tx.clone(),
@@ -138,8 +142,8 @@ pub fn restart_reader_for(
     }
     readers.insert(
         conn.conn_id,
-        spawn_reader(
-            conn.conn_id,
+        spawn_reader_generation(
+            (conn.conn_id, conn.delivery.socket_generation),
             conn.label.clone(),
             conn.socket.clone(),
             packet_tx.clone(),
@@ -152,4 +156,14 @@ pub fn create_uplink_channel() -> (
     UnboundedReceiver<UplinkPacket>,
 ) {
     unbounded_channel::<UplinkPacket>()
+}
+
+#[cfg(test)]
+pub fn spawn_reader(
+    conn_id: ConnectionId,
+    label: String,
+    socket: Arc<BatchUdpSocket>,
+    packet_tx: UnboundedSender<UplinkPacket>,
+) -> ReaderHandle {
+    spawn_reader_generation((conn_id, 0), label, socket, packet_tx)
 }
