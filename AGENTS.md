@@ -1132,6 +1132,65 @@ version, runtime flags, selection policy or hardware-performance claim are added
 Gate: `cargo test --lib probe`; separate `cargo test --lib ack_rtt` and
 `cargo test --lib batch_io`; `cargo clippy -- -D warnings`.
 
+## PURE DELIVERED-RATE CONTROLLER (scheduler evaluation, Todo 20)
+
+`connection::rate_cap::{RateCap, RateState, ClimbMode, RateSignals}` is a standalone
+policy module. No connection field, sender/housekeeping call, selector, CLI or
+telemetry change is wired yet; `connection/congestion/enhanced.rs` is untouched.
+`RateCap::default()` belongs to one socket lifetime. The later lifecycle owner must
+reconstruct it alongside that link's delivery ledger on recovery/socket replacement.
+
+`tick(&mut self, &DeliveryLedger, &RateSignals)` MUST run exactly once per 1s
+housekeeping tick, even when idle, never per packet or in a catch-up loop. It reads
+`delivery.delivered_bps(signals.now_ms)` internally: callers cannot substitute TX
+bitrate. Signals supply monotonic ledger time, finite nonnegative `srtt_ms`,
+`rtt_min_ms`, `queue_delay_ms`, `jitter_ms`, finite `velocity_ms_per_update`, and
+`loss_ewma: Option<f64>` (fraction, unknown is not zero). Integration should use
+the same link's RTT/queue trackers and advanced normal-loss tracker, not probe loss.
+
+States are exactly `Bootstrap | Climbing { sub } | Holding | BackingOff | Drain`;
+submodes are `Normal | Hai | FastRecovery { ticks_left }`. State/target/rate fields
+are private and exposed via read-only `state()`, `target_bps()`, `delivered_bps()`.
+The first positive observation seeds `max(1_000_000, delivered)` and enters normal
+Climbing without applying a growth increment on the same tick. Idle before that
+preserves Bootstrap, so the first later observation still seeds correctly.
+
+- Normal grows 2%; Hai grows 6% only with measured RTT, absolute velocity ≤0.1
+  ms/Kalman update, jitter ≤10% sRTT, and zero queue delay. The explicit 0.1
+  tolerance and queue veto resolve the plan's unspecified near-zero criterion.
+- BackingOff needs loss ≥0.015 AND delivered ≥0.3×target; the next target is exactly
+  `max(0.85*prev, min(delivered, prev))`. The first observation AFTER three completed
+  cuts tests efficacy; loss ≥0.8×entry starts a 30-tick cut-suppression latch, including
+  that observation tick. Strictly lower loss permits continued backoff. Efficacy is
+  tested once per uninterrupted backoff episode, not repeatedly against moving entry
+  loss. `is_uncongestive()` exposes the latch; it ages through idle as well.
+- Measured sRTT >1.5×baseline holds. At ≥2×baseline with `Some(0.0)` loss, Drain
+  applies ×0.75 only at episode entry AND with no cut in the preceding ten ticks.
+  Episode identity is separate from the guard: expiry cannot recut sustained Drain.
+  A guarded/suppressed episode is not cut later merely because the timer expires.
+- Backoff/Drain arm five recovery growth ticks. They survive Holding and idle.
+  Mode selection occurs before decrement: reported `ticks_left` is 4,3,2,1,0 after
+  the five full ×1.04 ticks. Only the next climbing tick can choose Normal/Hai.
+- Idle freezes target, active mode, Drain identity and recovery budget; it clears
+  incomplete backoff efficacy evidence. `stale_since` counts the first idle tick
+  inclusively, so `bdp_cap_suspended()` becomes true on tick ten, stays true through
+  indefinite idle, and clears on the next positive delivery without rebootstrap.
+
+`bdp_cap_packets(rtt_min_ms) -> u32` returns
+`max(32, floor(target_bps*rtt_min_ms/1000/8*1.5/1316))`, or `u32::MAX` when suspended.
+Packet conversion intentionally saturates overflow; growth saturates at finite f64
+maximum. `soft_cap_multiplier(in_flight: u32)` uses the last tick's cached baseline:
+1.0 at/below cap (including suspension), otherwise `cap/in_flight`, always positive.
+It is RANKING ONLY, never an eligibility predicate. There are no share-tier verdicts.
+
+Tests are split into `rate_cap_tests.rs` (growth/ledger/ranking),
+`rate_cap_backoff_tests.rs` (loss/latch) and `rate_cap_episode_tests.rs` (timing/idle).
+They populate a real DeliveryLedger with SRTLA ACK credits, not a mock send rate.
+The five audit-named regressions include an exhaustive wildcard-free match over
+both enums; adding any new verdict fails compilation. Gate:
+`cargo test --lib rate_cap` and `cargo clippy -- -D warnings`. This is pure policy
+coverage; no live-bond performance or runtime integration claim is implied.
+
 ## CODEBASE (inherited from upstream)
 
 ```
