@@ -431,6 +431,22 @@ Run `cargo test -p network-sim --lib scenarios` and
 `cargo clippy -p network-sim --all-targets -- -D warnings`; these are unprivileged
 definition/metric tests, not evidence of a real bonded-hardware performance improvement.
 
+### Paired checkpointed scheduler campaigns
+
+`tests/bench_scheduler.rs` consumes a required **explicit `cells` matrix**, not a
+Cartesian product. It interleaves candidates per seeded pair, retries failed indices,
+archives stale fingerprints, and atomically publishes the existing `RunRecord` schema.
+The ignored `campaign` and `smoke` tests require `--features test-internals`, immutable
+binaries and Linux netns privileges. Unprivileged manifest/order/resume tests run with
+`cargo test --features test-internals --test bench_scheduler`.
+
+See the [campaign contract and manifest example](docs/notes/bench-campaign.md).
+Smoke runs A+D twice per candidate using full 45s/75s windows, never shortened D.
+The runner uses interval CSV semantics, real warm-up settling, FIFO source-rate
+changes, bounded worker processes, and the A/B runner's shared host measurement lock.
+Live campaign validation remains separate from the unprivileged gate; no hardware
+performance claim is implied.
+
 ### Duplicate-DATA receiver spike (test builds only)
 
 `tests/netns_dup_spike.rs` is an ignored, privileged experiment using two registered

@@ -827,6 +827,37 @@ scheduler's definitions, not a duplicate set of defaults. Scenario C/D waveform
 fixtures include both the 215 ms delay spike and full 500 ms capacity dip; whole
 property holds cannot overlap, so their combined waveform uses adjacent updates.
 
+### Paired campaign runner
+
+`tests/bench_scheduler.rs` and `tests/bench_support/` integrate the scenario, topology,
+profile and metric APIs. [Campaign contract](docs/notes/bench-campaign.md): required
+explicit cells, per-pair seeded candidate interleaving, atomic RunRecord checkpoints,
+fingerprint-based stale archival, and bounded retries (default **two total attempts**).
+Only matching `status: "ok"` records count; `.failed-N` and `.exhausted` never do.
+Records add `attempt`, optional `reason`/`detail` without changing RunRecord v1.
+Expected adaptive configuration is explicitly supplied by the manifest and compared
+against observed metrics, never synthesized as an observation.
+
+Source traffic starts after all-link REG3 and shaping initialization, at the scenario's
+warm-up rate. Settle at ≥90% for three consecutive seconds (30s bound), retain ten
+seconds of prehistory, then apply t=0 OfferedRate and run the temporal scheduler.
+Smoke forces A+D/two runs/full windows; never truncate D. CSV parsing explicitly uses
+`CaptureSemantics::Interval`, never fullstats. The first CSV-row clock bracket and
+its uncertainty are recorded; no report-cadence assumption. Ramps use real FIFO source
+control; pre-replug counters are sampled; receiver restart has its explicit budget.
+
+The old A/B `measurement_lock` is extracted to `tests/support/measurement_lock.rs`.
+Its local mutex is retained and a kernel file lock serializes separate binaries and
+worktrees. The file-lock functions have a test-only Clippy MSRV of 1.89 under the
+pinned nightly (no production MSRV bump or new FFI/dependency). Each live run is a
+GNU-timeout worker (duration+60s, kill-after 10s), with PID-suffixed namespace cleanup.
+No pcap unless explicitly enabled; successful captures are removed, failures retained.
+
+Gate: `cargo test --features test-internals --test bench_scheduler` and
+`cargo clippy --test bench_scheduler --features test-internals -- -D warnings`.
+Live `campaign`/`smoke` are intentionally ignored and require separate privileged
+validation; the unit gate does not establish live performance or hardware behavior.
+
 ## CODEBASE (inherited from upstream)
 
 ```
