@@ -49,39 +49,34 @@ fn probe_zero_rate_emits_nothing_over_five_seconds() {
 }
 
 #[test]
-fn probe_targeting_requires_soft_health_deadline_hold_and_not_sole_carrier() {
-    // Given every health state, a deadline-release and a sole-carrier veto.
+fn probe_targeting_accepts_health_or_deadline_hold_but_never_down_or_sole() {
+    // Given every health state and an independent deadline hold.
     for health in [
         HealthState::Healthy,
+        HealthState::Stalled,
+        HealthState::Degraded,
         HealthState::Down,
         HealthState::Rejoining,
     ] {
-        let mut target = held(1);
-        target.health = health;
-        // When scheduling, then these links are never probed.
-        assert!(ProbeScheduler::default().next(&[target], 0).is_none());
-    }
-    for target in [
-        ProbeTarget {
-            deadline_held: false,
-            ..held(1)
-        },
-        ProbeTarget {
-            sole_carrier: true,
-            ..held(1)
-        },
-    ] {
-        assert!(ProbeScheduler::default().next(&[target], 0).is_none());
-    }
-    assert!(
-        ProbeScheduler::default()
-            .next(
-                &[ProbeTarget {
-                    health: HealthState::Degraded,
+        for deadline_held in [false, true] {
+            for sole_carrier in [false, true] {
+                let target = ProbeTarget {
+                    health,
+                    deadline_held,
+                    sole_carrier,
                     ..held(1)
-                }],
-                0
-            )
-            .is_some()
-    );
+                };
+                let expected = match health {
+                    HealthState::Down => false,
+                    HealthState::Stalled | HealthState::Degraded => !sole_carrier,
+                    HealthState::Healthy | HealthState::Rejoining => deadline_held && !sole_carrier,
+                };
+                // When scheduled, then either hold qualifies, with hard/sole vetoes.
+                assert_eq!(
+                    ProbeScheduler::default().next(&[target], 0).is_some(),
+                    expected
+                );
+            }
+        }
+    }
 }

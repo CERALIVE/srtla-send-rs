@@ -23,11 +23,12 @@ pub struct ProbeTarget {
 
 impl ProbeTarget {
     pub const fn eligible(self) -> bool {
-        let soft = match self.health {
+        let held = match self.health {
             HealthState::Stalled | HealthState::Degraded => true,
-            HealthState::Down | HealthState::Healthy | HealthState::Rejoining => false,
+            HealthState::Healthy | HealthState::Rejoining => self.deadline_held,
+            HealthState::Down => false,
         };
-        soft && self.deadline_held && !self.sole_carrier
+        held && !self.sole_carrier
     }
 }
 
