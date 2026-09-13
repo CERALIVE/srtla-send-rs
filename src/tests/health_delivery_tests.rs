@@ -62,9 +62,17 @@ async fn scenario_d(clock: &TestClock) -> SrtlaConnection {
         conn.rtt.waiting_for_keepalive_response = true;
         let mut reply = SRTLA_TYPE_KEEPALIVE.to_be_bytes().to_vec();
         reply.extend_from_slice(&(now - 40).to_be_bytes());
-        conn.process_packet(0, &mut reg, &listener, &forwarder, None, &reply)
-            .await
-            .unwrap();
+        conn.process_packet(
+            0,
+            &mut reg,
+            &listener,
+            &forwarder,
+            None,
+            &reply,
+            &crate::stats::SharedStats::new(),
+        )
+        .await
+        .unwrap();
         assert_eq!(conn.last_ack_or_rtt_sample_ms, now);
     }
     // Three real NAK frames drain the backlog without proving any DATA delivery.
@@ -75,7 +83,15 @@ async fn scenario_d(clock: &TestClock) -> SrtlaConnection {
             nak.extend_from_slice(&seq.to_be_bytes());
         }
         let incoming = conn
-            .process_packet(0, &mut reg, &listener, &forwarder, None, &nak)
+            .process_packet(
+                0,
+                &mut reg,
+                &listener,
+                &forwarder,
+                None,
+                &nak,
+                &crate::stats::SharedStats::new(),
+            )
             .await
             .unwrap();
         for seq in incoming.nak_numbers {

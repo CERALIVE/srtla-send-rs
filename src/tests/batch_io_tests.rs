@@ -328,7 +328,15 @@ mod tests {
         );
 
         broken
-            .process_packet(0, &mut reg, &listener, &instant_tx, None, &reg3)
+            .process_packet(
+                0,
+                &mut reg,
+                &listener,
+                &instant_tx,
+                None,
+                &reg3,
+                &crate::stats::SharedStats::new(),
+            )
             .await
             .unwrap();
         assert!(
@@ -357,21 +365,45 @@ mod tests {
         ];
 
         reg.send_reg2_to(0, &mut conn).await;
-        conn.process_packet(0, &mut reg, &listener, &instant_tx, None, &reg3)
-            .await
-            .unwrap();
+        conn.process_packet(
+            0,
+            &mut reg,
+            &listener,
+            &instant_tx,
+            None,
+            &reg3,
+            &crate::stats::SharedStats::new(),
+        )
+        .await
+        .unwrap();
         assert!(conn.connected, "the uplink is established");
         assert!(
             !reg.is_awaiting_reg3(0),
             "no registration is in flight any more"
         );
 
-        conn.process_packet(0, &mut reg, &listener, &instant_tx, None, &reg_err)
-            .await
-            .unwrap();
-        conn.process_packet(0, &mut reg, &listener, &instant_tx, None, &reg_err)
-            .await
-            .unwrap();
+        conn.process_packet(
+            0,
+            &mut reg,
+            &listener,
+            &instant_tx,
+            None,
+            &reg_err,
+            &crate::stats::SharedStats::new(),
+        )
+        .await
+        .unwrap();
+        conn.process_packet(
+            0,
+            &mut reg,
+            &listener,
+            &instant_tx,
+            None,
+            &reg_err,
+            &crate::stats::SharedStats::new(),
+        )
+        .await
+        .unwrap();
 
         assert!(
             conn.connected,
@@ -408,7 +440,15 @@ mod tests {
         let pending_timeout = reg.pending_timeout_at_ms();
 
         conn_a
-            .process_packet(0, &mut reg, &listener, &instant_tx, None, &reg_err)
+            .process_packet(
+                0,
+                &mut reg,
+                &listener,
+                &instant_tx,
+                None,
+                &reg_err,
+                &crate::stats::SharedStats::new(),
+            )
             .await
             .unwrap();
 
@@ -443,9 +483,17 @@ mod tests {
         assert_eq!(reg.pending_reg2_idx(), Some(0));
         conn.connected = true;
 
-        conn.process_packet(0, &mut reg, &listener, &instant_tx, None, &reg_err)
-            .await
-            .unwrap();
+        conn.process_packet(
+            0,
+            &mut reg,
+            &listener,
+            &instant_tx,
+            None,
+            &reg_err,
+            &crate::stats::SharedStats::new(),
+        )
+        .await
+        .unwrap();
 
         assert!(!conn.connected, "an in-phase REG_ERR tears the link down");
         assert_eq!(reg.pending_reg2_idx(), None);
@@ -460,7 +508,15 @@ mod tests {
         conn2.connected = true;
 
         conn2
-            .process_packet(0, &mut awaiting, &listener, &instant_tx, None, &reg_err)
+            .process_packet(
+                0,
+                &mut awaiting,
+                &listener,
+                &instant_tx,
+                None,
+                &reg_err,
+                &crate::stats::SharedStats::new(),
+            )
             .await
             .unwrap();
 
@@ -541,9 +597,17 @@ mod tests {
         reg.send_reg2_to(0, &mut conn).await;
         assert!(reg.is_awaiting_reg3(0));
 
-        conn.process_packet(0, &mut reg, &listener, &instant_tx, None, &reg3)
-            .await
-            .unwrap();
+        conn.process_packet(
+            0,
+            &mut reg,
+            &listener,
+            &instant_tx,
+            None,
+            &reg3,
+            &crate::stats::SharedStats::new(),
+        )
+        .await
+        .unwrap();
         assert!(
             conn.connected,
             "the first in-phase REG3 registers the uplink"
@@ -580,7 +644,15 @@ mod tests {
         );
 
         connections[0]
-            .process_packet(0, &mut reg, &listener, &instant_tx, None, &reg3)
+            .process_packet(
+                0,
+                &mut reg,
+                &listener,
+                &instant_tx,
+                None,
+                &reg3,
+                &crate::stats::SharedStats::new(),
+            )
             .await
             .unwrap();
 
@@ -642,7 +714,15 @@ mod tests {
         );
 
         connections[0]
-            .process_packet(0, &mut reg, &listener, &instant_tx, None, &reg3)
+            .process_packet(
+                0,
+                &mut reg,
+                &listener,
+                &instant_tx,
+                None,
+                &reg3,
+                &crate::stats::SharedStats::new(),
+            )
             .await
             .unwrap();
         assert!(connections[0].connected);
@@ -678,7 +758,15 @@ mod tests {
         );
 
         connections[0]
-            .process_packet(0, &mut reg, &listener, &instant_tx, None, &reg3)
+            .process_packet(
+                0,
+                &mut reg,
+                &listener,
+                &instant_tx,
+                None,
+                &reg3,
+                &crate::stats::SharedStats::new(),
+            )
             .await
             .unwrap();
         assert_eq!(
@@ -696,3 +784,4 @@ mod tests {
         );
     }
 }
+// allow: SIZE_OK — retained registration/prefix regression suite; only the required shared-stats arguments change.

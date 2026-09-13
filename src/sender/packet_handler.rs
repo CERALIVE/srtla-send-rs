@@ -1,3 +1,4 @@
+// allow: SIZE_OK — existing packet-dispatch façade; this change only threads bond stats through receive callers, preserving forwarding order.
 use std::net::SocketAddr;
 
 use anyhow::Result;
@@ -13,6 +14,7 @@ use crate::config::ConfigSnapshot;
 use crate::connection::{SrtlaConnection, SrtlaIncoming};
 use crate::protocol;
 use crate::registration::SrtlaRegistrationManager;
+use crate::stats::SharedStats;
 
 /// Type alias for instant ACK forwarding: (client_addr, packet_data)
 pub type InstantForwarder = UnboundedSender<(SocketAddr, SmallVec<u8, 64>)>;
@@ -62,6 +64,7 @@ pub async fn process_connection_events(
     classic: bool,
     earned_ack_window: bool,
     incoming_override: Option<SrtlaIncoming>,
+    stats: &SharedStats,
 ) -> Result<()> {
     if idx >= connections.len() {
         return Ok(());
@@ -71,7 +74,14 @@ pub async fn process_connection_events(
         overridden
     } else {
         connections[idx]
-            .drain_incoming(idx, reg, local_listener, instant_tx, last_client_addr)
+            .drain_incoming(
+                idx,
+                reg,
+                local_listener,
+                instant_tx,
+                last_client_addr,
+                stats,
+            )
             .await?
     };
 
@@ -146,6 +156,7 @@ pub async fn handle_uplink_packet(
     local_listener: &UdpSocket,
     seq_tracker: &SequenceTracker,
     config_snap: &ConfigSnapshot,
+    stats: &SharedStats,
 ) {
     if packet.bytes.is_empty() {
         return;
@@ -159,6 +170,7 @@ pub async fn handle_uplink_packet(
                 instant_tx,
                 last_client_addr,
                 &packet.bytes,
+                stats,
             )
             .await
         {
@@ -174,6 +186,7 @@ pub async fn handle_uplink_packet(
                     config_snap.mode.is_classic(),
                     config_snap.earned_ack_window,
                     Some(incoming),
+                    stats,
                 )
                 .await
                 {
@@ -203,6 +216,7 @@ pub async fn drain_packet_queue(
     local_listener: &UdpSocket,
     seq_tracker: &SequenceTracker,
     config_snap: &ConfigSnapshot,
+    stats: &SharedStats,
 ) {
     // Process up to MAX_DRAIN_PACKETS to prevent CPU spikes from large queue bursts.
     // Remaining packets will be processed on the next event loop iteration.
@@ -219,6 +233,7 @@ pub async fn drain_packet_queue(
                     local_listener,
                     seq_tracker,
                     config_snap,
+                    stats,
                 )
                 .await;
                 processed += 1;

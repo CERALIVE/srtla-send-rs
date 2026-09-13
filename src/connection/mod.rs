@@ -10,6 +10,8 @@ pub mod health;
 mod incoming;
 pub mod loss;
 mod packet_io;
+#[cfg(test)]
+mod packet_io_tests;
 mod reconnection;
 pub mod route;
 mod rtt;
