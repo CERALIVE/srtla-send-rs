@@ -62,7 +62,7 @@ impl LinkQdisc {
     }
 
     /// Called only after the owning veth has actually been recreated.
-    pub fn reset_after_replug(&self) {
+    pub(crate) fn reset_after_replug(&self) {
         *self.current.borrow_mut() = None;
         self.blackhole.set(false);
     }

@@ -5,6 +5,7 @@ mod routing;
 mod spec;
 mod wiring;
 
+use std::cell::Cell;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -12,6 +13,7 @@ pub use routing::configure_bond_routing;
 use spec::Address;
 pub use spec::{BondConfigError, BondRow, CarrierMode, LinkSpec, MappingMode};
 
+use crate::profile::qdisc::LinkQdisc;
 use crate::twin::BindMapPublisher;
 use crate::{ImpairmentConfig, Namespace, NamespaceProcess, unique_ns_name};
 
@@ -22,6 +24,7 @@ struct Link {
     peer: String,
     address: Address,
     carrier: Carrier,
+    qdisc: LinkQdisc,
 }
 
 enum Carrier {
@@ -40,6 +43,7 @@ pub struct BondTopology {
     links: Vec<Link>,
     publisher: BindMapPublisher,
     mapping: MappingMode,
+    generation: Cell<u64>,
 }
 
 impl BondTopology {
@@ -61,8 +65,10 @@ impl BondTopology {
                         receiver: unique_ns_name("br"),
                     },
                 };
+                let sender = unique_ns_name("bs");
                 Ok(Link {
-                    sender: unique_ns_name("bs"),
+                    qdisc: LinkQdisc::new(&sender_ns, &sender),
+                    sender,
                     peer: unique_ns_name("bp"),
                     address,
                     carrier,
@@ -75,8 +81,12 @@ impl BondTopology {
             links,
             publisher: BindMapPublisher::new()?,
             mapping,
+            generation: Cell::new(1),
         };
         topo.wire()?;
+        for link in &topo.links {
+            link.qdisc.apply(&ImpairmentConfig::default())?;
+        }
         topo.publish()?;
         Ok(topo)
     }
@@ -89,6 +99,12 @@ impl BondTopology {
     }
     pub fn link_count(&self) -> usize {
         self.links.len()
+    }
+    pub fn carrier_mode(&self, index: usize) -> CarrierMode {
+        match self.links[index].carrier {
+            Carrier::Direct => CarrierMode::Direct,
+            Carrier::Nat { .. } => CarrierMode::Nat,
+        }
     }
     pub fn ips_path(&self) -> PathBuf {
         self.publisher.ips_path()
@@ -123,6 +139,9 @@ impl BondTopology {
                 if up { "up" } else { "down" },
             ],
         )?;
+        if up {
+            self.restore_link_routes(index)?;
+        }
         Ok(())
     }
 
@@ -130,7 +149,7 @@ impl BondTopology {
         self.default_routes(index, "del")
     }
     pub fn restore_default_route(&self, index: usize) -> Result<()> {
-        self.default_routes(index, "add")
+        self.default_routes(index, "replace")
     }
 
     /// Destroy and recreate the access veth under the same name and a new ifindex.
@@ -138,11 +157,17 @@ impl BondTopology {
     pub fn replug(&self, index: usize) -> Result<()> {
         self.sender_ns
             .exec_checked("ip", &["link", "del", self.sender_iface(index)])?;
-        self.wire_access(index, false)
+        self.wire_access(index, false)?;
+        self.links[index].qdisc.reset_after_replug();
+        self.links[index].qdisc.apply(&ImpairmentConfig::default())
     }
 
     pub fn apply_impairment(&self, index: usize, config: &ImpairmentConfig) -> Result<()> {
-        crate::apply_impairment(&self.sender_ns, self.sender_iface(index), config.clone())
+        self.links[index].qdisc.apply(config)
+    }
+
+    pub fn set_data_blackhole(&self, index: usize, on: bool) -> Result<()> {
+        self.links[index].qdisc.set_blackhole(on)
     }
 
     /// Append caller-selected scheduler/control arguments after the topology-owned positionals.

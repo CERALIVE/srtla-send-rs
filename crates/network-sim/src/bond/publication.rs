@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use sha2::{Digest, Sha256};
 
 use super::{BondTopology, MappingMode};
@@ -9,24 +9,58 @@ use crate::twin::{BindMapPublisher, TwinRow};
 
 impl BondTopology {
     pub(super) fn publish(&self) -> Result<()> {
+        let order = match &self.mapping {
+            MappingMode::BindMap { rows } => rows.iter().map(|r| r.iface_index).collect(),
+            MappingMode::None | MappingMode::LegacyControl => {
+                (0..self.link_count()).collect::<Vec<_>>()
+            }
+        };
+        self.publish_order(&order, self.generation.get())
+    }
+
+    /// Order contains topology indices, not positions in the previously published file.
+    /// Mapped publication advances generation and keeps the sidecar hash coherent.
+    pub fn reorder(&self, order: &[usize]) -> Result<()> {
+        let mut sorted = order.to_vec();
+        sorted.sort_unstable();
+        ensure!(
+            sorted == (0..self.link_count()).collect::<Vec<_>>(),
+            "reorder must be a complete permutation"
+        );
+        let generation = self
+            .generation
+            .get()
+            .checked_add(1)
+            .context("bind-map generation overflow")?;
+        self.publish_order(order, generation)?;
+        self.generation.set(generation);
+        Ok(())
+    }
+
+    fn publish_order(&self, order: &[usize], generation: u64) -> Result<()> {
         match &self.mapping {
             MappingMode::BindMap { rows } => {
-                let rows = rows
+                let rows = order
                     .iter()
-                    .map(|row| {
+                    .map(|index| {
+                        let row = rows
+                            .iter()
+                            .find(|row| row.iface_index == *index)
+                            .context("mapped topology index")?;
                         let iface = self.sender_iface(row.iface_index);
                         let twin = match row.priority {
                             Some(priority) => TwinRow::with_priority(&row.link_id, iface, priority),
                             None => TwinRow::new(&row.link_id, iface),
                         };
-                        (self.sender_ip(row.iface_index), twin)
+                        Ok((self.sender_ip(row.iface_index), twin))
                     })
-                    .collect::<Vec<_>>();
-                self.publisher.publish_bond_at(&rows, 1)
+                    .collect::<Result<Vec<_>>>()?;
+                self.publisher.publish_bond_at(&rows, generation)
             }
             MappingMode::LegacyControl | MappingMode::None => {
-                let ips = (0..self.link_count())
-                    .map(|i| self.sender_ip(i))
+                let ips = order
+                    .iter()
+                    .map(|i| self.sender_ip(*i))
                     .collect::<Vec<_>>()
                     .join("\n")
                     + "\n";

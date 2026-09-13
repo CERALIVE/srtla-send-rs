@@ -131,4 +131,20 @@ impl BondTopology {
         }
         ip(&self.sender_ns, &self.main_default(index, verb))
     }
+
+    pub(super) fn restore_link_routes(&self, index: usize) -> Result<()> {
+        let link = &self.links[index];
+        if !link.address.shared {
+            ip(
+                &self.sender_ns,
+                &format!(
+                    "route replace {} dev {} table {}",
+                    link.address.subnet,
+                    link.sender,
+                    source_table(index)
+                ),
+            )?;
+        }
+        self.default_routes(index, "replace")
+    }
 }
