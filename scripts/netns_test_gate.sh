@@ -6,7 +6,8 @@ TIMEOUT_SECONDS="${NETNS_TEST_TIMEOUT_SECONDS:-90}"
 # the 15s ACK liveness timeout and the 30s status-log interval — so they cannot
 # share the default budget.
 TWIN_TIMEOUT_SECONDS="${NETNS_TWIN_TEST_TIMEOUT_SECONDS:-420}"
-for BUDGET in "${TIMEOUT_SECONDS}" "${TWIN_TIMEOUT_SECONDS}"; do
+BOND_TIMEOUT_SECONDS="${NETNS_BOND_TEST_TIMEOUT_SECONDS:-120}"
+for BUDGET in "${TIMEOUT_SECONDS}" "${TWIN_TIMEOUT_SECONDS}" "${BOND_TIMEOUT_SECONDS}"; do
   [[ "${BUDGET}" =~ ^[1-9][0-9]*$ ]] || {
     echo "netns-test-gate: timeout budgets must be positive integers" >&2
     exit 2
@@ -15,6 +16,7 @@ done
 
 TARGETS=(
   netns_basic
+  netns_bond
   netns_edpf
   netns_failure
   netns_impairment
@@ -27,6 +29,7 @@ TARGETS=(
 budget_for() {
   case "$1" in
     netns_twin) echo "${TWIN_TIMEOUT_SECONDS}" ;;
+    netns_bond) echo "${BOND_TIMEOUT_SECONDS}" ;;
     *) echo "${TIMEOUT_SECONDS}" ;;
   esac
 }
@@ -45,4 +48,4 @@ for TARGET in "${TARGETS[@]}"; do
   [[ "${STATUS}" -eq 0 ]] || exit "${STATUS}"
 done
 
-echo "netns-test-gate: OK timeout=${TIMEOUT_SECONDS}s twin-timeout=${TWIN_TIMEOUT_SECONDS}s targets=${#TARGETS[@]}"
+echo "netns-test-gate: OK timeout=${TIMEOUT_SECONDS}s twin-timeout=${TWIN_TIMEOUT_SECONDS}s bond-timeout=${BOND_TIMEOUT_SECONDS}s targets=${#TARGETS[@]}"
