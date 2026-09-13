@@ -10,7 +10,6 @@ pub const SRTLA_TYPE_REG_NGP: u16 = 0x9211;
 pub const SRTLA_TYPE_REG_NAK: u16 = 0x9212;
 
 // SRT protocol constants (some used in tests or for protocol completeness)
-#[allow(dead_code)] // justified: used in integration_tests.rs for protocol validation
 pub const SRT_TYPE_HANDSHAKE: u16 = 0x8000;
 pub const SRT_TYPE_ACK: u16 = 0x8002;
 pub const SRT_TYPE_NAK: u16 = 0x8003;

@@ -1,6 +1,7 @@
 mod builders;
 mod constants;
 mod parsers;
+pub mod srt_handshake;
 mod srt_seq;
 mod types;
 

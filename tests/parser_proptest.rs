@@ -16,6 +16,7 @@
 //! while still covering all length/type branches.
 
 use proptest::prelude::*;
+use srtla_send::protocol::srt_handshake::parse_hsrsp_tsbpd_delay_ms;
 use srtla_send::protocol::{
     ConnectionInfo, SRT_CONTROL_HEADER_LEN, SRT_NAK_MAX_ENTRIES, SRT_TYPE_ACK, SRT_TYPE_NAK,
     SRTLA_ID_LEN, create_ack_packet, create_keepalive_packet, create_keepalive_packet_ext,
@@ -55,6 +56,23 @@ prop_compose! {
 }
 
 proptest! {
+    #[test]
+    fn srt_handshake_never_panics(buf in prop::collection::vec(any::<u8>(), 0..MAX_INPUT)) {
+        // Given arbitrary bytes, When parsed, Then return normally with a bounded delay.
+        let delay = parse_hsrsp_tsbpd_delay_ms(&buf);
+        prop_assert!(delay.is_none_or(|ms| ms <= u32::from(u16::MAX)));
+    }
+
+    #[test]
+    fn srt_handshake_extensions_never_panic(payload in prop::collection::vec(any::<u8>(), 0..MAX_INPUT)) {
+        // Given the captured header with arbitrary extensions, When parsed, Then never panic.
+        let fixture = include_bytes!("fixtures/srt-hsrsp-latency2000.bin");
+        let mut packet = fixture[..64].to_vec();
+        packet.extend_from_slice(&payload);
+        let delay = parse_hsrsp_tsbpd_delay_ms(&packet);
+        prop_assert!(delay.is_none_or(|ms| ms <= u32::from(u16::MAX)));
+    }
+
     // ---- ROBUSTNESS: arbitrary bytes never panic, results are bounded ----
 
     /// `parse_srt_nak` on arbitrary bytes never panics and never indexes OOB.
