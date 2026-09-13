@@ -6,7 +6,7 @@ use crate::topology::Namespace;
 ///
 /// Models bursty loss as a Markov chain between Good and Bad states,
 /// each with independent loss probabilities.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct GemodelConfig {
     /// Transition probability Good -> Bad (%).
     pub p: f32,
@@ -18,12 +18,15 @@ pub struct GemodelConfig {
     pub one_k: f32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DelayDistribution {
+    Normal,
+    Pareto,
+}
+
 /// Network impairment applied via `tc netem` (and optionally `tbf`).
-///
-/// All fields default to `None`/`false`. Set only the parameters you need;
-/// omitted parameters are not passed to `tc`. An all-`None` config clears
-/// any existing impairment on the interface.
-#[derive(Debug, Clone, Default)]
+/// Unset fields retain legacy defaults; LinkQdisc keeps its composed layout intact.
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ImpairmentConfig {
     pub delay_ms: Option<u32>,
     pub jitter_ms: Option<u32>,
@@ -35,10 +38,14 @@ pub struct ImpairmentConfig {
     pub duplicate_percent: Option<f32>,
     pub reorder_percent: Option<f32>,
     pub corrupt_percent: Option<f32>,
-    /// When true, bandwidth is enforced via a TBF root qdisc that drops
+    /// When true, bandwidth is enforced via a TBF qdisc that drops
     /// excess packets. When false, `rate_kbit` only adds serialization
     /// delay (netem `rate` param) without real enforcement.
     pub tbf_shaping: bool,
+    /// Netem queue length in packets, independent of TBF's byte backlog.
+    pub queue_limit: Option<u32>,
+    pub delay_distribution: Option<DelayDistribution>,
+    pub tbf_latency_ms: Option<u32>,
 }
 
 impl ImpairmentConfig {
@@ -51,6 +58,7 @@ impl ImpairmentConfig {
             && self.duplicate_percent.is_none()
             && self.reorder_percent.is_none()
             && self.corrupt_percent.is_none()
+            && self.queue_limit.is_none()
     }
 
     /// True if any netem-specific parameter (delay/loss/dup/reorder/corrupt) is set.
@@ -61,20 +69,29 @@ impl ImpairmentConfig {
             || self.duplicate_percent.is_some()
             || self.reorder_percent.is_some()
             || self.corrupt_percent.is_some()
+            || self.queue_limit.is_some()
     }
 
     /// Build the netem parameter list (delay, loss, dup, reorder, corrupt).
     /// When `include_rate` is true, appends the netem `rate` param too.
-    fn netem_args(&self, include_rate: bool) -> Vec<String> {
+    pub(crate) fn netem_args(&self, include_rate: bool) -> Vec<String> {
         let mut args = Vec::new();
 
         if let Some(delay) = self.delay_ms {
             args.push("delay".into());
             args.push(format!("{delay}ms"));
-            if let Some(jitter) = self.jitter_ms
-                && jitter > 0
-            {
+            if let Some(jitter) = self.jitter_ms {
                 args.push(format!("{jitter}ms"));
+            }
+            if let Some(distribution) = self.delay_distribution {
+                args.extend([
+                    "distribution".into(),
+                    match distribution {
+                        DelayDistribution::Normal => "normal",
+                        DelayDistribution::Pareto => "pareto",
+                    }
+                    .into(),
+                ]);
             }
         }
 
@@ -112,6 +129,9 @@ impl ImpairmentConfig {
         if include_rate && let Some(rate) = self.rate_kbit {
             args.extend(["rate".into(), format!("{rate}kbit")]);
         }
+        if let Some(limit) = self.queue_limit {
+            args.extend(["limit".into(), limit.to_string()]);
+        }
 
         args
     }
@@ -148,13 +168,16 @@ fn apply_tbf_with_netem(ns: &Namespace, iface: &str, config: &ImpairmentConfig) 
     let burst = rate_bytes_per_sec.max(15400) / 10;
     let rate_arg = format!("{rate}kbit");
     let burst_arg = burst.to_string();
+    let latency = config
+        .tbf_latency_ms
+        .map_or_else(|| "1s".into(), |ms| format!("{ms}ms"));
 
     tc_checked(
         ns,
         iface,
         &[
             "qdisc", "add", "dev", iface, "root", "handle", "1:", "tbf", "rate", &rate_arg,
-            "burst", &burst_arg, "latency", "1s",
+            "burst", &burst_arg, "latency", &latency,
         ],
         "apply TBF qdisc",
     )?;
@@ -199,6 +222,36 @@ fn tc_checked(ns: &Namespace, _iface: &str, args: &[&str], ctx: &str) -> Result<
 mod tests {
     use super::*;
     use crate::test_util::{check_privileges, unique_ns_name};
+
+    #[test]
+    fn queue_limit_and_pareto_distribution_reach_netem() {
+        // Given: a standalone packet limit and an explicit delay distribution.
+        let limit = ImpairmentConfig {
+            queue_limit: Some(42),
+            ..Default::default()
+        };
+        let delay = ImpairmentConfig {
+            delay_ms: Some(20),
+            jitter_ms: Some(5),
+            delay_distribution: Some(DelayDistribution::Pareto),
+            ..limit.clone()
+        };
+        // When/Then: both configs are meaningful and emit their native netem arguments.
+        assert!(!limit.is_empty() && limit.has_netem_params());
+        assert_eq!(limit.netem_args(false), ["limit", "42"]);
+        assert_eq!(
+            delay.netem_args(false),
+            [
+                "delay",
+                "20ms",
+                "5ms",
+                "distribution",
+                "pareto",
+                "limit",
+                "42"
+            ]
+        );
+    }
 
     fn parse_ping_rtt(output: &str) -> Option<f32> {
         output.lines().find_map(|line| {
