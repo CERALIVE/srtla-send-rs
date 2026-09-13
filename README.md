@@ -104,6 +104,13 @@ and telemetry extensions remain subsequent work. Do not deploy it as a proven
 improvement: the policy and packet-handler UDP tests are not bonded-hardware evidence.
 Run `cargo test --lib adaptive` and `cargo test --test adaptive_cli`.
 
+The Wave-4 foundation supplies shared APIs, not those pending integrations:
+`HealthSignals.route_health` reuses the existing route classification, telemetry
+accepts optional `health` and `priority` after `link_id` (both remain absent in
+runtime snapshots), and `SharedStats::pool_control()` exposes a bounded sender-owned
+request/reply handle. Its consumer mutates real priority layers before replying.
+The JSON-RPC priority method and scheduler-derived telemetry weights are not added.
+
 ### Optional Smart Exploration (Enhanced Mode Only)
 
 - **Context-Aware Discovery**: Tests alternative connections when current best is degrading and alternatives have recovered
