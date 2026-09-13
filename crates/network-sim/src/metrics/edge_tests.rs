@@ -114,7 +114,7 @@ fn malformed_sink_gap_is_missing_measurement_not_zero_goodput() {
 fn one_hz_sampler_uses_actual_time_and_emits_the_initial_sample() {
     // Given: a zero-length collection observes its start edge without sleeping.
     // When / Then: use the real collector wrapper, not a duplicate clock algorithm.
-    let samples = super::sampling::sample_for(Duration::ZERO, |t| Ok(t)).unwrap();
+    let samples = super::sampling::sample_for(Duration::ZERO, Ok).unwrap();
     assert_eq!(samples.len(), 1);
     assert!(samples[0] >= 0);
 }
