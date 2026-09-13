@@ -28,7 +28,7 @@ pub struct LinkProfile {
     pub carrier: CarrierMode,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TimedEvent {
     pub at: Duration,
     pub link: Option<usize>,
@@ -37,7 +37,7 @@ pub struct TimedEvent {
     pub graded: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Action {
     SetImpairment(ImpairmentConfig),
     DataBlackhole {

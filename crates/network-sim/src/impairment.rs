@@ -6,7 +6,7 @@ use crate::topology::Namespace;
 ///
 /// Models bursty loss as a Markov chain between Good and Bad states,
 /// each with independent loss probabilities.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct GemodelConfig {
     /// Transition probability Good -> Bad (%).
     pub p: f32,
@@ -18,7 +18,7 @@ pub struct GemodelConfig {
     pub one_k: f32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum DelayDistribution {
     Normal,
     Pareto,
@@ -26,7 +26,7 @@ pub enum DelayDistribution {
 
 /// Network impairment applied via `tc netem` (and optionally `tbf`).
 /// Unset fields retain legacy defaults; LinkQdisc keeps its composed layout intact.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ImpairmentConfig {
     pub delay_ms: Option<u32>,
     pub jitter_ms: Option<u32>,

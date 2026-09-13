@@ -4,8 +4,9 @@ use anyhow::{Result, ensure};
 
 use super::{Profile, TimedEvent};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct EventRecord {
+    #[serde(rename = "t_ms")]
     pub t_actual_ms: u64,
     pub event: TimedEvent,
 }
