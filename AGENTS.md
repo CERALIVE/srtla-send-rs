@@ -484,6 +484,52 @@ budget; it covers mixed and shared-IP carriage, the legacy control, route failur
 and restoration, and replug. The A/B runner's routing helper is now exported from
 `network_sim::bond`; its legacy topology and measurement protocol are unchanged.
 
+**Temporal profiles (`crates/network-sim/src/profile.rs`, Todo 10).** Model,
+expansion, monotonic scheduler, qdisc commands, runtime adapter and cross-traffic
+live in separate `profile/` modules. `Periodic.until` is the inclusive last onset,
+not an observation endpoint; each actual onset + hold + horizon must fit the run.
+Defaults: 30s recovery tail, 5s periodic tail, zero for load edges. One-shot holds
+end at an explicit restoration of the previous property value; otherwise they are
+instantaneous. `graded=false` never disables horizon validation. Periodic restores
+use the pre-onset state, not blindly the initial base. Nested periodic events and
+overlapping writes to held properties are rejected. Equal-time restores execute
+first, then stable declaration order. The synchronous `Scheduler` anchors a
+monotonic clock on first run, records successful actual timestamps, waits through
+the observation tail, and never retries a failed/partially applied event.
+
+**Generic bonds exclusively use `LinkQdisc`, NEVER the legacy root-clearing API.**
+Root `prio` handle `1:` has sixteen zero priomap entries; band `1:1` is netem `10:`
+or TBF `10:` → netem `11:`, band `1:2` is netem `20:` loss 100%. Blackhole toggles
+only `tc filter add/del ... parent 1: protocol ip prio 10`, using exactly
+`u32 match u16 0x0400 0xfc00 at 2 flowid 1:2` on add. That is IPv4 length
+1024–2047. An update replaces only band one, including while DATA is blackholed;
+kind changes detach only band one. `ImpairmentConfig.queue_limit` is a netem packet
+limit; `delay_distribution` supports Normal/Pareto; `tbf_latency_ms` defaults to
+1s. With a netem child, its packet limit owns the backlog (TBF latency is not an
+additional total-delay bound). Legacy `apply_impairment` retains root deletion for
+legacy/twin callers; never pass a generic bond interface to it.
+
+`BondRuntime` borrows the topology and exact sender/receiver handles and requires
+an offered-rate callback that changes the real source. It uses receiver port 5000.
+Replug restores the current impairment/filter and explicit route/link state;
+link-up restores source routes the kernel removed on link-down. Reorder publishes
+topology indices with stable link IDs, a coherent sidecar/hash and increasing
+generation before HUP. Cross-traffic uses iperf3 when present, otherwise paced
+Python UDP; both bind source IP AND device and use a server in the receiver ns.
+
+**Process-only restart is distinct from final teardown.** NamespaceProcess now
+stores argv/env and discovers the exact inner PID using before/after namespace PID
+sets plus wrapper ancestry (serialized harness spawns), with a process start-time
+identity check before signaling. `pid()` never returns the sudo wrapper in its
+place. `restart_process_only()` rejects an exited child with downcastable
+`ProcessControlError::AlreadyExited` before signaling anyone; it stops only the
+inner PID and respawns identical argv/env. Auxiliary cross-traffic uses
+`spawn_process_only` so error/drop cleanup cannot invoke namespace-wide kill.
+The existing `kill()` and ordinary handle Drop remain namespace-wide teardown.
+The original stack exposes `restart_receiver()`. The `netns_bond` 120s target now
+also covers mid-blackhole impairment updates (plain and TBF), keepalive RTT while
+DATA stalls, listener/sink PID preservation, both load backends and event dispatch.
+
 **`tests/netns_twin.rs` — duplicate-IP twin-modem scenarios (8 tests).** This target
 that reproduces two uplinks sharing ONE source address, which is what the bind-map exists
 for. It needs a topology no other target has, built by `crates/network-sim/src/twin/`:
