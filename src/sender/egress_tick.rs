@@ -36,6 +36,7 @@ pub async fn handle_egress(
     packet_tx: &UnboundedSender<UplinkPacket>,
     seq_tracker: &mut SequenceTracker,
 ) -> TickFlow {
+    let socket_was_valid = !conn.is_removed() && !conn.needs_rebind();
     let route_before = conn.route_health;
     match conn.poll_egress(&SystemIfaceResolver) {
         EgressPoll::Unchanged => {}
@@ -52,9 +53,17 @@ pub async fn handle_egress(
     }
     report_route_transition(conn, route_before);
 
+    if socket_was_valid && (conn.is_removed() || conn.needs_rebind()) {
+        conn.mark_for_recovery();
+        seq_tracker.remove_connection(conn.conn_id);
+    }
+
     // A removed link has no interface to bind to, so reconnecting it would only
     // burn the backoff. It waits for a reload, not a retry.
     if conn.is_removed() {
+        if let Some(reader) = reader_handles.remove(&conn.conn_id) {
+            reader.handle.abort();
+        }
         return TickFlow::Skip;
     }
 

@@ -1,3 +1,4 @@
+// allow: SIZE_OK — lane 23 is restricted to this existing sender regression suite; keep frozen tests in place.
 #[cfg(test)]
 mod tests {
 
@@ -1717,5 +1718,396 @@ mod tests {
             Some(2),
             "the switch cooldown must suppress exploration; stay on the current link"
         );
+    }
+}
+
+#[cfg(test)]
+mod lifecycle {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use smallvec::SmallVec;
+    use tokio::net::UdpSocket;
+    use tokio::time::{Duration, timeout};
+
+    use crate::bind_map::{IfaceName, LinkId};
+    use crate::config::ConfigSnapshot;
+    use crate::connection::delivery::{DataSend, DeliveryAck};
+    use crate::connection::health::{HealthMachine, HealthState};
+    use crate::connection::rate_cap::RateState;
+    use crate::connection::{RouteHealth, SrtlaConnection};
+    use crate::mode::SchedulingMode;
+    use crate::protocol::{SRTLA_TYPE_ACK, SRTLA_TYPE_REG3};
+    use crate::registration::SrtlaRegistrationManager;
+    use crate::sender::housekeeping::{handle_housekeeping, tick_health};
+    use crate::sender::packet_handler::handle_uplink_packet;
+    use crate::sender::uplink::{UplinkPacket, create_uplink_channel, restart_reader_for};
+    use crate::sender::{SequenceTracker, apply_link_changes};
+    use crate::stats::SharedStats;
+    use crate::test_helpers::create_test_connection;
+    use crate::utils::now_ms;
+
+    async fn dispatch(
+        conn: &mut SrtlaConnection,
+        reg: &mut SrtlaRegistrationManager,
+        packet: UplinkPacket,
+    ) {
+        let local = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        handle_uplink_packet(
+            packet,
+            std::slice::from_mut(conn),
+            reg,
+            &tx,
+            None,
+            &local,
+            &SequenceTracker::new(),
+            &ConfigSnapshot {
+                mode: SchedulingMode::Adaptive,
+                ..crate::config::DynamicConfig::new().snapshot()
+            },
+            &SharedStats::new(),
+        )
+        .await;
+    }
+
+    async fn register(conn: &mut SrtlaConnection) {
+        let mut reg = SrtlaRegistrationManager::new();
+        reg.arm_reg3_gate(0);
+        let packet = UplinkPacket {
+            conn_id: conn.conn_id,
+            reader_generation: conn.delivery.socket_generation,
+            bytes: SmallVec::from_slice_copy(&SRTLA_TYPE_REG3.to_be_bytes()),
+        };
+        dispatch(conn, &mut reg, packet).await;
+    }
+
+    async fn housekeeping(conn: &mut SrtlaConnection) {
+        let (tx, _rx) = create_uplink_channel();
+        let mut readers = HashMap::new();
+        handle_housekeeping(
+            std::slice::from_mut(conn),
+            &mut SrtlaRegistrationManager::new(),
+            false,
+            &mut None,
+            &mut readers,
+            &tx,
+            &mut SequenceTracker::new(),
+        )
+        .await
+        .unwrap();
+        for reader in readers.into_values() {
+            reader.handle.abort();
+        }
+    }
+
+    fn credit(conn: &mut SrtlaConnection, now: u64) {
+        for seq in 0..300 {
+            conn.delivery.record_sent(
+                seq,
+                DataSend {
+                    sent_ms: now,
+                    len: 1316,
+                },
+            );
+            assert!(conn.delivery.acknowledge(
+                DeliveryAck {
+                    seq,
+                    socket_generation: conn.delivery.socket_generation
+                },
+                now
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn housekeeping_enters_rejoining_after_reg3() {
+        // Given: the real registration handler has accepted REG3 on a fresh link.
+        let mut conn = create_test_connection().await;
+        conn.connected = false;
+        register(&mut conn).await;
+        // When: the production housekeeping entry runs.
+        housekeeping(&mut conn).await;
+        // Then: startup leaves the fallback-only Down state through the ramp.
+        assert_eq!(conn.health.state(), HealthState::Rejoining);
+    }
+
+    #[tokio::test]
+    async fn reorder_under_load_keeps_rejoining_ramp_progress() {
+        // Given: a mapped survivor midway through its ramp with credited DATA.
+        let mut conn = create_test_connection().await;
+        conn.link_id = Some(LinkId::parse("modem-a").unwrap());
+        let start = now_ms();
+        tick_health(std::slice::from_mut(&mut conn), &[], start);
+        credit(&mut conn, start + 1000);
+        tick_health(std::slice::from_mut(&mut conn), &[], start + 1000);
+        let cap = conn.rate_cap.target_bps();
+        let progress = conn.health.ramp_multiplier(start + 1000, 0);
+        assert!(progress > 0.05 && progress < 1.0);
+        let socket = conn.socket.clone();
+        let generation = conn.delivery.socket_generation;
+        let mut other = create_test_connection().await;
+        other.link_id = Some(LinkId::parse("modem-b").unwrap());
+        other.local_ip = "127.0.0.2".parse().unwrap();
+        let reordered = [other.spec(), conn.spec()];
+        let mut conns: SmallVec<_, 4> = [conn, other].into_iter().collect();
+        let mut reg = SrtlaRegistrationManager::new();
+        reg.arm_reg3_gate(0);
+        // When: SIGHUP applies the opposite file order.
+        apply_link_changes(
+            &mut conns,
+            &reordered,
+            "127.0.0.1",
+            8080,
+            &mut Some(0),
+            &mut SequenceTracker::new(),
+            &mut reg,
+        )
+        .await;
+        // Then: identity keeps the same ramp, delivered-rate controller and socket.
+        assert_eq!(conns[1].health.state(), HealthState::Rejoining);
+        assert_eq!(conns[1].health.ramp_multiplier(start + 1000, 0), progress);
+        assert_eq!(conns[1].rate_cap.target_bps(), cap);
+        assert_eq!(conns[1].delivery.socket_generation, generation);
+        assert!(Arc::ptr_eq(&conns[1].socket, &socket));
+        assert!(!reg.is_awaiting_reg3(0));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn replug_resets_down_then_reg3_rejoins() {
+        // Given: a live link with a non-bootstrap rate and health history.
+        let mut conn = create_test_connection().await;
+        let start = now_ms();
+        conn.health = HealthMachine::new(HealthState::Healthy, start);
+        credit(&mut conn, start);
+        tick_health(std::slice::from_mut(&mut conn), &[], start);
+        assert!(conn.rate_cap.target_bps() > 1_000_000.0);
+        let generation = conn.delivery.socket_generation;
+        struct OldIfindex;
+        impl crate::connection::IfaceResolver for OldIfindex {
+            fn ifindex(&self, _: &str) -> Option<u32> {
+                Some(u32::MAX)
+            }
+        }
+        conn.egress.adopt(Some(IfaceName::parse("lo").unwrap()));
+        conn.egress.resolve_for_bind(&OldIfindex).unwrap();
+        // When: housekeeping observes a new kernel ifindex for the same name.
+        housekeeping(&mut conn).await;
+        // Then: old measurements cannot promote the new socket.
+        assert_eq!(conn.health.state(), HealthState::Down);
+        assert_eq!(conn.rate_cap.state(), RateState::Bootstrap);
+        assert_eq!(conn.delivery.latest_data_proof_ms(), None);
+        assert_eq!(conn.loss.last_value(), None);
+        assert_ne!(conn.delivery.socket_generation, generation);
+        register(&mut conn).await;
+        tick_health(std::slice::from_mut(&mut conn), &[], start + 1000);
+        assert_eq!(conn.health.state(), HealthState::Rejoining);
+        assert_eq!(conn.health.ramp_multiplier(start + 1000, 0), 0.05);
+    }
+
+    #[tokio::test]
+    async fn recovery_resets_rate_and_health_with_delivery_generation() {
+        // Given: accumulated delivery, loss and admission state on a live socket.
+        let mut conn = create_test_connection().await;
+        let now = now_ms();
+        conn.health = HealthMachine::new(HealthState::Healthy, now);
+        conn.loss = crate::connection::loss::LossTracker::new(now);
+        for _ in 0..100 {
+            conn.loss.record_send(now);
+            conn.loss.record_data_nak(now);
+        }
+        credit(&mut conn, now);
+        tick_health(std::slice::from_mut(&mut conn), &[], now + 1000);
+        conn.adaptive.sole_failed_until_proof = true;
+        let generation = conn.delivery.socket_generation;
+        // When: a transmit failure marks that connection for recovery.
+        conn.mark_for_recovery();
+        // Then: no socket-scoped adaptive evidence survives the generation boundary.
+        assert_eq!(conn.health.state(), HealthState::Down);
+        assert_eq!(conn.rate_cap.state(), RateState::Bootstrap);
+        assert_eq!(conn.loss.last_value(), None);
+        assert_eq!(conn.delivery.latest_data_proof_ms(), None);
+        assert!(!conn.adaptive.sole_failed_until_proof);
+        assert_eq!(conn.delivery.socket_generation, generation.wrapping_add(1));
+    }
+
+    #[tokio::test]
+    async fn health_tick_expires_probes_even_on_down_links() {
+        // Given: two incomplete trains retained on an unavailable link.
+        let mut conn = create_test_connection().await;
+        conn.connected = false;
+        for (seq, id) in [(1, 1), (2, 2)] {
+            conn.probes.record_sent(
+                seq,
+                crate::connection::probe::ProbeTrain {
+                    id,
+                    started_ms: 1000,
+                    deadline_ms: 3000,
+                },
+                1000,
+            );
+        }
+        // When: the idle housekeeping sampler passes their deadlines.
+        tick_health(std::slice::from_mut(&mut conn), &[], 3001);
+        // Then: absent copies count as loss, not successful rejoin rounds.
+        assert_eq!(conn.loss.probe_loss(), Some(1.0));
+        assert_eq!(conn.probes.rounds_ok(), (0, None));
+        assert_eq!(conn.health.state(), HealthState::Down);
+        assert!(conn.probes.probe_log.is_empty());
+    }
+
+    #[tokio::test]
+    async fn ramp_completion_promotes_to_healthy_without_synthetic_proof() {
+        // Given: a registered idle link at the start of its unknown-RTT ramp.
+        let mut conn = create_test_connection().await;
+        tick_health(std::slice::from_mut(&mut conn), &[], 1000);
+        // When: the full six-second ramp completes.
+        tick_health(std::slice::from_mut(&mut conn), &[], 7000);
+        // Then: Healthy is reached without inventing DATA or loss evidence.
+        assert_eq!(conn.health.state(), HealthState::Healthy);
+        assert_eq!(conn.delivery.latest_data_proof_ms(), None);
+        assert_eq!(conn.loss.last_value(), None);
+    }
+
+    #[tokio::test]
+    async fn rate_ticks_are_one_second_apart_without_catch_up_growth() {
+        // Given: delivered DATA and the persistent production tick owner.
+        let mut conn = create_test_connection().await;
+        let mut ticker = crate::sender::housekeeping::HealthTicker::default();
+        credit(&mut conn, 1000);
+        ticker.tick(std::slice::from_mut(&mut conn), &[], 1000);
+        let seeded = conn.rate_cap.target_bps();
+        // When: an early callback and a late callback sample the same controller.
+        ticker.tick(std::slice::from_mut(&mut conn), &[], 1999);
+        assert_eq!(conn.rate_cap.target_bps(), seeded);
+        credit(&mut conn, 5000);
+        ticker.tick(std::slice::from_mut(&mut conn), &[], 5000);
+        // Then: only one normal 2% growth tick ran, not four catch-up ticks.
+        assert!((conn.rate_cap.target_bps() - seeded * 1.02).abs() < 0.001);
+    }
+
+    #[tokio::test]
+    async fn health_tick_stalls_on_data_silence_despite_live_inbound_rtt() {
+        // Given: a live RTT path but 32 accepted DATA sends without proof.
+        let mut conn = create_test_connection().await;
+        let now = now_ms();
+        conn.health = HealthMachine::new(HealthState::Healthy, now);
+        conn.rtt.update_estimate(40);
+        for seq in 0..32 {
+            conn.delivery.record_sent(
+                seq,
+                DataSend {
+                    sent_ms: now,
+                    len: 1316,
+                },
+            );
+        }
+        // When: one measured-RTT stall dwell passes without a DATA ACK.
+        tick_health(std::slice::from_mut(&mut conn), &[], now + 1000);
+        // Then: inbound/RTT liveness cannot conceal the DATA obstruction.
+        assert!(!conn.is_timed_out());
+        assert_eq!(conn.health.state(), HealthState::Stalled);
+        assert_eq!(conn.delivery.latest_data_proof_ms(), None);
+    }
+
+    #[tokio::test]
+    async fn route_loss_degrades_without_down_or_fabricated_measurements() {
+        // Given: a connected socket with no loss/queue evidence and a missing route.
+        let mut conn = create_test_connection().await;
+        conn.health = HealthMachine::new(HealthState::Healthy, 0);
+        conn.route_health = RouteHealth::NoDefaultRoute;
+        // When: the housekeeping sampler consumes the independent route observation.
+        tick_health(std::slice::from_mut(&mut conn), &[], now_ms());
+        // Then: route absence is soft degradation, never socket failure or invented loss.
+        assert_eq!(conn.health.state(), HealthState::Degraded);
+        assert!(conn.health.route_latched());
+        assert!(!conn.health.loss_latched());
+        assert_eq!(conn.loss.last_value(), None);
+        assert_eq!(conn.rtt.queue_delay_ms(), 0.0);
+        assert!(conn.connected);
+    }
+
+    #[tokio::test]
+    async fn queued_old_reader_packet_after_reconnect_is_not_proof() {
+        // Given: an actual old-reader ACK queued before replacement, then sequence reuse.
+        let mut conn = create_test_connection().await;
+        let peer = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let (tx, mut rx) = create_uplink_channel();
+        let mut readers = HashMap::new();
+        restart_reader_for(&conn, &mut readers, &tx);
+        let mut ack = Vec::from(SRTLA_TYPE_ACK.to_be_bytes());
+        ack.extend_from_slice(&[0, 0]);
+        ack.extend_from_slice(&42_u32.to_be_bytes());
+        peer.send_to(&ack, conn.socket.local_addr().unwrap())
+            .await
+            .unwrap();
+        let old = timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        conn.reconnect().await.unwrap();
+        restart_reader_for(&conn, &mut readers, &tx);
+        register(&mut conn).await;
+        conn.delivery.record_sent(
+            42,
+            DataSend {
+                sent_ms: now_ms(),
+                len: 1316,
+            },
+        );
+        // When: the old queued packet is dispatched against the replacement link.
+        dispatch(&mut conn, &mut SrtlaRegistrationManager::new(), old).await;
+        // Then: no proof; the NEW reader's same ACK does provide proof.
+        assert_eq!(conn.delivery.latest_data_proof_ms(), None);
+        peer.send_to(&ack, conn.socket.local_addr().unwrap())
+            .await
+            .unwrap();
+        let new = timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(new.reader_generation, conn.delivery.socket_generation);
+        dispatch(&mut conn, &mut SrtlaRegistrationManager::new(), new).await;
+        assert!(conn.delivery.latest_data_proof_ms().is_some());
+        for reader in readers.into_values() {
+            reader.handle.abort();
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn sighup_iface_move_starts_fresh_down_then_rejoins() {
+        // Given: an old mapped interface and accumulated state under a stable identity.
+        let mut conn = create_test_connection().await;
+        conn.link_id = Some(LinkId::parse("modem-a").unwrap());
+        conn.egress
+            .adopt(Some(IfaceName::parse("old-modem").unwrap()));
+        conn.health = HealthMachine::new(HealthState::Healthy, 0);
+        credit(&mut conn, now_ms());
+        let mut replacement = conn.spec();
+        replacement.iface = Some(IfaceName::parse("lo").unwrap());
+        let old_socket = conn.socket.clone();
+        let mut conns: SmallVec<_, 4> = [conn].into_iter().collect();
+        // When: the SIGHUP pool rebuild changes that identity's interface binding.
+        apply_link_changes(
+            &mut conns,
+            &[replacement],
+            "127.0.0.1",
+            8080,
+            &mut None,
+            &mut SequenceTracker::new(),
+            &mut SrtlaRegistrationManager::new(),
+        )
+        .await;
+        // Then: it really created a fresh socket, not just dropped a failed bind.
+        assert_eq!(conns.len(), 1);
+        assert!(!Arc::ptr_eq(&conns[0].socket, &old_socket));
+        assert_eq!(conns[0].health.state(), HealthState::Down);
+        assert_eq!(conns[0].rate_cap.state(), RateState::Bootstrap);
+        assert_eq!(conns[0].delivery.latest_data_proof_ms(), None);
+        register(&mut conns[0]).await;
+        tick_health(&mut conns, &[], now_ms());
+        assert_eq!(conns[0].health.state(), HealthState::Rejoining);
     }
 }

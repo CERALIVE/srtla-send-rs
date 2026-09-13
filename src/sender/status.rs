@@ -152,6 +152,16 @@ pub(crate) fn log_connection_status(
             conn.current_bitrate_mbps()
         );
 
+        if matches!(snap.mode, crate::mode::SchedulingMode::Adaptive) {
+            info!(
+                "        health={} pref={:.2} cap={:.0}",
+                conn.health.state().as_str(),
+                conn.effective_priority()
+                    .map_or(0.0, |priority| priority.get()),
+                conn.rate_cap.target_bps()
+            );
+        }
+
         // Egress health is reported SEPARATELY from the ACTIVE/TIMED_OUT line
         // above, because they answer different questions: that line is ACK
         // liveness, this one is whether the interface can still carry traffic
@@ -237,8 +247,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn status_renders_rtt_velocity_in_milliseconds_per_sample() {
+    fn capture_logs(run: impl FnOnce()) -> String {
         let logs = CapturedLogs::default();
         let output = logs.0.clone();
         let subscriber = tracing_subscriber::fmt()
@@ -247,15 +256,47 @@ mod tests {
             .with_max_level(tracing::Level::INFO)
             .with_writer(logs)
             .finish();
+        tracing::subscriber::with_default(subscriber, run);
+        String::from_utf8(output.lock().unwrap().clone()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn status_renders_rtt_velocity_in_milliseconds_per_sample() {
         let mut conn = create_test_connection().await;
         conn.rtt.estimated_rtt_ms = 42.0;
 
-        tracing::subscriber::with_default(subscriber, || {
+        let rendered = capture_logs(|| {
             log_connection_status(&[conn], None, &DynamicConfig::new());
         });
 
-        let rendered = String::from_utf8(output.lock().unwrap().clone()).unwrap();
         assert!(rendered.contains("velocity=0.00ms/sample"));
         assert!(!rendered.contains("velocity=0.00ms/s,"));
+    }
+
+    #[tokio::test]
+    async fn adaptive_status_reports_health_preference_and_target_cap() {
+        let mut conn = create_test_connection().await;
+        conn.priority_baseline = Some(crate::bind_map::Priority::try_from(0.1).unwrap());
+        let config = DynamicConfig::new();
+        config.set_mode(crate::mode::SchedulingMode::Adaptive);
+        let rendered = capture_logs(|| {
+            log_connection_status(&[conn], None, &config);
+        });
+        assert!(rendered.contains("health=down pref=0.10 cap=1000000"));
+    }
+
+    #[tokio::test]
+    async fn health_transitions_log_first_event_and_rate_limit_followups() {
+        let mut conn = create_test_connection().await;
+        let mut ticker = crate::sender::housekeeping::HealthTicker::default();
+        let rendered = capture_logs(|| {
+            ticker.tick(std::slice::from_mut(&mut conn), &[], 1000);
+            conn.route_health = crate::connection::RouteHealth::NoDefaultRoute;
+            ticker.tick(std::slice::from_mut(&mut conn), &[], 1001);
+            ticker.tick(std::slice::from_mut(&mut conn), &[], 2000);
+        });
+        assert_eq!(rendered.matches("link test-connection health").count(), 2);
+        assert!(rendered.contains("health down→rejoining (registered)"));
+        assert!(rendered.contains("health rejoining→degraded (no default route)"));
     }
 }

@@ -578,9 +578,13 @@ impl SrtlaConnection {
     /// Reset core connection state (window, packet tracking, batch queue).
     /// Used by both mark_for_recovery and reset_state.
     fn reset_core_state(&mut self) {
+        let now = now_ms();
         self.delivery.reset();
         self.probes.reset();
-        self.loss = loss::LossTracker::new(now_ms());
+        self.loss = loss::LossTracker::new(now);
+        self.rate_cap = rate_cap::RateCap::default();
+        self.health = health::HealthMachine::new(health::HealthState::Down, now);
+        self.adaptive = adaptive::AdaptiveLinkState::default();
         self.connected = false;
         self.window = WINDOW_DEF * WINDOW_MULT;
         self.in_flight_packets = 0;
@@ -670,6 +674,7 @@ impl SrtlaConnection {
     /// Full reset: clears all state including congestion/bitrate stats.
     fn reset_state(&mut self) {
         self.last_received = None;
+        self.last_keepalive_sent = None;
         self.reset_core_state();
 
         // Reset submodule state

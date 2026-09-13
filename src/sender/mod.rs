@@ -43,7 +43,7 @@ pub use connections::{
 // Re-export public items used by tests
 #[allow(unused_imports)]
 pub use housekeeping::GLOBAL_TIMEOUT_MS;
-use housekeeping::handle_housekeeping;
+use housekeeping::{HealthTicker, handle_housekeeping_with_targets as handle_housekeeping};
 pub use links::{LinkSource, SenderPaths};
 use packet_handler::{
     drain_packet_queue, flush_all_batches, handle_srt_packet, handle_uplink_packet,
@@ -214,6 +214,7 @@ pub async fn run_sender_with_config(
     let mut last_switch_time_ms: u64 = 0; // Track time of last connection switch
     let mut edpf_state = EdpfSchedulerState::default();
     let mut adaptive_state = AdaptiveState::new(shared_stats.clone());
+    let mut health_ticks = HealthTicker::default();
     let mut all_failed_at: Option<Instant> = None;
     let mut pending_changes: Option<PendingConnectionChanges> = None;
 
@@ -246,6 +247,8 @@ pub async fn run_sender_with_config(
             &mut reader_handles,
             &packet_tx,
             &mut seq_tracker,
+            &adaptive_state.targets,
+            &mut health_ticks,
         )
         .await
         {
@@ -347,6 +350,8 @@ pub async fn run_sender_with_config(
                             &mut reader_handles,
                             &packet_tx,
                             &mut seq_tracker,
+                            &adaptive_state.targets,
+                            &mut health_ticks,
                         ).await {
                             warn!("housekeeping failed: {err}");
                         }
