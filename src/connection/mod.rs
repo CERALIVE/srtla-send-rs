@@ -1,3 +1,4 @@
+// allow: SIZE_OK — existing connection façade; tracker field/init/reset stay beside the delivery lifecycle.
 mod ack_nak;
 pub mod batch_recv;
 pub mod batch_send;
@@ -7,6 +8,7 @@ pub mod delivery;
 pub mod egress;
 pub mod health;
 mod incoming;
+pub mod loss;
 mod packet_io;
 mod reconnection;
 pub mod route;
@@ -120,6 +122,7 @@ pub struct SrtlaConnection {
     #[cfg(not(feature = "test-internals"))]
     pub(crate) packet_log: FxHashMap<i32, u64>,
     pub(crate) delivery: delivery::DeliveryLedger,
+    pub(crate) loss: loss::LossTracker,
     /// Highest sequence number that has been cumulatively ACKed, under 31-bit
     /// serial (wrap-aware) ordering. `None` = nothing ACKed yet on this link.
     ///
@@ -235,6 +238,7 @@ impl SrtlaConnection {
             in_flight_packets: 0,
             packet_log: FxHashMap::with_capacity_and_hasher(PKT_LOG_SIZE, Default::default()),
             delivery: delivery::DeliveryLedger::default(),
+            loss: loss::LossTracker::new(now_ms()),
             highest_acked_seq: None,
             last_received: None,
             last_sent: None,
@@ -527,6 +531,7 @@ impl SrtlaConnection {
     /// Used by both mark_for_recovery and reset_state.
     fn reset_core_state(&mut self) {
         self.delivery.reset();
+        self.loss = loss::LossTracker::new(now_ms());
         self.connected = false;
         self.window = WINDOW_DEF * WINDOW_MULT;
         self.in_flight_packets = 0;
