@@ -1059,10 +1059,16 @@ pub fn inject_udp_stream(
     let dur_secs = duration.as_secs_f64();
 
     let script = format!(
-        "import socket,time\ns=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)\nd=b'\\x00'*188\\
-         nstart=time.time(); i=0\nwhile time.time()-start<{dur_secs}:\n\x20 \
-         s.sendto(d,('{target_ip}',{port}))\n\x20 i+=1\n\x20 \
-         time.sleep({interval_us}/1e6)\ns.close()\nprint(f'sent {{i}} packets')"
+        r#"import socket,time
+s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+d=b'\x00'*188
+start=time.monotonic(); i=0
+while time.monotonic()-start<{dur_secs}:
+    s.sendto(d,('{target_ip}',{port}))
+    i+=1
+    time.sleep({interval_us}/1e6)
+s.close()
+print(f'sent {{i}} packets')"#
     );
     ns.exec_checked("python3", &["-c", &script])
         .context("inject UDP stream")?;
@@ -1129,30 +1135,50 @@ mod srt_profile_tests {
         wait_for_udp_listener(&stack.topo.sender_ns, 6000, Duration::from_secs(10))
             .expect("caller input ready");
         // When real libsrt carries enough messages to cross its stats packet count.
-        inject_udp_packets(&stack.topo.sender_ns, "127.0.0.1", 6000, 10000)
-            .expect("source datagrams");
+        // A burst can overflow the caller's UDP receive buffer before SRT reads 1000 messages.
+        inject_udp_stream(
+            &stack.topo.sender_ns,
+            "127.0.0.1",
+            6000,
+            500,
+            Duration::from_secs(6),
+        )
+        .expect("source datagrams");
         // Then the listener publishes real CSV, including a data row rather than just a header.
         let deadline = Instant::now() + Duration::from_secs(10);
         let captured = loop {
-            let text = std::fs::read_to_string(&csv).unwrap_or_default();
-            if text.lines().count() >= 2 {
+            let text = std::fs::read_to_string(&csv).expect("read listener stats CSV");
+            if text.ends_with('\n') && text.lines().count() >= 2 {
                 break text;
             }
             assert!(
                 Instant::now() < deadline,
-                "no stats rows; caller={:?}; sender={:?}",
+                "no stats rows; listener={:?}; caller={:?}; sender={:?}",
+                stack.srt_server.as_ref().expect("listener").log_snapshot(),
                 caller.log_snapshot(),
                 stack.sender_log_snapshot()
             );
             std::thread::sleep(Duration::from_millis(100));
         };
-        assert!(
-            captured
-                .lines()
-                .next()
-                .expect("CSV header")
-                .split(',')
-                .any(|field| field == "pktRecv")
+        let mut lines = captured.lines();
+        let header = lines.next().expect("CSV header");
+        let recv_column = header
+            .split(',')
+            .position(|field| field == "pktRecv")
+            .expect("pktRecv column");
+        let received = lines
+            .next()
+            .expect("CSV data row")
+            .split(',')
+            .nth(recv_column)
+            .expect("pktRecv value")
+            .parse::<u64>()
+            .expect("numeric pktRecv");
+        assert!(received > 0, "listener must report real received packets");
+        eprintln!(
+            "listener CSV captured: pktRecv={received}, data_rows={}, path={}",
+            captured.lines().count() - 1,
+            csv.display()
         );
         stack.stop();
         drop(caller);
