@@ -155,6 +155,11 @@ impl HealthMachine {
         self.last_transition_ms
     }
 
+    /// Latched loss cause survives stale cohorts; ablation must not infer it from EWMA alone.
+    pub const fn loss_latched(&self) -> bool {
+        self.loss_latched
+    }
+
     /// Applies one observation. Hard failure outranks stall, which outranks degradation.
     pub fn step(&mut self, s: &HealthSignals, k: &HealthConstants) -> Option<Transition> {
         use HealthState::{Degraded, Down, Healthy, Rejoining, Stalled};

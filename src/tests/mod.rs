@@ -41,6 +41,9 @@ pub mod stall_deselect_tests;
 pub mod health_delivery_tests;
 
 #[cfg(test)]
+pub mod adaptive_tests;
+
+#[cfg(test)]
 pub mod health_delivery_batch_tests;
 
 #[cfg(test)]

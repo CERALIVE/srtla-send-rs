@@ -62,6 +62,12 @@ fn create_connection_from_socket(
         delivery: crate::connection::delivery::DeliveryLedger::default(),
         loss: crate::connection::loss::LossTracker::new(now_ms()),
         probes: crate::connection::probe::ProbeLog::default(),
+        health: crate::connection::health::HealthMachine::new(
+            crate::connection::health::HealthState::Down,
+            now_ms(),
+        ),
+        rate_cap: crate::connection::rate_cap::RateCap::default(),
+        adaptive: crate::connection::adaptive::AdaptiveLinkState::default(),
         highest_acked_seq: None,
         last_received: Some(Instant::now()),
         last_sent: None,

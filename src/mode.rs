@@ -27,6 +27,9 @@ pub enum SchedulingMode {
     /// Selects link with lowest predicted arrival time, filtered by
     /// head-of-line blocking guard and in-order delivery constraint.
     Edpf,
+
+    /// Experimental health/deadline-gated capacity ranking with duplicate DATA probes.
+    Adaptive,
 }
 
 impl SchedulingMode {
@@ -37,6 +40,7 @@ impl SchedulingMode {
             SchedulingMode::Enhanced => 1,
             SchedulingMode::RttThreshold => 2,
             SchedulingMode::Edpf => 3,
+            SchedulingMode::Adaptive => 4,
         }
     }
 
@@ -47,6 +51,7 @@ impl SchedulingMode {
             1 => SchedulingMode::Enhanced,
             2 => SchedulingMode::RttThreshold,
             3 => SchedulingMode::Edpf,
+            4 => SchedulingMode::Adaptive,
             _ => SchedulingMode::Enhanced,
         }
     }
@@ -81,6 +86,7 @@ impl fmt::Display for SchedulingMode {
             SchedulingMode::Enhanced => write!(f, "enhanced"),
             SchedulingMode::RttThreshold => write!(f, "rtt-threshold"),
             SchedulingMode::Edpf => write!(f, "edpf"),
+            SchedulingMode::Adaptive => write!(f, "adaptive"),
         }
     }
 }
@@ -94,8 +100,9 @@ impl std::str::FromStr for SchedulingMode {
             "enhanced" => Ok(SchedulingMode::Enhanced),
             "rtt-threshold" => Ok(SchedulingMode::RttThreshold),
             "edpf" => Ok(SchedulingMode::Edpf),
+            "adaptive" => Ok(SchedulingMode::Adaptive),
             _ => Err(format!(
-                "invalid mode '{}': use classic, enhanced, rtt-threshold, or edpf",
+                "invalid mode '{}': use classic, enhanced, rtt-threshold, edpf, or adaptive",
                 s
             )),
         }
@@ -109,6 +116,7 @@ impl clap::ValueEnum for SchedulingMode {
             SchedulingMode::Enhanced,
             SchedulingMode::RttThreshold,
             SchedulingMode::Edpf,
+            SchedulingMode::Adaptive,
         ]
     }
 
@@ -120,6 +128,7 @@ impl clap::ValueEnum for SchedulingMode {
                 Some(clap::builder::PossibleValue::new("rtt-threshold"))
             }
             SchedulingMode::Edpf => Some(clap::builder::PossibleValue::new("edpf")),
+            SchedulingMode::Adaptive => Some(clap::builder::PossibleValue::new("adaptive")),
         }
     }
 }
@@ -127,6 +136,24 @@ impl clap::ValueEnum for SchedulingMode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn adaptive_mode_keeps_legacy_encodings_and_default() {
+        // Given the fifth spelling, when parsed, then its encoding is additive.
+        let mode: SchedulingMode = "adaptive".parse().unwrap();
+        assert_eq!(mode.as_u8(), 4);
+        assert_eq!(SchedulingMode::from_u8(4), mode);
+        assert_eq!(mode.to_string(), "adaptive");
+        assert_eq!(SchedulingMode::default(), SchedulingMode::Enhanced);
+        for (id, spelling) in [
+            (0, "classic"),
+            (1, "enhanced"),
+            (2, "rtt-threshold"),
+            (3, "edpf"),
+        ] {
+            assert_eq!(SchedulingMode::from_u8(id).to_string(), spelling);
+        }
+    }
 
     #[test]
     fn test_mode_default() {

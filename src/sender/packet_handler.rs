@@ -8,11 +8,14 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tracing::{debug, warn};
 
 pub(crate) use super::ack::{AckContext, AckPolicy, apply_srtla_ack};
-use super::selection::{EdpfSchedulerState, select_connection_idx};
+use super::selection::adaptive::AdaptiveState;
+use super::selection::{EdpfSchedulerState, select_connection_idx_with_state};
 use super::sequence::SequenceTracker;
 use super::uplink::UplinkPacket;
 use crate::config::ConfigSnapshot;
+use crate::connection::probe::ProbeOpportunity;
 use crate::connection::{SrtlaConnection, SrtlaIncoming};
+use crate::mode::SchedulingMode;
 use crate::protocol;
 use crate::registration::SrtlaRegistrationManager;
 use crate::stats::SharedStats;
@@ -303,6 +306,7 @@ pub async fn handle_srt_packet(
     registration_complete: bool,
     config_snap: &ConfigSnapshot,
     edpf_state: &mut EdpfSchedulerState,
+    adaptive_state: &mut AdaptiveState,
 ) {
     match res {
         Ok((n, src)) => {
@@ -333,13 +337,14 @@ pub async fn handle_srt_packet(
                 return;
             }
 
-            let sel_idx = select_connection_idx(
+            let sel_idx = select_connection_idx_with_state(
                 connections,
                 *last_selected_idx,
                 *last_switch_time_ms,
                 packet_time_ms,
                 config_snap,
                 edpf_state,
+                adaptive_state,
             );
             if let Some(sel_idx) = sel_idx {
                 forward_via_connection(
@@ -353,6 +358,26 @@ pub async fn handle_srt_packet(
                     packet_time_ms,
                 )
                 .await;
+                if matches!(config_snap.mode, SchedulingMode::Adaptive) {
+                    let offer = ProbeOpportunity {
+                        primary_conn_id: connections[sel_idx].conn_id,
+                        packet: pkt,
+                        targets: &adaptive_state.targets,
+                    };
+                    if let Some(emission) =
+                        adaptive_state.probe.maybe_emit(connections, offer).await
+                        && let Err(error) = emission.outcome
+                    {
+                        warn!(conn_id = emission.conn_id, %error, "adaptive probe flush failed, marking for recovery");
+                        if let Some(conn) = connections
+                            .iter_mut()
+                            .find(|c| c.conn_id == emission.conn_id)
+                        {
+                            conn.mark_for_recovery();
+                        }
+                        seq_tracker.remove_connection(emission.conn_id);
+                    }
+                }
             } else {
                 warn!("no available connection to forward packet from {}", src);
             }

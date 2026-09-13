@@ -17,6 +17,7 @@ impl AckPolicy {
     /// explicitly selecting arrival-scoped attribution here, never a wildcard.
     pub const fn from_config(config: &ConfigSnapshot) -> Self {
         match config.mode {
+            SchedulingMode::Adaptive => Self::Adaptive,
             SchedulingMode::Classic => Self::Legacy {
                 classic: true,
                 earned_ack_window: config.earned_ack_window,

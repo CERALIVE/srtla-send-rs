@@ -1,6 +1,6 @@
 //! Connection selection strategies for SRTLA bonding
 //!
-//! This module provides four connection selection strategies:
+//! This module provides five connection selection strategies:
 //!
 //! ## Classic Mode
 //! Matches the original C implementation exactly:
@@ -39,6 +39,11 @@
 //!   send path so selection is deterministic and allocation-free on the hot path
 
 pub mod adaptive;
+use adaptive::AdaptiveState;
+#[cfg(test)]
+mod legacy;
+#[cfg(test)]
+pub use legacy::{select_by_mode, select_connection_idx};
 pub mod blest;
 mod classic;
 pub mod edpf;
@@ -90,15 +95,17 @@ pub struct EdpfSchedulerState {
 /// # Returns
 /// The index of the selected connection, or None if no valid connections
 #[inline(always)]
-pub fn select_connection_idx(
+pub fn select_connection_idx_with_state(
     conns: &mut [SrtlaConnection],
     last_idx: Option<usize>,
     last_switch_time_ms: u64,
     current_time_ms: u64,
     config: &ConfigSnapshot,
     edpf_state: &mut EdpfSchedulerState,
+    adaptive_state: &mut AdaptiveState,
 ) -> Option<usize> {
-    if config.stall_deselect {
+    // Adaptive owns stall admission; the experimental legacy mask is a strict no-op.
+    if config.stall_deselect && !matches!(config.mode, SchedulingMode::Adaptive) {
         return select_with_stall_deselect(
             conns,
             last_idx,
@@ -106,15 +113,17 @@ pub fn select_connection_idx(
             current_time_ms,
             config,
             edpf_state,
+            adaptive_state,
         );
     }
-    select_by_mode(
+    select_by_mode_with_state(
         conns,
         last_idx,
         last_switch_time_ms,
         current_time_ms,
         config,
         edpf_state,
+        adaptive_state,
     )
 }
 
@@ -122,13 +131,14 @@ pub fn select_connection_idx(
 /// selection layer — unchanged by `stall_deselect`, so the flag-off path is a
 /// pure pass-through with byte-identical behaviour.
 #[inline(always)]
-pub(crate) fn select_by_mode(
+fn select_by_mode_with_state(
     conns: &mut [SrtlaConnection],
     last_idx: Option<usize>,
     last_switch_time_ms: u64,
     current_time_ms: u64,
     config: &ConfigSnapshot,
     edpf_state: &mut EdpfSchedulerState,
+    adaptive_state: &mut AdaptiveState,
 ) -> Option<usize> {
     match config.mode {
         SchedulingMode::Classic => {
@@ -161,6 +171,14 @@ pub(crate) fn select_by_mode(
             // EDPF mode: BLEST → IoDS → EDPF pipeline
             edpf_pipeline_select(conns, config, edpf_state)
         }
+        SchedulingMode::Adaptive => adaptive::select(
+            conns,
+            last_idx,
+            last_switch_time_ms,
+            current_time_ms,
+            config,
+            adaptive_state,
+        ),
     }
 }
 
@@ -267,6 +285,7 @@ fn select_with_stall_deselect(
     current_time_ms: u64,
     config: &ConfigSnapshot,
     edpf_state: &mut EdpfSchedulerState,
+    adaptive_state: &mut AdaptiveState,
 ) -> Option<usize> {
     let min_in_flight = config.stall_min_in_flight;
     let stale_ms = config.stall_ack_stale_ms;
@@ -282,13 +301,14 @@ fn select_with_stall_deselect(
     }
 
     if !any_stalled || !any_healthy {
-        return select_by_mode(
+        return select_by_mode_with_state(
             conns,
             last_idx,
             last_switch_time_ms,
             current_time_ms,
             config,
             edpf_state,
+            adaptive_state,
         );
     }
 
@@ -307,13 +327,14 @@ fn select_with_stall_deselect(
         c.last_received = None;
     }
 
-    let pick = select_by_mode(
+    let pick = select_by_mode_with_state(
         conns,
         last_idx,
         last_switch_time_ms,
         current_time_ms,
         config,
         edpf_state,
+        adaptive_state,
     );
 
     for (i, connected, last_received) in masked {
@@ -322,216 +343,17 @@ fn select_with_stall_deselect(
     }
 
     pick.or_else(|| {
-        select_by_mode(
+        select_by_mode_with_state(
             conns,
             last_idx,
             last_switch_time_ms,
             current_time_ms,
             config,
             edpf_state,
+            adaptive_state,
         )
     })
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::test_helpers::create_test_connections;
-    use crate::utils::now_ms;
-
-    #[test]
-    fn test_select_connection_idx_classic() {
-        // Test that classic mode always picks highest score, ignoring dampening
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let mut connections = rt.block_on(create_test_connections(3));
-
-        connections[0].in_flight_packets = 5; // Lower score
-        connections[1].in_flight_packets = 0; // Highest score
-        connections[2].in_flight_packets = 10; // Lowest score
-
-        let last_switch_time_ms = now_ms();
-        let current_time_ms = last_switch_time_ms + 100; // Within cooldown
-
-        let config = ConfigSnapshot {
-            mode: SchedulingMode::Classic,
-            quality_enabled: false,
-            exploration_enabled: false,
-            rtt_delta_ms: 30,
-            earned_ack_window: false,
-            stall_deselect: false,
-            stall_min_in_flight: 32,
-            stall_ack_stale_ms: 3000,
-            stall_reprobe_ms: 1000,
-        };
-
-        // Classic mode should pick connection 1 (highest score) even during cooldown
-        let result = select_connection_idx(
-            &mut connections,
-            Some(0),
-            last_switch_time_ms,
-            current_time_ms,
-            &config,
-            &mut EdpfSchedulerState::default(),
-        );
-        assert_eq!(
-            result,
-            Some(1),
-            "Classic mode should pick highest score connection"
-        );
-    }
-
-    #[test]
-    fn test_select_connection_idx_enhanced() {
-        // Test that enhanced mode enforces cooldown dampening
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let mut connections = rt.block_on(create_test_connections(3));
-
-        connections[0].in_flight_packets = 5; // Currently selected, lower score
-        connections[1].in_flight_packets = 0; // Highest score
-        connections[2].in_flight_packets = 10; // Lowest score
-
-        let last_switch_time_ms = now_ms();
-        let current_time_ms = last_switch_time_ms + 5; // Within 15ms cooldown
-
-        let config = ConfigSnapshot {
-            mode: SchedulingMode::Enhanced,
-            quality_enabled: true,
-            exploration_enabled: false,
-            rtt_delta_ms: 30,
-            earned_ack_window: false,
-            stall_deselect: false,
-            stall_min_in_flight: 32,
-            stall_ack_stale_ms: 3000,
-            stall_reprobe_ms: 1000,
-        };
-
-        // Enhanced mode should stay with connection 0 due to cooldown
-        let result = select_connection_idx(
-            &mut connections,
-            Some(0),
-            last_switch_time_ms,
-            current_time_ms,
-            &config,
-            &mut EdpfSchedulerState::default(),
-        );
-        assert_eq!(
-            result,
-            Some(0),
-            "Enhanced mode should enforce cooldown and stay with current connection"
-        );
-
-        // After cooldown expires, should allow switching
-        let current_time_after_cooldown = last_switch_time_ms + 20; // Past 15ms cooldown
-        let result_after = select_connection_idx(
-            &mut connections,
-            Some(0),
-            last_switch_time_ms,
-            current_time_after_cooldown,
-            &config,
-            &mut EdpfSchedulerState::default(),
-        );
-        assert_eq!(
-            result_after,
-            Some(1),
-            "Enhanced mode should allow switching after cooldown expires"
-        );
-    }
-
-    #[test]
-    fn test_select_connection_idx_empty() {
-        let mut conns: Vec<SrtlaConnection> = vec![];
-        let config = ConfigSnapshot {
-            mode: SchedulingMode::Enhanced,
-            quality_enabled: false,
-            exploration_enabled: false,
-            rtt_delta_ms: 30,
-            earned_ack_window: false,
-            stall_deselect: false,
-            stall_min_in_flight: 32,
-            stall_ack_stale_ms: 3000,
-            stall_reprobe_ms: 1000,
-        };
-        let result = select_connection_idx(
-            &mut conns,
-            None,
-            0,
-            0,
-            &config,
-            &mut EdpfSchedulerState::default(),
-        );
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn edpf_pipeline_mutates_caller_owned_state() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let mut connections = rt.block_on(create_test_connections(2));
-        for c in connections.iter_mut() {
-            c.bitrate.current_bitrate_bps = 1_000_000.0;
-            c.rtt.rtt_min_ms = 30.0;
-        }
-
-        let config = ConfigSnapshot {
-            mode: SchedulingMode::Edpf,
-            quality_enabled: false,
-            exploration_enabled: false,
-            rtt_delta_ms: 30,
-            earned_ack_window: false,
-            stall_deselect: false,
-            stall_min_in_flight: 32,
-            stall_ack_stale_ms: 3000,
-            stall_reprobe_ms: 1000,
-        };
-
-        let mut state = EdpfSchedulerState::default();
-        let selected = select_connection_idx(&mut connections, None, 0, 0, &config, &mut state);
-
-        assert!(selected.is_some(), "EDPF should select a connection");
-        assert!(
-            state.iods.last_arrival > 0.0,
-            "the caller-owned IoDS state must be mutated by the pipeline"
-        );
-    }
-
-    #[test]
-    fn edpf_two_states_are_independent() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let mut connections = rt.block_on(create_test_connections(2));
-        for c in connections.iter_mut() {
-            c.bitrate.current_bitrate_bps = 1_000_000.0;
-            c.rtt.rtt_min_ms = 30.0;
-        }
-
-        let config = ConfigSnapshot {
-            mode: SchedulingMode::Edpf,
-            quality_enabled: false,
-            exploration_enabled: false,
-            rtt_delta_ms: 30,
-            earned_ack_window: false,
-            stall_deselect: false,
-            stall_min_in_flight: 32,
-            stall_ack_stale_ms: 3000,
-            stall_reprobe_ms: 1000,
-        };
-
-        let mut state_a = EdpfSchedulerState::default();
-        let state_b = EdpfSchedulerState::default();
-
-        for _ in 0..3 {
-            let _ = select_connection_idx(&mut connections, None, 0, 0, &config, &mut state_a);
-        }
-
-        assert!(
-            state_a.iods.last_arrival > 0.0,
-            "state_a should accumulate scheduled arrival history"
-        );
-        assert_eq!(
-            state_b.iods.last_arrival, 0.0,
-            "state_b is untouched and must remain at its Default"
-        );
-        assert!(
-            state_a.iods.last_arrival != state_b.iods.last_arrival,
-            "two separate EdpfSchedulerState instances must diverge independently"
-        );
-    }
-}
+mod tests;

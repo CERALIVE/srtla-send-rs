@@ -91,6 +91,7 @@ pub(crate) fn log_connection_status(
         crate::mode::SchedulingMode::Edpf => {
             info!("    EDPF pipeline: BLEST + IoDS + EDPF");
         }
+        crate::mode::SchedulingMode::Adaptive => {}
     }
 
     // Show packet log utilization

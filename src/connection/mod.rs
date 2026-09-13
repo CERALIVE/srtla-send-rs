@@ -1,5 +1,6 @@
 // allow: SIZE_OK — existing connection façade; tracker field/init/reset stay beside the delivery lifecycle.
 mod ack_nak;
+pub mod adaptive;
 pub mod batch_recv;
 pub mod batch_send;
 mod bitrate;
@@ -142,6 +143,9 @@ pub struct SrtlaConnection {
     pub(crate) delivery: delivery::DeliveryLedger,
     pub(crate) loss: loss::LossTracker,
     pub(crate) probes: probe::ProbeLog,
+    pub(crate) health: health::HealthMachine,
+    pub(crate) rate_cap: rate_cap::RateCap,
+    pub(crate) adaptive: adaptive::AdaptiveLinkState,
     /// Highest sequence number that has been cumulatively ACKed, under 31-bit
     /// serial (wrap-aware) ordering. `None` = nothing ACKed yet on this link.
     ///
@@ -262,6 +266,9 @@ impl SrtlaConnection {
             delivery: delivery::DeliveryLedger::default(),
             loss: loss::LossTracker::new(now_ms()),
             probes: probe::ProbeLog::default(),
+            health: health::HealthMachine::new(health::HealthState::Down, now_ms()),
+            rate_cap: rate_cap::RateCap::default(),
+            adaptive: adaptive::AdaptiveLinkState::default(),
             highest_acked_seq: None,
             last_received: None,
             last_sent: None,

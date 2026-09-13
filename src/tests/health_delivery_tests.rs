@@ -49,7 +49,7 @@ fn health(conn: &SrtlaConnection) -> HealthState {
     machine.state()
 }
 
-async fn scenario_d(clock: &TestClock) -> SrtlaConnection {
+pub(crate) async fn scenario_d(clock: &TestClock) -> SrtlaConnection {
     let (mut conn, _receiver) = accepted(40).await;
     assert_eq!(conn.in_flight_packets, 40);
     assert_eq!(conn.delivery.attempts_since_proof, 40);
