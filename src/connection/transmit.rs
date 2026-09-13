@@ -7,6 +7,10 @@ use super::delivery::DataSend;
 use crate::bind_map::IfaceName;
 use crate::utils::now_ms;
 
+#[cfg(test)]
+#[path = "loss_io_tests.rs"]
+mod loss_tests;
+
 impl SrtlaConnection {
     /// Flush the batch queue, committing exactly the datagrams that went out.
     ///
@@ -33,6 +37,7 @@ impl SrtlaConnection {
                         len: u16::try_from(len)?,
                     },
                 );
+                self.loss.record_send(accepted_at_ms);
             }
         }
         if transmitted {

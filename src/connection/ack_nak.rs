@@ -81,6 +81,9 @@ impl SrtlaConnection {
     pub fn handle_nak(&mut self, seq: i32) -> bool {
         let found = self.packet_log.remove(&seq).is_some();
         if found {
+            // Normal-log removal is unique attribution. Todo 19's separate probe-log
+            // lookup must not enter this branch or feed normal loss evidence.
+            self.loss.record_data_nak(now_ms());
             self.in_flight_packets = self.packet_log.len() as i32;
             self.congestion
                 .handle_nak(&mut self.window, seq, &self.label);
