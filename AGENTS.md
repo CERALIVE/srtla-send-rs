@@ -937,6 +937,49 @@ performance claim changes here. Tests: `cargo test --lib adaptive` and the real-
 
 ## PRIORITY PLUMBING (scheduler evaluation, Todo 21)
 
+### Wave-4 shared foundation
+
+- **Todo 23 seam:** `HealthSignals.route_health: connection::route::RouteHealth`
+  uses `Unknown | DefaultRoutePresent | NoDefaultRoute`, not a parallel enum or
+  synthetic loss/queue sample. `HealthMachine::route_latched()` is an independent
+  cause: NoDefaultRoute latches it, DefaultRoutePresent clears it, Unknown retains
+  it. A latched route blocks Degraded clearance; after restoration all causes must
+  clear continuously for the existing τ. Hard Down and stall precedence are intact.
+  `HealthConstants` is re-exported from `health_constants.rs` without API/default
+  changes. This foundation does NOT add housekeeping health ticks.
+- **Todo 25 seam:** `TelemetryConn` and `LinkStats` gain optional `health` and
+  `priority`. The document orders them after `link_id`, omitting None entirely;
+  `TelemetryConn` retains PartialEq but cannot derive Eq with raw optional f64.
+  `LinkStats.effective_multiplier` initially equals legacy `quality_multiplier`,
+  NOT a claimed adaptive admission/weight snapshot. Runtime health/priority remain
+  None; stats projection preserves values if supplied. Todo 25 must arrange the
+  actual scheduler-owned weight publication rather than reconstructing it here.
+  Schema stays 1; fixture JSON and existing fixture assertions are unchanged.
+- **Todo 24 seam:** `SharedStats::pool_control() -> Option<PoolControlHandle>`
+  reaches `sender::pool_control`. `submit(PoolControlRequest::SetLinkPriority {
+  key: LinkKey::LinkId(LinkId) | LinkKey::ConnId(usize), priority: Option<Priority>
+  })` is synchronous/nonblocking and returns a Tokio oneshot receiver of
+  `PoolControlResult`. The sender owns/drains the bounded 64-message mpsc channel
+  in its cross-platform event loop. **ConnId is the telemetry position, never the
+  internal random connection ID.** Application changes only the addressed override,
+  calls the existing clear methods for None, and replies AFTER mutation with
+  `{applied, key, link_id, conn_id, priority, effective_priority}` (typed priorities).
+  Errors: `UnknownLink(LinkKey)`, `Busy`, `Unavailable`, `PoolReloaded`.
+  The RPC adapter must parse boundary types, bound its reply wait, and never report
+  enqueue success as `applied`. Do not block an async runtime on `blocking_recv`.
+- **Reload ordering:** close/reject the old channel BEFORE `apply_link_changes`'s
+  first await; publish a fresh handle afterward. Queued requests of either key kind
+  get PoolReloaded, all retained old handles stay closed, and requests during reload
+  fail Unavailable. This conservatively fences positional writes even on unchanged
+  order. Existing baseline/link/conn reload semantics are unchanged. Dropping a
+  reply cancels queued work observed before application; racing cancellation after
+  application cannot roll it back. Sender teardown disconnects waiting replies.
+- Tests: `health::route_tests` proves route-only and mixed-cause clearance;
+  `telemetry_doc::optional_tests` pins order/omission; `sender::pool_control_tests`
+  mutates actual connections, and `pool_control_runtime_tests` drives the real sender
+  loop using initial snapshot readiness. JSON-RPC, fixture expansion, live health
+  ticks, and scheduler-derived telemetry remain the later lanes' work.
+
 `bind_map::Priority` is a private-field `f64` newtype, constructed by
 `TryFrom<f64>` only for finite −0.20..=+0.20; `get()` exposes the numeric bias.
 Raw sidecar rows use `#[serde(default)] Option<f64>`; after hash coherence,
@@ -1001,7 +1044,8 @@ Integration obligations:
   can clear loss even if this tick's cohort is below the floor. Stale (age ≥10s),
   absent, or undated EWMA requires `probe_loss`; supply it only after the last two
   complete trains. Loss demotion latches its cause; queue-only demotion with unknown
-  loss does not invent a loss requirement. Either detector can reset clear dwell.
+  loss does not invent a loss requirement. Loss, queue, or the independent route
+  cause can reset clear dwell.
 - `probe_rounds_started_ms: Option<u64>` is the start of the oldest train counted
   by `probe_rounds_ok`; expire the pair together. This additional timestamp is
   necessary to enforce the plan's freshness requirement from a pure snapshot.
