@@ -14,6 +14,7 @@
 pub mod bond;
 pub mod harness;
 pub mod impairment;
+pub mod profile;
 pub mod scenario;
 pub mod test_util;
 pub mod topology;
