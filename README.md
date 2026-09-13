@@ -388,6 +388,28 @@ cargo clippy -p network-sim -- -D warnings
 timeout --foreground --kill-after=10s 120s cargo test --test netns_bond -- --nocapture
 ```
 
+### Receiver-side benchmark metrics
+
+`network_sim::metrics` supplies receiver CSV windowing, a pcap-free 100 ms UDP sink,
+1 Hz link/telemetry collectors, optional control-command deltas, CPU/RSS readings,
+impairment episodes, source-load intervals, and the serde `RunRecord` schema.
+The [frozen definitions and collector contract](docs/notes/bench-scenarios.md#metrics)
+include a [round-tripped example](crates/network-sim/fixtures/run-record-example.json).
+Primary outcomes are useful sink goodput and viewer drop/unique-packet loss, not
+sender wire bitrate. Buffered delivery before an impairment reaches the viewer is
+not recovery evidence; planned idle is not a zero-baseline recovery success.
+
+The CSV parser uses the real libsrt field names and the **second `Time` column**;
+reorder distance is optional. `SrtStats::parse` implements the frozen cumulative
+packet/interval-belated contract. For the current listener flags without fullstats,
+explicitly select `CaptureSemantics::Interval`: later live evidence demonstrated
+interval packet counters. Both modes preserve raw rows and map by time, including
+gaps and zero-valued observations. Never infer capture semantics from counter values.
+
+Run `cargo test -p network-sim --lib metrics` without privileges. No production
+scheduler or telemetry-producer behavior changes; campaign execution/reporting remain
+separate consumers of the schema.
+
 ### Duplicate-DATA receiver spike (test builds only)
 
 `tests/netns_dup_spike.rs` is an ignored, privileged experiment using two registered
