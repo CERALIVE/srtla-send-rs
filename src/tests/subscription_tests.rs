@@ -34,6 +34,8 @@ fn sample_conn() -> TelemetryConn {
         bytes_sent_total: 0,
         iface: None,
         link_id: None,
+        health: None,
+        priority: None,
     }
 }
 

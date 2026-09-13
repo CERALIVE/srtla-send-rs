@@ -43,6 +43,8 @@ fn base_conn() -> TelemetryConn {
         bytes_sent_total: 0,
         iface: None,
         link_id: None,
+        health: None,
+        priority: None,
     }
 }
 
@@ -84,6 +86,9 @@ fn link(connected: bool, bitrate_bytes_per_sec: u32, rtt_ms: u32, base_score: i3
         rtt_velocity: 0.0,
         base_score,
         quality_multiplier: 1.0,
+        health: None,
+        priority: None,
+        effective_multiplier: 1.0,
     }
 }
 

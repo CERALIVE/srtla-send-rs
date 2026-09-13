@@ -1,4 +1,5 @@
 //! The ADR-001 telemetry document: its model, its units, and its serializer.
+// allow: SIZE_OK — retain the single serializer and existing inline byte-parity suite during the shared-field migration; new optional-field tests are separate.
 //!
 //! Split from [`crate::telemetry_file`], which owns only the publish mechanics
 //! (temp sibling -> fsync -> `rename(2)`). Everything that decides what the
@@ -59,7 +60,7 @@ pub const TELEMETRY_SCHEMA_VERSION: u32 = 1;
 /// Field names / units mirror the C `TelemetrySnapshot` (`sender_telemetry.h`).
 /// `bitrate_bytes_per_sec` is the wire byte rate; the mandated x8 -> bits/s
 /// conversion happens only at serialization, in [`ConnRecord::from`].
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct TelemetryConn {
     pub conn_id: u32,
     pub rtt_ms: u32,
@@ -76,12 +77,14 @@ pub struct TelemetryConn {
     pub iface: Option<String>,
     /// The sidecar's writer-assigned identity, echoed; `None` when unmapped.
     pub link_id: Option<String>,
+    pub health: Option<&'static str>,
+    pub priority: Option<f64>,
 }
 
 /// Serialized per-connection record. `conn_id` is a string and `bitrate_bps` is
 /// bits/s (the x8 conversion), matching the ADR-001 schema and the Zod reader.
 /// Field order is fixed to mirror the C golden fixture; the two additive
-/// identity fields come last and are omitted entirely when absent.
+/// identity fields precede optional scheduler observations; absent keys are omitted.
 #[derive(Serialize)]
 struct ConnRecord {
     conn_id: String,
@@ -96,6 +99,10 @@ struct ConnRecord {
     iface: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     link_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    health: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    priority: Option<f64>,
 }
 
 impl From<&TelemetryConn> for ConnRecord {
@@ -113,6 +120,8 @@ impl From<&TelemetryConn> for ConnRecord {
             bytes_sent_total: c.bytes_sent_total,
             iface: c.iface.clone(),
             link_id: c.link_id.clone(),
+            health: c.health,
+            priority: c.priority,
         }
     }
 }
@@ -228,6 +237,8 @@ pub fn conns_from_stats(stats: &StatsSnapshot) -> Vec<TelemetryConn> {
                 bytes_sent_total: l.bytes_sent_total,
                 iface: l.iface.clone(),
                 link_id: l.link_id.clone(),
+                health: l.health,
+                priority: l.priority,
             }
         })
         .collect()
@@ -246,6 +257,10 @@ fn equal_share_percent(active: usize) -> u8 {
         .checked_div(active)
         .map_or(0, |share| share.min(100) as u8)
 }
+
+#[cfg(test)]
+#[path = "telemetry_optional_tests.rs"]
+mod optional_tests;
 
 #[cfg(test)]
 mod tests {
@@ -271,6 +286,8 @@ mod tests {
             bytes_sent_total: 812_000_000,
             iface: None,
             link_id: None,
+            health: None,
+            priority: None,
         }
     }
 
@@ -307,6 +324,9 @@ mod tests {
             rtt_velocity: 0.0,
             base_score: score,
             quality_multiplier: 1.0,
+            health: None,
+            priority: None,
+            effective_multiplier: 1.0,
         }
     }
 

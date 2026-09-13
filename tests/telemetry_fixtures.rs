@@ -83,6 +83,7 @@ fn assert_fixture(name: &str, produced: &str) {
     );
 }
 
+// allow: SIZE_OK — preserve this fixture matrix and regeneration protocol; only the shared input literal gains absent optional fields.
 fn conn(conn_id: u32, link_id: Option<&str>, iface: Option<&str>) -> TelemetryConn {
     TelemetryConn {
         conn_id,
@@ -95,6 +96,8 @@ fn conn(conn_id: u32, link_id: Option<&str>, iface: Option<&str>) -> TelemetryCo
         bytes_sent_total: 812_000_000,
         iface: iface.map(ToString::to_string),
         link_id: link_id.map(ToString::to_string),
+        health: None,
+        priority: None,
     }
 }
 

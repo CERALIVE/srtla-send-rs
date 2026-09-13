@@ -49,6 +49,10 @@ pub struct LinkStats {
     /// ADDITIVE, never required.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub link_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub health: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub priority: Option<f64>,
     /// True if SRTLA registration completed (REG3 received)
     pub connected: bool,
     /// True if no packets received within timeout period
@@ -89,6 +93,8 @@ pub struct LinkStats {
     /// This is the EXACT multiplier used in `select_connection_idx()`.
     /// In classic mode, this is always 1.0 (quality scoring disabled).
     pub quality_multiplier: f64,
+    /// Legacy quality until the scheduler publishes its full adaptive multiplier.
+    pub effective_multiplier: f64,
 }
 
 /// Aggregate statistics snapshot.
@@ -282,6 +288,9 @@ impl SharedStats {
                 rtt_velocity: conn.get_rtt_velocity(),
                 base_score: conn.get_score(),
                 quality_multiplier,
+                health: None,
+                priority: None,
+                effective_multiplier: quality_multiplier,
             };
 
             if is_active {
