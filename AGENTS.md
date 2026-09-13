@@ -554,8 +554,8 @@ unattended sudo, `srt-live-transmit`, `tcpdump`, and `tshark`; explicit executio
 fails on absent prerequisites. Run under a 90-second outer timeout with `--ignored`.
 Fresh one-link pairs at listener `latency=2000` and `latency=500` yield matching
 HSRSP delays, with identical UDP payloads captured on the sender uplink and loopback.
-The clean-room decoder is test-only (`tests/support/hsrsp.rs`); no production
-instrumentation or parser is introduced. The committed 80-byte raw-payload fixture
+The spike's clean-room decoder stays test-only (`tests/support/hsrsp.rs`); Todo 18
+adds the separate production parser below. The committed 80-byte raw-payload fixture
 `tests/fixtures/srt-hsrsp-latency2000.bin` is regenerated only with `UPDATE_GOLDEN=1`.
 Offsets are zero-based from the SRT/UDP-payload start: extension type `[64,66)` = 2,
 body length `[66,68)` = 3 words, latency `[76,80)` = `07 d0 07 d0`.
@@ -1026,6 +1026,49 @@ legacy `cargo test --lib rtt` cases. Tests cover the 50-send/50-NAK guard, EWMA
 convergence, expiry, raw RTT ramp/jitter, real accepted-prefix errors, attribution,
 and lifecycle resets. No HealthMachine/HealthSignals runtime wiring, telemetry,
 CLI, probe production or scheduler-selection change is part of this tracker work.
+
+## NEGOTIATED SRT LATENCY (scheduler evaluation, Todo 18)
+
+`protocol::srt_handshake::parse_hsrsp_tsbpd_delay_ms(&[u8]) -> Option<u32>` is a
+clean-room, allocation-free passive decoder using the real committed 80-byte
+`tests/fixtures/srt-hsrsp-latency2000.bin`. Header checks: type `[0,2)` = 0x8000,
+version `[16,20)` = 5, extension flags `[22,24)` has HS bit 1, conclusion request
+`[36,40)` = 0xffffffff. Extensions start at 64; each advances `4+4*body_words`.
+Command 2 HSRSP requires at least three complete body words; receiver delay is the
+big-endian high half of the latency word at descriptor offset E+12 (not the low
+sender half). All descriptors/bodies must fit, including trailing extensions.
+Absent HSRSP, other types/versions/phases, and truncation silently return `None`.
+
+`process_packet_internal` sniffs ONLY the existing forwarding else-branch when
+type is `SRT_TYPE_HANDSHAKE`, then executes the original byte-copy push regardless
+of parse success. Both `process_packet` and `drain_incoming` borrow `&SharedStats`;
+the sender passes the same bond handle through every uplink/queue-drain entry,
+including SIGHUP. Do not attach this bond-wide state to individual connection
+lifecycles or alter registration, liveness, forwarding, or source acceptance.
+
+`SharedStats` owns a new private `Arc<AtomicU32>` with relaxed loads/stores: the
+single word is the whole observation and publishes no associated memory. Zero is
+unknown; the public `negotiated_latency_ms() -> Option<u32>` reads directly without
+any snapshot/configuration lock. Its crate-private setter is called on successful
+decode only. Housekeeping/reload/reconnect retain the last observation; a later
+valid handshake replaces it (including zero → unknown). There is no authentication,
+stream-identity binding or generation/freshness fencing: Todo 22 must not invent
+those guarantees. No adaptive deadline gate is enabled by this plumbing alone.
+
+`get-status` adds optional `negotiated_latency_ms`, omitted for unknown (not null).
+The 30-second status log prints the value or `None`. `StatsSnapshot`, ADR-001 file
+telemetry, CLI and TS bindings remain unchanged. Stats tests were extracted into
+`src/stats_tests.rs`; module/test names retain the `stats::tests` path.
+Gates: `cargo test --lib srt_handshake` (real fixture + byte-flip/truncation controls),
+`cargo test --lib packet_io` (byte-preserving receive paths), atomic/status tests,
+`cargo test --test parser_proptest` (arbitrary bytes and captured-header extensions),
+and `cargo clippy -- -D warnings`.
+
+`tests/negotiated_latency.rs` runs the actual binary without privileges, completing
+registration with a loopback UDP test peer, checking the returned datagram verbatim
+and querying the live Unix `get-status`. Both captured-HSRSP and flipped-type cases
+are bounded to ten seconds; temporary paths and ports are per test. This exercises
+production handle propagation, not a second live-libsrt capture or hardware gate.
 
 ## CODEBASE (inherited from upstream)
 
