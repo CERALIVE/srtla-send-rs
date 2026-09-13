@@ -9,7 +9,7 @@
 
 use std::collections::{HashSet, VecDeque};
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -679,6 +679,64 @@ fn registered_uplink_count(log: &[String]) -> usize {
 // SrtlaTestStack
 // ---------------------------------------------------------------------------
 
+/// Explicit libsrt listener tuning. Only `LEGACY_DEFAULT` omits URI parameters.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SrtProfile {
+    pub latency_ms: u32,
+    pub lossmaxttl: u32,
+    pub name: &'static str,
+}
+
+impl SrtProfile {
+    pub const PRODUCTION: Self = Self {
+        latency_ms: 2000,
+        lossmaxttl: 40,
+        name: "production",
+    };
+    pub const STRICT: Self = Self {
+        latency_ms: 500,
+        lossmaxttl: 10,
+        name: "strict",
+    };
+    /// Sentinel for the old URI, not a request to configure libsrt with zeroes.
+    pub const LEGACY_DEFAULT: Self = Self {
+        latency_ms: 0,
+        lossmaxttl: 0,
+        name: "legacy-default",
+    };
+
+    pub fn listener_uri(&self, port: u16) -> String {
+        let uri = format!("srt://:{port}?mode=listener");
+        if *self == Self::LEGACY_DEFAULT {
+            uri
+        } else {
+            format!(
+                "{uri}&latency={}&lossmaxttl={}",
+                self.latency_ms, self.lossmaxttl
+            )
+        }
+    }
+
+    /// Listener arguments; `-stats 1000` counts packets, not milliseconds.
+    /// Capture directories must already exist; non-UTF-8 paths are rejected.
+    pub fn listener_argv(&self, port: u16, stats_csv: Option<&Path>) -> Result<Vec<String>> {
+        let mut args = Vec::new();
+        if let Some(path) = stats_csv {
+            args.extend([
+                "-statsout".into(),
+                path.to_str()
+                    .context("stats_csv path must be UTF-8")?
+                    .into(),
+                "-statspf:csv".into(),
+                "-stats".into(),
+                "1000".into(),
+            ]);
+        }
+        args.extend([self.listener_uri(port), "udp://127.0.0.1:9999".into()]);
+        Ok(args)
+    }
+}
+
 /// Receiver CLI dialect; selected by `SRTLA_REC_KIND` (default `ceralive`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReceiverKind {
@@ -1033,6 +1091,82 @@ fn resolve_external_binary(key: &str, fallback: &str) -> Result<PathBuf> {
         }
         None => check_binary(fallback)
             .with_context(|| format!("{fallback} not found in PATH ({key} unset)")),
+    }
+}
+
+#[cfg(test)]
+mod srt_profile_tests {
+    use super::*;
+
+    #[test]
+    fn srt_uri_includes_profile_params() {
+        for (profile, expected) in [
+            (
+                SrtProfile::PRODUCTION,
+                "srt://:4001?mode=listener&latency=2000&lossmaxttl=40",
+            ),
+            (
+                SrtProfile::STRICT,
+                "srt://:4001?mode=listener&latency=500&lossmaxttl=10",
+            ),
+        ] {
+            // Given an explicit preset; when composing the listener URI.
+            let uri = profile.listener_uri(4001);
+            // Then both knobs are emitted in the libsrt URI syntax.
+            assert_eq!(uri, expected);
+        }
+    }
+
+    #[test]
+    fn legacy_default_uri_unchanged() {
+        // Given legacy behavior without stats capture; when building the invocation.
+        let args = SrtProfile::LEGACY_DEFAULT
+            .listener_argv(4001, None)
+            .expect("legacy args");
+        // Then the entire listener argument vector is byte-identical to the old stack.
+        assert_eq!(args, ["srt://:4001?mode=listener", "udp://127.0.0.1:9999"]);
+    }
+
+    #[test]
+    fn stats_capture_uses_csv_and_packet_count_flags() {
+        // Given an explicit capture path containing a space; when building the invocation.
+        let args = SrtProfile::PRODUCTION
+            .listener_argv(4001, Some(std::path::Path::new("capture dir/stats.csv")))
+            .expect("stats args");
+        // Then capture is one path argument and the cadence is 1000 packets, not milliseconds.
+        assert_eq!(
+            args,
+            [
+                "-statsout",
+                "capture dir/stats.csv",
+                "-statspf:csv",
+                "-stats",
+                "1000",
+                "srt://:4001?mode=listener&latency=2000&lossmaxttl=40",
+                "udp://127.0.0.1:9999"
+            ]
+        );
+    }
+
+    #[test]
+    fn legacy_profile_can_capture_stats_without_tuning_latency() {
+        // Given a legacy profile with opt-in capture; when composing the invocation.
+        let args = SrtProfile::LEGACY_DEFAULT
+            .listener_argv(1234, Some(std::path::Path::new("stats.csv")))
+            .expect("legacy stats args");
+        // Then capture does not opt into either profile knob.
+        assert_eq!(
+            args,
+            [
+                "-statsout",
+                "stats.csv",
+                "-statspf:csv",
+                "-stats",
+                "1000",
+                "srt://:1234?mode=listener",
+                "udp://127.0.0.1:9999"
+            ]
+        );
     }
 }
 
