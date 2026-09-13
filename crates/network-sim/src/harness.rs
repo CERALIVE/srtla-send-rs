@@ -5,12 +5,14 @@
 //! and [`SrtlaTestStack`] for the full 3-process test pipeline
 //! (srt-live-transmit + srtla_rec + srtla_send).
 
-// allow: SIZE_OK — Todo 8 explicitly confines launch plumbing and its tests to this existing harness.
+// allow: SIZE_OK — Existing harness compatibility surface; new process-control logic lives in its own module.
 
 use std::collections::{HashSet, VecDeque};
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+#[cfg(test)]
+use std::process::Stdio;
+use std::process::{Child, Command};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -20,6 +22,9 @@ use anyhow::{Context, Result, bail};
 use crate::impairment::{ImpairmentConfig, apply_impairment};
 use crate::test_util::unique_ns_name;
 use crate::topology::Namespace;
+
+mod process_control;
+pub use process_control::ProcessControlError;
 
 // ---------------------------------------------------------------------------
 // Dependency checking
@@ -168,6 +173,9 @@ pub struct NamespaceProcess {
     stdout_tail: OutputTail,
     stderr_tail: OutputTail,
     drain_threads: Vec<JoinHandle<()>>,
+    launch: Option<process_control::Launch>,
+    inner: Option<process_control::Identity>,
+    teardown: process_control::Teardown,
 }
 
 impl NamespaceProcess {
@@ -188,6 +196,9 @@ impl NamespaceProcess {
             stdout_tail,
             stderr_tail,
             drain_threads,
+            launch: None,
+            inner: None,
+            teardown: process_control::Teardown::Namespace,
         })
     }
 
@@ -203,27 +214,18 @@ impl NamespaceProcess {
         args: &[&str],
         env: &[(&str, &str)],
     ) -> Result<Self> {
-        let label = format!("{binary} in ns:{}", ns.name);
-        let mut cmd = Command::new("sudo");
-        cmd.args(["ip", "netns", "exec", &ns.name]);
-        if !env.is_empty() {
-            // Use `env` to set variables inside the namespace
-            cmd.arg("env");
-            for &(k, v) in env {
-                cmd.arg(format!("{k}={v}"));
-            }
-        }
-        cmd.arg(binary)
-            .args(args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        let child = cmd.spawn().with_context(|| format!("spawn {label}"))?;
-        let mut process = Self::from_child(child, ProcessScope::Namespace(ns.name.clone()))?;
-        process.label = label;
-
-        tracing::debug!(label = %process.label, pid = process.child.id(), "spawned namespace process");
-        Ok(process)
+        Self::spawn_launch(
+            process_control::Launch {
+                namespace: ns.name.clone(),
+                binary: binary.into(),
+                args: args.iter().map(|s| (*s).into()).collect(),
+                env: env
+                    .iter()
+                    .map(|(k, v)| ((*k).into(), (*v).into()))
+                    .collect(),
+            },
+            process_control::Teardown::Namespace,
+        )
     }
 
     /// Read all captured stdout lines (non-blocking snapshot via `try_wait`).
@@ -364,7 +366,15 @@ impl NamespaceProcess {
 
 impl Drop for NamespaceProcess {
     fn drop(&mut self) {
-        self.kill();
+        match self.teardown {
+            process_control::Teardown::Namespace => self.kill(),
+            process_control::Teardown::Process => {
+                if let Err(error) = self.stop_process_only() {
+                    tracing::warn!(%error, "process-only teardown failed");
+                }
+            }
+            process_control::Teardown::None => {}
+        }
     }
 }
 
@@ -377,6 +387,31 @@ mod namespace_process_tests {
     use std::time::{Duration, Instant};
 
     use super::{NamespaceProcess, ProcessScope, new_output_tail};
+
+    #[test]
+    fn restart_process_only_when_already_exited_preserves_other_pids() {
+        // Given: a reaped child and a separate live process in its teardown scope.
+        let mut other = Command::new("sleep").arg("30").spawn().unwrap();
+        let child = Command::new("true")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut process =
+            NamespaceProcess::from_child(child, ProcessScope::Pids(vec![other.id()])).unwrap();
+        process.child.wait().unwrap();
+        // When: attempting a receiver-only restart after exit.
+        let error = process.restart_process_only().unwrap_err();
+        let alive = other.try_wait().unwrap().is_none();
+        other.kill().unwrap();
+        other.wait().unwrap();
+        // Then: the error is typed and the unrelated process received no signal.
+        assert!(matches!(
+            error.downcast_ref(),
+            Some(super::ProcessControlError::AlreadyExited)
+        ));
+        assert!(alive);
+    }
 
     fn signal_exact(signal: &str, target: &str) {
         let _ = Command::new("kill").args([signal, "--", target]).status();
@@ -442,6 +477,9 @@ mod namespace_process_tests {
             stdout_tail: new_output_tail(),
             stderr_tail: new_output_tail(),
             drain_threads: vec![],
+            launch: None,
+            inner: None,
+            teardown: super::process_control::Teardown::Namespace,
         };
         let (done_tx, done_rx) = mpsc::channel();
         let teardown = thread::spawn(move || {
