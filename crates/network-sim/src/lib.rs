@@ -17,6 +17,7 @@ pub mod impairment;
 pub mod metrics;
 pub mod profile;
 pub mod scenario;
+pub mod scenarios;
 pub mod test_util;
 pub mod topology;
 pub mod twin;
