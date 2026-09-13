@@ -51,6 +51,9 @@
 
 #![cfg(unix)]
 
+// allow: SIZE_OK — this frozen A/B experiment is unchanged except for extracting its routing helper;
+// splitting its measurement/control machinery is outside the topology change.
+
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
@@ -235,52 +238,9 @@ fn kill_netns_pids(ns_name: &str) {
     }
 }
 
-/// Give every uplink beyond link 0 its own egress path and a symmetric reply
-/// route. Without this, all three bound source IPs resolve the receiver through
-/// link 0's subnet and only one link ever carries traffic — the bond would be
-/// nominal and the A/B comparison meaningless.
-fn configure_bond_routing(topo: &SrtlaTestTopology) {
-    for iface in ["all", "default"]
-        .into_iter()
-        .chain(topo.sender_ifaces.iter().map(String::as_str))
-    {
-        let _ = topo.sender_ns.exec(
-            "sysctl",
-            &["-w", &format!("net.ipv4.conf.{iface}.rp_filter=0")],
-        );
-    }
-    for iface in ["all", "default"]
-        .into_iter()
-        .chain(topo.receiver_ifaces.iter().map(String::as_str))
-    {
-        let _ = topo.receiver_ns.exec(
-            "sysctl",
-            &["-w", &format!("net.ipv4.conf.{iface}.rp_filter=0")],
-        );
-    }
-
-    let recv_ip = topo.receiver_ip.clone();
-    for idx in 1..topo.sender_ips.len() {
-        let table = (101 + idx).to_string();
-        let src = topo.sender_ips[idx].as_str();
-        let sif = topo.sender_ifaces[idx].as_str();
-        let rif = topo.receiver_ifaces[idx].as_str();
-        let _ = topo.sender_ns.exec(
-            "ip",
-            &["route", "add", &recv_ip, "dev", sif, "table", &table],
-        );
-        let _ = topo
-            .sender_ns
-            .exec("ip", &["rule", "add", "from", src, "lookup", &table]);
-        let _ = topo
-            .receiver_ns
-            .exec("ip", &["route", "add", src, "dev", rif, "src", &recv_ip]);
-    }
-}
-
 fn start_stack(name: &str, bin: &str, mode: &str) -> Stack {
     let topo = SrtlaTestTopology::new(name, LINKS).expect("create topology");
-    configure_bond_routing(&topo);
+    network_sim::bond::configure_bond_routing(&topo).expect("configure bond routing");
 
     for (idx, delay_ms) in DELAYS_MS.iter().enumerate() {
         topo.impair_link(
