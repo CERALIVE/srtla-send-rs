@@ -4,6 +4,21 @@ mod tests {
     use crate::mode::SchedulingMode;
 
     #[test]
+    fn adaptive_text_mode_round_trips_through_status() {
+        // Given the unchanged default, When text selects adaptive, Then status agrees.
+        let config = DynamicConfig::new();
+        apply_cmd(&config, "mode adaptive", None);
+        let response = crate::jsonrpc::dispatch_jsonrpc(
+            r#"{"method":"get-status","id":1}"#,
+            &config,
+            &crate::stats::SharedStats::new(),
+        );
+        let status: serde_json::Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(status["result"]["mode"], "adaptive");
+        assert_eq!(config.mode(), SchedulingMode::Adaptive);
+    }
+
+    #[test]
     fn test_config_new() {
         let config = DynamicConfig::new();
         let snap = config.snapshot();

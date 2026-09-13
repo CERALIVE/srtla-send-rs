@@ -90,7 +90,8 @@ pub struct Cli {
     #[arg(long = "control-socket")]
     pub control_socket: Option<String>,
 
-    /// Scheduling mode: classic, enhanced (default), rtt-threshold, edpf
+    /// Scheduling mode: classic, enhanced (default), rtt-threshold, edpf,
+    /// adaptive (experimental in 3.4.0: self-tuning health-gated scheduler)
     #[arg(long = "mode", value_enum, default_value = "enhanced")]
     pub mode: SchedulingMode,
     /// Disable quality scoring (enhanced/rtt-threshold only)

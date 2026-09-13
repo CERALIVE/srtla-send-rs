@@ -31,6 +31,8 @@ pub struct Capabilities {
     pub dry_run: bool,
     pub stats_file: bool,
     pub control_socket: bool,
+    pub adaptive_scheduler: bool,
+    pub link_priority: bool,
 }
 
 /// The full document written to stdout.
@@ -58,6 +60,8 @@ pub fn capability_document() -> CapabilityDocument {
             dry_run: true,
             stats_file: true,
             control_socket: cfg!(unix),
+            adaptive_scheduler: true,
+            link_priority: true,
         },
     }
 }
