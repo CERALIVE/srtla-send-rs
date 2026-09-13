@@ -447,14 +447,44 @@ without privileges and covers repeated teardown calls. Both namespace and veth n
 the shared PID+atomic-counter uniqueness suffix; do not replace the veth suffix with the
 test-binary PID alone because scenarios inside one integration target run in parallel.
 Never run the privileged targets unbounded: use `scripts/netns_test_gate.sh`, which caps
-each target at 90 s by default. **`netns_twin` is the one exception, at 420 s
+each target at 90 s by default. **`netns_bond` gets 120 s; `netns_twin` gets 420 s
 (`NETNS_TWIN_TEST_TIMEOUT_SECONDS`)**: its scenarios wait out real sender timers no other
 target touches — the 15 s `CONN_TIMEOUT` and the 30 s status-log interval — so a shared
 budget would make it flake at exit 124. Separately,
 `stall_deselect_real_starlink_repro` is one intentionally ignored hardware-only test; run
 it with `--ignored` only on the bonded Starlink/cellular validation rig.
 
-**`tests/netns_twin.rs` — duplicate-IP twin-modem scenarios (8 tests).** The only target
+**Generic bond topology (`crates/network-sim/src/bond.rs`).**
+`BondTopology::new(test_name, &[LinkSpec], MappingMode)` accepts 1–253 links;
+`LinkSpec` carries explicit `CarrierMode::{Direct,Nat}` and an optional zero-based
+`shared_ip_with` reference to an earlier link. Shared groups require NAT on every
+member, one carrier per link, and an explicit `BindMap { rows }` or `LegacyControl`
+policy. `MappingMode::None` with sharing returns typed `BondConfigError` before any
+namespace creation; distinct-IP users explicitly pass `None`. `BondRow` supplies
+`link_id`, `iface_index`, and optional finite `priority`; row order defines IP-file
+order. The priority is only an additive fixture field, not scheduler support.
+`TwinRow::new` stays unchanged; `with_priority` is additive, and absent priorities
+retain exact legacy sidecar bytes. Heterogeneous-IP publication extends the existing
+`BindMapPublisher` under `bond/publication.rs`, keeping the twin files independent.
+The bond owns namespaces and launch files, not process handles: drop every
+`NamespaceProcess` before dropping its topology. `sender_args`/`spawn_sender` apply
+the mapping policy; receiver/profile selection stays at the caller layer.
+
+NAT setup uses the proven `100.64.N.0/24` transit, carrier MASQUERADE, receiver
+loopback `10.99.0.1` and source-hinted return routes. Distinct links all get source
+tables (including link 0); shared links use the twin-style per-device defaults.
+Both namespace and per-device `rp_filter` are cleared. No asymmetric fault routes
+or packet marks are installed. All names use the shared PID+counter helper.
+`replug(i)` deletes/recreates the access veth (new ifindex, shaping resets);
+`delete_default_route`/`restore_default_route` operate on the link's source-table
+and main-table defaults. `tx_bytes` is raw netdev traffic, including the ARP probes
+that continue without DATA in a route blackhole. `tests/netns_bond.rs` has its own
+**120 s** gate budget (`NETNS_BOND_TEST_TIMEOUT_SECONDS`), separate from the twin
+budget; it covers mixed and shared-IP carriage, the legacy control, route failure
+and restoration, and replug. The A/B runner's routing helper is now exported from
+`network_sim::bond`; its legacy topology and measurement protocol are unchanged.
+
+**`tests/netns_twin.rs` — duplicate-IP twin-modem scenarios (8 tests).** This target
 that reproduces two uplinks sharing ONE source address, which is what the bind-map exists
 for. It needs a topology no other target has, built by `crates/network-sim/src/twin/`:
 each twin sits behind its **own NAT carrier namespace**, because a plain veth pair would

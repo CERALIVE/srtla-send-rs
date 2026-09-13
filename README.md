@@ -249,7 +249,8 @@ TERM-then-KILL polling; it does not assume the tracked `sudo` PID is a process-g
 and never blocks on an unbounded child wait. Namespace and veth names both include the
 PID+atomic-counter uniqueness suffix, so parallel scenarios in one test binary cannot
 collide. CI/release test commands remain capped at 300 seconds, and manual privileged runs
-use `./scripts/netns_test_gate.sh` (90 seconds per target by default; `netns_twin` gets
+use `./scripts/netns_test_gate.sh` (90 seconds per target by default; `netns_bond` gets
+120 seconds via `NETNS_BOND_TEST_TIMEOUT_SECONDS`, and `netns_twin` gets
 420 because its scenarios wait out the sender's own 15-second liveness timeout and
 30-second status-log interval). One separate real-Starlink stall reproduction is
 intentionally `#[ignore]` and runs only on hardware.
@@ -274,6 +275,47 @@ the *same* topology without `--bind-map` leaves the second twin carrying nothing
 covers reload remove/re-add under a stable `link_id`, a file-order swap that recreates no
 socket, an unplug/replug recovering on a new ifindex, and a route-removal blackhole being
 reported rather than read as healthy.
+
+### Generic N-link bond fixtures
+
+`network_sim::bond::BondTopology::new(test_name, links, mapping)` builds 1–253
+links with an explicit `LinkSpec { carrier: CarrierMode::Direct | CarrierMode::Nat,
+shared_ip_with: Option<usize> }`. Direct links use veth pairs and source routing;
+NAT links each own a carrier namespace, IPv4 forwarding and MASQUERADE onto
+`100.64.N.0/24`. The receiver holds `10.99.0.1` on loopback and uses source-hinted
+return routes. Reverse-path filtering is disabled at both namespace and device
+scope. All namespaces and interfaces use the existing PID+counter naming convention.
+
+`shared_ip_with` is a zero-based reference to an earlier link. Every member of a
+shared group must use NAT; the first shared group uses `10.30.9.1`. Mapping policy
+has **no default**: distinct-IP callers explicitly pass `MappingMode::None`;
+shared-IP callers must choose `BindMap { rows }` or `LegacyControl`. The latter
+intentionally omits the sidecar for the falsifiability control. An ambiguous `None`
+configuration returns a downcastable `BondConfigError` before creating namespaces.
+Bind-map rows are `BondRow { link_id, iface_index, priority: Option<f64> }`, one per
+interface, ordered as the IP file should be ordered. Priority is an optional,
+forward-compatible writer field, not a new scheduler feature. `TwinRow::new` is
+unchanged; `TwinRow::with_priority` adds it only when requested.
+
+The topology publishes its launch files through a `BindMapPublisher` extension
+kept under `bond/` (the original twin publisher only supports one repeated IP).
+`sender_args((listen_port, receiver_port), extra)` and
+`spawn_sender(binary, extra)` apply the chosen sidecar policy; the convenience
+spawn uses ports 5555/5000. Receiver selection and `SrtProfile` remain the caller's
+explicit responsibility. Drop all `NamespaceProcess` handles before the topology.
+
+Fault/measurement APIs are zero-based: `sender_iface`, `sender_ip`, `tx_bytes`,
+`set_link_up`, `delete_default_route`/`restore_default_route`, `replug`, and
+`apply_impairment(i, &config)`. Replug destroys and recreates the access veth under
+the same name, with a new ifindex and no inherited shaping. `tx_bytes` is the raw
+kernel netdev count and resets on replug; it includes ARP/control traffic, so a
+route blackhole can add a few ARP bytes while carrying no DATA.
+
+`tests/netns_bond.rs` proves mixed 3-Direct/1-NAT carriage, mapped shared-IP
+carriage (both links ≥100 kB in classic mode), the legacy control, route-loss
+isolation/restoration, and Direct/NAT replug. These are kernel wire-carriage tests,
+not useful-SRT-goodput or hardware-performance claims. The pre-existing A/B runner
+now calls `network_sim::bond::configure_bond_routing` rather than owning that setup.
 
 ### Duplicate-DATA receiver spike (test builds only)
 
