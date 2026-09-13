@@ -5,8 +5,7 @@ set -euo pipefail
 # Exits 0 if all checks pass, non-zero on first blocking failure.
 # Prints one line per check item.
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+REPO_ROOT="$(GIT_MASTER=1 git rev-parse --show-toplevel)"
 
 # Item (a): Privileged command checks via sudo -n
 check_privileged_commands() {
@@ -20,7 +19,9 @@ check_privileged_commands() {
   )
   
   for cmd in "${commands[@]}"; do
-    if ! sudo -n $cmd > /dev/null 2>&1; then
+    local command_parts=()
+    read -r -a command_parts <<< "$cmd"
+    if ! sudo -n "${command_parts[@]}" > /dev/null 2>&1; then
       echo "BLOCKING (a): unattended sudo required for ip/tc/tcpdump/nsenter/modprobe/kill: grant NOPASSWD for exactly those commands, run the campaign in a root session, or pre-authenticate with a long timestamp_timeout"
       return 1
     fi
@@ -173,16 +174,12 @@ check_srtla_repo() {
 
 # Main execution
 main() {
-  local failed_item=""
-  
   # Run all checks, stopping on first blocking failure
   if ! check_privileged_commands; then
-    failed_item="(a)"
     return 1
   fi
   
   if ! check_required_tools; then
-    failed_item="(b)"
     return 1
   fi
   
@@ -192,17 +189,14 @@ main() {
   fi
   
   if ! check_artifact_dir; then
-    failed_item="(d)"
     return 1
   fi
   
   if ! check_repo_filesystem; then
-    failed_item="(e)"
     return 1
   fi
   
   if ! check_srtla_repo; then
-    failed_item="(f)"
     return 1
   fi
   
