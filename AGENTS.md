@@ -765,6 +765,28 @@ aarch64 cross-build env (mirrors the PINNED TOOLCHAIN note): linker
 
 ## BENCHMARK METRICS (network-sim)
 
+**Reference-backed scenarios (Todo 12):** `network_sim::scenarios::all()` returns
+13 profiles (A–L, B1/B2). `scenarios::Profile` wraps the unchanged temporal `Profile`
+in `timeline` with explicit offered/warm-up rates, production SRT settings and optional
+source-ramp/restart-budget metadata. Pass `timeline` to the scheduler/metrics, and
+the explicit aggregate capacity to `load_intervals::evaluate`. Definitions do not
+launch the runner: it must start the SRT source before settling (90% warm-up rate,
+three consecutive seconds, 30s deadline/`settle_timeout`), retain ten seconds of
+prehistory, apply the 400ms source ramp through live control, and enforce I's 2s
+receiver kill/respawn budget. `Profile::validate()` checks FULL periodic expansion.
+C/D use 215ms combined spike/half-rate + 285ms half-rate holds, every 15s with 5s
+tails and `until=duration−6s`; never overlap SetImpairment holds. D is 75s, not 60s.
+H is 90s with a 20s final reorder horizon. K preserves seeded random-walk samples
+while retaining TBF enforcement; samples are ungraded zero-tail diagnostics.
+L uses feasible warm-up, overload at t=0, ungraded idle, and ONE burst LoadInterval;
+do not log intermediate source ramp writes as additional load boundaries. Its
+explicit overload/burst targets are 14.4/9Mbit for the 16Mbit bond; a dead sink
+must have `reached_ms=None`, `recovered=false`. Catalog and citations:
+[`docs/notes/bench-scenarios.md`](docs/notes/bench-scenarios.md). Gate:
+`cargo test -p network-sim --lib scenarios` and
+`cargo clippy -p network-sim --all-targets -- -D warnings` (include test-module lints).
+No hardware validation is implied, and no production sender behavior changes.
+
 `crates/network-sim/src/metrics/` owns the dev-only benchmark collectors and serde
 `RunRecord` v1. The authoritative definitions and runner integration contract are
 [`docs/notes/bench-scenarios.md#metrics`](docs/notes/bench-scenarios.md#metrics).

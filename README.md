@@ -410,6 +410,27 @@ Run `cargo test -p network-sim --lib metrics` without privileges. No production
 scheduler or telemetry-producer behavior changes; campaign execution/reporting remain
 separate consumers of the schema.
 
+### Reference-backed benchmark scenarios
+
+`network_sim::scenarios::all()` returns thirteen concrete profiles, A–L with B1/B2.
+The [scenario catalog](docs/notes/bench-scenarios.md#scenario-library-al) records
+cited constants, explicit rates, 45–90s windows and metric obligations. A scenario
+`Profile` owns the unchanged temporal profile in `timeline`, source/warm-up rates,
+the production SRT preset, and optional ramp/restart settings for the campaign runner.
+Its validation expands every periodic cycle and rejects late recovery horizons.
+
+C/D preserve both the 215ms Starlink delay spike and 500ms capacity dip without
+overlapping whole-impairment holds. D adds the NAT-link DATA-only 20–28s obstruction.
+L warms up at feasible load, then overloads at measurement t=0; planned idle is
+ungraded and its 400ms burst ramp is one source-load interval, not a zero-baseline
+impairment recovery. The runner must start the source before settling (≥90% warm-up
+rate for three consecutive seconds, 30s deadline), apply ramps through source control,
+and enforce I's two-second kill/respawn budget. The library does not launch a campaign.
+
+Run `cargo test -p network-sim --lib scenarios` and
+`cargo clippy -p network-sim --all-targets -- -D warnings`; these are unprivileged
+definition/metric tests, not evidence of a real bonded-hardware performance improvement.
+
 ### Duplicate-DATA receiver spike (test builds only)
 
 `tests/netns_dup_spike.rs` is an ignored, privileged experiment using two registered
