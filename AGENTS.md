@@ -985,6 +985,48 @@ current-thread tests; production/test-internals-only builds retain the real mono
 clock. No sleeps or global clock replacement; existing frozen flag tests are unchanged.
 HealthMachine runtime wiring, probe production and hardware validation remain later work.
 
+## LOSS / QUEUE EVIDENCE (scheduler evaluation, Todo 17)
+
+`connection::loss::LossTracker` owns normal-DATA loss independently of legacy
+congestion counters. `new(now_ms)` anchors 1000ms `[start, end)` cohorts;
+`record_send(now_ms)` runs beside the DeliveryLedger insertion in
+`connection/transmit.rs::flush_batch`, inside the accepted-prefix `Some(seq)` arm.
+Queue-only packets, failed suffixes, sequence-less control and direct probe copies
+never count. `record_data_nak(now_ms)` runs only after `handle_nak` successfully
+removes a normal `packet_log` entry; duplicate/missing NAKs do not count. Keep
+future probe-log lookup outside this branch. Existing NAK/window effects stay intact.
+
+`advance(now_ms)` closes elapsed cohorts before counting a boundary event. It feeds
+`cohort_naks / cohort_sends` to the existing alpha-0.2 `Ewma` only at
+`LOSS_COHORT_MIN_SENDS = 100` or more. Below-floor cohorts are discarded, not pooled.
+`last_value() -> Option<f64>` and `last_cohort_ms() -> Option<u64>` retain the
+last qualifying estimate and its cohort END, even across long idle gaps. Counts are
+by send/NAK observation time, not retrospective reassignment to a packet's send cohort.
+The future health sampler must call `advance(now)` even for idle links, then read
+`loss_cohort_ok(now, stale_after_ms)` (latest completed cohort qualified and fresh)
+and `is_stale(now, stale_after_ms)` (unknown or age >= threshold). Discarding a
+cohort disables qualification without deleting a retained clearance estimate.
+Recovery/socket replacement reconstruct loss state at `reset_core_state`.
+`probe_loss() -> Option<f64>` reads a default-None `pub(crate)` field reserved for
+Todo 19's unacknowledged-copy fraction over the last `rejoin_rounds` trains.
+
+`RttTracker` adds separate `rtt_obs_fast` / `rtt_obs_slow` time windows over raw RTT
+observations. `queue_delay_ms() -> f64` is `max(0, (fast_min - slow_min) / 2)`
+over `(now-1000, now]` / `(now-30000, now]`; no fast evidence returns 0.
+`slow_min_rtt_ms() -> f64` exposes the time-based floor (0 if absent) for future
+queue thresholds. Expiry is checked on reads as well as inserts. The child
+`rtt/queue_delay.rs` keeps monotonic minimum candidates, coalescing same-ms samples;
+at most one candidate per millisecond bounds retained entries without sample-count
+eviction. Reset clears both new windows. **The existing filtered sample-count
+windows, `rtt_min_ms` computation, and in-file RTT tests are byte-unchanged.**
+Do not substitute these time windows for the baseline consumed by BLEST/legacy EDPF.
+
+Run `cargo test --lib loss`, `cargo test --lib queue_delay`, and the unchanged
+legacy `cargo test --lib rtt` cases. Tests cover the 50-send/50-NAK guard, EWMA
+convergence, expiry, raw RTT ramp/jitter, real accepted-prefix errors, attribution,
+and lifecycle resets. No HealthMachine/HealthSignals runtime wiring, telemetry,
+CLI, probe production or scheduler-selection change is part of this tracker work.
+
 ## CODEBASE (inherited from upstream)
 
 ```
