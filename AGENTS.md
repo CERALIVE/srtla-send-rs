@@ -883,9 +883,10 @@ script changes Rust code or proves that a scheduler should actually be retired.
 ## PURE LINK HEALTH (scheduler evaluation, Todo 15)
 
 `connection::health` is a production-compiled but **unwired**, allocation-free policy
-module. Only `pub mod health;` was added to the existing connection implementation;
-no fields, calls, scheduling modes, runtime flags, telemetry, or clock/I/O reads were
-added. Tests are test-only companion modules in `src/tests/health_*_tests.rs`, loaded
+module. Todo 15 added only `pub mod health;` to the connection implementation;
+Todo 16 separately adds the DATA evidence ledger below, not runtime health calls,
+scheduling modes, flags or telemetry. Policy tests are test-only companion modules in
+`src/tests/health_*_tests.rs`, loaded
 by `health.rs` without changing `src/lib.rs` or its existing `not(loom)` gate.
 
 API: `HealthState::{Healthy, Degraded, Stalled, Rejoining, Down}` with lowercase
@@ -930,6 +931,59 @@ Integration obligations:
 Run `cargo test --lib health`, `cargo fmt --all -- --check`, and the real lib+bin
 `cargo clippy -- -D warnings`. This is policy coverage only; later delivery/probe
 tracking and housekeeping integration must establish the live behavior separately.
+
+## DATA DELIVERY LEDGER (scheduler evaluation, Todo 16)
+
+`SrtlaConnection::delivery` is `pub(crate)` and independent of `packet_log`.
+`connection::delivery::DeliveryLedger` owns a preallocated 4096-entry sequence map
+with O(1) linked LRU removal, 6000ms expiry (exactly 6000ms remains valid), saturating
+`attempts_since_proof: u32`, `last_data_proof_ms: u64`, a first-attempt/proof-age anchor,
+a two-second delivered-byte ring and `socket_generation: u32`. Retransmitting a
+sequence refreshes its timestamp/length/LRU position and adds one attempt; a hit is
+consumed once. Eviction never resets attempts or moves the proof-age anchor.
+
+`FlushOutcome.accepted` is now `SmallVec<(Option<i32>, u64, usize), 4>`:
+sequence, existing QUEUE timestamp, actual accepted datagram length. The touched
+`flush_batch` implementation was extracted from the oversized connection façade to
+`connection/transmit.rs`; its method name and callers are unchanged. It registers
+the accepted prefix in the legacy log using queue timestamps, and separately records
+`DataSend { sent_ms: acceptance_now_ms, len: checked_u16_length }` in the ledger.
+This also runs on a prefix followed by a hard error. Unsent suffixes, queue-only
+packets and sequence-less control packets do not enter the ledger. No telemetry
+accounting call was moved.
+
+`handle_srtla_ack_specific` consults the ledger FIRST. A valid `DeliveryAck { seq,
+socket_generation }` hit stamps proof, resets attempts and credits its length even
+if a cumulative ACK or NAK already pruned `packet_log`. Its existing bool return,
+RTT sampling, legacy stamp and window growth remain packet-log-dependent. Never
+make these legacy effects depend on the new ledger, or require a packet-log hit
+for DATA proof. Keepalive, cumulative ACK and NAK never stamp DATA proof. Future
+probe hits must use the probe log rather than inserting copies into this ledger.
+
+`proof_age_ms(now_ms)` returns elapsed since first accepted attempt before first
+proof, then elapsed since proof; a fresh/reset idle ledger returns `None`. Zero is
+a valid clock timestamp, so absence is tracked separately from the public zero
+stamp. `delivered_bps(now_ms)` is a fixed 2s wire-bits/s signal over `(now−2000, now]`,
+not telemetry's queued-send rate or useful viewer goodput. Equal-ms credits aggregate,
+so the retained ring is bounded by 2000 buckets without losing high-PPS samples.
+
+`reset_core_state` clears all evidence and wrapping-increments generation for both
+`mark_for_recovery` and successful socket replacement. Ledger lookups check BOTH the
+caller token and entry generation. An old token cannot consume a reused current
+sequence. **Reader-event generation propagation is still an integration obligation:**
+the legacy sequence-only ACK handler supplies the current connection generation;
+SRTLA wire ACKs carry no generation and cannot authenticate one. Do not confuse
+ledger invalidation/token checking with completed stale-reader queue fencing.
+
+Tests: `cargo test --lib health_delivery` includes the seven required named cases,
+the permanent `legacy_stall_predicate_misses_scenario_d` control, expiry/LRU/rate/token
+boundaries, and real kernel prefix/partial-error sends. Scenario D uses 40 accepted
+sends, five real keepalive-handler replies at 10–14s, and three NAK frames removing
+40 packet-log entries. It remains Stalled with 40 attempts and zero in-flight packets.
+`utils::test_clock` is a cfg(test)-only, scoped, thread-local !Send override for these
+current-thread tests; production/test-internals-only builds retain the real monotonic
+clock. No sleeps or global clock replacement; existing frozen flag tests are unchanged.
+HealthMachine runtime wiring, probe production and hardware validation remain later work.
 
 ## CODEBASE (inherited from upstream)
 
