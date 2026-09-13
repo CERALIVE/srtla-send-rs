@@ -1,12 +1,31 @@
 //! Explicit-cell, paired campaign harness. Live tests require Linux netns privileges.
 #![cfg(unix)]
 
+mod bench_support;
 #[path = "bench_support/checkpoint.rs"]
 mod checkpoint;
 #[path = "bench_support/manifest.rs"]
 mod manifest;
 #[path = "support/measurement_lock.rs"]
 mod measurement;
+
+#[test]
+#[ignore = "full campaign requires netns privileges and BENCH_MANIFEST"]
+fn campaign() -> anyhow::Result<()> {
+    bench_support::runner::campaign(false)
+}
+
+#[test]
+#[ignore = "A+D smoke requires netns privileges and BENCH_MANIFEST; full scenario windows"]
+fn smoke() -> anyhow::Result<()> {
+    bench_support::runner::campaign(true)
+}
+
+#[test]
+#[ignore = "private bounded single-run worker; launched by campaign"]
+fn worker() -> anyhow::Result<()> {
+    bench_support::runner::worker()
+}
 
 use network_sim::metrics::identity::Hash256;
 use network_sim::metrics::record::RunStatus;
