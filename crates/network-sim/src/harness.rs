@@ -812,19 +812,30 @@ impl SrtlaTestStack {
     /// Start the full stack: srt-live-transmit → srtla_rec → srtla_send.
     ///
     /// `sender_extra_args` are appended to the srtla_send command line.
-    pub fn start(test_name: &str, num_links: usize, sender_extra_args: &[&str]) -> Result<Self> {
+    /// Pass `SrtProfile::LEGACY_DEFAULT` and `None` to retain the old listener argv.
+    /// Profile and capture remain explicit arguments so existing tests cannot opt in silently.
+    pub fn start(
+        test_name: &str,
+        num_links: usize,
+        sender_extra_args: &[&str],
+        srt_profile: SrtProfile,
+        stats_csv: Option<PathBuf>,
+    ) -> Result<Self> {
+        let srt_binary = find_srt_live_transmit_binary()?;
+        let rec_binary = find_srtla_rec_binary()?;
+        let receiver_kind = ReceiverKind::from_env()?;
+        let listener_args = srt_profile.listener_argv(SRT_SERVER_PORT, stats_csv.as_deref())?;
+        let receiver_args = receiver_kind.argv(SRTLA_REC_PORT, "127.0.0.1", SRT_SERVER_PORT);
         let topo = SrtlaTestTopology::new(test_name, num_links)?;
         let ip_list_path = topo.write_ip_list()?;
 
         // 1. Start srt-live-transmit in receiver NS
-        //    Acts as an SRT listener that sinks to /dev/null.
-        let srt_uri = format!("srt://:{}?mode=listener", SRT_SERVER_PORT);
-        // Sink to a UDP port — srt-live-transmit only supports srt://, udp://, file://con
-        let sink_uri = "udp://127.0.0.1:9999";
         let mut srt_server = NamespaceProcess::spawn(
             &topo.receiver_ns,
-            "srt-live-transmit",
-            &[&srt_uri, sink_uri],
+            srt_binary
+                .to_str()
+                .context("SRT tool binary path must be UTF-8")?,
+            &listener_args.iter().map(String::as_str).collect::<Vec<_>>(),
         )
         .context("start srt-live-transmit")?;
 
@@ -837,19 +848,12 @@ impl SrtlaTestStack {
             .context("wait for srt-live-transmit")?;
 
         // 2. Start srtla_rec in receiver NS
-        let srtla_port_str = SRTLA_REC_PORT.to_string();
-        let srt_port_str = SRT_SERVER_PORT.to_string();
         let mut srtla_rec = NamespaceProcess::spawn(
             &topo.receiver_ns,
-            "srtla_rec",
-            &[
-                "--srtla_port",
-                &srtla_port_str,
-                "--srt_hostname",
-                "127.0.0.1",
-                "--srt_port",
-                &srt_port_str,
-            ],
+            rec_binary
+                .to_str()
+                .context("receiver binary path must be UTF-8")?,
+            &receiver_args.iter().map(String::as_str).collect::<Vec<_>>(),
         )
         .context("start srtla_rec")?;
 
@@ -1097,6 +1101,62 @@ fn resolve_external_binary(key: &str, fallback: &str) -> Result<PathBuf> {
 #[cfg(test)]
 mod srt_profile_tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires netns privileges, real SRT tools and a built srtla_send"]
+    fn profile_stats_stack_writes_csv() {
+        // Given a registered single-link stack with explicit strict tuning and capture.
+        check_integration_deps().expect("live stack dependencies");
+        let dir = tempfile::tempdir().expect("capture directory");
+        let csv = dir.path().join("listener stats.csv");
+        let mut stack =
+            SrtlaTestStack::start("profile_csv", 1, &[], SrtProfile::STRICT, Some(csv.clone()))
+                .expect("profile stack");
+        stack
+            .wait_for_registered_uplinks(1, Duration::from_secs(20))
+            .expect("registered uplink");
+        let tool = find_srt_live_transmit_binary().expect("SRT tool");
+        let caller_uri = format!(
+            "srt://127.0.0.1:{}?mode=caller&latency=500",
+            stack.sender_srt_port()
+        );
+        let caller = NamespaceProcess::spawn(
+            &stack.topo.sender_ns,
+            tool.to_str().expect("tool path"),
+            &["udp://:6000", &caller_uri],
+        )
+        .expect("real SRT caller");
+        wait_for_udp_listener(&stack.topo.sender_ns, 6000, Duration::from_secs(10))
+            .expect("caller input ready");
+        // When real libsrt carries enough messages to cross its stats packet count.
+        inject_udp_packets(&stack.topo.sender_ns, "127.0.0.1", 6000, 10000)
+            .expect("source datagrams");
+        // Then the listener publishes real CSV, including a data row rather than just a header.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let captured = loop {
+            let text = std::fs::read_to_string(&csv).unwrap_or_default();
+            if text.lines().count() >= 2 {
+                break text;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "no stats rows; caller={:?}; sender={:?}",
+                caller.log_snapshot(),
+                stack.sender_log_snapshot()
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        };
+        assert!(
+            captured
+                .lines()
+                .next()
+                .expect("CSV header")
+                .split(',')
+                .any(|field| field == "pktRecv")
+        );
+        stack.stop();
+        drop(caller);
+    }
 
     #[test]
     fn srt_uri_includes_profile_params() {

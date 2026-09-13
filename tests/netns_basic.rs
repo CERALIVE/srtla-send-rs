@@ -9,6 +9,7 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use network_sim::SrtlaTestStack;
+use network_sim::harness::SrtProfile;
 
 #[test]
 fn test_two_link_registration() {
@@ -17,7 +18,8 @@ fn test_two_link_registration() {
     }
     common::build_srtla_send();
 
-    let mut stack = SrtlaTestStack::start("reg2", 2, &[]).expect("start stack");
+    let mut stack = SrtlaTestStack::start("reg2", 2, &[], SrtProfile::LEGACY_DEFAULT, None)
+        .expect("start stack");
 
     common::wait_until_ready(&stack);
 
@@ -42,7 +44,8 @@ fn test_data_forwarding() {
     }
     common::build_srtla_send();
 
-    let mut stack = SrtlaTestStack::start("fwd", 2, &[]).expect("start stack");
+    let mut stack = SrtlaTestStack::start("fwd", 2, &[], SrtProfile::LEGACY_DEFAULT, None)
+        .expect("start stack");
 
     common::wait_until_ready(&stack);
 

@@ -18,6 +18,7 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use network_sim::SrtlaTestStack;
+use network_sim::harness::SrtProfile;
 
 const SRTLA_REC_PORT: &str = "5000";
 const SECOND_RECEIVER_IP: &str = "10.10.1.22";
@@ -49,7 +50,9 @@ fn receiver_replying_from_a_second_address_keeps_the_link_alive() {
     }
     common::build_srtla_send();
 
-    let mut stack = SrtlaTestStack::start("unconn_altsrc", 1, &[]).expect("start stack");
+    let mut stack =
+        SrtlaTestStack::start("unconn_altsrc", 1, &[], SrtProfile::LEGACY_DEFAULT, None)
+            .expect("start stack");
     if skip_without_iptables(&stack) {
         return;
     }
@@ -117,7 +120,9 @@ fn send_error_marks_the_link_for_recovery_promptly() {
     }
     common::build_srtla_send();
 
-    let mut stack = SrtlaTestStack::start("unconn_senderr", 1, &[]).expect("start stack");
+    let mut stack =
+        SrtlaTestStack::start("unconn_senderr", 1, &[], SrtProfile::LEGACY_DEFAULT, None)
+            .expect("start stack");
     if skip_without_iptables(&stack) {
         return;
     }

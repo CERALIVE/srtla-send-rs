@@ -9,6 +9,7 @@ use std::thread;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
+use network_sim::harness::SrtProfile;
 use network_sim::{ImpairmentConfig, LinkScenarioConfig, Scenario, ScenarioConfig, SrtlaTestStack};
 
 #[test]
@@ -18,7 +19,8 @@ fn test_random_walk_stability() {
     }
     common::build_srtla_send();
 
-    let mut stack = SrtlaTestStack::start("rw", 2, &[]).expect("start stack");
+    let mut stack =
+        SrtlaTestStack::start("rw", 2, &[], SrtProfile::LEGACY_DEFAULT, None).expect("start stack");
 
     common::wait_until_ready(&stack);
 
@@ -121,7 +123,8 @@ fn test_step_change_convergence() {
     }
     common::build_srtla_send();
 
-    let mut stack = SrtlaTestStack::start("step", 2, &[]).expect("start stack");
+    let mut stack = SrtlaTestStack::start("step", 2, &[], SrtProfile::LEGACY_DEFAULT, None)
+        .expect("start stack");
 
     common::wait_until_ready(&stack);
 
