@@ -472,6 +472,22 @@ well-formed but unorderable republication refused as `stale-generation`; an
 unplug/replug recovering on a genuinely new ifindex; and a route-removal blackhole
 reported on the route axis, confirmed by ACK timeout, never reading healthy.
 
+**`tests/netns_hsrsp_spike.rs` — ignored live HSRSP visibility spike.** Requires
+an explicit `SRTLA_REC_BIN` pointing at an out-of-tree CeraLive receiver build,
+unattended sudo, `srt-live-transmit`, `tcpdump`, and `tshark`; explicit execution
+fails on absent prerequisites. Run under a 90-second outer timeout with `--ignored`.
+Fresh one-link pairs at listener `latency=2000` and `latency=500` yield matching
+HSRSP delays, with identical UDP payloads captured on the sender uplink and loopback.
+The clean-room decoder is test-only (`tests/support/hsrsp.rs`); no production
+instrumentation or parser is introduced. The committed 80-byte raw-payload fixture
+`tests/fixtures/srt-hsrsp-latency2000.bin` is regenerated only with `UPDATE_GOLDEN=1`.
+Offsets are zero-based from the SRT/UDP-payload start: extension type `[64,66)` = 2,
+body length `[66,68)` = 3 words, latency `[76,80)` = `07 d0 07 d0`.
+The high half `[76,78)` and low half `[78,80)` both decode to 2000 here; the
+500ms control changes both to 500. This symmetric capture alone does not distinguish
+directional half semantics. Extension lengths are walked, not assumed fixed by
+the decoder. `HSRSP_CAPTURE_DIR` optionally preserves unique pcap/log directories.
+
 **Production subscription-concurrency invariant (BLOCKING, separate target).**
 `tests/subscription_loom.rs` uses Loom to enumerate schedules while racing the real
 `SubscriptionManager` (`src/subscription.rs`) `broadcast` path against its real

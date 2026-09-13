@@ -254,6 +254,18 @@ use `./scripts/netns_test_gate.sh` (90 seconds per target by default; `netns_twi
 30-second status-log interval). One separate real-Starlink stall reproduction is
 intentionally `#[ignore]` and runs only on hardware.
 
+`tests/netns_hsrsp_spike.rs` is an explicitly ignored, one-link live-handshake
+spike. Point `SRTLA_REC_BIN` at an out-of-tree CeraLive receiver build, install
+`tcpdump` and `tshark`, and run
+`timeout --foreground --kill-after=10s 90s cargo test --test netns_hsrsp_spike -- --ignored --nocapture`.
+It captures the first three seconds of caller negotiation at listener latencies
+2000 and 500 ms, decodes HSRSP with a test-only clean-room helper, and requires
+byte-identical forwarding from the uplink to sender loopback. Explicit runs fail
+on missing prerequisites rather than silently passing. `UPDATE_GOLDEN=1` deliberately
+regenerates `tests/fixtures/srt-hsrsp-latency2000.bin` (raw SRT UDP payload, 80 bytes);
+`HSRSP_CAPTURE_DIR` optionally names an existing directory in which unique capture
+subdirectories and process logs are retained. No production handshake parser is added.
+
 `tests/netns_twin.rs` covers the duplicate-IP twin case that a single-subnet veth
 topology cannot express: two uplinks on ONE source address, each behind its own NAT
 carrier namespace, exactly as two identical HiLink dongles present themselves. It proves
