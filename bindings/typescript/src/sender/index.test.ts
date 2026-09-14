@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { ZodError } from 'zod';
 
+import type { SchedulingMode, SrtlaSendOptionsInput } from './index.js';
 import { buildSrtlaSendArgs, getSrtlaSendExec, spawnSrtlaSend } from './index.js';
 
 describe('buildSrtlaSendArgs', () => {
@@ -80,6 +81,48 @@ describe('buildSrtlaSendArgs', () => {
 		expect(intervalIdx).toBeGreaterThanOrEqual(0);
 		expect(args[intervalIdx + 1]).toBe('500');
 		expect(args.indexOf('--stats-file')).toBeLessThan(intervalIdx);
+	});
+});
+
+describe('mode arg', () => {
+	test('buildSrtlaSendArgs_mode_omitted_when_unset', () => {
+		const args = buildSrtlaSendArgs({ srtlaHost: 'host' });
+		expect(args).not.toContain('--mode');
+	});
+
+	test('buildSrtlaSendArgs_mode_emitted_when_set', () => {
+		const args = buildSrtlaSendArgs({ srtlaHost: 'host', mode: 'adaptive' });
+		const idx = args.indexOf('--mode');
+		expect(idx).toBeGreaterThanOrEqual(0);
+		expect(args[idx + 1]).toBe('adaptive');
+	});
+
+	test('buildSrtlaSendArgs_mode_accepts_every_scheduling_mode', () => {
+		const modes: SchedulingMode[] = ['classic', 'enhanced', 'rtt-threshold', 'edpf', 'adaptive'];
+		for (const mode of modes) {
+			const args = buildSrtlaSendArgs({ srtlaHost: 'host', mode });
+			const idx = args.indexOf('--mode');
+			expect(args[idx + 1]).toBe(mode);
+		}
+	});
+
+	test('buildSrtlaSendArgs_mode_precedes_verbose', () => {
+		const args = buildSrtlaSendArgs({ srtlaHost: 'host', mode: 'edpf', verbose: true });
+		expect(args.indexOf('--mode')).toBeLessThan(args.indexOf('--verbose'));
+	});
+
+	test('buildSrtlaSendArgs_rejects_an_unknown_mode_string_at_runtime', () => {
+		// Cast bypasses the SchedulingMode literal union to prove the runtime Zod
+		// guard rejects it too (compile-time rejection is proven separately below,
+		// via the ts-expect-error case checked by `bun run typecheck`).
+		const invalid = { srtlaHost: 'host', mode: 'bogus' } as unknown as SrtlaSendOptionsInput;
+		expect(() => buildSrtlaSendArgs(invalid)).toThrow(ZodError);
+	});
+
+	test('an invalid mode literal is rejected at compile time', () => {
+		// @ts-expect-error 'bogus' is not a member of SchedulingMode.
+		const options: SrtlaSendOptionsInput = { srtlaHost: 'host', mode: 'bogus' };
+		expect(options.srtlaHost).toBe('host');
 	});
 });
 

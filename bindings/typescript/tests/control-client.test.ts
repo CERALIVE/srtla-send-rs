@@ -146,6 +146,143 @@ describe('connection failure', () => {
 	});
 });
 
+describe('setLinkPriority', () => {
+	function serverRecordingRequests(result: Record<string, unknown>): {
+		server: FakeServer;
+		requests: Array<{ method: string; id: number; params?: unknown }>;
+	} {
+		const requests: Array<{ method: string; id: number; params?: unknown }> = [];
+		const server = startFakeServer((line, reply) => {
+			const req = JSON.parse(line) as { method: string; id: number; params?: unknown };
+			if (req.method === 'hello') {
+				reply(
+					JSON.stringify({
+						jsonrpc: '2.0',
+						id: req.id,
+						result: { schema_version: 1, engine: 'srtla_send', capabilities: [] },
+					}),
+				);
+				return;
+			}
+			requests.push(req);
+			if (req.method === 'set-link-priority') {
+				reply(JSON.stringify({ jsonrpc: '2.0', id: req.id, result }));
+			}
+		});
+		return { server, requests };
+	}
+
+	test('setLinkPriority_maps_linkId_to_the_wire_link_id_param', async () => {
+		const { server, requests } = serverRecordingRequests({
+			applied: true,
+			key: 'link_id',
+			link_id: 'modem-a',
+			conn_id: '0',
+			priority: 0.1,
+			effective_priority: 0.1,
+		});
+		const client = await createControlClient({ socketPath: server.socketPath });
+		expect(client).not.toBeNull();
+		if (client === null) return;
+
+		const result = await client.setLinkPriority({ linkId: 'modem-a', priority: 0.1 });
+
+		expect(requests).toHaveLength(1);
+		expect(requests[0]?.method).toBe('set-link-priority');
+		expect(requests[0]?.params).toEqual({ link_id: 'modem-a', priority: 0.1 });
+		expect(result.applied).toBe(true);
+		expect(result.key).toBe('link_id');
+		expect(result.link_id).toBe('modem-a');
+		expect(result.effective_priority).toBe(0.1);
+		client.close();
+	});
+
+	test('setLinkPriority_maps_connId_to_the_wire_conn_id_param', async () => {
+		const { server, requests } = serverRecordingRequests({
+			applied: true,
+			key: 'conn_id',
+			conn_id: '2',
+			priority: -0.2,
+			effective_priority: -0.2,
+		});
+		const client = await createControlClient({ socketPath: server.socketPath });
+		expect(client).not.toBeNull();
+		if (client === null) return;
+
+		const result = await client.setLinkPriority({ connId: '2', priority: -0.2 });
+
+		expect(requests[0]?.params).toEqual({ conn_id: '2', priority: -0.2 });
+		expect(result.key).toBe('conn_id');
+		expect(result.link_id).toBeUndefined();
+		client.close();
+	});
+
+	test('setLinkPriority_maps_null_priority_to_clear_the_addressed_layer', async () => {
+		const { server, requests } = serverRecordingRequests({
+			applied: true,
+			key: 'conn_id',
+			conn_id: '0',
+			priority: null,
+			effective_priority: null,
+		});
+		const client = await createControlClient({ socketPath: server.socketPath });
+		expect(client).not.toBeNull();
+		if (client === null) return;
+
+		const result = await client.setLinkPriority({ connId: '0', priority: null });
+
+		expect(requests[0]?.params).toEqual({ conn_id: '0', priority: null });
+		expect(result.priority).toBeNull();
+		expect(result.effective_priority).toBeNull();
+		client.close();
+	});
+
+	test('setLinkPriority_rejects_an_out_of_range_priority_before_any_socket_write', async () => {
+		const { server, requests } = serverRecordingRequests({});
+		const client = await createControlClient({ socketPath: server.socketPath });
+		expect(client).not.toBeNull();
+		if (client === null) return;
+
+		await expect(client.setLinkPriority({ linkId: 'a', priority: 0.5 })).rejects.toThrow(
+			RangeError,
+		);
+		// The request never reached the server: validation failed synchronously
+		// inside the async function, before `request()` wrote a frame.
+		expect(requests).toHaveLength(0);
+		client.close();
+	});
+
+	test('setLinkPriority_rejects_a_below_minimum_priority', async () => {
+		const { server } = serverRecordingRequests({});
+		const client = await createControlClient({ socketPath: server.socketPath });
+		expect(client).not.toBeNull();
+		if (client === null) return;
+
+		await expect(client.setLinkPriority({ connId: '0', priority: -0.21 })).rejects.toThrow(
+			RangeError,
+		);
+		client.close();
+	});
+
+	test('setLinkPriority_accepts_the_exact_boundary_values', async () => {
+		const { server } = serverRecordingRequests({
+			applied: true,
+			key: 'link_id',
+			link_id: 'a',
+			conn_id: '0',
+			priority: 0.2,
+			effective_priority: 0.2,
+		});
+		const client = await createControlClient({ socketPath: server.socketPath });
+		expect(client).not.toBeNull();
+		if (client === null) return;
+
+		const result = await client.setLinkPriority({ linkId: 'a', priority: 0.2 });
+		expect(result.applied).toBe(true);
+		client.close();
+	});
+});
+
 describe('sender arg + path helpers', () => {
 	test('buildSrtlaSendArgs_emits_control_socket', () => {
 		const args = buildSrtlaSendArgs({
