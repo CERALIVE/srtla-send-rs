@@ -327,8 +327,11 @@ impl SharedStats {
                 rtt_velocity: conn.get_rtt_velocity(),
                 base_score,
                 quality_multiplier,
-                health: None,
-                priority: None,
+                health: matches!(config.mode, SchedulingMode::Adaptive)
+                    .then(|| conn.health.state().as_str()),
+                priority: conn
+                    .effective_priority()
+                    .map(crate::bind_map::Priority::get),
                 effective_multiplier,
             };
 

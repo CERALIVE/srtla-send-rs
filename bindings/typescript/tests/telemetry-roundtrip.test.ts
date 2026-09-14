@@ -50,9 +50,20 @@ const PRODUCER_ORDERED_FIXTURES: string[] = [
 	'telemetry-reconnect',
 	'telemetry-degraded-startup',
 	'telemetry-degraded-reload',
+	'telemetry-adaptive',
 ];
 
 describe('byte parity: parse(serialize(x)) preserves every sender field', () => {
+	test('a stripped health field falsifies adaptive byte parity', async () => {
+		// Given the Rust-produced adaptive document parsed by the real reader.
+		const bytes = await readBytes('telemetry-adaptive');
+		const parsed = telemetrySchema.parse(JSON.parse(bytes));
+		expect(JSON.stringify(parsed)).toBe(bytes);
+		// When health is deleted as a stripping parser would do.
+		for (const conn of parsed.connections) delete conn.health;
+		// Then the byte comparison detects that loss.
+		expect(JSON.stringify(parsed)).not.toBe(bytes);
+	});
 	test.each(PRODUCER_ORDERED_FIXTURES)('%s survives the round trip byte-for-byte', async (name) => {
 		const bytes = await readBytes(name);
 

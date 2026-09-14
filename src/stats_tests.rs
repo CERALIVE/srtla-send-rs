@@ -1,6 +1,39 @@
 use super::*;
 use crate::mode::SchedulingMode;
 
+#[tokio::test]
+async fn scheduler_observations_follow_mode_and_effective_priority() {
+    // Given a priority override distinct from the sidecar baseline.
+    let mut conns = crate::test_helpers::create_test_connections(2).await;
+    conns[0].priority_baseline = Some(crate::bind_map::Priority::try_from(-0.2).unwrap());
+    conns[0].priority_override_conn = Some(crate::bind_map::Priority::try_from(0.2).unwrap());
+    let stats = SharedStats::new();
+    // When snapshots are published in each mode.
+    for mode in [
+        SchedulingMode::Adaptive,
+        SchedulingMode::Classic,
+        SchedulingMode::Enhanced,
+        SchedulingMode::RttThreshold,
+        SchedulingMode::Edpf,
+    ] {
+        stats.update(
+            &conns,
+            &ConfigSnapshot {
+                mode,
+                ..test_config()
+            },
+        );
+        let links = stats.get().links;
+        // Then health is adaptive-only, but configured priority is echoed even when inactive.
+        assert_eq!(
+            links[0].health,
+            matches!(mode, SchedulingMode::Adaptive).then_some("down")
+        );
+        assert_eq!(links[0].priority, Some(0.2));
+        assert_eq!(links[1].priority, None);
+    }
+}
+
 #[test]
 fn negotiated_latency_is_unknown_until_observed() {
     // Given a fresh container, When read directly, Then no latency is invented.

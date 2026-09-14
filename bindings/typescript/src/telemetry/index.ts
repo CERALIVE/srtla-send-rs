@@ -100,6 +100,10 @@ export const connectionTelemetrySchema = z.object({
 	 * ADR-003.
 	 */
 	link_id: z.string().min(1).optional(),
+	/** Adaptive-only health observation; absent means unknown, not healthy. */
+	health: z.enum(['healthy', 'degraded', 'stalled', 'rejoining', 'down']).optional(),
+	/** Configured effective priority, not the health-gated ranking multiplier. */
+	priority: z.number().min(-0.2).max(0.2).optional(),
 });
 
 /**

@@ -331,7 +331,7 @@ CeraUI and the device integration depend on these staying stable:
   distinguishable only by it. Pinned by the `telemetry-reordered` / `telemetry-reconnect`
   fixtures on both sides.
 - **Cross-language fixture matrix — Rust writes, TypeScript parses THE SAME BYTES.**
-  Eight fixtures, each committed twice (`tests/fixtures/<name>.json` and
+  Nine fixtures, each committed twice (`tests/fixtures/<name>.json` and
   `bindings/typescript/tests/fixtures/<name>.json`) and asserted byte-identical by
   `tests/telemetry_fixture_parity.rs`. The producer half is `tests/telemetry_fixtures.rs`
   (regenerate deliberately with `UPDATE_GOLDEN=1 cargo test --test telemetry_fixtures`,
@@ -961,8 +961,17 @@ performance claim changes here. Tests: `cargo test --lib adaptive` and the real-
   fallback retains its base-only rank. Adaptive zero-total snapshots stay zero,
   never using the legacy equal-share fallback. Percentages describe ranking shares,
   not packet counters or a one-hot representation of cooldown/hysteresis decisions.
-  Runtime health/priority remain None until the telemetry consumer work lands.
-  Schema stays 1; fixture JSON and existing fixture assertions are unchanged.
+  Health is now populated only in adaptive mode (`healthy|degraded|stalled|rejoining|down`);
+  priority echoes `effective_priority()` whenever configured, including in legacy
+  modes where it has no scheduling effect. Absent values remain omitted. Schema
+  stays 1. `telemetry-adaptive` adds a mapped healthy +0.2 carrier and zero-weight
+  stalled neighbour without priority; all eight older fixture pairs are byte-unchanged.
+  TS declares both fields after `link_id` and byte-roundtrips the new fixture.
+  The fully populated record alone has the exact 12-key assertion; its neighbour
+  uses subset checks. Old golden key equality/additivity remain frozen. A stripped
+  health control falsifies byte parity. `tests/telemetry_adaptive.rs` also drives the
+  real binary over two loopback uplinks with DATA ACKs withheld on one while
+  keepalives continue, requiring that link's live stats-file weight to reach zero.
 - **Todo 24 seam:** `SharedStats::pool_control() -> Option<PoolControlHandle>`
   reaches `sender::pool_control`. `submit(PoolControlRequest::SetLinkPriority {
   key: LinkKey::LinkId(LinkId) | LinkKey::ConnId(usize), priority: Option<Priority>
