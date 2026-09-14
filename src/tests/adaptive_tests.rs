@@ -26,12 +26,19 @@ mod weight_ranking;
 #[path = "adaptive/weights.rs"]
 mod weights;
 
-fn config() -> ConfigSnapshot {
+pub(crate) fn config() -> ConfigSnapshot {
     DynamicConfig::new().snapshot()
 }
 
-async fn pool() -> SmallVec<SrtlaConnection, 4> {
-    let mut conns = create_test_connections(2).await;
+pub(crate) async fn pool() -> SmallVec<SrtlaConnection, 4> {
+    pool_of(2).await
+}
+
+/// The fixed synthetic pool every adaptive trace starts from: neutral Healthy
+/// links with a wide window, so any divergence comes from the mechanism under
+/// test rather than from the starting state.
+pub(crate) async fn pool_of(links: usize) -> SmallVec<SrtlaConnection, 4> {
+    let mut conns = create_test_connections(links).await;
     for conn in &mut conns {
         conn.health = HealthMachine::new(HealthState::Healthy, 0);
         conn.window = 20_000;

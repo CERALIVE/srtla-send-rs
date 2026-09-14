@@ -35,9 +35,13 @@ impl AdaptiveState {
         self.stats.update(conns, cfg);
     }
 
+    /// Feature bits come from `adaptive_env`, which resolves to
+    /// `AdaptiveFeatures::default()` unless a `test-internals` build was given
+    /// `SRTLA_ADAPTIVE_FEATURES` — the release binary and an unset-env
+    /// `test-internals` binary therefore run the same set.
     pub fn new(stats: SharedStats) -> Self {
         Self {
-            features: AdaptiveFeatures::ALL,
+            features: crate::adaptive_env::features(),
             sole_carrier: None,
             probe: ProbeScheduler::default(),
             targets: SmallVec::new(),

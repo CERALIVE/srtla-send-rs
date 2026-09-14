@@ -52,12 +52,15 @@ pub enum DeadlineGate {
 
 impl DeadlineGate {
     pub fn update(&mut self, predicted_ms: f64, budget: DeadlineBudget) -> bool {
+        let tuning = crate::adaptive_env::tuning();
+        let hold = tuning.deadline_hold_fraction * f64::from(budget.latency_ms);
+        let release = tuning.deadline_release_fraction() * f64::from(budget.latency_ms);
         let next = match *self {
-            Self::Admitted if predicted_ms > 0.5 * f64::from(budget.latency_ms) => Self::Held {
+            Self::Admitted if predicted_ms > hold => Self::Held {
                 clear_since_ms: None,
             },
             Self::Admitted => Self::Admitted,
-            Self::Held { clear_since_ms } if predicted_ms < 0.4 * f64::from(budget.latency_ms) => {
+            Self::Held { clear_since_ms } if predicted_ms < release => {
                 let since = clear_since_ms.unwrap_or(budget.now_ms);
                 if elapsed_ms(budget.now_ms, since) >= budget.tau_ms {
                     Self::Admitted

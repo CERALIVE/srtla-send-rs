@@ -139,7 +139,9 @@ impl RateCap {
             if self.backoff_ticks == 0 {
                 self.loss_entry = signals.loss_ewma;
             }
-            self.target_bps = (0.85 * self.target_bps).max(self.delivered_bps.min(self.target_bps));
+            let backoff = crate::adaptive_env::tuning().ratecap_loss_backoff;
+            self.target_bps =
+                (backoff * self.target_bps).max(self.delivered_bps.min(self.target_bps));
             self.backoff_ticks = self.backoff_ticks.saturating_add(1);
             self.recovery_ticks_left = RECOVERY_TICKS;
             self.state = RateState::BackingOff;

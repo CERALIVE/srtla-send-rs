@@ -294,7 +294,9 @@ pub enum CmdResponse {
 /// - `stall-reprobe-ms <ms>` - set the stall re-probe interval
 /// - `status` - show current configuration
 /// - `stats` - get per-link telemetry as JSON
-/// - `metrics` - (`test-internals` only) A/B evaluation counters as JSON
+/// - `metrics` - (`test-internals` only) A/B evaluation counters as JSON, plus
+///   this build's `effective_config` (`adaptive_features`, `adaptive_tuning`)
+///   for the bench runner to check against its manifest
 pub fn apply_cmd(config: &DynamicConfig, cmd: &str, stats: Option<&SharedStats>) -> CmdResponse {
     let cmd = cmd.trim();
     if cmd.is_empty() {
@@ -508,6 +510,14 @@ pub fn apply_cmd(config: &DynamicConfig, cmd: &str, stats: Option<&SharedStats>)
             info!("  stall-min-in-flight: {}", snap.stall_min_in_flight);
             info!("  stall-ack-stale-ms: {}", snap.stall_ack_stale_ms);
             info!("  stall-reprobe-ms: {}", snap.stall_reprobe_ms);
+            #[cfg(feature = "test-internals")]
+            {
+                info!(
+                    "  adaptive-features: {}",
+                    crate::adaptive_env::features_csv()
+                );
+                info!("  adaptive-tuning: {}", crate::adaptive_env::tuning_csv());
+            }
         }
 
         // Query-time truth for the A/B evaluation runner: process-lifetime
@@ -515,7 +525,8 @@ pub fn apply_cmd(config: &DynamicConfig, cmd: &str, stats: Option<&SharedStats>)
         // delta. Absent from a production build (`test-internals` only).
         #[cfg(feature = "test-internals")]
         "metrics" => {
-            return CmdResponse::Json(crate::ab_metrics::metrics().to_json());
+            let counters = crate::ab_metrics::metrics().to_json();
+            return CmdResponse::Json(crate::adaptive_env::with_effective_config(&counters));
         }
 
         "stats" => {

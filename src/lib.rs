@@ -14,6 +14,8 @@ static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 #[cfg(not(loom))]
 pub mod ab_metrics;
 #[cfg(not(loom))]
+pub mod adaptive_env;
+#[cfg(not(loom))]
 pub mod bind_map;
 #[cfg(not(loom))]
 pub mod capabilities;
