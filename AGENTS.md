@@ -927,11 +927,11 @@ the elected carrier. **`stall_deselect` is a strict no-op in adaptive**, and ada
 ACK attribution uses the existing generation-fenced arrival-scoped policy regardless
 of the legacy earned-ACK flag.
 
-Remaining boundary: health initializes Down; Todo 23 owns health/rate housekeeping,
-registration/recovery state resets and lifecycle status. Until then fresh runtime
-adaptive pools use the connected fallback, not live health adaptation. Todo 24 owns
-the intentionally failing four-value CLI contract test and expanded control surface;
-Todo 25 owns telemetry echoes. No default, wire format, frozen trace, or hardware
+Todos 23/24 are integrated: health/rate housekeeping, registration/recovery resets,
+lifecycle status, and the adaptive control surface now run in production. Health
+still initializes Down and enters Rejoining after registration. Todo 25's connector
+refreshes actual admission/ranking before the initial and every housekeeping stats
+snapshot, even without DATA. No default, wire format, frozen trace, or hardware
 performance claim changes here. Tests: `cargo test --lib adaptive` and the real-binary
 `cargo test --test adaptive_cli`, including the ALL−STALL scenario-D control.
 
@@ -950,10 +950,18 @@ performance claim changes here. Tests: `cargo test --lib adaptive` and the real-
 - **Todo 25 seam:** `TelemetryConn` and `LinkStats` gain optional `health` and
   `priority`. The document orders them after `link_id`, omitting None entirely;
   `TelemetryConn` retains PartialEq but cannot derive Eq with raw optional f64.
-  `LinkStats.effective_multiplier` initially equals legacy `quality_multiplier`,
-  NOT a claimed adaptive admission/weight snapshot. Runtime health/priority remain
-  None; stats projection preserves values if supplied. Todo 25 must arrange the
-  actual scheduler-owned weight publication rather than reconstructing it here.
+  `LinkStats.effective_multiplier` now reads the socket-scoped selection cache in
+  adaptive mode; legacy modes retain `quality_multiplier`. The single
+  `selection/adaptive/ranking.rs::refresh` pass owns admission, deadline hysteresis,
+  election, and the quality × ramp × preference × soft-cap product. Both packet
+  selection and `AdaptiveState::update_stats` consume that pass; stats never
+  reconstructs admission. The cache pairs the base score with its multiplier, is
+  cleared on socket reset, and follows the connection through reorder. Held links
+  publish zero; a sole carrier retains the product, while the last-resort connected
+  fallback retains its base-only rank. Adaptive zero-total snapshots stay zero,
+  never using the legacy equal-share fallback. Percentages describe ranking shares,
+  not packet counters or a one-hot representation of cooldown/hysteresis decisions.
+  Runtime health/priority remain None until the telemetry consumer work lands.
   Schema stays 1; fixture JSON and existing fixture assertions are unchanged.
 - **Todo 24 seam:** `SharedStats::pool_control() -> Option<PoolControlHandle>`
   reaches `sender::pool_control`. `submit(PoolControlRequest::SetLinkPriority {

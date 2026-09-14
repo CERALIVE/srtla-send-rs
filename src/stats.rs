@@ -27,6 +27,7 @@ use serde::Serialize;
 use crate::bind_map::BindMapReport;
 use crate::config::ConfigSnapshot;
 use crate::connection::SrtlaConnection;
+use crate::mode::SchedulingMode;
 use crate::sender::calculate_quality_multiplier;
 use crate::sender::pool_control::{PoolControlHandle, PoolControlReceiver};
 use crate::utils::now_ms;
@@ -94,7 +95,8 @@ pub struct LinkStats {
     /// This is the EXACT multiplier used in `select_connection_idx()`.
     /// In classic mode, this is always 1.0 (quality scoring disabled).
     pub quality_multiplier: f64,
-    /// Legacy quality until the scheduler publishes its full adaptive multiplier.
+    /// Scheduler-published quality × ramp × preference × soft cap in adaptive,
+    /// zero for held links. Legacy modes retain the quality multiplier.
     pub effective_multiplier: f64,
 }
 
@@ -289,6 +291,24 @@ impl SharedStats {
             } else {
                 1.0
             };
+            let (base_score, quality_multiplier, effective_multiplier) = match config.mode {
+                SchedulingMode::Adaptive => conn.adaptive.weight.map_or(
+                    (conn.get_score(), quality_multiplier, 0.0),
+                    |weight| {
+                        (
+                            weight.base_score,
+                            weight.quality_multiplier,
+                            weight.effective_multiplier,
+                        )
+                    },
+                ),
+                SchedulingMode::Classic
+                | SchedulingMode::Enhanced
+                | SchedulingMode::RttThreshold
+                | SchedulingMode::Edpf => {
+                    (conn.get_score(), quality_multiplier, quality_multiplier)
+                }
+            };
 
             let link = LinkStats {
                 ip: conn.local_ip,
@@ -305,11 +325,11 @@ impl SharedStats {
                 bytes_sent_total: conn.session_bytes_sent(),
                 rtt_min_ms: conn.get_rtt_min_ms(),
                 rtt_velocity: conn.get_rtt_velocity(),
-                base_score: conn.get_score(),
+                base_score,
                 quality_multiplier,
                 health: None,
                 priority: None,
-                effective_multiplier: quality_multiplier,
+                effective_multiplier,
             };
 
             if is_active {

@@ -21,6 +21,10 @@ mod features;
 mod forwarding;
 #[path = "adaptive/io.rs"]
 mod io;
+#[path = "adaptive/weight_ranking.rs"]
+mod weight_ranking;
+#[path = "adaptive/weights.rs"]
+mod weights;
 
 fn config() -> ConfigSnapshot {
     DynamicConfig::new().snapshot()

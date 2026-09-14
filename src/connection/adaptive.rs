@@ -3,11 +3,27 @@ use std::time::Duration;
 /// Socket-scoped admission history: follows the connection, never an ips-file index.
 #[derive(Debug, Default)]
 pub struct AdaptiveLinkState {
+    /// Last shared admission/ranking pass; None means held out, never an estimated weight.
+    pub(crate) weight: Option<SelectionWeight>,
     pub deadline: DeadlineGate,
     pub sole_failed_until_proof: bool,
     pub last_sole_election_ms: Option<u64>,
     generation: u32,
     observed_proof_ms: Option<u64>,
+}
+
+/// Cache the base alongside the multiplier so a later stats read cannot mix packet epochs.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SelectionWeight {
+    pub base_score: i32,
+    pub quality_multiplier: f64,
+    pub effective_multiplier: f64,
+}
+
+impl SelectionWeight {
+    pub fn score(self) -> f64 {
+        f64::from(self.base_score) * self.effective_multiplier
+    }
 }
 
 impl AdaptiveLinkState {

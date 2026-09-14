@@ -187,10 +187,9 @@ pub fn build_telemetry_json_from_stats(last_updated_ms: u64, stats: &StatsSnapsh
 /// Project the shared stats snapshot into per-uplink telemetry records.
 ///
 /// `conn_id` is the link's 0-based position in IP-list order. `weight_percent`
-/// is the link's share of total selection weight (`base_score x quality`) among
-/// active links, normalized to 100; inactive links report 0. Active links with
-/// no capacity signal yet fall back to an equal share so a freshly-registered
-/// group is not reported as all-zero.
+/// is the link's share of total selection weight (`base_score x effective_multiplier`),
+/// normalized to 100; inactive links report 0. Only legacy modes use the equal-share
+/// zero-capacity fallback: adaptive must never resurrect a held-out link's weight.
 #[must_use]
 pub fn conns_from_stats(stats: &StatsSnapshot) -> Vec<TelemetryConn> {
     let weights: Vec<f64> = stats
@@ -198,7 +197,7 @@ pub fn conns_from_stats(stats: &StatsSnapshot) -> Vec<TelemetryConn> {
         .iter()
         .map(|l| {
             if l.connected && !l.timed_out {
-                f64::from(l.base_score.max(0)) * l.quality_multiplier
+                f64::from(l.base_score.max(0)) * l.effective_multiplier
             } else {
                 0.0
             }
@@ -217,7 +216,7 @@ pub fn conns_from_stats(stats: &StatsSnapshot) -> Vec<TelemetryConn> {
         .enumerate()
         .map(|(idx, l)| {
             let is_active = l.connected && !l.timed_out;
-            let weight_percent = if !is_active {
+            let weight_percent = if !is_active || (stats.mode == "adaptive" && total <= 0.0) {
                 0
             } else if total > 0.0 {
                 weight_share_percent(weights[idx], total)

@@ -96,12 +96,10 @@ Held-out links receive globally paced duplicate DATA, never the elected sole car
 Only a due probe forces its primary batch to flush; no copy precedes primary
 acceptance, and neither probe selection nor emission changes switch history.
 
-**This is not yet a complete runtime health controller.** Health starts Down, and
-housekeeping health/rate ticks, registration/recovery resets, and lifecycle status
-integration remain Todo 23. Until that lands, a freshly started adaptive sender uses
-the connected-pool fallback rather than live health adaptation. Control/capability
-and telemetry extensions remain subsequent work. Do not deploy it as a proven
-improvement: the policy and packet-handler UDP tests are not bonded-hardware evidence.
+Housekeeping health/rate ticks, registration/recovery resets, lifecycle status and
+adaptive control are integrated. Health starts Down and enters Rejoining after
+registration. Do not deploy it as a proven improvement: policy and packet-handler
+UDP tests are not bonded-hardware evidence.
 Run `cargo test --lib adaptive` and `cargo test --test adaptive_cli`.
 
 The Wave-4 foundation supplies shared APIs, not those pending integrations:
@@ -109,7 +107,13 @@ The Wave-4 foundation supplies shared APIs, not those pending integrations:
 accepts optional `health` and `priority` after `link_id` (both remain absent in
 runtime snapshots), and `SharedStats::pool_control()` exposes a bounded sender-owned
 request/reply handle. Its consumer mutates real priority layers before replying.
-The JSON-RPC priority method and scheduler-derived telemetry weights are not added.
+The JSON-RPC priority method is integrated. Adaptive telemetry weights now come from
+the same admission/ranking pass used by packet selection, refreshed after health
+ticks before the initial and periodic snapshots, even with no DATA arriving.
+Held-out links report zero; the sole carrier retains its ranking factors. The
+last-resort connected fallback keeps its existing base-only rank. A zero-total
+adaptive snapshot never substitutes legacy equal shares. These are normalized
+ranking weights, not measured traffic shares or one-hot cooldown decisions.
 
 ### Optional Smart Exploration (Enhanced Mode Only)
 

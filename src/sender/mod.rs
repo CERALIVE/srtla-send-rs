@@ -263,7 +263,7 @@ pub async fn run_sender_with_config(
     // once and hand the identical bytes to both sinks.
     {
         shared_stats.set_bind_map(link_source.report());
-        shared_stats.update(&connections, &config.snapshot());
+        adaptive_state.update_stats(&mut connections, &config.snapshot());
         // `last_updated_ms` is compared against `Date.now()` by the TS watcher,
         // so it must be a real wall-clock reading, not the monotonic `now_ms()`.
         let snapshot_json = build_telemetry_json_from_stats(wall_clock_ms(), &shared_stats.get());
@@ -360,7 +360,7 @@ pub async fn run_sender_with_config(
                         // report is refreshed alongside it so a reload's new
                         // operating mode reaches the next published snapshot.
                         shared_stats.set_bind_map(link_source.report());
-                        shared_stats.update(&connections, &config.snapshot());
+                        adaptive_state.update_stats(&mut connections, &config.snapshot());
 
                         if let Some(changes) = pending_changes.take()
                             && let Some(new_links) = changes.new_links
