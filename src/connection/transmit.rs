@@ -27,7 +27,9 @@ impl SrtlaConnection {
         let outcome = self.batch_sender.flush(&self.socket).await;
         let transmitted = !outcome.accepted.is_empty() || !outcome.probes.is_empty();
         let accepted_at_ms = now_ms();
-        for (seq, send_time_ms, len) in outcome.accepted {
+        for ((seq, send_time_ms, len), retransmitted) in
+            outcome.accepted.into_iter().zip(outcome.retransmitted)
+        {
             if let Some(s) = seq {
                 self.register_packet(s, send_time_ms);
                 self.delivery.record_sent(
@@ -37,7 +39,21 @@ impl SrtlaConnection {
                         len: u16::try_from(len)?,
                     },
                 );
-                self.loss.record_send(accepted_at_ms);
+                if retransmitted {
+                    self.delivery.mark_retransmitted(s);
+                }
+                let loss_send = self.loss.record_accepted_send(accepted_at_ms);
+                self.delivery.record_loss_send(s, loss_send);
+                if self.health.state() == super::health::HealthState::Stalled {
+                    let window = super::adaptive::RecoveryWindow {
+                        epoch_ms: self.health.entered_at_ms(),
+                        // Original trains share no probe token bucket: m=1, same ACK deadline.
+                        timeout_ms: 2000_u64.saturating_add(self.get_smooth_rtt_ms() as u64),
+                    };
+                    self.adaptive
+                        .original_recovery
+                        .record_sent(s, accepted_at_ms, window);
+                }
             }
         }
         for probe in outcome.probes {

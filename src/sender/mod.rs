@@ -1,4 +1,5 @@
-// allow: SIZE_OK — existing cross-platform select-loop façade; keep all event arms visible while threading the shared observation.
+// allow: SIZE_OK — existing cross-platform select-loop façade; keep pending-input ownership,
+// ACK/control/signal arms and pacing wakeups visible together. Budget policy lives in wire_admission.
 pub mod ack;
 mod connections;
 pub(crate) mod duplicate_data;
@@ -71,6 +72,8 @@ use crate::stats::SharedStats;
 use crate::subscription::SubscriptionManager;
 use crate::telemetry_file::{TelemetryWriter, build_telemetry_json_from_stats};
 use crate::utils::wall_clock_ms;
+
+mod wire_admission;
 
 pub const HOUSEKEEPING_INTERVAL_MS: u64 = 1000;
 const STATUS_LOG_INTERVAL_MS: u64 = 30_000;
@@ -181,6 +184,10 @@ pub async fn run_sender_with_config(
     }
 
     let mut recv_buf = vec![0u8; crate::protocol::MTU];
+    // One retained datagram bounds user-space backpressure without blocking ACKs/signals.
+    let mut pending_local = None;
+    let mut wire_timer = time::interval(Duration::from_millis(1));
+    wire_timer.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
     let mut housekeeping_timer = time::interval_at(
         Instant::now() + Duration::from_millis(HOUSEKEEPING_INTERVAL_MS),
         Duration::from_millis(HOUSEKEEPING_INTERVAL_MS),
@@ -282,9 +289,10 @@ pub async fn run_sender_with_config(
                     Some(request) = pool_control.recv() => {
                         request.apply(&mut connections);
                     }
-                    res = local_listener.recv_from(&mut recv_buf) => {
+                    res = local_listener.recv_from(&mut recv_buf), if pending_local.is_none() => {
                         let config_snap = config.snapshot();
-                        handle_srt_packet(
+                        let received = res.as_ref().ok().copied();
+                        let outcome = handle_srt_packet(
                             res,
                             &mut recv_buf,
                             &mut connections,
@@ -298,6 +306,10 @@ pub async fn run_sender_with_config(
                             &mut adaptive_state,
                         )
                         .await;
+                        pending_local = match outcome {
+                            packet_handler::SrtPacketOutcome::Consumed => None,
+                            packet_handler::SrtPacketOutcome::Backpressured => received,
+                        };
                         drain_packet_queue(
                             &mut packet_rx,
                             &mut connections,
@@ -420,6 +432,23 @@ pub async fn run_sender_with_config(
                         subscriptions.broadcast(&snapshot_json);
                     }
                     $($sighup_branch)*
+                    _ = wire_timer.tick(), if pending_local.is_some() || wire_admission::queued(&connections) => {
+                        let config_snap = config.snapshot();
+                        wire_admission::configure(&mut connections, config_snap.mode);
+                        flush_all_batches(&mut connections, &mut seq_tracker).await;
+                        if let Some(received) = pending_local.take() {
+                            let outcome = handle_srt_packet(
+                                Ok(received), &mut recv_buf, &mut connections,
+                                &mut last_selected_idx, &mut last_switch_time_ms,
+                                &mut seq_tracker, &mut last_client_addr, reg.has_connected,
+                                &config_snap, &mut edpf_state, &mut adaptive_state,
+                            ).await;
+                            pending_local = match outcome {
+                                packet_handler::SrtPacketOutcome::Consumed => None,
+                                packet_handler::SrtPacketOutcome::Backpressured => Some(received),
+                            };
+                        }
+                    }
                     _ = batch_flush_timer.tick() => {
                         flush_all_batches(&mut connections, &mut seq_tracker).await;
                     }

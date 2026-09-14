@@ -1,4 +1,7 @@
+// allow: SIZE_OK — existing registration state machine; the scoped fix invalidates old-group grants without rewriting phase handling.
 mod probing;
+#[cfg(test)]
+mod recovery_tests;
 
 use std::collections::HashSet;
 
@@ -263,6 +266,10 @@ impl SrtlaRegistrationManager {
                     conn_idx
                 );
                 return;
+            }
+            if self.srtla_id != full_id {
+                // Grants authorize a REG2 for one full group ID, not its replacement.
+                self.awaiting_reg3.clear();
             }
             self.srtla_id.copy_from_slice(full_id);
             debug!(

@@ -129,3 +129,53 @@ async fn loss_socket_replacement_discards_previous_evidence() {
     assert_eq!(conn.loss.last_value(), None);
     assert_eq!(conn.loss.last_cohort_ms(), None);
 }
+
+#[tokio::test]
+async fn delayed_naks_are_charged_to_the_accepted_send_cohort() {
+    // Given1000 accepted sends followed by a different cohort with only100 sends.
+    let clock = TestClock::new(10_000);
+    let (mut conn, _peer) = accepted(1000).await;
+    clock.set(11_000);
+    for seq in 1000..1100 {
+        conn.queue_data_packet(&[0; 16], Some(seq), 11_000);
+    }
+    while conn.has_queued_packets() {
+        conn.flush_batch().await.unwrap();
+    }
+    // When all1000 old sends are NAKed during the small new cohort.
+    clock.set(11_200);
+    for seq in 0..1000 {
+        assert!(conn.handle_nak(seq));
+    }
+    clock.set(12_000);
+    conn.loss.advance(12_000);
+    // Then loss1.0 in the OLD cohort followed by0 in the NEW gives EWMA0.8, not2.0.
+    assert_eq!(conn.loss.last_value(), Some(0.8));
+    assert_eq!(conn.loss.last_cohort_ms(), Some(12_000));
+}
+
+#[tokio::test]
+async fn delayed_subfloor_and_pre_recovery_naks_cannot_poison_new_evidence() {
+    for recovered in [false, true] {
+        // Given either a sub-floor old cohort or one predating qualified recovery.
+        let clock = TestClock::new(10_000);
+        let (mut conn, _peer) = accepted(if recovered { 100 } else { 50 }).await;
+        clock.set(11_000);
+        if recovered {
+            conn.loss.begin_recovered_epoch(11_000);
+        }
+        for seq in 100..200 {
+            conn.queue_data_packet(&[0; 16], Some(seq), 11_000);
+        }
+        while conn.has_queued_packets() {
+            conn.flush_batch().await.unwrap();
+        }
+        // When old NAKs arrive after the new epoch/cohort started.
+        for seq in 0..50 {
+            assert!(conn.handle_nak(seq));
+        }
+        conn.loss.advance(12_000);
+        // Then the current cohort remains loss-free; old evidence stays in its own scope.
+        assert_eq!(conn.loss.last_value(), Some(0.0), "recovered={recovered}");
+    }
+}

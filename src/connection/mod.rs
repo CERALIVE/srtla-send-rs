@@ -39,6 +39,8 @@ use anyhow::Result;
 pub use batch_recv::BatchUdpSocket;
 pub use batch_send::BatchSender;
 pub use bitrate::BitrateTracker;
+mod wire_budget;
+pub mod wire_rate;
 pub use congestion::CongestionControl;
 pub use egress::{EgressFault, EgressLifecycle, EgressPoll, IfaceResolver, LinkState};
 use egress::{SystemIfaceResolver, classify_egress_fault};
@@ -145,6 +147,7 @@ pub struct SrtlaConnection {
     pub(crate) probes: probe::ProbeLog,
     pub(crate) health: health::HealthMachine,
     pub(crate) rate_cap: rate_cap::RateCap,
+    pub(crate) wire_rate: wire_rate::WireRateEstimator,
     pub(crate) adaptive: adaptive::AdaptiveLinkState,
     /// Highest sequence number that has been cumulatively ACKed, under 31-bit
     /// serial (wrap-aware) ordering. `None` = nothing ACKed yet on this link.
@@ -268,6 +271,7 @@ impl SrtlaConnection {
             probes: probe::ProbeLog::default(),
             health: health::HealthMachine::new(health::HealthState::Down, now_ms()),
             rate_cap: rate_cap::RateCap::default(),
+            wire_rate: wire_rate::WireRateEstimator::default(),
             adaptive: adaptive::AdaptiveLinkState::default(),
             highest_acked_seq: None,
             last_received: None,
@@ -583,6 +587,7 @@ impl SrtlaConnection {
         self.probes.reset();
         self.loss = loss::LossTracker::new(now);
         self.rate_cap = rate_cap::RateCap::default();
+        // Retain wire_rate; the next observation revalidates it against delivery's new generation.
         self.health = health::HealthMachine::new(health::HealthState::Down, now);
         self.adaptive = adaptive::AdaptiveLinkState::default();
         self.connected = false;

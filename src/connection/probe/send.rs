@@ -81,7 +81,11 @@ impl ProbeScheduler {
             return None;
         }
         // Never stack paced probes behind an unsent suffix and later burst them.
-        if conn.has_queued_packets() {
+        if conn.has_queued_packets()
+            || !conn
+                .batch_sender
+                .can_queue_wire(offer.packet.len(), crate::utils::now_ms())
+        {
             return None;
         }
         if !conn.queue_probe_packet(offer.packet, dispatch) {

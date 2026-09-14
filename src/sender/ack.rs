@@ -3,6 +3,22 @@ use crate::connection::SrtlaConnection;
 use crate::connection::delivery::DeliveryAck;
 use crate::mode::SchedulingMode;
 
+#[cfg(test)]
+#[path = "adaptive_ack_rtt_tests.rs"]
+mod adaptive_ack_rtt_tests;
+#[cfg(test)]
+#[path = "loss_recovery_tests.rs"]
+mod loss_recovery_tests;
+#[cfg(test)]
+#[path = "recovery_evidence_tests.rs"]
+mod recovery_evidence_tests;
+#[cfg(test)]
+#[path = "retransmit_accounting_tests.rs"]
+mod retransmit_accounting_tests;
+#[cfg(test)]
+#[path = "sole_recovery_tests.rs"]
+mod sole_recovery_tests;
+
 #[derive(Clone, Copy, Debug)]
 pub enum AckPolicy {
     Legacy {
@@ -77,6 +93,8 @@ pub fn apply_srtla_ack(connections: &mut [SrtlaConnection], srtla_ack: i32, cont
             }
             let now = crate::utils::now_ms();
             conn.advance_probes(now);
+            let rtt_sent_ms = conn.delivery.rtt_sent_ms(srtla_ack);
+            let loss_debits = conn.delivery.loss_debits(srtla_ack);
             if conn.probes.acknowledge(srtla_ack, now) {
                 conn.delivery.record_probe_proof(now);
                 conn.advance_probes(now);
@@ -88,7 +106,14 @@ pub fn apply_srtla_ack(connections: &mut [SrtlaConnection], srtla_ack: i32, cont
                 now,
             ) {
                 // Only an original on THIS link may clear its congestion accounting.
-                conn.handle_srtla_ack_specific(srtla_ack, false);
+                for debit in loss_debits {
+                    conn.loss.credit_recovered(debit, now);
+                }
+                conn.adaptive.original_recovery.acknowledge(srtla_ack, now);
+                conn.apply_specific_ack(srtla_ack, false, false);
+                if let Some(sent_ms) = rtt_sent_ms {
+                    conn.rtt.record_round_trip(sent_ms, now);
+                }
             }
         }
         AckPolicy::Legacy {

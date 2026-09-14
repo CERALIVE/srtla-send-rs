@@ -33,6 +33,7 @@ async fn scenario_d_is_held_probed_and_readmitted_after_rejoining_ramp() {
         probe_rounds_ok: 0,
         probe_rounds_started_ms: None,
         held_links: 1,
+        observation_interval_ms: 0,
         now_ms: 14_000,
     };
     conns[0].health = HealthMachine::new(HealthState::Healthy, 10_000);

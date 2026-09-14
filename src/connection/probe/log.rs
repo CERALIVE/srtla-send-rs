@@ -153,12 +153,9 @@ impl ProbeLog {
     pub fn rounds_ok(&self) -> (u32, Option<u64>) {
         let mut count = 0;
         let mut start = None;
-        for train in self
-            .trains
-            .iter()
-            .rev()
-            .filter(|t| t.expired || t.sequences.len() == usize::from(PROBE_TRAIN_LEN))
-        {
+        for train in self.trains.iter().rev().filter(|t| {
+            t.expired || (t.acknowledged >= 5 && t.sequences.len() == usize::from(PROBE_TRAIN_LEN))
+        }) {
             if train.acknowledged < 5 || train.sequences.len() != usize::from(PROBE_TRAIN_LEN) {
                 break;
             }

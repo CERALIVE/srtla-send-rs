@@ -125,6 +125,15 @@ fn queue_clearance_requires_continuous_dwell_and_both_latched_causes() {
             },
             &k,
         );
+        machine.step(
+            &HealthSignals {
+                queue_delay_ms: 10.0,
+                loss_ewma,
+                ..signals(1_000)
+            },
+            &k,
+        );
+        assert_eq!(machine.state(), Degraded);
         let clear = HealthSignals {
             queue_delay_ms: 5.0,
             loss_ewma,

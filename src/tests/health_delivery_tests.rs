@@ -43,6 +43,7 @@ fn health(conn: &SrtlaConnection) -> HealthState {
             probe_rounds_ok: 0,
             probe_rounds_started_ms: None,
             held_links: 1,
+            observation_interval_ms: 0,
             now_ms: now_ms(),
         },
         &HealthConstants::default(),

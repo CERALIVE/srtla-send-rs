@@ -3,6 +3,9 @@
 use std::collections::VecDeque;
 
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
+
+use super::loss::{LossDebit, LossSend};
 
 pub const DELIVERY_CAPACITY: usize = 4096;
 pub const DELIVERY_MAX_AGE_MS: u64 = 6000;
@@ -20,9 +23,12 @@ pub struct DeliveryAck {
     pub socket_generation: u32,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct Entry {
     send: DataSend,
+    loss_send: Option<LossSend>,
+    loss_debits: SmallVec<LossDebit, 2>,
+    rtt_eligible: bool,
     generation: u32,
     previous: Option<i32>,
     next: Option<i32>,
@@ -38,6 +44,7 @@ pub struct DeliveryLedger {
     pub(crate) attempts_since_proof: u32,
     pub(crate) last_data_proof_ms: u64,
     has_data_proof: bool,
+    original_delivery_ms: Option<u64>,
     proof_anchor_ms: Option<u64>,
     delivered_bytes_window: VecDeque<(u64, u64)>,
     pub(crate) socket_generation: u32,
@@ -52,6 +59,7 @@ impl Default for DeliveryLedger {
             attempts_since_proof: 0,
             last_data_proof_ms: 0,
             has_data_proof: false,
+            original_delivery_ms: None,
             proof_anchor_ms: None,
             delivered_bytes_window: VecDeque::with_capacity(2000),
             socket_generation: 0,
@@ -63,6 +71,13 @@ impl DeliveryLedger {
     /// `sent_ms` is the monotonic acceptance time, not the queue timestamp.
     pub fn record_sent(&mut self, seq: i32, send: DataSend) {
         self.expire(send.sent_ms);
+        let rtt_eligible = !self.entries.contains_key(&seq);
+        let mut loss_debits = self
+            .entries
+            .get_mut(&seq)
+            .map(|entry| std::mem::take(&mut entry.loss_debits))
+            .unwrap_or_default();
+        loss_debits.retain(|debit| debit.pending_at(send.sent_ms));
         self.remove(seq);
         if self.entries.len() == DELIVERY_CAPACITY
             && let Some(oldest) = self.oldest
@@ -71,6 +86,9 @@ impl DeliveryLedger {
         }
         let entry = Entry {
             send,
+            loss_send: None,
+            loss_debits,
+            rtt_eligible,
             generation: self.socket_generation,
             previous: self.newest,
             next: None,
@@ -103,6 +121,7 @@ impl DeliveryLedger {
         }
         let len = entry.send.len;
         self.remove(ack.seq);
+        self.original_delivery_ms = Some(now_ms);
         self.record_probe_proof(now_ms);
         while self
             .delivered_bytes_window
@@ -136,6 +155,11 @@ impl DeliveryLedger {
         }
     }
 
+    /// Latest normal-DATA ACK (including SRT retries), never duplicate-probe proof.
+    pub const fn latest_original_delivery_ms(&self) -> Option<u64> {
+        self.original_delivery_ms
+    }
+
     /// ACK-credited wire bits/s over (now-2000ms, now], with a fixed 2s denominator.
     pub fn delivered_bps(&self, now_ms: u64) -> f64 {
         self.delivered_bytes_window.iter()
@@ -152,6 +176,7 @@ impl DeliveryLedger {
         self.attempts_since_proof = 0;
         self.last_data_proof_ms = 0;
         self.has_data_proof = false;
+        self.original_delivery_ms = None;
         self.proof_anchor_ms = None;
         self.delivered_bytes_window.clear();
         self.socket_generation = self.socket_generation.wrapping_add(1);
@@ -167,6 +192,51 @@ impl DeliveryLedger {
 
     pub(crate) fn contains(&self, seq: i32) -> bool {
         self.entries.contains_key(&seq)
+    }
+
+    pub(crate) fn mark_retransmitted(&mut self, seq: i32) {
+        if let Some(entry) = self.entries.get_mut(&seq) {
+            entry.rtt_eligible = false;
+        }
+    }
+
+    pub(crate) fn sent_ms(&self, seq: i32) -> Option<u64> {
+        self.entries.get(&seq).map(|entry| entry.send.sent_ms)
+    }
+
+    pub(crate) fn record_loss_debit(&mut self, seq: i32, debit: LossDebit) {
+        if let Some(entry) = self.entries.get_mut(&seq) {
+            entry
+                .loss_debits
+                .retain(|prior| prior.pending_at(crate::utils::now_ms()));
+            if !entry.loss_debits.iter_mut().any(|prior| prior.merge(debit)) {
+                entry.loss_debits.push(debit);
+            }
+        }
+    }
+
+    pub(crate) fn record_loss_send(&mut self, seq: i32, send: LossSend) {
+        if let Some(entry) = self.entries.get_mut(&seq) {
+            entry.loss_send = Some(send);
+        }
+    }
+
+    pub(crate) fn loss_send(&self, seq: i32) -> Option<LossSend> {
+        self.entries.get(&seq).and_then(|entry| entry.loss_send)
+    }
+
+    pub(crate) fn loss_debits(&self, seq: i32) -> SmallVec<LossDebit, 2> {
+        self.entries
+            .get(&seq)
+            .map(|entry| entry.loss_debits.clone())
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn rtt_sent_ms(&self, seq: i32) -> Option<u64> {
+        self.entries
+            .get(&seq)
+            .filter(|entry| entry.rtt_eligible)
+            .map(|entry| entry.send.sent_ms)
     }
 
     fn expire(&mut self, now_ms: u64) {
@@ -206,3 +276,6 @@ impl DeliveryLedger {
 #[cfg(test)]
 #[path = "../tests/health_delivery_ledger_tests.rs"]
 mod health_delivery_ledger_tests;
+#[cfg(test)]
+#[path = "original_delivery_tests.rs"]
+mod original_delivery_tests;

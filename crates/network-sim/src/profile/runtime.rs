@@ -16,6 +16,7 @@ pub struct ProcessEndpoints<'a> {
 
 pub struct BondRuntime<'a> {
     pub processes: ProcessEndpoints<'a>,
+    receiver_restart_elapsed: Option<Duration>,
     topology: &'a BondTopology,
     impairments: Vec<ImpairmentConfig>,
     blackholes: Vec<bool>,
@@ -44,6 +45,7 @@ impl<'a> BondRuntime<'a> {
         }
         Ok(Self {
             processes,
+            receiver_restart_elapsed: None,
             topology,
             impairments: profile.links.iter().map(|l| l.base.clone()).collect(),
             blackholes: vec![false; topology.link_count()],
@@ -109,7 +111,9 @@ impl<'a> BondRuntime<'a> {
                 }
             }
             Action::ReceiverRestart => {
+                let start = std::time::Instant::now();
                 self.processes.receiver.restart_process_only()?;
+                self.receiver_restart_elapsed = Some(start.elapsed());
                 wait_for_udp_listener(&self.topology.receiver_ns, 5000, Duration::from_secs(5))?;
             }
             Action::SighupReorder(order) => {
@@ -129,5 +133,10 @@ impl<'a> BondRuntime<'a> {
             Action::Periodic { .. } => bail!("expand periodic events before applying them"),
         }
         Ok(())
+    }
+
+    /// Kill/respawn duration, excluding the receiver's separate UDP-readiness preflight.
+    pub const fn receiver_restart_elapsed(&self) -> Option<Duration> {
+        self.receiver_restart_elapsed
     }
 }

@@ -455,6 +455,169 @@ budget would make it flake at exit 124. Separately,
 `stall_deselect_real_starlink_repro` is one intentionally ignored hardware-only test; run
 it with `--ignored` only on the bonded Starlink/cellular validation rig.
 
+**Adaptive integration target:** `tests/netns_adaptive.rs` uses generic
+`BondTopology`/temporal profiles, the real FIFO-controlled SRT source, and the shared
+host measurement lock. Four privileged scenarios pin D, G (60s), I, and duplicate-IP
+twins including the legacy falsifiability control and both in-blackhole priority
+mutations. Two existing unprivileged helper tests are included through shared modules.
+`NETNS_ADAPTIVE_TEST_TIMEOUT_SECONDS` defaults to 360s in the bounded gate. Set
+`SRTLA_REC_BIN` explicitly for CeraLive receiver provenance;
+`NETNS_ADAPTIVE_ARTIFACT_DIR` optionally preserves observations/sink/log evidence.
+The protected legacy twin suite is unchanged. **The new adaptive target is currently
+red under real privileges** on D/G/twin health/rejoin and final-share assertions;
+the latest receiver-restart scenario passes. Deadline-settled loss is regression-tested,
+but a separately captured G run and mapped twins still demote on queue delay;
+do not interpret its unprivileged self-skip as integration validation or close the
+adaptive integration milestone before those failures are resolved. Preserve thresholds.
+
+**Recovery-load scope and new evidence (Todo 28 round 8):** four oracle consults
+justify testing recovery under feasible load, not assuming aggregate admission that
+does not exist. D now holds 6.4 Mbit/s from t=20 to t=46 (28s restoration +17s
+deadline +1 telemetry tick), then restores its actual 22.4 Mbit/s offered rate;
+twins hold 6.4 Mbit/s until t=38 (28+9+1), then restore 12.8 Mbit/s. Bounded
+Healthy recovery, no relapse, and separate full-rate health/share assertions remain
+blocking. The ignored `immediate_full_rate_restoration_stress` records the old
+schedules without a health/share pass gate. The test launcher suppresses the
+per-NAK congestion log flood so the bounded process tail retains health/RTT lines.
+No production mechanism or threshold changed in round 8.
+
+**This correction is NOT yet sufficient:** final real runs still fail D/G/twins;
+I passes. D reaches Healthy at restore+15.5916s, but misses Stalled/0 and loses
+Healthy after full load. Twins do not rejoin until restore+15.2844s (>9s), and the
+first priority-set snapshot again omits the applied key. Instrumented feasible-load
+twins have two successful probe rounds and zero queue/loss on the probe path, yet
+the oldest round's age (e.g. 2697ms) exceeds the 2060.24ms freshness allowance;
+this is a separately exposed recovery timing problem, not overload during that
+low-load interval. Do not widen the gate without a separately verified correction.
+
+G remains an independent failure, NOT an approved threshold-expectation exemption.
+The installed GE model is `5% 0.1% 0.8% 0.02%` (~0.7847% stationary loss), not
+5% aggregate loss or 80% bad-state loss. A real zero-loss marginal-link control
+still incurs 43,690 qdisc drops and 36/61 demoted snapshots. Final unchanged G
+carries 3,937,450B but is demoted 45/61; none of its three 5Mbit companions has a
+Healthy sample. Per-link allocation/recovery collapse needs investigation; the
+evidence does not justify relaxing ≤10%. See
+`docs/notes/scheduler-evaluation-2026-09.md`. Todo 28 remains open.
+
+**Sampled recovery freshness (Todo 28 round 9):** the acquisition formula was
+correct for ONE held/probed link in the two-link twin topology, but its consumer
+is a 1Hz housekeeping sampler, not an immediate ACK callback. `HealthSignals`
+now carries `observation_interval_ms`: runtime supplies the existing
+`HOUSEKEEPING_INTERVAL_MS`, immediate policy fixtures use zero. Only the Stalled
+recovery freshness limit adds that interval to `rejoin_span`; train ACK deadlines,
+epoch ordering, two qualified rounds, stall/queue/loss thresholds and the rejoin
+ramp are unchanged. This also covers sampled original-DATA recovery evidence.
+Do not substitute delayed wall-clock execution time or an unbounded allowance.
+The real scheduler/log regression (105ms opportunities, 60ms ACK RTT, oldest-start
+age2697ms, completion-to-observation642ms) first failed Stalled versus Rejoining;
+it now passes, with stale/pre-epoch and four-ACK negative guards. Final twins
+reach Rejoining+3.071572s and Healthy+5.086991s within9s, before full-rate restoration,
+without relapse. Later full-rate health/share remains red; this is a partial fix.
+
+G's original source load is12.8Mbit; actual original DATA is1332B for1316B payload
+(12.9556Mbit), below the companions'15Mbit total even without the marginal link.
+Round9 accepted-prefix captures show the marginal initially assigned2.2768Mbit
+of DATA, then companion original+retry rates6.0017/6.2453/5.9146Mbit before their
+health demotions. Early traffic is ranked admission, with zero pre-registration,
+sole or fallback bytes in those intervals; retransmissions and real queues grow.
+This falsifies the simple aggregate-rate explanation but is not yet a proven
+specific ranking-code defect or an approved startup-control redesign. G's scenario
+and≤10%assertion remain unchanged. Final I passes; D/G/twins remain failing targets.
+
+**Retransmission accounting audit (Todo28 round10):** no R-specific admission or
+accounting bypass was found. The sender forwards NAKs back to the local SRT caller;
+it does not generate payload retries. R-marked DATA re-enters `handle_srt_packet`
+and the normal adaptive selector/queue/accepted-prefix path. Every queued retry
+counts in BitrateTracker, every accepted retry in delivery attempts/loss-send
+accounting, and ACKed retry DATA in `DeliveryLedger::delivered_bps`. Karn exclusion
+affects RTT sampling only. Four new real-UDP/production-dispatch tests pass against
+unchanged production behavior (`retransmit_accounting_tests.rs`, adaptive forwarding).
+
+Keep the accounting distinctions explicit: queued count is per datagram; flight
+and the delivery ledger are keyed by sequence. Repeated same-sequence outstanding
+copies count all wire bytes but one unresolved sequence and one ambiguous ACK
+credit. `RateCap` intentionally consumes ACK-derived delivered throughput, NOT
+BitrateTracker's transmitted rate; its positive BDP multiplier is not a sent-byte
+pacer. This does not prove accurate physical queue occupancy or convergence under
+retry amplification. No speculative controller change, G scenario change or
+threshold relaxation was made. Latest real gates remain I PASS, D/G/Twins FAIL;
+round9's bounded twin recovery still passes. Todo28 remains unchecked.
+
+**Attempted-wire admission (Todo 28 round 11 — NOT acceptance-green):** adaptive
+mode now has a separate hard gate, `connection/wire_budget.rs`, integrated at
+`BatchSender::flush` and `sender/wire_admission.rs`. Its input is the existing
+per-link `RateCap.target_bps()` estimate; RateCap's code and positive ranking
+multiplier are unchanged. This is an enforced estimate, NOT a configured or known
+physical link capacity. Monotonic credit has a two-MTU (3000-byte) burst bound;
+every kernel-accepted queued datagram debits it, including originals, R-marked
+retries and probes. Failed/unaccepted suffixes do not spend credit; an unfunded
+suffix remains queued and is not a socket error. Same-sequence copies each pay.
+SRTLA registration/keepalive control remains on its existing unpaced control path.
+
+Before enqueue, an exhausted preferred link yields to another funded link from
+the existing health/deadline-admitted set; budget pressure cannot reopen a held
+link or override sole-carrier retention. With none funded, the input returns
+`SrtPacketOutcome::Backpressured`, retaining ONE datagram and pausing local UDP
+reads. A 1ms timer drains funded prefixes/retries that datagram while ACKs,
+housekeeping, control and signals remain live. This bounds user-space backlog,
+not end-to-end UDP loss: kernel receive buffering is finite and the producer is
+not guaranteed lossless backpressure. Legacy modes disable the gate. No feature
+bit was added; adaptive wire enforcement is always on, including when the eight
+older ablation bits are disabled. Default feature bits themselves are unchanged.
+
+DEBUG housekeeping records `wire_budget_bps` and `attempted_wire_bytes` (UDP-payload
+bytes, not IP/link framing or confirmed goodput). This diagnostic counter is scoped
+to the enabled budget epoch, reset on socket/batch reset or leaving adaptive mode;
+it is NOT ADR-002 session bytes. Stats-file schema/weights remain unchanged.
+Optional netns artifacts now retain final qdisc JSON alongside these debug logs.
+
+**Known new limitation/regression:** enforcing the soft controller's target exposed
+its unsuitable bootstrap/capacity estimate. In the one round-11 G run all three
+companions stayed Healthy (61/61 each), their peak sampled attempted rates were
+2.908096/2.222816/2.855872 Mbit/s, and all four qdiscs had zero non-model drops.
+But marginal budget rose to 1.104081 Mbit/s against its 1Mbit capacity, and it
+remained Degraded in31/61 samples (all queue-labelled), despite4,369,830B carriage.
+I now FAILS throughput: pre-restart sink2,684,640bps and no90% recovery, although
+process/REG3 timing passes. D passes unchanged; twins pass recovery/final health
+but fail share and first-post-RPC snapshots. This experiment is NOT ready to merge
+or deploy. No G recalibration or round12 tuning is authorized; Todo28 stays open.
+
+**Queue investigation (Todo 28 round 6):** temporary explicit-now minima captures in
+G and twins found slow floors of 60–61 ms and elevated fast minima, not isolated low
+outliers. Twin kernel qdisc capture confirmed actual TBF backlog/drop growth after
+restoring 12.8 Mbit/s while only one 8 Mbit/s link was admitted, followed by overload of
+the recovering link. `RateCap` is a positive soft ranking penalty, NOT pacing;
+G also queued at Bootstrap and while Holding below 1 Mbit/s, so target-ramp growth
+alone does not explain it. No RTT filter, health threshold or rate policy was
+changed in this round. The new G diagnostic also had two loss-labelled demotions:
+the prior run's queue-only attribution must not be generalized to every run.
+
+**Integration correctness follow-up (still incomplete):** adaptive cumulative SRT
+ACKs retain congestion pruning but do not supply per-path RTT; specific ACKs sample
+from the delivery ledger's kernel-acceptance timestamp only when unambiguous.
+`FlushOutcome.retransmitted` is aligned one-for-one with the unchanged accepted
+tuple and marks the SRT R bit. Retransmitted/repeated outstanding sequences still
+credit DATA proof and delivered bytes, but cannot poison adaptive RTT minima.
+All legacy RTT paths and frozen traces are unchanged. A pending probe train does
+not erase preceding successful rounds, and Degraded/Stalled→Rejoining begins a new
+normal-loss epoch only after health policy has qualified recovery. A validated
+changed receiver full ID invalidates old-ID pending REG3 grants; connected links
+still skip the broadcast and REG_NGP acceptance is unchanged. These mechanisms have
+five failing-first regressions. D/G/twin live integration remains red; receiver
+restart passes after separating process respawn from its downstream-SRT preflight.
+`BondRuntime::receiver_restart_elapsed()` excludes UDP readiness; deadlines in the
+adaptive test are anchored at respawn, not at the later readiness observation.
+
+**Original-traffic recovery and temporal loss attribution:** the plan's prohibition
+on duplicate probes to the elected sole carrier is preserved. A separate bounded
+original-DATA witness in `connection/original_recovery.rs` observes accepted sends
+while Stalled and their arrival/generation-exact ACKs. It reuses two ten-packet,
+at-least-five-ACK train qualification with the existing one-link deadline and health
+freshness checks; zero/four-ACK controls stay Stalled. It emits nothing and does not
+alter ordinary delivery/window/byte accounting. Socket resets and new health epochs
+cannot reuse previous evidence. This fixes the missing original-traffic recovery
+path, but live D/twins can still relapse after reaching Rejoining; no all-green claim.
+
 **Generic bond topology (`crates/network-sim/src/bond.rs`).**
 `BondTopology::new(test_name, &[LinkSpec], MappingMode)` accepts 1–253 links;
 `LinkSpec` carries explicit `CarrierMode::{Direct,Nat}` and an optional zero-based
@@ -1048,7 +1211,8 @@ API: `HealthState::{Healthy, Degraded, Stalled, Rejoining, Down}` with lowercase
 `as_str()`, `HealthSignals`, `HealthConstants`, `HealthMachine::new(state, now_ms)`,
 `step(&signals, &constants) -> Option<Transition { from, to, at_ms }>`, and
 `ramp_multiplier(now_ms, held_links)`. State/timestamps/dwell have read-only getters;
-`step` exclusively owns transitions and maintains dwell in 1..=16.
+`step` delegates to `step_with_originals`, the production transition entry point;
+the latter owns transitions and maintains dwell in 1..=16.
 
 Defaults: stall_attempts=32; τ=clamp(4×sRTT,1000,3000) ms, unknown=3000;
 loss_enter=0.10, loss_clear=0.05, loss_cohort_min_sends=100,
@@ -1057,6 +1221,33 @@ clear=max(5,0.125×slow_min) ms; rejoin_rounds=2; probe_train_len=10;
 probe_max_pps=10 bond-wide; dwell_backoff_max=16. Formula-valued defaults are public
 methods `stall_tau`, `queue_enter`, `queue_clear`; `train_period_ms` and `rejoin_span`
 expose the cadence calculations to future probe consumers.
+
+**Queue-entry persistence (Todo 28 round 7):** `step_with_originals` starts one
+private `queue_entry_pending: Option<QueueEntryPending>` episode on the first
+Healthy/Rejoining evaluation at or above `queue_enter`. It latches `since_ms` and
+`required_ms=τ`; later RTT changes do not move that deadline. Queue degradation
+requires continuous qualifying evidence for the latched duration. Below-entry
+observations and entry into Down/Stalled/Degraded clear the episode; the
+Rejoining→Healthy edge MUST preserve it if queue remains high. Hard failure wins,
+then stall, then immediate route/finalized-loss degradation, then matured queue.
+Starting the timer does not double dwell; only an actual soft rejoin relapse does.
+The Degraded `queue_clear`/`clear_since_ms` path is UNCHANGED and separate storage.
+
+This deliberately absorbs short full-load restoration transients from a source
+unaware of the rejoin ramp. It does not reinterpret round 6's proven kernel backlog
+as measurement noise, widen queue thresholds, or change HealthSignals/HealthConstants.
+Never use `ramp_span_effective` or `dwell_multiplier` for entry persistence: sustained
+evidence must mature in 1–3s from the first qualifying evaluation (design budget
+roughly 5s from physical onset including detector/housekeeping quantization, not
+a hard real-time guarantee). Remaining overload is an admission/sole-carrier
+coordination investigation, not permission to extend this window.
+
+The first round-7 live gate remains RED: I passes, D/G/twins fail unchanged
+assertions. G carries 3,727,772B but is demoted in 48/61 distinct snapshots
+(36Degraded/12Stalled). Twins' retained survivor and rejoining-link demotions both
+say **normal DATA loss**, not queue; no causal admission/qdisc capture was added
+this round. D/G transition causes are unretained and must not be guessed from NAK
+warnings. The gate is unit-proven (seven new tests), not a live-convergence fix.
 
 Integration obligations:
 - Pass normalized finite/nonnegative timing observations and loss fractions in [0,1]
@@ -1149,18 +1340,44 @@ congestion counters. `new(now_ms)` anchors 1000ms `[start, end)` cohorts;
 `record_send(now_ms)` runs beside the DeliveryLedger insertion in
 `connection/transmit.rs::flush_batch`, inside the accepted-prefix `Some(seq)` arm.
 Queue-only packets, failed suffixes, sequence-less control and direct probe copies
-never count. `record_data_nak(now_ms)` runs only after `handle_nak` successfully
+never count. `record_data_nak_for_send(sent_ms, now_ms)` runs only after `handle_nak` successfully
 removes a normal `packet_log` entry; duplicate/missing NAKs do not count. Keep
-future probe-log lookup outside this branch. Existing NAK/window effects stay intact.
+probe-log lookup outside this branch. Existing NAK/window effects stay intact.
 
 `advance(now_ms)` closes elapsed cohorts before counting a boundary event. It feeds
 `cohort_naks / cohort_sends` to the existing alpha-0.2 `Ewma` only at
 `LOSS_COHORT_MIN_SENDS = 100` or more. Below-floor cohorts are discarded, not pooled.
 `last_value() -> Option<f64>` and `last_cohort_ms() -> Option<u64>` retain the
-last qualifying estimate and its cohort END, even across long idle gaps. Counts are
-by send/NAK observation time, not retrospective reassignment to a packet's send cohort.
-The future health sampler must call `advance(now)` even for idle links, then read
-`loss_cohort_ok(now, stale_after_ms)` (latest completed cohort qualified and fresh)
+last qualifying estimate and its cohort END, even across long idle gaps. NAKs use the
+accepted-send timestamp from the delivery ledger (congestion-log timestamp fallback),
+never arrival time to select a denominator. A bounded ten-second closed-cohort history
+corrects older cohorts and recomputes EWMA chronologically from an evicted-prefix
+checkpoint. This does not redetermine the load floor, pool sub-floor cohorts, refresh
+old evidence dates, or clamp loss ratios. Pre-epoch/expired feedback is never charged
+to new traffic. `record_data_nak(now_ms)` remains a same-cohort convenience API.
+**Close and settle are distinct.** Closure freezes the accepted-send denominator;
+the closed cohort cannot feed EWMA until the latest of its accepted-send deadlines
+has elapsed. Adaptive admission supplies the SAME `negotiated_latency_ms` observation
+as its deadline gate (one shared 500ms unknown-fallback constant). Each accepted send
+captures an epoch/cohort/deadline `LossSend` token: deadline = acceptance time + that
+budget. A changed budget or a retry never extends an older debit's deadline.
+For adaptive normal ACKs, `LossDebit`s in the bounded delivery entry can be credited
+exactly once in either the open or closed-but-unsettled cohort, before EACH debit's
+deadline. Retries retain distinct cohort/deadline groups; only identical groups merge.
+At/after deadline, unresolved NAKs (including a first late observation) are final and
+cannot be forgiven. Probe/cross-link/stale-generation/old-epoch ACKs and missing
+ledger entries cannot receive credit. Socket replacement resets both ledgers.
+Expired debit groups are pruned on retry/NAK; the delivery ledger's 4096-entry/6s
+bound and ten-second cohort history still apply. An unsettled cohort expiring from
+history is discarded, never prematurely finalized for an exceptionally large budget.
+`last_settlement_ms` controls the one-second fresh-settlement qualification, while
+`last_cohort_ms` remains the ORIGINAL cohort end for the ten-second stale rule.
+Late final NAK revisions recompute retained EWMA without refreshing either date.
+Raw congestion NAK/window effects, legacy ACK behaviour, and ALL health transition
+thresholds/dwell logic remain unchanged. This is deadline-budget accounting, not a
+receiver playback timestamp measurement or blanket eventual-delivery forgiveness.
+The health sampler must call `advance(now)` even for idle links, then read
+`loss_cohort_ok(now, stale_after_ms)` (qualified fresh settlement, original evidence not stale)
 and `is_stale(now, stale_after_ms)` (unknown or age >= threshold). Discarding a
 cohort disables qualification without deleting a retained clearance estimate.
 Recovery/socket replacement reconstruct loss state at `reset_core_state`.

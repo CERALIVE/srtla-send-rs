@@ -3,7 +3,7 @@ use tokio::time::{Duration, timeout};
 
 use super::*;
 use crate::sender::SequenceTracker;
-use crate::sender::packet_handler::handle_srt_packet;
+use crate::sender::packet_handler::{SrtPacketOutcome, handle_srt_packet};
 use crate::test_helpers::create_test_connection_to;
 
 struct Forwarding {
@@ -41,8 +41,13 @@ impl Forwarding {
     }
 
     async fn send(&mut self, seq: u32) {
+        self.send_data(seq, false).await;
+    }
+
+    async fn send_data(&mut self, seq: u32, retransmitted: bool) -> SrtPacketOutcome {
         let mut packet = [0; 1316];
         packet[..4].copy_from_slice(&seq.to_be_bytes());
+        packet[4] = if retransmitted { 0x04 } else { 0 };
         let cfg = ConfigSnapshot {
             mode: "adaptive".parse().unwrap(),
             ..config()
@@ -60,8 +65,68 @@ impl Forwarding {
             &mut self.edpf,
             &mut self.state,
         )
-        .await;
+        .await
     }
+}
+
+#[tokio::test]
+async fn exhausted_wire_budget_uses_another_funded_link_before_backpressure() {
+    // Given two healthy1Mbit budgets and an active cooldown on the first link.
+    let _clock = TestClock::new(10_000);
+    let mut f = Forwarding::new().await;
+    for conn in &mut f.conns {
+        conn.health = HealthMachine::new(HealthState::Healthy, 0);
+        conn.batch_sender
+            .configure_wire_rate(Some(1_000_000.0), 10_000);
+        assert!(conn.batch_sender.wire_limited());
+        assert!(conn.batch_sender.can_queue_wire(1316, 10_000));
+    }
+    f.send(0).await;
+    f.send(1).await;
+    // When a third datagram exceeds the current link's two-MTU credit.
+    assert_eq!(f.send_data(2, true).await, SrtPacketOutcome::Consumed);
+    // Then another funded admitted link wins despite cooldown; the pool stays intact.
+    assert_eq!(f.last, Some(1));
+    assert_eq!(f.conns.len(), 2);
+}
+
+#[tokio::test]
+async fn all_wire_budgets_exhausted_defers_without_queueing_or_counting_the_packet() {
+    // Given four packets consuming two healthy links' initial bounded bursts.
+    let clock = TestClock::new(10_000);
+    let mut f = Forwarding::new().await;
+    for conn in &mut f.conns {
+        conn.health = HealthMachine::new(HealthState::Healthy, 0);
+        conn.batch_sender
+            .configure_wire_rate(Some(1_000_000.0), 10_000);
+    }
+    for seq in 0..4 {
+        f.send(seq).await;
+    }
+    // When all admitted budgets are exhausted, retain the datagram at the input boundary.
+    assert_eq!(f.send_data(4, true).await, SrtPacketOutcome::Backpressured);
+    assert_eq!(
+        f.conns
+            .iter()
+            .map(|c| c.bitrate.bytes_sent_total)
+            .sum::<u64>(),
+        4 * 1316
+    );
+    assert_eq!(f.sequences.get(4, 10_000), None);
+    for conn in &mut f.conns {
+        conn.flush_batch().await.unwrap();
+    }
+    clock.set(10_012);
+    // Then accrued credit admits the same pending packet once, without dropping a link.
+    assert_eq!(f.send_data(4, true).await, SrtPacketOutcome::Consumed);
+    assert_eq!(
+        f.conns
+            .iter()
+            .map(|c| c.bitrate.bytes_sent_total)
+            .sum::<u64>(),
+        5 * 1316
+    );
+    assert_eq!(f.conns.len(), 2);
 }
 
 #[tokio::test]
@@ -134,4 +199,38 @@ async fn adaptive_probes_do_not_flush_every_packet_or_probe_the_sole_carrier() {
     assert_eq!(f.conns[0].probes.probes_sent, 0);
     assert_eq!(f.conns[1].probes.probes_sent, 1);
     assert!(f.state.targets[0].sole_carrier);
+}
+
+#[tokio::test]
+async fn retransmitted_input_obeys_the_same_health_admission_as_original_data() {
+    // Given a held link with a larger raw window and a just-established cooldown.
+    for retransmitted in [false, true] {
+        let _clock = TestClock::new(10_000);
+        let mut f = Forwarding::new().await;
+        f.conns[1].window = 1_000_000;
+        f.last = Some(1);
+        f.switched = 10_000;
+        // When original or R-marked DATA enters the real production packet handler.
+        f.send_data(42, retransmitted).await;
+        // Then both select the admitted carrier, never the held link or its cooldown.
+        assert_eq!(f.last, Some(0));
+        assert_eq!(f.sequences.get(42, 10_000), Some(f.conns[0].conn_id));
+        assert_eq!(f.conns[0].in_flight_packets, 1);
+        assert_eq!(f.conns[0].bitrate.bytes_sent_total, 1316);
+        assert_eq!(f.conns[1].in_flight_packets, 0);
+        assert_eq!(f.conns[1].probes.probes_sent, 1);
+        let mut received = [0; 1316];
+        assert_eq!(
+            timeout(Duration::from_secs(1), f.peers[0].recv(&mut received))
+                .await
+                .unwrap()
+                .unwrap(),
+            1316
+        );
+        assert_eq!(received[4] & 0x04, if retransmitted { 0x04 } else { 0 });
+        eprintln!(
+            "R={retransmitted}: production handler selected admitted0, held1 original-flight0, \
+             wire flag preserved"
+        );
+    }
 }

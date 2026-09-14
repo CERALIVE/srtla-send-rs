@@ -22,6 +22,7 @@ pub(super) fn signals(now_ms: u64) -> HealthSignals {
         probe_rounds_started_ms: None,
         probe_loss: None,
         held_links: 1,
+        observation_interval_ms: 0,
         now_ms,
     }
 }
@@ -219,8 +220,13 @@ fn transition_and_hysteresis_table() {
     ];
     for (name, from, s, to) in cases {
         let mut machine = HealthMachine::new(from, 0);
+        let k = HealthConstants::default();
+        if s.queue_delay_ms >= k.queue_enter(s.slow_min_rtt_ms) {
+            machine.step(&HealthSignals { now_ms: 0, ..s }, &k);
+            assert_eq!(machine.state(), from, "pending {name}");
+        }
         // When: the observation is applied.
-        let result = machine.step(&s, &HealthConstants::default());
+        let result = machine.step(&s, &k);
         // Then: exactly the expected edge (or no edge) is reported.
         assert_eq!(machine.state(), to, "{name}");
         assert_eq!(

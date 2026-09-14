@@ -125,3 +125,22 @@ fn loss_boundary_send_belongs_to_the_next_cohort() {
     // Then neither 99 nor 1 satisfies the floor.
     assert_eq!(tracker.last_value(), None);
 }
+
+#[test]
+fn delayed_feedback_preserves_evidence_age_and_history_is_bounded() {
+    // Given one closed, loss-free cohort.
+    let mut tracker = LossTracker::new(0);
+    cohort(&mut tracker, 0, (100, 0));
+    // When feedback arrives eight seconds after closure, then only its original date remains.
+    tracker.record_data_nak_for_send(0, 9000);
+    assert_eq!(tracker.last_value(), Some(0.01));
+    assert_eq!(tracker.last_cohort_ms(), Some(1000));
+    assert!(!tracker.loss_cohort_ok(9000, 10_000));
+    tracker.record_data_nak_for_send(0, 11_000);
+    assert_eq!(tracker.last_value(), Some(0.01));
+    assert!(tracker.is_stale(11_000, 10_000));
+    for second in 12..1000 {
+        cohort(&mut tracker, second * 1000, (100, 1));
+        assert!(tracker.closed.len() <= 10);
+    }
+}

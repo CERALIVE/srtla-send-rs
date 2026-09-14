@@ -1,4 +1,6 @@
 //! Pure per-link health transitions; runtime integration is deliberately separate.
+// allow: SIZE_OK — keep the single transition function and its private timing state together;
+// queue entry and clearance must be reviewed against the same precedence table.
 
 use core::time::Duration;
 
@@ -57,6 +59,9 @@ pub struct HealthSignals {
     /// The probe tracker must expire/reset the count and this timestamp together.
     pub probe_rounds_started_ms: Option<u64>,
     pub held_links: u32,
+    /// Maximum scheduled interval between health observations; zero for immediate evaluation.
+    /// Completed train acquisition and waiting for the next observation are distinct ages.
+    pub observation_interval_ms: u64,
     pub now_ms: u64,
 }
 
@@ -67,7 +72,19 @@ pub struct Transition {
     pub at_ms: u64,
 }
 
-/// Mutate only through `step`: private fields preserve dwell and timestamp invariants.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct RecoveryRounds {
+    pub count: u32,
+    pub started_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug)]
+struct QueueEntryPending {
+    since_ms: u64,
+    required_ms: f64,
+}
+
+/// Mutate only through step methods: private fields preserve dwell and timestamp invariants.
 #[derive(Clone, Debug)]
 pub struct HealthMachine {
     state: HealthState,
@@ -75,6 +92,7 @@ pub struct HealthMachine {
     dwell_multiplier: u32,
     last_transition_ms: u64,
     clear_since_ms: Option<u64>,
+    queue_entry_pending: Option<QueueEntryPending>,
     loss_latched: bool,
     route_latched: bool,
     ramp_tau_ms: f64,
@@ -91,6 +109,7 @@ impl HealthMachine {
             dwell_multiplier: 1,
             last_transition_ms: now_ms,
             clear_since_ms: None,
+            queue_entry_pending: None,
             loss_latched: matches!(state, HealthState::Degraded),
             route_latched: false,
             ramp_tau_ms: 3000.0,
@@ -121,6 +140,15 @@ impl HealthMachine {
 
     /// Applies one observation. Hard failure outranks stall, which outranks degradation.
     pub fn step(&mut self, s: &HealthSignals, k: &HealthConstants) -> Option<Transition> {
+        self.step_with_originals(s, k, RecoveryRounds::default())
+    }
+
+    pub(crate) fn step_with_originals(
+        &mut self,
+        s: &HealthSignals,
+        k: &HealthConstants,
+        originals: RecoveryRounds,
+    ) -> Option<Transition> {
         use HealthState::{Degraded, Down, Healthy, Rejoining, Stalled};
 
         let tau = k.stall_tau(s.srtt_ms);
@@ -132,9 +160,18 @@ impl HealthMachine {
             RouteHealth::DefaultRoutePresent => false,
             RouteHealth::Unknown => self.route_latched,
         };
-        let degraded = self.route_latched
-            || loss_entered
-            || s.queue_delay_ms >= k.queue_enter(s.slow_min_rtt_ms);
+        let queue_above_enter = s.queue_delay_ms >= k.queue_enter(s.slow_min_rtt_ms);
+        let queue_entered = if matches!(self.state, Healthy | Rejoining) && queue_above_enter {
+            let pending = self.queue_entry_pending.get_or_insert(QueueEntryPending {
+                since_ms: s.now_ms,
+                required_ms: tau,
+            });
+            elapsed_ms(s.now_ms, pending.since_ms) >= pending.required_ms
+        } else {
+            self.queue_entry_pending = None;
+            false
+        };
+        let degraded = self.route_latched || loss_entered || queue_entered;
         let next = if !s.connected || !s.socket_valid || !s.iface_present {
             Down
         } else {
@@ -144,12 +181,18 @@ impl HealthMachine {
                 Healthy => Healthy,
                 Down => Rejoining,
                 Stalled => {
-                    let recent = s.probe_rounds_started_ms.is_some_and(|start| {
-                        start >= self.entered_at_ms
-                            && start <= s.now_ms
-                            && elapsed_ms(s.now_ms, start) <= k.rejoin_span(s.srtt_ms, s.held_links)
-                    });
-                    if s.probe_rounds_ok >= k.rejoin_rounds && recent {
+                    let recent = |started_ms: Option<u64>| {
+                        started_ms.is_some_and(|start| {
+                            start >= self.entered_at_ms
+                                && start <= s.now_ms
+                                && elapsed_ms(s.now_ms, start)
+                                    <= k.rejoin_span(s.srtt_ms, s.held_links)
+                                        + elapsed_ms(s.observation_interval_ms, 0)
+                        })
+                    };
+                    if (s.probe_rounds_ok >= k.rejoin_rounds && recent(s.probe_rounds_started_ms))
+                        || (originals.count >= k.rejoin_rounds && recent(originals.started_ms))
+                    {
                         Rejoining
                     } else {
                         Stalled
@@ -208,7 +251,7 @@ impl HealthMachine {
                 self.ramp_tau_ms = tau;
                 self.ramp_train_ms = k.train_period_ms(1);
             }
-            Degraded | Stalled | Down => {}
+            Degraded | Stalled | Down => self.queue_entry_pending = None,
         }
         self.loss_latched = matches!(next, Degraded) && loss_entered;
         self.clear_since_ms = None;
@@ -246,6 +289,9 @@ fn elapsed_ms(now_ms: u64, then_ms: u64) -> f64 {
 #[cfg(test)]
 #[path = "../tests/health_invariant_tests.rs"]
 mod invariant_tests;
+#[cfg(test)]
+#[path = "../tests/health_queue_entry_tests.rs"]
+mod queue_entry_tests;
 #[cfg(test)]
 #[path = "../tests/health_recovery_tests.rs"]
 mod recovery_tests;

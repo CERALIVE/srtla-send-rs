@@ -1,8 +1,13 @@
 use std::time::Duration;
 
+#[path = "original_recovery.rs"]
+mod original_recovery;
+pub(crate) use original_recovery::{OriginalRecovery, RecoveryWindow};
+
 /// Socket-scoped admission history: follows the connection, never an ips-file index.
 #[derive(Debug, Default)]
 pub struct AdaptiveLinkState {
+    pub(crate) original_recovery: OriginalRecovery,
     /// Last shared admission/ranking pass; None means held out, never an estimated weight.
     pub(crate) weight: Option<SelectionWeight>,
     pub deadline: DeadlineGate,

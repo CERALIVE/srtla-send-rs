@@ -114,6 +114,23 @@ last-resort connected fallback keeps its existing base-only rank. A zero-total
 adaptive snapshot never substitutes legacy equal shares. These are normalized
 ranking weights, not measured traffic shares or one-hot cooldown decisions.
 
+Adaptive path RTT uses specific SRTLA ACKs and keepalive echoes, not cumulative SRT
+ACKs: the latter name the next expected sequence and can return on another uplink.
+Wire-marked retransmissions and repeated outstanding sequences still prove DATA
+delivery, but are excluded from adaptive RTT sampling because the ACK cannot identify
+which copy it acknowledges (Karn ambiguity). Eligible samples use kernel-acceptance
+timestamps even when cumulative pruning already removed congestion-log entries.
+Legacy RTT behaviour is unchanged. Pending probe trains no longer erase preceding
+successful rounds, and qualified soft recovery starts a fresh normal-loss epoch
+instead of blending the previous outage into the first recovered cohort.
+Stalled links can also qualify recovery from original DATA: two ten-packet groups
+with at least five link-specific ACKs each, using the same deadline and freshness
+rules. This is passive observation, not self-probing: the elected sole carrier is
+still never sent duplicate probes and remains Stalled without sufficient proof.
+Evidence is bounded and scoped to the socket and current Stalled epoch.
+These correctness fixes are regression-tested; the privileged D/G/twin integration
+scenarios still expose unresolved recovery/selection behaviour and are not green.
+
 ### Optional Smart Exploration (Enhanced Mode Only)
 
 - **Context-Aware Discovery**: Tests alternative connections when current best is degrading and alternatives have recovered
@@ -292,6 +309,104 @@ use `./scripts/netns_test_gate.sh` (90 seconds per target by default; `netns_bon
 420 because its scenarios wait out the sender's own 15-second liveness timeout and
 30-second status-log interval). One separate real-Starlink stall reproduction is
 intentionally `#[ignore]` and runs only on hardware.
+
+`tests/netns_adaptive.rs` adds four strict adaptive integration scenarios: the full
+D obstruction waveform, G's marginal link over 60 seconds, I's CeraLive receiver
+restart, and duplicate-IP twins with in-obstruction priority set/clear. It reuses
+the FIFO-controlled real SRT source and host measurement lock (their two existing
+unprivileged tests are also included). Assertions use telemetry identities and
+per-interface netdev byte deltas, not IP identity or telemetry weights as traffic
+shares. The twin scenario includes a second, unmapped legacy-control run.
+The target has its own 360-second budget, `NETNS_ADAPTIVE_TEST_TIMEOUT_SECONDS`.
+Receiver recovery timing starts at process respawn; the separate downstream-SRT
+preflight/UDP-readiness wait is not charged to the two-second kill/respawn budget.
+`BondRuntime::receiver_restart_elapsed()` reports that process-only duration.
+Set `SRTLA_REC_BIN` to the intended CeraLive receiver build; optionally set
+`NETNS_ADAPTIVE_ARTIFACT_DIR` to retain per-run observations, sink buckets and logs.
+**Integration is not yet green:** D/G/twin health/rejoin and final-share assertions
+remain red; the latest receiver-restart scenario passes. Deadline-settled loss is
+regression-tested, but a diagnostic G run and mapped twins still demote on queue
+delay. These assertions are blocking, not ignored or
+relaxed; the adaptive engine remains experimental, not integration-validated.
+
+A further instrumented G/twin investigation measured valid 60–61 ms RTT floors
+with genuinely elevated fast-window minima. Kernel TBF queues filled after the
+twin load returned to 12.8 Mbit/s while the survivor alone could carry 8 Mbit/s, then
+filled on the recovering link. The rate controller supplies a soft ranking
+penalty, not a paced send-rate limit; G also queued before target growth and
+while Holding below its link capacity. No estimator filter or relaxed health
+threshold was applied. Separate loss-labelled demotions occurred in the new G
+run, so earlier queue-only attribution is specific to that earlier measurement.
+
+The subsequent queue-entry persistence gate below passes its deterministic policy
+tests but does not close this integration gap. In its first unchanged live run,
+I passes; D still misses Healthy recovery and continuing keepalive-log evidence;
+G carries 3,727,772 bytes but is Stalled/Degraded in 48/61 samples; twins miss
+Healthy recovery and deliver 47.1518% final preferred share (required [55%,70%)).
+Both twin priority snapshots pass in this run. No further persistence extension or
+admission/sole-carrier change is included, and the adaptive gate remains blocking.
+
+The subsequent recovery-load scope correction separates feasible recovery from a
+full-rate step: D holds 6.4 Mbit/s through its 17-second recovery deadline, restoring
+22.4 Mbit/s at t=46; twins hold 6.4 Mbit/s through their 9-second deadline, restoring
+12.8 Mbit/s at t=38. Neither deadline nor the final health/share requirements was
+relaxed. Adaptive has no aggregate admission or source backpressure, so immediate
+full-rate restoration remains a documented risk and an ignored diagnostic stress
+case, not a passing recovery assertion. The test's logging filter now retains
+health/keepalive evidence by suppressing the per-NAK congestion flood.
+
+**The revised tests still do not pass.** D recovers within its deadline but misses
+stall detection and later loses Healthy; twins expose a successful-probe freshness
+timing gap before full load, plus the recurring first-priority-snapshot failure.
+G's chronic demotion also reproduces with zero configured loss on its 1 Mbit/s
+link: real qdisc overflow remains, and its supposedly healthy companions demote
+too. G's ≤10% criterion remains unchanged; this is not grounds for calling the
+failure expected GE loss. Latest clean-code run: I passes; D/G/twins fail.
+See [the evaluation findings](docs/notes/scheduler-evaluation-2026-09.md).
+
+The sampled-freshness defect is now corrected: recovery evidence's acquisition
+budget additionally accounts for the actual one-second housekeeping observation
+interval. Immediate policy evaluation uses zero observation delay. Probe ACK
+deadlines, epoch fencing, two successful trains, health thresholds and the rejoin
+ramp remain unchanged. A real-scheduler regression and stale/insufficient-evidence
+controls pin the distinction. In the latest live twins run, Rejoining occurs at
+restore+3.0716s and Healthy at+5.0870s, within9s and without low-load relapse;
+later full-rate health/share still fails, so the complete integration gate stays red.
+
+G's12.8Mbit application load fits within the three companions'15Mbit capacity even
+after ordinary framing. Startup accepted-prefix captures instead show excessive
+initial allocation to the1Mbit link, followed by retransmission-inflated companion
+rates above their individual5Mbit caps, before health demotion. No G assertion,
+scenario, rate policy or ranking behavior was changed from that evidence alone.
+
+The subsequent retransmission-accounting check found no special R-flag bypass:
+SRT's caller supplies retransmissions through the same local listener and adaptive
+selector as original DATA. Real-UDP tests confirm retry bytes, queued/in-flight
+load, delivery attempts and ACK-derived rate are counted. Repeated outstanding
+copies of the same sequence still share one flight/ledger entry and one ambiguous
+ACK credit, while every wire send contributes to cumulative bytes. Consequently
+the controller's delivered-rate/unique-flight proxies are not a total-wire pacing
+budget. No new production fix was justified by this narrower hypothesis; G and
+the complete adaptive integration gate remain unresolved.
+
+The next experiment adds **hard per-link attempted-wire admission**, separate from
+RateCap's ranking multiplier. Queued originals, retransmits and probes share byte
+credit derived from the current RateCap target, with a two-MTU burst limit.
+Unfunded datagrams wait; only the kernel-accepted prefix spends credit. Admission
+uses another funded, health-admitted link when available. Otherwise one pending
+input datagram pauses local UDP reads while a 1ms pacing wakeup and the existing
+ACK/control/signal handlers keep running. This is bounded user-space queueing,
+not a lossless-backpressure guarantee across UDP. The four legacy modes are unchanged.
+
+**This experiment is not acceptance-green.** In round11, G's three companions stay
+Healthy and all four qdiscs show zero non-model drops, but the marginal link still
+fails its unchanged≤10%demotion gate. The chosen rate estimate also creates an
+I throughput regression: the pre-restart sink is only2.684640Mbit/s and recovery
+never reaches90% of offered load. The gate enforces its supplied estimate; it does
+not discover physical capacity. D passes, while twins still fail preference share
+and first-post-RPC snapshots despite successful bounded recovery and final health.
+Do not deploy or call the adaptive milestone complete. See the evaluation note
+for the measured limits and explicit stop boundary.
 
 `tests/netns_hsrsp_spike.rs` is an explicitly ignored, one-link live-handshake
 spike. Point `SRTLA_REC_BIN` at an out-of-tree CeraLive receiver build, install
@@ -603,8 +718,24 @@ but housekeeping transitions and lifecycle reset integration remain separate wor
 Hard failures enter Down; restored connections enter Rejoining rather than skipping
 the ramp. Stalling requires both 32 attempts without DATA proof and proof age ≥τ,
 where τ = clamp(4×sRTT, 1000, 3000) ms (3000 ms without a sample). Degradation uses
-qualifying normal-loss EWMA ≥10%, queue delay ≥max(10, 0.25×slow-min-RTT) ms,
+qualifying normal-loss EWMA ≥10%, persistent queue delay ≥max(10, 0.25×slow-min-RTT) ms,
 or an independently observed `RouteHealth::NoDefaultRoute`.
+Queue entry from Healthy/Rejoining requires that predicate continuously for τ,
+latched at the first qualifying evaluation. Falling below entry clears the pending
+episode, as does entering Down/Stalled/Degraded; Rejoining→Healthy preserves it.
+Hard failure, stall, and finalized loss/route degradation still take precedence
+without waiting for the queue timer. Starting the timer never increases backoff:
+only an actual Rejoining→Degraded transition does.
+
+This is a deliberate queue-entry persistence policy, not threshold tuning or an
+RTT-estimator filter. A real encoder restores its offered load without knowing the
+bond's internal rejoin ramp; short restoration congestion should not itself trigger
+a relapse. Sustained evidence still matures within 1–3 seconds of its first
+qualifying evaluation, independent of ramp length and dwell multiplier. The design
+budget including detector/housekeeping quantization is approximately 5 seconds from
+physical onset, not a hard real-time guarantee. Admission/sole-carrier coordination
+is separate; this gate does not promise that every overload scenario recovers.
+
 Recovery requires continuous clearance for τ: loss ≤5% and queue delay
 ≤max(5, 0.125×slow-min-RTT) ms. A loss-triggered demotion retains its evidence
 requirement; after 10 seconds without a valid normal cohort, only complete probe-train
@@ -671,13 +802,34 @@ sends count as load; only unique NAK hits in that link's normal packet log count
 loss. Cohorts with at least **100 sends** feed `NAKs / sends` into an alpha-0.2
 EWMA. Smaller cohorts are discarded, so a starved link's 50 sends and 50 NAKs do
 not create or change its loss estimate. Duplicate/foreign NAKs, unsent suffixes,
-control frames and direct probe copies are excluded. These are observation-time
-cohorts, not retrospective send-cohort attribution.
+control frames and direct probe copies are excluded. A NAK is charged to its
+accepted-send cohort, not the cohort open when feedback arrives. Ten seconds of
+bounded closed-cohort history allows delayed feedback to correct the chronological
+EWMA without refreshing the evidence's original end timestamp. Old sub-floor or
+pre-recovery-epoch feedback cannot contaminate a new loaded cohort; feedback beyond
+retention is not reassigned to the current denominator. No loss-ratio clamp is used.
+
+Adaptive ACK handling distinguishes cohort **closure** from **settlement**. Closure
+freezes the accepted-send count; EWMA waits until the cohort's accepted sends have
+reached their delivery-budget deadlines. Each deadline is acceptance time plus the
+same negotiated latency used by adaptive admission (500ms when unknown), frozen at
+acceptance. A valid normal SRTLA ACK can clear its pending debit even after closure,
+but strictly before that debit's deadline. At or after the deadline, unresolved or
+newly observed NAKs are final; later ACKs cannot erase them. Retries keep distinct
+cohort/deadline groups and never extend an older attempt's deadline.
+Duplicate, cross-link, probe, stale-generation, expired-entry and old-epoch ACKs
+cannot erase another loss. Pending evidence remains within the existing bounded
+delivery ledger and ten-second cohort history. Raw congestion NAK/window penalties,
+legacy ACK behaviour, and Rejoining/Healthy degradation thresholds are unchanged.
+This is local deadline-budget accounting, not receiver playback-time measurement
+or blanket forgiveness of eventual delivery.
 
 `LossTracker::advance(now_ms)` closes elapsed cohorts, including on idle reads.
 `last_value()` and `last_cohort_ms()` preserve the last qualifying estimate and its
 original cohort-end timestamp; late polling cannot make stale evidence fresh.
-`loss_cohort_ok(now, stale_after_ms)` rejects sub-floor/stale cohorts, while retained
+A separate settlement timestamp allows newly settled high-latency cohorts to qualify
+without moving the original ten-second staleness anchor. Late final NAK corrections
+refresh neither timestamp. `loss_cohort_ok(now, stale_after_ms)` rejects sub-floor/stale cohorts, while retained
 evidence remains readable for clearance. Recovery/socket replacement resets it.
 `probe_loss()` remains unknown (`None`) until two completed probe trains provide
 evidence; the probe mechanism below supplies it independently of normal cohorts.
@@ -1326,6 +1478,7 @@ Normal registration:
 - Keepalives are sent when idle, and periodically for RTT measurement; the RTT is smoothed via a Kalman filter, whose velocity diagnostics are milliseconds per sample (`ms/sample`), not per second. The Kalman output is clamped to ≥0 before use. Keepalive and ACK RTT samples share one plausibility gate: a sample of exactly 0 (a reply within the same millisecond, or a clock that moved backwards) and anything above 10 s are both discarded, so neither biases the filter. A genuine sub-millisecond round trip on a LAN or loopback link also measures 0 and is therefore not sampled. Window recovery is conservative and time-based when there are no recent NAKs.
 - Small control packets (keepalive, REG1/REG2) are zero-padded to a 32-byte minimum on the wire (`MIN_CONTROL_PKT_LEN`), matching the C `pad_sendto` behavior, so cellular/carrier NAT keepalive thresholds don't silently drop tiny control frames. DATA packets are never padded.
 - A REG3 only registers an uplink the sender actually sent a REG2 on, and the authorization is one-shot: a duplicate or replayed REG3 is counted and ignored instead of resetting a live uplink's window and in-flight state. A REG2 broadcast retry skips uplinks that are already registered or already awaiting their REG3. A SIGHUP reload that reorders the pool drops only *incomplete* registration attempts — established uplinks keep their socket, registration, and window.
+- An accepted changed receiver group ID invalidates pending REG3 grants belonging to the previous ID. Otherwise those old grants would suppress the new group's REG2 broadcast until a retry timeout. Established sockets remain untouched, and REG_NGP acceptance is unchanged.
 - A REG_ERR is honored only for an uplink that is actually mid-registration (awaiting its REG2, or awaiting its REG3); one arriving on an established link is counted and ignored rather than disconnecting it, and an in-phase REG_ERR clears only the handshake state that uplink owns, never another uplink's concurrent attempt. Every out-of-phase REG3/REG_ERR remains counted, but only the first of each kind logs at `WARN`; repeats are `DEBUG` so spoofed traffic cannot flood default-level logs.
 - Each uplink's reader task is monitored on every housekeeping tick. If a reader exits unexpectedly (e.g. due to a socket error), it is restarted within one tick rather than waiting for the 15 s liveness timeout.
 - The all-uplinks-failed global timeout measures time elapsed since the failure, not process uptime. A transient all-down blip on a long-running session no longer triggers an immediate fatal exit.

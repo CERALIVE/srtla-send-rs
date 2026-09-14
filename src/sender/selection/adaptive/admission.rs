@@ -12,9 +12,13 @@ pub(super) fn srtt(conn: &SrtlaConnection) -> Option<f64> {
 
 pub(super) fn snapshot(conns: &mut [SrtlaConnection], state: &mut AdaptiveState, now: u64) {
     let k = HealthConstants::default();
-    let latency_ms = state.stats.negotiated_latency_ms().unwrap_or(500);
+    let latency_ms = state
+        .stats
+        .negotiated_latency_ms()
+        .unwrap_or(crate::connection::loss::UNKNOWN_LATENCY_MS);
     state.targets.clear();
     for conn in conns {
+        conn.loss.set_latency_ms(latency_ms);
         conn.adaptive.observe(
             conn.delivery.socket_generation,
             conn.delivery.latest_data_proof_ms(),

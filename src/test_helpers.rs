@@ -67,6 +67,7 @@ fn create_connection_from_socket(
             now_ms(),
         ),
         rate_cap: crate::connection::rate_cap::RateCap::default(),
+        wire_rate: crate::connection::wire_rate::WireRateEstimator::default(),
         adaptive: crate::connection::adaptive::AdaptiveLinkState::default(),
         highest_acked_seq: None,
         last_received: Some(Instant::now()),

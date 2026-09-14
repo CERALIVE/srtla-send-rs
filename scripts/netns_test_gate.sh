@@ -7,7 +7,8 @@ TIMEOUT_SECONDS="${NETNS_TEST_TIMEOUT_SECONDS:-90}"
 # share the default budget.
 TWIN_TIMEOUT_SECONDS="${NETNS_TWIN_TEST_TIMEOUT_SECONDS:-420}"
 BOND_TIMEOUT_SECONDS="${NETNS_BOND_TEST_TIMEOUT_SECONDS:-120}"
-for BUDGET in "${TIMEOUT_SECONDS}" "${TWIN_TIMEOUT_SECONDS}" "${BOND_TIMEOUT_SECONDS}"; do
+ADAPTIVE_TIMEOUT_SECONDS="${NETNS_ADAPTIVE_TEST_TIMEOUT_SECONDS:-360}"
+for BUDGET in "${TIMEOUT_SECONDS}" "${TWIN_TIMEOUT_SECONDS}" "${BOND_TIMEOUT_SECONDS}" "${ADAPTIVE_TIMEOUT_SECONDS}"; do
   [[ "${BUDGET}" =~ ^[1-9][0-9]*$ ]] || {
     echo "netns-test-gate: timeout budgets must be positive integers" >&2
     exit 2
@@ -15,6 +16,7 @@ for BUDGET in "${TIMEOUT_SECONDS}" "${TWIN_TIMEOUT_SECONDS}" "${BOND_TIMEOUT_SEC
 done
 
 TARGETS=(
+  netns_adaptive
   netns_basic
   netns_bond
   netns_edpf
@@ -28,6 +30,7 @@ TARGETS=(
 
 budget_for() {
   case "$1" in
+    netns_adaptive) echo "${ADAPTIVE_TIMEOUT_SECONDS}" ;;
     netns_twin) echo "${TWIN_TIMEOUT_SECONDS}" ;;
     netns_bond) echo "${BOND_TIMEOUT_SECONDS}" ;;
     *) echo "${TIMEOUT_SECONDS}" ;;
@@ -48,4 +51,4 @@ for TARGET in "${TARGETS[@]}"; do
   [[ "${STATUS}" -eq 0 ]] || exit "${STATUS}"
 done
 
-echo "netns-test-gate: OK timeout=${TIMEOUT_SECONDS}s twin-timeout=${TWIN_TIMEOUT_SECONDS}s bond-timeout=${BOND_TIMEOUT_SECONDS}s targets=${#TARGETS[@]}"
+echo "netns-test-gate: OK timeout=${TIMEOUT_SECONDS}s twin-timeout=${TWIN_TIMEOUT_SECONDS}s bond-timeout=${BOND_TIMEOUT_SECONDS}s adaptive-timeout=${ADAPTIVE_TIMEOUT_SECONDS}s targets=${#TARGETS[@]}"

@@ -18,6 +18,9 @@ use tracing::debug;
 use super::batch_recv::BatchUdpSocket;
 use super::probe::ProbeTrain;
 
+#[path = "batch_budget.rs"]
+mod budget;
+
 #[derive(Clone, Copy, Debug)]
 enum QueuedKind {
     Normal(Option<u32>),
@@ -29,6 +32,12 @@ pub struct AcceptedProbe {
     pub seq: i32,
     pub train: ProbeTrain,
     pub len: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct WireSample {
+    pub rate_bps: f64,
+    pub accepted_bytes: u64,
 }
 
 /// Maximum number of packets to buffer before flushing (Moblin uses 15+1=16)
@@ -55,6 +64,8 @@ const FLUSH_INTERVAL_MS: u64 = 15;
 pub struct FlushOutcome {
     /// Queue-order (sequence, queue timestamp in ms, accepted wire length in bytes).
     pub accepted: SmallVec<(Option<i32>, u64, usize), 4>,
+    /// One wire R-flag per `accepted` entry, pushed in the same prefix-commit loop.
+    pub retransmitted: SmallVec<bool, 4>,
     pub probes: SmallVec<AcceptedProbe, 4>,
     pub error: Option<std::io::Error>,
 }
@@ -62,6 +73,7 @@ pub struct FlushOutcome {
 /// Batch sender that queues packets and flushes them efficiently
 #[derive(Debug)]
 pub struct BatchSender {
+    wire_budget: Option<super::wire_budget::WireBudget>,
     /// Queue of packets waiting to be sent
     queue: Vec<SmallVec<u8, 1500>>,
 
@@ -86,6 +98,7 @@ impl BatchSender {
     /// Create a new batch sender
     pub fn new() -> Self {
         Self {
+            wire_budget: None,
             queue: Vec::with_capacity(BATCH_SIZE_THRESHOLD),
             sequences: Vec::with_capacity(BATCH_SIZE_THRESHOLD),
             queue_times: Vec::with_capacity(BATCH_SIZE_THRESHOLD),
@@ -150,7 +163,11 @@ impl BatchSender {
             return FlushOutcome::default();
         }
 
-        let candidates = self.queue.len().min(BATCH_SEND_SIZE);
+        let attempted_at_ms = crate::utils::now_ms();
+        let candidates = self.funded_prefix(self.queue.len().min(BATCH_SEND_SIZE), attempted_at_ms);
+        if candidates == 0 {
+            return FlushOutcome::default();
+        }
         let (sent_count, mut error) = {
             let packets: SmallVec<&[u8], BATCH_SEND_SIZE> = self.queue[..candidates]
                 .iter()
@@ -159,7 +176,10 @@ impl BatchSender {
             socket.send_batch(&packets).await
         };
 
+        self.debit_prefix(sent_count, attempted_at_ms);
+
         let mut accepted = SmallVec::new();
+        let mut retransmitted = SmallVec::new();
         let mut probes = SmallVec::new();
         for ((&kind, &time), packet) in self
             .sequences
@@ -170,7 +190,8 @@ impl BatchSender {
         {
             match kind {
                 QueuedKind::Normal(seq) => {
-                    accepted.push((seq.map(|s| s as i32), time, packet.len()))
+                    accepted.push((seq.map(|s| s as i32), time, packet.len()));
+                    retransmitted.push(packet.len() >= 16 && packet[4] & 0x04 != 0);
                 }
                 QueuedKind::Probe(seq, train) => probes.push(AcceptedProbe {
                     seq,
@@ -199,6 +220,7 @@ impl BatchSender {
 
         FlushOutcome {
             accepted,
+            retransmitted,
             probes,
             error,
         }
@@ -206,6 +228,7 @@ impl BatchSender {
 
     /// Reset the batch sender state (for reconnection)
     pub fn reset(&mut self) {
+        self.wire_budget = None;
         self.queue.clear();
         self.sequences.clear();
         self.queue_times.clear();

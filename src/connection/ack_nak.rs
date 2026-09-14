@@ -79,16 +79,24 @@ impl SrtlaConnection {
     /// Handle NAK for a specific sequence. O(1) remove.
     #[inline]
     pub fn handle_nak(&mut self, seq: i32) -> bool {
-        let found = self.packet_log.remove(&seq).is_some();
-        if found {
+        let sent = self.packet_log.remove(&seq);
+        if let Some(queued_ms) = sent {
             // Normal-log removal is unique attribution. Todo 19's separate probe-log
             // lookup must not enter this branch or feed normal loss evidence.
-            self.loss.record_data_nak(now_ms());
+            let debit = match self.delivery.loss_send(seq) {
+                Some(send) => self.loss.debit_accepted_send(send, now_ms()),
+                None => self
+                    .loss
+                    .debit_data_nak(self.delivery.sent_ms(seq).unwrap_or(queued_ms), now_ms()),
+            };
+            if let Some(debit) = debit {
+                self.delivery.record_loss_debit(seq, debit);
+            }
             self.in_flight_packets = self.packet_log.len() as i32;
             self.congestion
                 .handle_nak(&mut self.window, seq, &self.label);
         }
-        found
+        sent.is_some()
     }
 
     /// Handle SRTLA ACK for a specific sequence. O(1) remove.
@@ -100,6 +108,15 @@ impl SrtlaConnection {
     /// a cumulative SRT ACK, a miss simply means another link owns it.
     #[inline]
     pub fn handle_srtla_ack_specific(&mut self, seq: i32, classic_mode: bool) -> bool {
+        self.apply_specific_ack(seq, classic_mode, true)
+    }
+
+    pub(crate) fn apply_specific_ack(
+        &mut self,
+        seq: i32,
+        classic_mode: bool,
+        sample_rtt: bool,
+    ) -> bool {
         let now = now_ms();
         self.delivery.acknowledge(
             super::delivery::DeliveryAck {
@@ -111,7 +128,9 @@ impl SrtlaConnection {
         if let Some(sent_ms) = self.packet_log.remove(&seq) {
             self.in_flight_packets = self.packet_log.len() as i32;
 
-            self.rtt.record_round_trip(sent_ms, now);
+            if sample_rtt {
+                self.rtt.record_round_trip(sent_ms, now);
+            }
 
             // Stall signal (EXPERIMENTAL `stall_deselect`): this link EARNED the
             // ACK (it owned the acked seq) — the strongest per-link delivery

@@ -1,4 +1,5 @@
-// allow: SIZE_OK — existing packet-dispatch façade; this change only threads bond stats through receive callers, preserving forwarding order.
+// allow: SIZE_OK — existing packet-dispatch façade; retain shared receive/forward/error ordering.
+// Wire policy is extracted into wire_admission; this façade only reports deferred input to its owner.
 use std::net::SocketAddr;
 
 use anyhow::Result;
@@ -75,7 +76,12 @@ pub async fn process_connection_events_at(
     for ack in incoming.ack_numbers.iter() {
         let owner = seq_tracker.get(*ack, current_time_ms);
         for c in connections.iter_mut() {
-            let owns_acked_seq = owner == Some(c.conn_id);
+            // SRT cumulative ACKs name the next expected sequence and may return
+            // on another uplink. Adaptive path timing uses link-specific ACKs instead.
+            let owns_acked_seq = match context.policy {
+                AckPolicy::Adaptive => false,
+                AckPolicy::Legacy { .. } => owner == Some(c.conn_id),
+            };
             c.handle_srt_ack(*ack as i32, current_time_ms, owns_acked_seq);
         }
     }
@@ -307,20 +313,28 @@ pub async fn handle_srt_packet(
     config_snap: &ConfigSnapshot,
     edpf_state: &mut EdpfSchedulerState,
     adaptive_state: &mut AdaptiveState,
-) {
+) -> SrtPacketOutcome {
     match res {
         Ok((n, src)) => {
             if n == 0 {
-                return;
+                return SrtPacketOutcome::Consumed;
             }
             // Capture timestamp once at packet entry - reduces syscalls from 3-5 to 1 per packet
             let packet_time_ms = crate::utils::now_ms();
+            super::wire_admission::configure(connections, config_snap.mode);
+            *last_client_addr = Some(src);
 
             let pkt = &recv_buf[..n];
             let seq = protocol::get_srt_sequence_number(pkt);
             if !registration_complete {
                 let sel_idx = select_pre_registration_connection(connections, *last_selected_idx);
                 if let Some(sel_idx) = sel_idx {
+                    if !connections[sel_idx]
+                        .batch_sender
+                        .can_queue_wire(n, packet_time_ms)
+                    {
+                        return SrtPacketOutcome::Backpressured;
+                    }
                     forward_via_connection(
                         sel_idx,
                         pkt,
@@ -334,7 +348,7 @@ pub async fn handle_srt_packet(
                     .await;
                 }
                 *last_client_addr = Some(src);
-                return;
+                return SrtPacketOutcome::Consumed;
             }
 
             let sel_idx = select_connection_idx_with_state(
@@ -347,6 +361,10 @@ pub async fn handle_srt_packet(
                 adaptive_state,
             );
             if let Some(sel_idx) = sel_idx {
+                let Some(sel_idx) = super::wire_admission::funded_link(connections, sel_idx, n)
+                else {
+                    return SrtPacketOutcome::Backpressured;
+                };
                 forward_via_connection(
                     sel_idx,
                     pkt,
@@ -385,6 +403,13 @@ pub async fn handle_srt_packet(
         }
         Err(e) => warn!("error reading local SRT: {}", e),
     }
+    SrtPacketOutcome::Consumed
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SrtPacketOutcome {
+    Consumed,
+    Backpressured,
 }
 
 #[allow(clippy::too_many_arguments)]

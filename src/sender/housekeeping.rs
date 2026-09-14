@@ -306,9 +306,19 @@ impl HealthTicker {
                 probe_rounds_ok,
                 probe_rounds_started_ms,
                 held_links,
+                observation_interval_ms: super::HOUSEKEEPING_INTERVAL_MS,
                 now_ms: now,
             };
-            conn.health.step(&signals, &k);
+            let originals = conn.adaptive.original_recovery.rounds(now);
+            if let Some(transition) = conn.health.step_with_originals(&signals, &k, originals)
+                && matches!(
+                    transition.from,
+                    HealthState::Degraded | HealthState::Stalled
+                )
+                && transition.to == HealthState::Rejoining
+            {
+                conn.loss.begin_recovered_epoch(now);
+            }
             let to = if replaced {
                 HealthState::Down
             } else {
@@ -359,6 +369,12 @@ impl HealthTicker {
                     loss_ewma: conn.loss.last_value(),
                 },
             );
+            if let Some(sample) = conn.batch_sender.wire_sample() {
+                tracing::debug!(link = %conn.label, generation = conn.delivery.socket_generation,
+                    now_ms = now, wire_budget_bps = sample.rate_bps, attempted_wire_bytes = sample.accepted_bytes,
+                    wire_rate_phase = ?conn.wire_rate.phase(),
+                    target_bps = conn.rate_cap.target_bps(), "adaptive wire budget");
+            }
         }
     }
 }

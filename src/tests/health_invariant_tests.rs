@@ -63,17 +63,25 @@ fn relapsed_ramp_uses_scaled_span() {
         },
         &k,
     );
-    machine.step(&HealthSignals { now_ms: 200, ..s }, &k);
+    machine.step(
+        &HealthSignals {
+            now_ms: 1_100,
+            queue_delay_ms: 10.0,
+            ..s
+        },
+        &k,
+    );
     machine.step(&HealthSignals { now_ms: 1_200, ..s }, &k);
+    machine.step(&HealthSignals { now_ms: 2_200, ..s }, &k);
     assert_eq!(machine.state(), Rejoining);
     assert_eq!(machine.dwell_multiplier(), 2);
     // When: the doubled 6000ms ramp advances.
-    for (now, expected) in [(1_200, 0.05), (4_200, 0.525), (7_200, 1.0)] {
+    for (now, expected) in [(2_200, 0.05), (5_200, 0.525), (8_200, 1.0)] {
         assert!((machine.ramp_multiplier(now, 3) - expected).abs() < 1e-12);
     }
-    machine.step(&HealthSignals { now_ms: 7_199, ..s }, &k);
+    machine.step(&HealthSignals { now_ms: 8_199, ..s }, &k);
     assert_eq!(machine.state(), Rejoining);
-    machine.step(&HealthSignals { now_ms: 7_200, ..s }, &k);
+    machine.step(&HealthSignals { now_ms: 8_200, ..s }, &k);
     // Then: Healthy entry coincides exactly with ramp completion and resets dwell.
     assert_eq!(machine.state(), Healthy);
     assert_eq!(machine.dwell_multiplier(), 1);
