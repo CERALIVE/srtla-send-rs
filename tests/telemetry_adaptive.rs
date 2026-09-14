@@ -2,6 +2,7 @@
 
 use std::collections::HashSet;
 use std::net::{Ipv4Addr, SocketAddr};
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
@@ -36,16 +37,26 @@ impl Drop for Sender {
 }
 
 async fn live_snapshot() -> Snapshot {
-    let dir = tempfile::tempdir().unwrap();
+    let deadline = tokio::time::sleep(Duration::from_secs(15));
+    tokio::pin!(deadline);
+    let binary = Path::new(env!("CARGO_BIN_EXE_srtla_send"));
+    // A same-filesystem hard link executes the exact Cargo artifact under a private
+    // kernel process name, outside host-wide `killall srtla_send` cleanup.
+    let dir = tempfile::tempdir_in(binary.parent().unwrap()).unwrap();
+    let executable = dir.path().join(format!("atel-{}", std::process::id()));
+    std::fs::hard_link(binary, &executable).unwrap();
     let ips = dir.path().join("ips");
     let stats = dir.path().join("stats.json");
+    let log_path = dir.path().join("sender.log");
+    let log = std::fs::File::create(&log_path).unwrap();
     std::fs::write(&ips, "127.0.0.1\n127.0.0.2\n").unwrap();
     let receiver = UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let reservation = UdpSocket::bind("[::]:0").await.unwrap();
     let port = reservation.local_addr().unwrap().port();
     drop(reservation);
     let mut sender = Sender(
-        Command::new(env!("CARGO_BIN_EXE_srtla_send"))
+        Command::new(&executable)
+            .env("RUST_LOG", "info")
             .args([
                 port.to_string(),
                 "127.0.0.1".into(),
@@ -56,10 +67,16 @@ async fn live_snapshot() -> Snapshot {
             .arg("--stats-file")
             .arg(&stats)
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stdout(Stdio::from(log.try_clone().unwrap()))
+            .stderr(Stdio::from(log))
             .spawn()
             .unwrap(),
+    );
+    #[cfg(target_os = "linux")]
+    assert_eq!(
+        std::fs::read_to_string(format!("/proc/{}/comm", sender.0.id())).unwrap(),
+        format!("atel-{}\n", std::process::id()),
+        "test child must not share the production process name used by host-wide cleanup",
     );
     let source = UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let mut send_tick = tokio::time::interval(Duration::from_millis(2));
@@ -71,6 +88,8 @@ async fn live_snapshot() -> Snapshot {
     let mut seq = 0_u32;
     loop {
         tokio::select! {
+            _ = &mut deadline => panic!("live telemetry deadline exceeded; sender log:\n{}",
+                std::fs::read_to_string(&log_path).unwrap()),
             result = receiver.recv_from(&mut buf) => {
                 let (n, peer) = result.unwrap();
                 match get_packet_type(&buf[..n]) {
@@ -99,7 +118,10 @@ async fn live_snapshot() -> Snapshot {
                 source.send_to(&packet, (Ipv4Addr::LOCALHOST, port)).await.unwrap();
             }
             _ = observe_tick.tick() => {
-                assert!(sender.0.try_wait().unwrap().is_none(), "sender exited during live telemetry scenario");
+                if let Some(status) = sender.0.try_wait().unwrap() {
+                    panic!("sender pid={} exited during live telemetry scenario: {status:?}; log:\n{}",
+                        sender.0.id(), std::fs::read_to_string(&log_path).unwrap());
+                }
                 match std::fs::read_to_string(&stats) {
                     Ok(json) => {
                         let snapshot: Snapshot = serde_json::from_str(&json).unwrap();
@@ -122,9 +144,7 @@ async fn live_snapshot() -> Snapshot {
 async fn live_binary_publishes_zero_weight_for_data_blackhole_with_keepalives() {
     // Given two registered loopback links; one echoes keepalives but never ACKs DATA.
     // When real traffic drives the sender's housekeeping and stats-file publication.
-    let snapshot = tokio::time::timeout(Duration::from_secs(15), live_snapshot())
-        .await
-        .unwrap();
+    let snapshot = live_snapshot().await;
     // Then the live wire document reports the actual hold, without inventing priority.
     assert_eq!(snapshot.schema_version, 1);
     assert_eq!(snapshot.connections[0].health.as_deref(), Some("stalled"));

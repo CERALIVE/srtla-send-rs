@@ -1138,6 +1138,12 @@ Rust and byte-roundtripped by the TS reader. All older fixtures remain unchanged
 old producers read as `undefined`, with neither key materialized. Deleting health
 from a parsed adaptive document deliberately fails the byte comparison.
 
+`cargo test --test telemetry_adaptive -- --nocapture` exercises the live binary on
+two loopback uplinks, withholding DATA ACKs on one while echoing keepalives. The
+harness runs the exact built executable through a private `atel-<test-pid>` hard
+link so host-wide production-name cleanup cannot kill the test. Exit/deadline
+failures include captured child logs; the scenario keeps its 15-second bound.
+
 With no active links the file still exists with `"connections": []` ("running but idle",
 distinct from "absent"). The live file is removed on clean shutdown (SIGTERM/SIGINT).
 

@@ -972,6 +972,12 @@ performance claim changes here. Tests: `cargo test --lib adaptive` and the real-
   health control falsifies byte parity. `tests/telemetry_adaptive.rs` also drives the
   real binary over two loopback uplinks with DATA ACKs withheld on one while
   keepalives continue, requiring that link's live stats-file weight to reach zero.
+  That test executes the exact Cargo artifact through a same-filesystem hard-link
+  alias `atel-<test-pid>` in a private target-directory temp folder. Never launch it
+  with the production process name: concurrent host control-plane tests can issue
+  `killall srtla_send` and terminate an unrelated test child. Linux checks the actual
+  kernel process name. Child logs accompany exit/deadline failures; the 15s deadline
+  and telemetry assertions are unchanged, with no spawn/test retries or signal masks.
 - **Todo 24 seam:** `SharedStats::pool_control() -> Option<PoolControlHandle>`
   reaches `sender::pool_control`. `submit(PoolControlRequest::SetLinkPriority {
   key: LinkKey::LinkId(LinkId) | LinkKey::ConnId(usize), priority: Option<Priority>
