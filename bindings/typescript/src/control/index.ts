@@ -24,9 +24,45 @@ export interface ControlClientOptions {
 	timeoutMs?: number;
 }
 
+// Mirrors the server's bind_map::Priority bound (src/bind_map/types.rs) exactly:
+// finite and within -0.20..=0.20 inclusive. `null` clears the addressed layer.
+const LINK_PRIORITY_MIN = -0.2;
+const LINK_PRIORITY_MAX = 0.2;
+
+/** The `set-link-priority` result (mirrors `src/jsonrpc.rs`'s wire shape). */
+export interface SetLinkPriorityResult {
+	applied: boolean;
+	key: 'link_id' | 'conn_id';
+	link_id?: string;
+	conn_id: string;
+	priority: number | null;
+	effective_priority: number | null;
+}
+
+/**
+ * `set-link-priority` params: address a link by its stable `link_id` (persists
+ * across SIGHUP) or by its current telemetry `conn_id` (volatile position).
+ * `priority: null` clears the addressed layer.
+ */
+export type SetLinkPriorityParams =
+	| { linkId: string; priority: number | null }
+	| { connId: string; priority: number | null };
+
+function assertLinkPriorityInRange(priority: number | null): void {
+	if (priority === null) {
+		return;
+	}
+	if (!Number.isFinite(priority) || priority < LINK_PRIORITY_MIN || priority > LINK_PRIORITY_MAX) {
+		throw new RangeError(
+			`priority must be finite and within ${LINK_PRIORITY_MIN}..=${LINK_PRIORITY_MAX}, or null to clear; got ${priority}`,
+		);
+	}
+}
+
 export interface ControlClient {
 	hello(): Promise<HelloResult>;
 	rawRequest(method: string, params?: unknown): Promise<unknown>;
+	setLinkPriority(params: SetLinkPriorityParams): Promise<SetLinkPriorityResult>;
 	subscribeStats(onEvent: (snapshot: Telemetry | null) => void): () => void;
 	close(): void;
 }
@@ -204,6 +240,21 @@ export async function createControlClient(
 		},
 		rawRequest(method: string, params?: unknown): Promise<unknown> {
 			return request(open, { id: nextId++, method, params }, timeoutMs);
+		},
+		async setLinkPriority(params: SetLinkPriorityParams): Promise<SetLinkPriorityResult> {
+			// Validate before touching the socket: an out-of-range priority must
+			// never reach `request()` (and therefore never write a frame).
+			assertLinkPriorityInRange(params.priority);
+			const wireParams =
+				'linkId' in params
+					? { link_id: params.linkId, priority: params.priority }
+					: { conn_id: params.connId, priority: params.priority };
+			const result = await request(
+				open,
+				{ id: nextId++, method: 'set-link-priority', params: wireParams },
+				timeoutMs,
+			);
+			return result as SetLinkPriorityResult;
 		},
 		subscribeStats(onEvent: (snapshot: Telemetry | null) => void): () => void {
 			// The first line after subscribe-events is NOT an ack — it is the
