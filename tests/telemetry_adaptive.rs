@@ -1,6 +1,7 @@
 #![cfg(unix)]
 
 use std::collections::HashSet;
+use std::fs::OpenOptions;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -36,9 +37,106 @@ impl Drop for Sender {
     }
 }
 
+struct ChildPaths<'a> {
+    executable: &'a Path,
+    ips: &'a Path,
+    stats: &'a Path,
+    log: &'a Path,
+}
+
+/// Bounded spawn attempts. Each attempt draws an independent ephemeral port, so
+/// three is already far past the measured loss rate while still failing fast on
+/// a real bind defect.
+const SPAWN_ATTEMPTS: u32 = 3;
+/// The sender binds its listener before awaiting anything else, so readiness is
+/// milliseconds away; this budget only has to outlast process startup.
+const LISTEN_READY_TIMEOUT: Duration = Duration::from_secs(2);
+const READY_POLL: Duration = Duration::from_millis(10);
+
+/// Spawns the sender and returns only once the child owns the SRT listen port.
+///
+/// Reserving an ephemeral port and releasing it before `exec` leaves a window in
+/// which any other process on the host can take it; the child then dies roughly
+/// a millisecond later with `bind local SRT UDP listener: Address already in
+/// use`, which reads exactly like the sender crashing. The window cannot be
+/// closed by holding the reservation open, because the child binds the port as a
+/// plain unicast UDP socket with no `SO_REUSEPORT`, and teaching production to
+/// share a listen port to suit a test would be the wrong direction entirely. So
+/// the acquisition is confirmed instead of assumed, and a port lost in that
+/// window — identified by the child's own bind error, never by a bare early exit
+/// — is re-drawn. Every other failure stays fatal on the first occurrence.
+async fn spawn_listening(paths: &ChildPaths<'_>, receiver_port: u16) -> (Sender, u16) {
+    let mut attempts_left = SPAWN_ATTEMPTS;
+    loop {
+        attempts_left -= 1;
+        let reservation = UdpSocket::bind("[::]:0").await.unwrap();
+        let port = reservation.local_addr().unwrap().port();
+        drop(reservation);
+        // Append, so a re-drawn port keeps the losing attempt's log for diagnosis.
+        let log = OpenOptions::new().append(true).open(paths.log).unwrap();
+        let mut sender = Sender(
+            Command::new(paths.executable)
+                .env("RUST_LOG", "info")
+                .args([
+                    port.to_string(),
+                    "127.0.0.1".into(),
+                    receiver_port.to_string(),
+                ])
+                .arg(paths.ips)
+                .args(["--mode", "adaptive", "--stats-file-interval", "100"])
+                .arg("--stats-file")
+                .arg(paths.stats)
+                .stdin(Stdio::null())
+                .stdout(Stdio::from(log.try_clone().unwrap()))
+                .stderr(Stdio::from(log))
+                .spawn()
+                .unwrap(),
+        );
+        if await_listening(&mut sender, paths.log, port).await {
+            return (sender, port);
+        }
+        drop(sender);
+        assert!(
+            attempts_left > 0,
+            "SRT listen port taken in the reservation window on all {SPAWN_ATTEMPTS} attempts; \
+             log:\n{}",
+            std::fs::read_to_string(paths.log).unwrap(),
+        );
+    }
+}
+
+/// Bounded readiness poll for the child's own report that it bound `port`.
+///
+/// Returns `false` for exactly one retryable outcome — the reserved port was
+/// taken between release and the child's bind. Any other early exit, and the
+/// absence of readiness altogether, panics with the captured log.
+async fn await_listening(sender: &mut Sender, log_path: &Path, port: u16) -> bool {
+    let listening = format!("listening for SRT on [::]:{port}");
+    let deadline = tokio::time::Instant::now() + LISTEN_READY_TIMEOUT;
+    loop {
+        let log = std::fs::read_to_string(log_path).unwrap();
+        if log.contains(&listening) {
+            return true;
+        }
+        if let Some(status) = sender.0.try_wait().unwrap() {
+            // The listener bind precedes every await in the sender, so a child
+            // that exited without that line never owned the port. Only the bind
+            // error itself is treated as the lost-reservation race.
+            if log.contains("bind local SRT UDP listener") && log.contains("Address already in use")
+            {
+                return false;
+            }
+            panic!("sender exited before binding the SRT listener: {status:?}; log:\n{log}");
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "sender never reported its SRT listener within {LISTEN_READY_TIMEOUT:?}; log:\n{log}",
+        );
+        tokio::time::sleep(READY_POLL).await;
+    }
+}
+
 async fn live_snapshot() -> Snapshot {
-    let deadline = tokio::time::sleep(Duration::from_secs(15));
-    tokio::pin!(deadline);
     let binary = Path::new(env!("CARGO_BIN_EXE_srtla_send"));
     // A same-filesystem hard link executes the exact Cargo artifact under a private
     // kernel process name, outside host-wide `killall srtla_send` cleanup.
@@ -48,30 +146,23 @@ async fn live_snapshot() -> Snapshot {
     let ips = dir.path().join("ips");
     let stats = dir.path().join("stats.json");
     let log_path = dir.path().join("sender.log");
-    let log = std::fs::File::create(&log_path).unwrap();
+    std::fs::File::create(&log_path).unwrap();
     std::fs::write(&ips, "127.0.0.1\n127.0.0.2\n").unwrap();
     let receiver = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-    let reservation = UdpSocket::bind("[::]:0").await.unwrap();
-    let port = reservation.local_addr().unwrap().port();
-    drop(reservation);
-    let mut sender = Sender(
-        Command::new(&executable)
-            .env("RUST_LOG", "info")
-            .args([
-                port.to_string(),
-                "127.0.0.1".into(),
-                receiver.local_addr().unwrap().port().to_string(),
-            ])
-            .arg(&ips)
-            .args(["--mode", "adaptive", "--stats-file-interval", "100"])
-            .arg("--stats-file")
-            .arg(&stats)
-            .stdin(Stdio::null())
-            .stdout(Stdio::from(log.try_clone().unwrap()))
-            .stderr(Stdio::from(log))
-            .spawn()
-            .unwrap(),
-    );
+    let (mut sender, port) = spawn_listening(
+        &ChildPaths {
+            executable: &executable,
+            ips: &ips,
+            stats: &stats,
+            log: &log_path,
+        },
+        receiver.local_addr().unwrap().port(),
+    )
+    .await;
+    // Unchanged 15s telemetry budget, started where the scenario itself starts so
+    // that confirming the listener cannot borrow from it.
+    let deadline = tokio::time::sleep(Duration::from_secs(15));
+    tokio::pin!(deadline);
     #[cfg(target_os = "linux")]
     assert_eq!(
         std::fs::read_to_string(format!("/proc/{}/comm", sender.0.id())).unwrap(),
