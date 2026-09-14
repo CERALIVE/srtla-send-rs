@@ -13,9 +13,10 @@ pub struct HealthConstants {
 
 impl Default for HealthConstants {
     fn default() -> Self {
+        let tuning = crate::adaptive_env::tuning();
         Self {
-            stall_attempts: 32,
-            loss_enter: 0.10,
+            stall_attempts: tuning.stall_attempts,
+            loss_enter: tuning.loss_enter,
             loss_clear: 0.05,
             loss_cohort_min_sends: 100,
             loss_stale_after_ms: 10_000,

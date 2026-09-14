@@ -6,7 +6,8 @@ use clap::Parser;
 use srtla_send::cli::{Cli, dry_run_resolve};
 #[cfg(not(loom))]
 use srtla_send::{
-    bind_map, capabilities, config, sender, stats, subscription, telemetry_file, version,
+    adaptive_env, bind_map, capabilities, config, sender, stats, subscription, telemetry_file,
+    version,
 };
 #[cfg(not(loom))]
 use tracing::{info, warn};
@@ -26,6 +27,11 @@ fn main() {}
 #[cfg(not(loom))]
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
+    // MUST stay the first statement: an unusable ablation request has to fail the
+    // process before any feature bit or scheduler constant is read, or the run
+    // reports an `effective_config` it never used. No-op without `test-internals`.
+    adaptive_env::init_from_env()?;
+
     let args = Cli::parse();
 
     if args.print_version {

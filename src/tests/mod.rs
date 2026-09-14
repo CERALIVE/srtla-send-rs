@@ -44,6 +44,9 @@ pub mod health_delivery_tests;
 pub mod adaptive_tests;
 
 #[cfg(test)]
+pub mod adaptive_ablation_tests;
+
+#[cfg(test)]
 pub mod health_delivery_batch_tests;
 
 #[cfg(test)]
