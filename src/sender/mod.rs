@@ -288,6 +288,11 @@ pub async fn run_sender_with_config(
                 tokio::select! {
                     Some(request) = pool_control.recv() => {
                         request.apply(&mut connections);
+                        // Refresh the telemetry snapshot immediately so the next
+                        // published snapshot reflects the applied change (e.g., priority
+                        // set via RPC). Without this, the snapshot lags until the next
+                        // housekeeping tick.
+                        adaptive_state.update_stats(&mut connections, &config.snapshot());
                     }
                     res = local_listener.recv_from(&mut recv_buf), if pending_local.is_none() => {
                         let config_snap = config.snapshot();
