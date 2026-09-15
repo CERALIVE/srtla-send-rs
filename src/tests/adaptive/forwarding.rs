@@ -70,8 +70,8 @@ impl Forwarding {
 }
 
 #[tokio::test]
-async fn exhausted_wire_budget_uses_another_funded_link_before_backpressure() {
-    // Given two healthy1Mbit budgets and an active cooldown on the first link.
+async fn adaptive_rate_estimate_does_not_override_ranked_link_cooldown() {
+    // Given two healthy links with old hard budgets that adaptive must disable.
     let _clock = TestClock::new(10_000);
     let mut f = Forwarding::new().await;
     for conn in &mut f.conns {
@@ -85,40 +85,32 @@ async fn exhausted_wire_budget_uses_another_funded_link_before_backpressure() {
     f.send(1).await;
     // When a third datagram exceeds the current link's two-MTU credit.
     assert_eq!(f.send_data(2, true).await, SrtPacketOutcome::Consumed);
-    // Then another funded admitted link wins despite cooldown; the pool stays intact.
-    assert_eq!(f.last, Some(1));
+    // Then rate-only funding cannot override the ranked link's cooldown.
+    assert_eq!(f.last, Some(0));
     assert_eq!(f.conns.len(), 2);
 }
 
 #[tokio::test]
-async fn all_wire_budgets_exhausted_defers_without_queueing_or_counting_the_packet() {
-    // Given four packets consuming two healthy links' initial bounded bursts.
-    let clock = TestClock::new(10_000);
+async fn adaptive_originals_and_retries_continue_beyond_old_wire_bursts() {
+    // Given two healthy links and five packets exceeding their old combined bursts.
+    let _clock = TestClock::new(10_000);
     let mut f = Forwarding::new().await;
     for conn in &mut f.conns {
         conn.health = HealthMachine::new(HealthState::Healthy, 0);
         conn.batch_sender
             .configure_wire_rate(Some(1_000_000.0), 10_000);
     }
-    for seq in 0..4 {
-        f.send(seq).await;
+    // When originals and retries enter at the same clock tick, none is backpressured.
+    for seq in 0..5 {
+        assert_eq!(
+            f.send_data(seq, seq % 2 == 1).await,
+            SrtPacketOutcome::Consumed
+        );
     }
-    // When all admitted budgets are exhausted, retain the datagram at the input boundary.
-    assert_eq!(f.send_data(4, true).await, SrtPacketOutcome::Backpressured);
-    assert_eq!(
-        f.conns
-            .iter()
-            .map(|c| c.bitrate.bytes_sent_total)
-            .sum::<u64>(),
-        4 * 1316
-    );
-    assert_eq!(f.sequences.get(4, 10_000), None);
     for conn in &mut f.conns {
         conn.flush_batch().await.unwrap();
     }
-    clock.set(10_012);
-    // Then accrued credit admits the same pending packet once, without dropping a link.
-    assert_eq!(f.send_data(4, true).await, SrtPacketOutcome::Consumed);
+    // Then every datagram is counted once and accepted without accruing rate credit.
     assert_eq!(
         f.conns
             .iter()
@@ -126,6 +118,9 @@ async fn all_wire_budgets_exhausted_defers_without_queueing_or_counting_the_pack
             .sum::<u64>(),
         5 * 1316
     );
+    for seq in 0..5 {
+        assert!(f.sequences.get(seq, 10_000).is_some());
+    }
     assert_eq!(f.conns.len(), 2);
 }
 

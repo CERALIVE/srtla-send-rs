@@ -205,9 +205,7 @@ impl SrtlaConnection {
                         self.label,
                         ack_list.len()
                     );
-                    for seq in ack_list {
-                        incoming.srtla_ack_numbers.push(seq);
-                    }
+                    incoming.srtla_ack_frames.push(ack_list);
                 }
             } else if pt == SRTLA_TYPE_KEEPALIVE {
                 if self

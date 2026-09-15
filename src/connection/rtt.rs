@@ -1,4 +1,6 @@
 // allow: SIZE_OK — legacy RTT code and in-file tests are byte-frozen; new window logic lives in queue_delay.
+#[cfg(test)]
+mod ack_frame_tests;
 mod queue_delay;
 
 use std::collections::VecDeque;

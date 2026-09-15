@@ -82,14 +82,45 @@ impl AckContext {
     }
 }
 
+#[cfg(test)]
 pub fn apply_srtla_ack(connections: &mut [SrtlaConnection], srtla_ack: i32, context: AckContext) {
+    apply_srtla_ack_frame(connections, &[u32::try_from(srtla_ack).unwrap()], context);
+}
+
+/// Credit every ACK, but sample adaptive RTT only from the final receiver-order
+/// entry. Earlier entries include receiver coalescing delay; a final probe or
+/// ambiguous/missing original must not fall back to one of those earlier entries.
+pub fn apply_srtla_ack_frame(
+    connections: &mut [SrtlaConnection],
+    sequences: &[u32],
+    context: AckContext,
+) {
+    let mut sample = None;
+    for &seq in sequences {
+        // The wire parser supplies only checked 31-bit sequence numbers.
+        let Ok(seq) = i32::try_from(seq) else {
+            sample = None;
+            continue;
+        };
+        sample = apply_srtla_ack_entry(connections, seq, context);
+    }
+    if let Some((sent_ms, now)) = sample {
+        connections[context.arrival_idx]
+            .rtt
+            .record_round_trip(sent_ms, now);
+    }
+}
+
+fn apply_srtla_ack_entry(
+    connections: &mut [SrtlaConnection],
+    srtla_ack: i32,
+    context: AckContext,
+) -> Option<(u64, u64)> {
     match context.policy {
         AckPolicy::Adaptive => {
-            let Some(conn) = connections.get_mut(context.arrival_idx) else {
-                return;
-            };
+            let conn = connections.get_mut(context.arrival_idx)?;
             if context.reader_generation != conn.delivery.socket_generation {
-                return;
+                return None;
             }
             let now = crate::utils::now_ms();
             conn.advance_probes(now);
@@ -111,9 +142,7 @@ pub fn apply_srtla_ack(connections: &mut [SrtlaConnection], srtla_ack: i32, cont
                 }
                 conn.adaptive.original_recovery.acknowledge(srtla_ack, now);
                 conn.apply_specific_ack(srtla_ack, false, false);
-                if let Some(sent_ms) = rtt_sent_ms {
-                    conn.rtt.record_round_trip(sent_ms, now);
-                }
+                return rtt_sent_ms.map(|sent_ms| (sent_ms, now));
             }
         }
         AckPolicy::Legacy {
@@ -139,4 +168,5 @@ pub fn apply_srtla_ack(connections: &mut [SrtlaConnection], srtla_ack: i32, cont
             }
         }
     }
+    None
 }

@@ -422,8 +422,60 @@ CeraUI and the device integration depend on these staying stable:
 
 ## BUILD / GATE
 
-**Scenario-A limitation and owner decision:** the sender retains the exact `d168aa6`
-wire-rate baseline. Post-Todo-28 provisional-learning, DemandLimited-utilization and
+**Hard-admission correction (2026-09-15), live acceptance still blocked:**
+`sender/wire_admission.rs::configure` now returns `None` for Adaptive's hard
+budget, retaining the estimator update but never installing `WireBudget`.
+`RateCap`'s soft BDP ranking multiplier is unchanged and does not read
+`WireRateEstimator::rate_bps`. Without the budget, `wire_sample()` is absent and
+the retained estimator update rebases instead of actively searching; do not claim
+continued attempted-wire measurement. The four frozen wire-rate/queue/search/budget
+implementation files remain byte-identical. The new fixed-clock regression first
+failed with `funded_link == None` after a queue-induced 500 kbit/s estimate and
+two-MTU reservation; it now admits and actually flushes three MTUs. Existing
+learned-rate/reconnect and forwarding tests assert the new no-hard-gate contract.
+Three isolated A indices (two attempts each, unchanged criteria) still fail
+`settle_timeout`; this correction is not sufficient for Scenario-A acceptance.
+Both full feature-suite invocations fail G's demotion and Twins sustained-health
+checks, while I passes; D remains ignored in those invocations. Build, Clippy and
+library tests pass. Formatting still reports the two pre-existing spans in unchanged
+`tests/netns_adaptive.rs`. No all-green gate, no C1 restart, and no scheduler
+acceptance is claimed. Historical hard-admission descriptions below are superseded.
+
+**ACK-frame RTT correction (2026-09-15), also insufficient for Scenario A:**
+Adaptive credits every valid link-local original/probe ACK as before, but supplies
+at most one RTT sample per SRTLA ACK frame, from its final receiver-order entry.
+A final probe, missing/expired original, replay, or Karn-ambiguous retransmission
+supplies none; never substitute an earlier entry that includes coalescing delay.
+`SrtlaIncoming` retains frame boundaries even when draining multiple datagrams.
+Legacy per-sequence RTT/window behavior is unchanged. `rtt.rs` adds only a test
+module, not an estimator change. The real-dispatch staggered-ten-original regression
+first recorded ten samples (870 down to 60 ms), Kalman 112.40 ms/jitter 170 ms; it now
+records only 60 ms, Kalman 60 ms/jitter 0. Seven tests cover mixed/probe-only frames,
+Karn exclusion, receiver order, replay, separate frames, and legacy behavior.
+
+The admission isolation comparison stashed only the three inherited Rust changes:
+HEAD `5d54052` failed G (30/61 demoted); baseline Twins passed once and failed a
+second run, including both sustained-health assertions. Restored admission-only
+Twins passed. Thus both failure signatures predate admission removal; this does
+not establish equal failure rates or waive either blocking assertion.
+The combined immutable candidate's isolated A smoke still failed all six attempts
+(three indices, unchanged two-attempt budget) with `settle_timeout`. Sink data
+shows transient 23.78–24.20 Mbps one-second peaks but only 7.02–11.07 Mbps in final
+one-second buckets. Admission-only evidence likewise had transient ~24 Mbps peaks,
+so neither zero-goodput failure placeholders nor peaks establish sustained delivery.
+Retained sender log tails contain NAK floods but no health/RTT status lines and no
+literal 1000-sequence truncation warnings; truncated logs cannot prove their absence
+throughout a run. Stable health and RTT improvement are unverified live. No C1
+restart, active-search redesign, telemetry expansion, or acceptance-criteria change.
+Final gate: release build, Clippy, changed-file formatting, nine changed Rust files'
+LSP diagnostics, and library tests (883 passed, one ignored) pass. Both feature
+suites pass 908 library tests (one ignored), then fail G (34/61 and 49/61 demoted)
+and Twins sustained health; I passes. Later integration targets are not reached.
+Whole-tree formatting still reports only the unchanged `netns_adaptive.rs` spans.
+Both fixes remain uncommitted pending the owner's decision on the failed live gate.
+
+**Scenario-A limitation and owner decision:** the estimator retains the exact `d168aa6`
+wire-rate implementation. Post-Todo-28 provisional-learning, DemandLimited-utilization and
 repeat-reset experiments passed deterministic tests but failed live A acceptance and
 have been reverted. Their mechanisms, full provisional test source, measured limits,
 and the C1/C2 follow-up are archived in
@@ -637,8 +689,9 @@ retry amplification. No speculative controller change, G scenario change or
 threshold relaxation was made. Latest real gates remain I PASS, D/G/Twins FAIL;
 round9's bounded twin recovery still passes. Todo28 remains unchecked.
 
-**Attempted-wire admission (Todo 28 round 11 — NOT acceptance-green):** adaptive
-mode now has a separate hard gate, `connection/wire_budget.rs`, integrated at
+**Historical attempted-wire admission (Todo 28 round 11 — NOT acceptance-green;
+superseded by the hard-admission correction above):** adaptive
+mode acquired a separate hard gate, `connection/wire_budget.rs`, integrated at
 `BatchSender::flush` and `sender/wire_admission.rs`. Its input is the existing
 per-link `RateCap.target_bps()` estimate; RateCap's code and positive ranking
 multiplier are unchanged. This is an enforced estimate, NOT a configured or known

@@ -1,5 +1,3 @@
-use anyhow::Context;
-
 use crate::connection::wire_rate::{WireRateInput, WireRatePhase, WireRttSample};
 use crate::mode::SchedulingMode;
 use crate::test_helpers::create_test_connection;
@@ -32,15 +30,11 @@ async fn learned_wire_rate_survives_recovery_and_socket_recreation() -> anyhow::
     }
     assert_eq!(conn.wire_rate.rate_bps(), 8_000_000.0);
     assert_eq!(conn.rate_cap.target_bps(), 1_000_000.0);
-    // When production configuration installs the budget and later rebuilds the socket.
+    // When production configuration disables hard admission and rebuilds the socket.
     clock.set(2000);
     super::configure(std::slice::from_mut(&mut conn), SchedulingMode::Adaptive);
-    let sample = conn
-        .batch_sender
-        .wire_sample()
-        .context("adaptive wire budget must be configured")?;
-    assert_eq!(sample.rate_bps, 8_000_000.0);
-    assert_eq!(sample.accepted_bytes, 0);
+    assert_eq!(conn.wire_rate.rate_bps(), 8_000_000.0);
+    assert!(!conn.batch_sender.wire_limited());
     conn.mark_for_recovery();
     conn.reconnect().await?;
     clock.set(3000);
@@ -48,11 +42,7 @@ async fn learned_wire_rate_survives_recovery_and_socket_recreation() -> anyhow::
     // Then learned rate survives, with new-generation validation rather than cold bootstrap.
     assert_eq!(conn.wire_rate.rate_bps(), 8_000_000.0);
     assert_eq!(conn.wire_rate.phase(), WireRatePhase::Searching);
-    let sample = conn
-        .batch_sender
-        .wire_sample()
-        .context("adaptive wire budget must survive recovery")?;
-    assert_eq!(sample.rate_bps, 8_000_000.0);
+    assert!(!conn.batch_sender.wire_limited());
     assert_eq!(conn.delivery.latest_original_delivery_ms(), None);
     assert_eq!(conn.rate_cap.target_bps(), 1_000_000.0);
     Ok(())

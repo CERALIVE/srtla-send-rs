@@ -8,7 +8,10 @@ use tokio::net::UdpSocket;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tracing::{debug, warn};
 
-pub(crate) use super::ack::{AckContext, AckPolicy, apply_srtla_ack};
+#[cfg(test)]
+pub(crate) use super::ack::apply_srtla_ack;
+use super::ack::apply_srtla_ack_frame;
+pub(crate) use super::ack::{AckContext, AckPolicy};
 use super::selection::adaptive::AdaptiveState;
 use super::selection::{EdpfSchedulerState, select_connection_idx_with_state};
 use super::sequence::SequenceTracker;
@@ -59,7 +62,7 @@ pub async fn process_connection_events_at(
     if !incoming.read_any
         && incoming.ack_numbers.is_empty()
         && incoming.nak_numbers.is_empty()
-        && incoming.srtla_ack_numbers.is_empty()
+        && incoming.srtla_ack_frames.is_empty()
         && incoming.forward_to_client.is_empty()
     {
         return Ok(());
@@ -86,8 +89,8 @@ pub async fn process_connection_events_at(
         }
     }
 
-    for srtla_ack in incoming.srtla_ack_numbers.iter() {
-        apply_srtla_ack(connections, *srtla_ack as i32, context);
+    for frame in &incoming.srtla_ack_frames {
+        apply_srtla_ack_frame(connections, frame, context);
     }
 
     for nak in incoming.nak_numbers.iter() {

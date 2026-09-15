@@ -103,6 +103,38 @@ experiments that passed unit tests but did not stabilize live delivery. The eval
 note preserves those mechanisms and reusable test scaffolding for the planned C1/C2
 campaigns. Prior bounded-recovery evidence does not establish stable throughput on A.
 
+**Hard-admission correction (2026-09-15), not throughput acceptance:** adaptive no
+longer installs a `WireBudget` in `wire_admission::configure`. The separate
+`RateCap` BDP ranking multiplier is unchanged; ranking does not consume
+`WireRateEstimator::rate_bps`. The estimator implementation and update call are
+retained, but without a budget its accepted-byte sample is absent, so it cannot
+perform active rate search. A fixed-clock regression proves that a queue-induced
+500 kbit/s estimate cannot deny admission or limit the kernel-accepted batch.
+Three fresh Scenario-A indices still exhausted the unchanged two-attempt budget
+with `settle_timeout`. G and Twins sustained-health checks also fail in both
+feature-suite runs; I passes. This narrow correction is therefore **insufficient**
+to clear the live gate. No thresholds, scenarios, or campaign criteria were relaxed.
+
+**ACK-frame follow-up (2026-09-15):** adaptive now takes at most one RTT sample
+per SRTLA ACK frame, from its final entry in receiver arrival order. Earlier
+entries include receiver batching delay. If the final entry is a duplicate probe,
+retransmission-ambiguous original, replay, or missing original, the frame supplies
+no RTT sample. Every entry still receives its existing delivery/loss/window
+accounting; the four legacy modes retain per-sequence RTT behavior. Frame boundaries
+survive batched reads. Seven regression/control tests include a staggered ten-packet
+frame that formerly sampled 870–60 ms on a 60 ms path and now samples 60 ms only.
+
+This does **not** fix live Scenario A: all six new attempts still fail
+`settle_timeout`. Both admission-only and combined candidates briefly reach ~24 Mbps
+one-second sink peaks, then fail to sustain the settling target; the combined
+candidate's final one-second sink buckets are 7.02–11.07 Mbps. Its truncated sender
+log tails cannot establish stable health or live RTT improvement. Separately,
+stash-isolated HEAD reproduces both G demotion (30/61) and Twins sustained-health
+failures, establishing pre-existing failure signatures, not equal failure rates
+or a waiver. Scheduler acceptance and Campaign C1 remain blocked.
+The final build/Clippy/library/changed-file-formatting gates pass, but both broader
+feature suites still fail G and Twins health; later targets are not reached.
+
 `--mode adaptive` selects the health/deadline-gated capacity pipeline. It ranks
 admitted links by the existing queued-load score and cached quality, multiplied by
 rejoin ramp, Healthy-only preference, and the delivered-rate controller's soft cap.
@@ -414,7 +446,9 @@ the controller's delivered-rate/unique-flight proxies are not a total-wire pacin
 budget. No new production fix was justified by this narrower hypothesis; G and
 the complete adaptive integration gate remain unresolved.
 
-The next experiment adds **hard per-link attempted-wire admission**, separate from
+The historical round-11 experiment below is superseded by the hard-admission
+correction above; its measurements are not current acceptance evidence.
+That experiment added **hard per-link attempted-wire admission**, separate from
 RateCap's ranking multiplier. Queued originals, retransmits and probes share byte
 credit derived from the current RateCap target, with a two-MTU burst limit.
 Unfunded datagrams wait; only the kernel-accepted prefix spends credit. Admission
