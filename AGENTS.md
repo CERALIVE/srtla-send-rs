@@ -1393,6 +1393,32 @@ probe_max_pps=10 bond-wide; dwell_backoff_max=16. Formula-valued defaults are pu
 methods `stall_tau`, `queue_enter`, `queue_clear`; `train_period_ms` and `rejoin_span`
 expose the cadence calculations to future probe consumers.
 
+**Round-8 keepalive detector (2026-09-15), uncommitted experiment / acceptance FAILED.**
+`HealthSignals.keepalive_silence_ms` comes from the socket-scoped
+`connection::keepalive::KeepaliveLiveness`, not RTT's intermittently armed waiting
+flag. The original attempts≥32 AND DATA-proof-age≥τ condition remains; an OR arm
+adds control silence≥3×IDLE_TIME (3000ms) with DATA proof unknown or ≥τ old.
+Healthy controls never veto DATA-stall detection; fresh DATA still proves liveness.
+Unknown control age means no accepted keepalive send, not expiry. First accepted
+send anchors the no-reply deadline; subsequent sends cannot postpone it. Pending
+timestamps use a fixed 16-slot ring, matched timestamped replies are one-shot and
+monotonic, and bare two-byte replies prove control liveness only. Zero-ms replies
+do not change the existing RTT rejection rule. Core recovery clears this evidence.
+No keepalive-only Stalled→Rejoining bypass is added: recovery still needs DATA.
+Keepalive sends remain independent of selection, checked every housekeeping tick;
+actual intervals include tick/I/O scheduling, not a hard real-time guarantee.
+
+This does **not** resolve D: its classifier deliberately passes small controls while
+dropping DATA. Ten unchanged sole-ON release trials give3/10 timely Stalled/0,
+versus fresh baseline2/10 and historical4/5; full D0/10. All nine logged Stalled
+transitions meet the original DATA condition. No substantial detector improvement
+is established, so admission/ranking/sole remain untouched and conditional A was
+not run. Dedicated G fails3/3; release Twins passes3/3, while both broader feature
+gates and the netns script fail G/Twins. No full-green or C1/Todo31 completion claim.
+Nine new tests include two behavioral failures before implementation, healthy idle
+controls, replay/interop/reset boundaries and preserved DATA-only failure handling.
+Details and per-run timings: [`docs/notes/adaptive-keepalive-round8.md`](docs/notes/adaptive-keepalive-round8.md).
+
 **Queue-entry persistence (Todo 28 round 7):** `step_with_originals` starts one
 private `queue_entry_pending: Option<QueueEntryPending>` episode on the first
 Healthy/Rejoining evaluation at or above `queue_enter`. It latches `since_ms` and

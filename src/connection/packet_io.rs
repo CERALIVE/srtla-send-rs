@@ -208,6 +208,8 @@ impl SrtlaConnection {
                     incoming.srtla_ack_frames.push(ack_list);
                 }
             } else if pt == SRTLA_TYPE_KEEPALIVE {
+                self.keepalive_liveness
+                    .record_reply(data, crate::utils::now_ms());
                 if self
                     .rtt
                     .handle_keepalive_response(data, &self.label)

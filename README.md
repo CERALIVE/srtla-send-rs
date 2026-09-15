@@ -135,6 +135,19 @@ or a waiver. Scheduler acceptance and Campaign C1 remain blocked.
 The final build/Clippy/library/changed-file-formatting gates pass, but both broader
 feature suites still fail G and Twins health; later targets are not reached.
 
+**Round-8 keepalive-detector experiment (2026-09-15): NOT an A/D solution.**
+Separate socket-scoped keepalive reply tracking adds a three-interval silence
+condition without requiring DATA attempts; the existing DATA-only stall condition
+is retained. Real-UDP failing-first tests cover idle silence and a late DATA ACK
+resetting the attempt counter. However, D deliberately passes small keepalives
+while dropping DATA: ten detector-only, sole-ON release trials yield only **3/10**
+timely Stalled/zero-weight observations, versus the nearest default baseline's
+**2/10** (historical **4/5** is not a paired control). Complete D passes: **0/10**.
+The conditional admission change was not attempted. G fails all three dedicated
+trials; release Twins passes three, but broader test-profile gates still fail G
+and Twins health. This experiment remains uncommitted and unaccepted; no C1 restart
+or hardware improvement is claimed. See the [round-8 findings](docs/notes/adaptive-keepalive-round8.md).
+
 `--mode adaptive` selects the health/deadline-gated capacity pipeline. It ranks
 admitted links by the existing queued-load score and cached quality, multiplied by
 rejoin ramp, Healthy-only preference, and the delivered-rate controller's soft cap.
@@ -803,8 +816,19 @@ read clocks or perform I/O. Adaptive selection now reads a connection-owned mach
 but housekeeping transitions and lifecycle reset integration remain separate work.
 
 Hard failures enter Down; restored connections enter Rejoining rather than skipping
-the ramp. Stalling requires both 32 attempts without DATA proof and proof age ≥τ,
-where τ = clamp(4×sRTT, 1000, 3000) ms (3000 ms without a sample). Degradation uses
+the ramp. The DATA-stall condition requires both 32 attempts without DATA proof and
+proof age ≥τ, where τ = clamp(4×sRTT, 1000, 3000) ms (3000 ms without a sample).
+The experimental round-8 alternative is keepalive silence ≥3×IDLE_TIME (3000ms),
+with DATA proof either unknown or also ≥τ old. Fresh DATA proof prevents a
+control-only loss from declaring an actively delivering link stalled. Silence
+starts at the first accepted keepalive send until the first reply, then at each
+accepted reply; further sends never renew it. Tracking is separate from RTT
+sampling, accepts zero-ms and bare two-byte liveness without seeding RTT, rejects
+unmatched/replayed timestamped echoes, and resets with socket recovery. A healthy
+keepalive cannot veto the DATA-stall condition or substitute for DATA recovery
+rounds. Thus an idle link stalled by control silence still needs DATA evidence to
+rejoin; this is a limitation of the narrow detector experiment, not a new recovery
+design. Degradation uses
 qualifying normal-loss EWMA ≥10%, persistent queue delay ≥max(10, 0.25×slow-min-RTT) ms,
 or an independently observed `RouteHealth::NoDefaultRoute`.
 Queue entry from Healthy/Rejoining requires that predicate continuously for τ,

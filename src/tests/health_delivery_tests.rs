@@ -33,6 +33,7 @@ fn health(conn: &SrtlaConnection) -> HealthState {
             route_health: crate::connection::route::RouteHealth::Unknown,
             attempts_since_proof: conn.delivery.attempts_since_proof,
             proof_age_ms: conn.delivery.proof_age_ms(now_ms()),
+            keepalive_silence_ms: conn.keepalive_liveness.silence_age_ms(now_ms()),
             srtt_ms: conn.has_rtt_sample().then(|| conn.get_smooth_rtt_ms()),
             loss_ewma: None,
             loss_cohort_ok: false,

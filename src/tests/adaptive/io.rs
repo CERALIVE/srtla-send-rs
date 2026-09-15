@@ -23,6 +23,7 @@ async fn scenario_d_is_held_probed_and_readmitted_after_rejoining_ramp() {
         route_health: crate::connection::route::RouteHealth::Unknown,
         attempts_since_proof: conns[0].delivery.attempts_since_proof,
         proof_age_ms: conns[0].delivery.proof_age_ms(14_000),
+        keepalive_silence_ms: conns[0].keepalive_liveness.silence_age_ms(14_000),
         srtt_ms: Some(40.0),
         loss_ewma: None,
         loss_cohort_ok: false,

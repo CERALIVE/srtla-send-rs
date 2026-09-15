@@ -12,6 +12,7 @@ pub(super) fn signals(now_ms: u64) -> HealthSignals {
         route_health: crate::connection::route::RouteHealth::Unknown,
         attempts_since_proof: 0,
         proof_age_ms: Some(0),
+        keepalive_silence_ms: None,
         srtt_ms: Some(40.0),
         loss_ewma: Some(0.0),
         loss_cohort_ok: true,

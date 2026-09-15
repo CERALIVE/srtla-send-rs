@@ -296,6 +296,7 @@ impl HealthTicker {
                 route_health: conn.route_health,
                 attempts_since_proof: conn.delivery.attempts_since_proof,
                 proof_age_ms: conn.delivery.proof_age_ms(now),
+                keepalive_silence_ms: conn.keepalive_liveness.silence_age_ms(now),
                 srtt_ms,
                 loss_ewma: conn.loss.last_value(),
                 loss_cohort_ok: conn.loss.loss_cohort_ok(now, k.loss_stale_after_ms),
@@ -331,7 +332,10 @@ impl HealthTicker {
             {
                 let reason = match to {
                     HealthState::Down => "socket or registration unavailable",
-                    HealthState::Stalled => "DATA proof overdue",
+                    HealthState::Stalled if signals.attempts_since_proof >= k.stall_attempts => {
+                        "DATA proof overdue"
+                    }
+                    HealthState::Stalled => "keepalive replies overdue",
                     HealthState::Degraded if conn.health.route_latched() => "no default route",
                     HealthState::Degraded if conn.health.loss_latched() => "normal DATA loss",
                     HealthState::Degraded => "queue delay",
@@ -342,6 +346,9 @@ impl HealthTicker {
                     HealthState::Healthy => "ramp complete",
                 };
                 info!(
+                    attempts_since_proof = signals.attempts_since_proof,
+                    proof_age_ms = ?signals.proof_age_ms,
+                    keepalive_silence_ms = ?signals.keepalive_silence_ms,
                     "link {} health {}→{} ({reason})",
                     conn.label,
                     observation.reported.as_str(),

@@ -44,6 +44,9 @@ pub struct HealthSignals {
     /// None is unknown, not infinite age. Before first proof, supply time since
     /// registration/first attempt so an unproven active link can still stall.
     pub proof_age_ms: Option<u64>,
+    /// Since last keepalive reply, or first accepted keepalive before any reply.
+    /// None means no keepalive has been sent on this socket, not infinite age.
+    pub keepalive_silence_ms: Option<u64>,
     pub srtt_ms: Option<f64>,
     pub loss_ewma: Option<f64>,
     /// True only for a qualifying normal-DATA cohort; probes never set this.
@@ -152,8 +155,14 @@ impl HealthMachine {
         use HealthState::{Degraded, Down, Healthy, Rejoining, Stalled};
 
         let tau = k.stall_tau(s.srtt_ms);
-        let stalled = s.attempts_since_proof >= k.stall_attempts
-            && s.proof_age_ms.is_some_and(|age| elapsed_ms(age, 0) >= tau);
+        let data_overdue = s.proof_age_ms.is_some_and(|age| elapsed_ms(age, 0) >= tau);
+        let keepalive_overdue = s
+            .keepalive_silence_ms
+            .is_some_and(|age| age >= super::keepalive::SILENCE_MS);
+        // Control silence covers idle/starved links; healthy echoes cannot veto a
+        // DATA-only blackhole, and recent DATA proof still establishes liveness.
+        let stalled = (s.attempts_since_proof >= k.stall_attempts && data_overdue)
+            || (keepalive_overdue && (data_overdue || s.proof_age_ms.is_none()));
         let loss_entered = s.loss_cohort_ok && s.loss_ewma.is_some_and(|loss| loss >= k.loss_enter);
         self.route_latched = match s.route_health {
             RouteHealth::NoDefaultRoute => true,
@@ -289,6 +298,9 @@ fn elapsed_ms(now_ms: u64, then_ms: u64) -> f64 {
 #[cfg(test)]
 #[path = "../tests/health_invariant_tests.rs"]
 mod invariant_tests;
+#[cfg(test)]
+#[path = "../tests/health_keepalive_tests.rs"]
+mod keepalive_tests;
 #[cfg(test)]
 #[path = "../tests/health_queue_entry_tests.rs"]
 mod queue_entry_tests;

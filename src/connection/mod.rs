@@ -9,6 +9,9 @@ pub mod delivery;
 pub mod egress;
 pub mod health;
 mod incoming;
+mod keepalive;
+#[cfg(test)]
+mod keepalive_health_tests;
 pub mod loss;
 mod packet_io;
 #[cfg(test)]
@@ -170,6 +173,7 @@ pub struct SrtlaConnection {
     pub(crate) last_sent: Option<Instant>,
     /// Timestamp of the last keepalive sent (for periodic telemetry)
     pub(crate) last_keepalive_sent: Option<Instant>,
+    pub(crate) keepalive_liveness: keepalive::KeepaliveLiveness,
     /// `now_ms()` of this link's last rate-limited PROBE growth under the
     /// EXPERIMENTAL `earned_ack_window` valve. `0` = eligible now; updated ONLY
     /// on probe growth (never by the earner's full growth). Inert while the flag
@@ -277,6 +281,7 @@ impl SrtlaConnection {
             last_received: None,
             last_sent: None,
             last_keepalive_sent: None,
+            keepalive_liveness: keepalive::KeepaliveLiveness::default(),
             last_probe_growth_ms: 0,
             last_ack_or_rtt_sample_ms: 0,
             last_stall_reprobe_ms: 0,
@@ -427,6 +432,9 @@ impl SrtlaConnection {
         };
         let pkt = create_keepalive_packet_ext(info);
         self.send_control_padded(&pkt).await?;
+        if let Some(sent_ms) = extract_keepalive_timestamp(&pkt) {
+            self.keepalive_liveness.record_sent(sent_ms);
+        }
         let now_instant = Instant::now();
         let now = now_ms();
         self.last_sent = Some(now_instant);
@@ -583,6 +591,7 @@ impl SrtlaConnection {
     /// Used by both mark_for_recovery and reset_state.
     fn reset_core_state(&mut self) {
         let now = now_ms();
+        self.keepalive_liveness = keepalive::KeepaliveLiveness::default();
         self.delivery.reset();
         self.probes.reset();
         self.loss = loss::LossTracker::new(now);
