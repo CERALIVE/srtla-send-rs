@@ -1087,6 +1087,19 @@ property holds cannot overlap, so their combined waveform uses adjacent updates.
 
 ### Paired campaign runner
 
+C1 retains all seven arms: five fork modes and upstream `df0b393` classic/enhanced,
+across thirteen profiles, production SRT, five runs, seed 20260913 (455 successes
+required). Upstream's intentional 4.0.1/fork 3.3.0 version divergence is not an
+exclusion criterion. Set upstream `stats_file: false` and omit `effective_config`:
+the harness otherwise appends unsupported `--stats-file`, causing argument-parse
+exit disguised as a UDP-listener timeout. All five fork test-internals modes expose
+the complete adaptive configuration through metrics, even in legacy modes; declare
+that observed configuration without enabling adaptive mode or adding env overrides.
+`sender-startup.log` preserves captured child output before propagating listener
+readiness failure. The readiness timeout and all measurement criteria are unchanged.
+The C1 manifest contract tests pin these distinctions; successful startup alone is
+not warm-up settling or campaign acceptance.
+
 `tests/bench_scheduler.rs` and `tests/bench_support/` integrate the scenario, topology,
 profile and metric APIs. [Campaign contract](docs/notes/bench-campaign.md): required
 explicit cells, per-pair seeded candidate interleaving, atomic RunRecord checkpoints,

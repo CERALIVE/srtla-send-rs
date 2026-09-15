@@ -612,6 +612,17 @@ definition/metric tests, not evidence of a real bonded-hardware performance impr
 
 ### Paired checkpointed scheduler campaigns
 
+C1 compares all five fork modes with upstream `df0b393` classic/enhanced: thirteen
+profiles, production SRT, N=5, seed 20260913, 455 required successful runs. The
+intentional fork 3.3.0/upstream 4.0.1 divergence is part of the comparison, not a
+reason to remove upstream. External arms use `stats_file: false` and no
+`effective_config` expectation: upstream does not implement the fork's stats-file
+flag or adaptive metrics. Fork test-internals arms declare their actual complete
+metrics configuration in every mode. Failed listener startup now retains captured
+output in `sender-startup.log`, so an unsupported argument is not hidden behind an
+empty UDP-listener poll. Startup and settling bounds remain unchanged; neither
+startup success nor partial campaign progress establishes performance acceptance.
+
 `tests/bench_scheduler.rs` consumes a required **explicit `cells` matrix**, not a
 Cartesian product. It interleaves candidates per seeded pair, retries failed indices,
 archives stale fingerprints, and atomically publishes the existing `RunRecord` schema.
