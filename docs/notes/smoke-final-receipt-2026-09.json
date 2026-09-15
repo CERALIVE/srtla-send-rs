@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "campaign": "smoke",
+  "source_revision": "d168aa6ea2a5ba5e1b3771a64c5015a3c4574a03",
+  "sender_sha256": "b8763976a36134ecd115d9666a8b30791b24ccd6cb077fbf110ade6177e94af8",
+  "receiver_sha256": "38b7b76c6e8f8e888aaecf1baf784c7b30895c6cc17e01e03857474e987ac854",
+  "manifest_sha256": "27f03239450644c73cea652765953cafd6e372969b1ba56b258a833ce5964548",
+  "seed": 1,
+  "srt_profile": {"name": "production", "latency_ms": 2000, "lossmaxttl": 40},
+  "original_campaign": {
+    "status": "failed",
+    "exit_code": 101,
+    "duration_seconds": 859.93,
+    "command_duration_seconds": 860.87,
+    "planned_indices": 12,
+    "attempts": 21,
+    "successful_indices": 3,
+    "failed_attempts": 18,
+    "exhausted_indices": 9
+  },
+  "owner_scoped_acceptance": {
+    "status": "passed",
+    "rescored_existing_data": true,
+    "new_live_runs": 0,
+    "minimum_successes_per_required_cell": 1,
+    "planned_indices_per_cell": 2,
+    "required_cells": ["classic--A--ceralive--production", "enhanced--A--ceralive--production"],
+    "informational_cells": ["classic--D--ceralive--production", "enhanced--D--ceralive--production", "adaptive--A--ceralive--production", "adaptive--D--ceralive--production"],
+    "performance_certification": false,
+    "c1_c2_waiver": false
+  },
+  "generated_artifact_sha256": {
+    "summary.json": "c11f224fe2e0f5131d66905d82c5bd06c8634199f7f9e8979bea38291e870094",
+    "report.md": "437392f85db8a6882e98b13ba43a99d6436f959c6adbd0fba55e54c83ca23720",
+    "known-findings.json": "80516a506504b47057fcb21ad6a22f2c80409b638ac5724b7eb976a364d31a4e"
+  },
+  "cells": [
+    {"candidate": "classic", "scenario": "A", "successful_indices": [0, 1], "failed_attempts": 0, "exhausted_indices": [], "acceptance": "required-pass"},
+    {"candidate": "enhanced", "scenario": "A", "successful_indices": [0], "failed_attempts": 2, "exhausted_indices": [1], "acceptance": "required-pass"},
+    {"candidate": "classic", "scenario": "D", "successful_indices": [], "failed_attempts": 4, "exhausted_indices": [0, 1], "acceptance": "informational", "reason": "settle_timeout"},
+    {"candidate": "enhanced", "scenario": "D", "successful_indices": [], "failed_attempts": 4, "exhausted_indices": [0, 1], "acceptance": "informational", "reason": "settle_timeout"},
+    {"candidate": "adaptive", "scenario": "A", "successful_indices": [], "failed_attempts": 4, "exhausted_indices": [0, 1], "acceptance": "informational", "reason": "settle_timeout"},
+    {"candidate": "adaptive", "scenario": "D", "successful_indices": [], "failed_attempts": 4, "exhausted_indices": [0, 1], "acceptance": "informational", "reason": "settle_timeout"}
+  ],
+  "successful_records": [
+    {
+      "run_id": "efb7d129-f93f-4b43-b9d7-93f280d0979f",
+      "cell_id": "classic--A--ceralive--production",
+      "run_index": 0,
+      "attempt": 1,
+      "started_at": "2026-09-15T01:44:15.056Z",
+      "window_seconds": 45,
+      "useful_goodput_bps": 21458169.6,
+      "viewer_loss_ratio": 0.10565541004868512,
+      "fingerprint": "bd383fd00f6fba426188b6814b4f69ca7140e481940f9495cb21f95531d66331"
+    },
+    {
+      "run_id": "bc254228-0f3b-4f1f-95ad-29ff1e6589ae",
+      "cell_id": "classic--A--ceralive--production",
+      "run_index": 1,
+      "attempt": 1,
+      "started_at": "2026-09-15T01:47:40.058Z",
+      "window_seconds": 45,
+      "useful_goodput_bps": 21010612.622222222,
+      "viewer_loss_ratio": 0.12387617242552364,
+      "fingerprint": "bd383fd00f6fba426188b6814b4f69ca7140e481940f9495cb21f95531d66331"
+    },
+    {
+      "run_id": "2080f176-bd48-4436-888d-cbdf22605fcf",
+      "cell_id": "enhanced--A--ceralive--production",
+      "run_index": 0,
+      "attempt": 1,
+      "started_at": "2026-09-15T01:45:18.067Z",
+      "window_seconds": 45,
+      "useful_goodput_bps": 21251820.8,
+      "viewer_loss_ratio": 0.11487147075379464,
+      "fingerprint": "11a1d78e32d39ba2587957433c48cce3246da56540ae594be0ba6c3a51fe1134"
+    }
+  ]
+}
