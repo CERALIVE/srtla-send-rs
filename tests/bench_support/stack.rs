@@ -142,7 +142,12 @@ impl Stack {
             "env",
             &launch.iter().map(String::as_str).collect::<Vec<_>>(),
         )?;
-        wait_for_udp_listener(&topo.sender_ns, 5555, Duration::from_secs(5))?;
+        let readiness = wait_for_udp_listener(&topo.sender_ns, 5555, Duration::from_secs(5));
+        std::fs::write(
+            request.artifacts.join("sender-startup.log"),
+            sender.log_snapshot().join("\n"),
+        )?;
+        readiness?;
         wait_for_registered_uplinks(&sender, links.len(), Duration::from_secs(30))?;
         if control.exists() {
             ensure!(

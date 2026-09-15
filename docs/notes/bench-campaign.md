@@ -135,6 +135,16 @@ Each attempt has a unique artifact directory with `request.json`, `result.json`,
 `worker.log`, individual process logs, `receiver.csv`, `sink.csv`, and `clocks.json`
 when calibration/measurement reached that point.
 
+`sender-startup.log` is written immediately after the sender listener wait, including
+on failure, before the partially built stack is dropped. Inspect it first for a
+port-5555 timeout: candidate `stats_file: true` injects `--stats-file` independently
+of `candidate.args`, and upstream `df0b393` rejects that flag before binding.
+Its arms must set `stats_file: false` and omit unsupported `effective_config`
+(an empty object is an explicit expectation, not absence). All five fork
+test-internals modes expose the complete adaptive configuration even when the
+selected scheduler is legacy; declare it verbatim. No candidate is excluded by
+its version label, and no startup/settling timeout is extended for this correction.
+
 Every result is the existing **RunRecord v1**, with additive `attempt` (1-based),
 optional `reason`, and optional `detail` at top level. Run indices are 0-based;
 `started_at` is UTC RFC3339; `order_index` is the invocation's execution ordinal.
