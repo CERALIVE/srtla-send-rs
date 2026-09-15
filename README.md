@@ -78,6 +78,13 @@ The scheduler state (BLEST + IoDS) is owned per send-loop (no thread-local), so 
 
 #### Adaptive Mode [PARTIAL]
 
+Adaptive has a [known baseline-topology throughput limitation](docs/notes/scheduler-evaluation-2026-09.md#known-limitation-adaptive-mode-baseline-topology-throughput-instability-scenario-a-discovered-post-todo-28),
+discovered by the post-Todo-28 smoke campaign on three equal10Mbit/s links with normal
+jitter. The owner retained the `d168aa6` wire-rate baseline and reverted subsequent
+experiments that passed unit tests but did not stabilize live delivery. The evaluation
+note preserves those mechanisms and reusable test scaffolding for the planned C1/C2
+campaigns. Prior bounded-recovery evidence does not establish stable throughput on A.
+
 `--mode adaptive` selects the health/deadline-gated capacity pipeline. It ranks
 admitted links by the existing queued-load score and cached quality, multiplied by
 rejoin ramp, Healthy-only preference, and the delivered-rate controller's soft cap.
@@ -600,6 +607,23 @@ The runner uses interval CSV semantics, real warm-up settling, FIFO source-rate
 changes, bounded worker processes, and the A/B runner's shared host measurement lock.
 Live campaign validation remains separate from the unprivileged gate; no hardware
 performance claim is implied.
+
+The [smoke tooling](scripts/bench/README.md#smoke-campaign) builds the clean current
+revision into a SHA-addressed, read-only `test-internals` artifact and defines the
+classic/enhanced/adaptive A+D matrix. The owner-calibrated smoke gate requires at least
+one successful run out of two in each of classic/A and enhanced/A; all D and adaptive/A outcomes
+are informational. `report_smoke.sh` validates all original outcomes and provenance,
+then publishes actual successful counts and indices without relabelling failures.
+`assert_smoke.sh` keeps the required-record goodput, receiver-packet, configuration,
+and full-window checks. Zero coverage in either required cell remains blocking.
+This is path-coverage calibration, not performance certification or a C1/C2 waiver. Negative tests
+mutate disposable copies, never measured evidence. This proves measurement plumbing,
+not scheduler superiority or permission to tune constants.
+
+The [final smoke report](docs/notes/smoke-final-report-2026-09.md) retrospectively scores
+the existing campaign: classic/A2/2 and enhanced/A1/2 pass this scope, while all four
+informational cells remain0/2. The original campaign exit101 is retained as a failure;
+no new live run or scheduler change was used to obtain the scoped pass.
 
 ### Statistical reports and retention decisions
 

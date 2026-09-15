@@ -422,6 +422,28 @@ CeraUI and the device integration depend on these staying stable:
 
 ## BUILD / GATE
 
+**Scenario-A limitation and owner decision:** the sender retains the exact `d168aa6`
+wire-rate baseline. Post-Todo-28 provisional-learning, DemandLimited-utilization and
+repeat-reset experiments passed deterministic tests but failed live A acceptance and
+have been reverted. Their mechanisms, full provisional test source, measured limits,
+and the C1/C2 follow-up are archived in
+[`docs/notes/scheduler-evaluation-2026-09.md`](docs/notes/scheduler-evaluation-2026-09.md#known-limitation-adaptive-mode-baseline-topology-throughput-instability-scenario-a-discovered-post-todo-28).
+Do not reintroduce them as accepted fixes or describe an unidentified fourth gate as
+proven. Todo 28's acceptance remains scoped, including D's accepted4/5 residual.
+For Todo29 only, the final owner calibration makes all D cells and adaptive/A informational
+and requires at least one of two successful planned indices in each of classic/A and
+enhanced/A. All twelve index outcomes and provenance are validated; failures are never
+relabelled. `report.py --smoke-coverage` accepts only the two canonical required smoke
+cells and preserves actual indices/counts; default complete-manifest reporting remains
+unchanged. This is coverage, not a strict majority or performance proof. C1/C2 remain
+strict; no settling predicate, scheduler constant or runtime source has changed.
+The existing final campaign was retrospectively rescored without new live runs:
+classic/A2/2 and enhanced/A1/2 pass this final scope. All D cells and adaptive/A
+remain0/2; the original full-matrix exit101 remains a failure. The
+[portable report](docs/notes/smoke-final-report-2026-09.md) and
+[receipt](docs/notes/smoke-final-receipt-2026-09.json) preserve that distinction.
+Todo29's measurement-path acceptance does not accept an adaptive scheduler fix.
+
 Run the **full gate green on the pinned nightly** before every PR (it auto-selects via
 `rust-toolchain.toml`):
 
@@ -1021,6 +1043,17 @@ Gate: `cargo test --features test-internals --test bench_scheduler` and
 `cargo clippy --test bench_scheduler --features test-internals -- -D warnings`.
 Live `campaign`/`smoke` are intentionally ignored and require separate privileged
 validation; the unit gate does not establish live performance or hardware behavior.
+
+Smoke tooling lives in `scripts/bench/`: `build_candidate.sh` rejects tracked and
+untracked dirt, builds release + `test-internals` in the artifact root’s `target-ti`,
+and publishes copied, read-only, SHA-addressed binaries without replacement.
+`manifests/smoke.json` is a concrete local artifact receipt for classic/enhanced/adaptive,
+A/D, CeraLive production, two runs, seed 1. Rebuild and update paths for later revisions.
+`assert_smoke.sh` validates all twelve terminal RunRecord outcomes and compares summary
+aggregates with the actual successful classic/A and enhanced/A records. CSV packet
+deltas live in raw records, not summary v1; all D and adaptive/A outcomes are informational.
+Config expectations apply to successful records in all three modes. Shell mutation tests use disposable evidence
+copies. See `scripts/bench/README.md` for invocation and actual retry semantics.
 
 ### Statistical reporting and D-1 retention
 
