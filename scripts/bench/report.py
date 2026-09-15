@@ -57,9 +57,7 @@ class Cell(Document):
 
     @property
     def id(self) -> str:
-        return "--".join(
-            (self.candidate, self.scenario, self.receiver, self.srt_profile)
-        )
+        return f"{self.candidate}--{self.scenario}--{self.receiver}--{self.srt_profile}"
 
 
 class Candidate(Document):
@@ -610,7 +608,26 @@ def summarize_cell(records: Sequence[RunRecord], expected: Candidate) -> Evidenc
     )
 
 
-def load_records(manifest: Manifest, roots: Sequence[Path]) -> LoadedRecords:
+def load_records(
+    manifest: Manifest, roots: Sequence[Path], *, smoke_coverage: bool = False
+) -> LoadedRecords:
+    if smoke_coverage:
+        required = {
+            (name, "A", "ceralive", "production", 2) for name in ("classic", "enhanced")
+        }
+        actual = {
+            (c.candidate, c.scenario, c.receiver, c.srt_profile, c.runs)
+            for c in manifest.cells
+        }
+        if (
+            manifest.campaign != "smoke"
+            or manifest.seed != 1
+            or len(manifest.cells) != 2
+            or actual != required
+        ):
+            raise EvidenceError(
+                "smoke coverage requires the two canonical classic/enhanced A cells, runs=2, seed=1"
+            )
     expected = {cell.id: cell for cell in manifest.cells}
     if len(expected) != len(manifest.cells):
         raise EvidenceError("duplicate manifest cells")
@@ -625,6 +642,10 @@ def load_records(manifest: Manifest, roots: Sequence[Path]) -> LoadedRecords:
             raise EvidenceError(f"results directory not found: {root}")
     records: dict[str, dict[int, RunRecord]] = {key: {} for key in expected}
     warnings: list[str] = []
+    if smoke_coverage:
+        warnings.append(
+            "Smoke coverage calibration: at least one of two successes per required cell; original indices retained; not a performance or C1/C2 acceptance verdict"
+        )
     paths = {
         path.resolve()
         for root in roots
@@ -651,6 +672,8 @@ def load_records(manifest: Manifest, roots: Sequence[Path]) -> LoadedRecords:
             case _:
                 assert_never(envelope.status)
         cell = expected[record.cell_id]
+        if smoke_coverage and record.run_index >= cell.runs:
+            raise EvidenceError(f"unexpected run index {record.run_index} in {cell.id}")
         receiver = receivers[cell.receiver]
         kind = receiver.kind or (
             receiver.name
@@ -679,11 +702,11 @@ def load_records(manifest: Manifest, roots: Sequence[Path]) -> LoadedRecords:
             raise EvidenceError(f"duplicate event_index in {cell.id}")
         records[cell.id][record.run_index] = record
     missing = [
-        f"{cell.id}: n={len(records[cell.id])}, required={cell.runs}, "
+        f"{cell.id}: n={len(records[cell.id])}, required={1 if smoke_coverage else cell.runs}, "
         + f"missing run_indices={sorted(set(range(cell.runs)) - records[cell.id].keys())}"
         for cell in manifest.cells
-        if len(records[cell.id]) < cell.runs
-        or not set(range(cell.runs)) <= records[cell.id].keys()
+        if len(records[cell.id]) < (1 if smoke_coverage else cell.runs)
+        or (not smoke_coverage and not set(range(cell.runs)) <= records[cell.id].keys())
     ]
     if missing:
         raise EvidenceError("missing/insufficient cell(s): " + "; ".join(missing))
@@ -693,8 +716,10 @@ def load_records(manifest: Manifest, roots: Sequence[Path]) -> LoadedRecords:
     )
 
 
-def build_summary(manifest: Manifest, roots: Sequence[Path]) -> Summary:
-    loaded = load_records(manifest, roots)
+def build_summary(
+    manifest: Manifest, roots: Sequence[Path], *, smoke_coverage: bool = False
+) -> Summary:
+    loaded = load_records(manifest, roots, smoke_coverage=smoke_coverage)
     records = loaded.by_cell
     candidates = {c.label: c for c in manifest.candidates}
     if len(candidates) != len(manifest.candidates) or any(
@@ -934,6 +959,135 @@ class ReportTests(unittest.TestCase):
                 EvidenceError, "adaptive--A--ceralive--production.*required=2"
             ):
                 _ = build_summary(manifest, (root,))
+
+    def smoke_fixture(self, root: Path) -> Manifest:
+        manifest = Manifest(
+            campaign="smoke",
+            seed=1,
+            candidates=tuple(Candidate(label=name) for name in ("classic", "enhanced")),
+            receivers=(ManifestReceiver(name="ceralive"),),
+            cells=tuple(
+                Cell(
+                    candidate=name,
+                    scenario="A",
+                    receiver="ceralive",
+                    srt_profile="production",
+                    runs=2,
+                )
+                for name in ("classic", "enhanced")
+            ),
+        )
+        for cell in manifest.cells:
+            base = self.record(cell.scenario)
+            record = base.model_copy(
+                update={
+                    "campaign": "smoke",
+                    "seed": 1,
+                    "cell_id": cell.id,
+                    "run_index": 1,
+                    "candidate": base.candidate.model_copy(
+                        update={"label": cell.candidate}
+                    ),
+                }
+            )
+            _ = (root / f"{cell.id}.json").write_text(
+                record.model_dump_json(), encoding="utf-8"
+            )
+        return manifest
+
+    def test_smoke_coverage_preserves_original_nonzero_indices(self) -> None:
+        # Given only index1 succeeds in each of the two required smoke cells.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.smoke_fixture(root)
+            # When the explicit smoke coverage policy reduces the records.
+            summary = build_summary(manifest, (root,), smoke_coverage=True)
+            # Then every retained sample keeps its original index and actual count.
+            for group in summary.groups:
+                for cell in group.cells.values():
+                    self.assertEqual(cell.n, 1)
+                    self.assertEqual(cell.run_indices, (1,))
+
+    def test_default_reporting_still_requires_both_smoke_indices(self) -> None:
+        # Given the same partial data but no explicit calibration flag.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.smoke_fixture(root)
+            # When the default reporter runs, then full manifest completeness still applies.
+            with self.assertRaisesRegex(EvidenceError, "missing/insufficient"):
+                _ = build_summary(manifest, (root,))
+
+    def test_smoke_coverage_rejects_zero_coverage(self) -> None:
+        # Given one valid sample per required cell.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.smoke_fixture(root)
+            path = root / f"{manifest.cells[0].id}.json"
+            path.unlink()
+            # When a cell has no sample, then calibration cannot manufacture coverage.
+            with self.assertRaisesRegex(EvidenceError, "missing/insufficient"):
+                _ = build_summary(manifest, (root,), smoke_coverage=True)
+
+    def test_smoke_coverage_rejects_unplanned_indices(self) -> None:
+        # Given valid smoke data, when an index exceeds the planned pair, then reject it.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.smoke_fixture(root)
+            path = root / f"{manifest.cells[0].id}.json"
+            record = RunRecord.model_validate_json(path.read_text(encoding="utf-8"))
+            _ = path.write_text(
+                record.model_copy(update={"run_index": 2}).model_dump_json(),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(EvidenceError, "unexpected run index"):
+                _ = build_summary(manifest, (root,), smoke_coverage=True)
+
+    def test_smoke_coverage_is_unavailable_to_other_campaigns(self) -> None:
+        # Given a non-smoke campaign, when requesting calibration, then refuse it.
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            self.assertRaisesRegex(EvidenceError, "smoke coverage"),
+        ):
+            _ = build_summary(self.manifest(), (Path(directory),), smoke_coverage=True)
+
+    def test_smoke_coverage_cli_emits_actual_indices(self) -> None:
+        # Given a canonical partial smoke fixture with only index1 in each cell.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            results = root / "results"
+            results.mkdir()
+            manifest = self.smoke_fixture(results)
+            manifest_path = root / "manifest.json"
+            _ = manifest_path.write_text(manifest.model_dump_json(), encoding="utf-8")
+            summary_path = root / "summary.json"
+            # When the actual CLI explicitly requests the smoke-only calibration.
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    __file__,
+                    "--smoke-coverage",
+                    "--results",
+                    str(results),
+                    "--manifest",
+                    str(manifest_path),
+                    "--out",
+                    str(root / "report.md"),
+                    "--json",
+                    str(summary_path),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            # Then publication preserves each measured index rather than renumbering.
+            self.assertEqual(process.returncode, 0, process.stderr)
+            summary = Summary.model_validate_json(
+                summary_path.read_text(encoding="utf-8")
+            )
+            for group in summary.groups:
+                for cell in group.cells.values():
+                    self.assertEqual((cell.n, cell.run_indices), (1, (1,)))
 
     def test_mismatched_configuration_and_load_are_reported(self) -> None:
         # Given an observed override different from the manifest plus a busy host.
@@ -1176,6 +1330,7 @@ class ReportTests(unittest.TestCase):
 
 class Arguments(argparse.Namespace):
     self_test: bool = False
+    smoke_coverage: bool = False
     results: list[Path] | None = None
     manifest: Path | None = None
     out: Path | None = None
@@ -1196,6 +1351,11 @@ def main() -> int:
         description="Manifest-complete paired benchmark statistics"
     )
     _ = parser.add_argument("--self-test", action="store_true")
+    _ = parser.add_argument(
+        "--smoke-coverage",
+        action="store_true",
+        help="Explicit one-of-two coverage for classic/A and enhanced/A only",
+    )
     _ = parser.add_argument("--results", nargs="+", type=Path)
     _ = parser.add_argument("--manifest", type=Path)
     _ = parser.add_argument("--out", type=Path)
@@ -1220,7 +1380,9 @@ def main() -> int:
         manifest = Manifest.model_validate_json(
             args.manifest.read_text(encoding="utf-8")
         )
-        summary = build_summary(manifest, args.results)
+        summary = build_summary(
+            manifest, args.results, smoke_coverage=args.smoke_coverage
+        )
         publish(args.out, markdown(summary))
         publish(args.json, summary.model_dump_json(indent=2) + "\n")
     except (OSError, ValidationError, EvidenceError) as error:
