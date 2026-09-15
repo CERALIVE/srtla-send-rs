@@ -2,6 +2,8 @@
 #![cfg(unix)]
 
 mod bench_support;
+#[path = "bench_support/c1_contract.rs"]
+mod c1_contract;
 #[path = "bench_support/checkpoint.rs"]
 mod checkpoint;
 #[path = "bench_support/manifest.rs"]

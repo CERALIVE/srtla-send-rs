@@ -1,0 +1,179 @@
+{
+  "campaign": "c1-baselines",
+  "seed": 20260913,
+  "candidates": [
+    {
+      "label": "classic",
+      "bin": "/tmp/srtla-bench/bins/srtla_send-c984555d8998684611b5f3838577392eb8ebaa9e-0ca536cd1d8feef4",
+      "args": ["--mode", "classic"],
+      "env": {},
+      "stats_file": true,
+      "effective_config": {
+        "adaptive_features": ["stall", "loss", "queue", "deadline", "rejoin", "sole", "pref", "ratecap"],
+        "adaptive_tuning": {"stall_attempts": 32, "loss_enter": 0.1, "deadline_hold_fraction": 0.5, "ratecap_loss_backoff": 0.85}
+      }
+    },
+    {
+      "label": "enhanced",
+      "bin": "/tmp/srtla-bench/bins/srtla_send-c984555d8998684611b5f3838577392eb8ebaa9e-0ca536cd1d8feef4",
+      "args": ["--mode", "enhanced"],
+      "env": {},
+      "stats_file": true,
+      "effective_config": {
+        "adaptive_features": ["stall", "loss", "queue", "deadline", "rejoin", "sole", "pref", "ratecap"],
+        "adaptive_tuning": {"stall_attempts": 32, "loss_enter": 0.1, "deadline_hold_fraction": 0.5, "ratecap_loss_backoff": 0.85}
+      }
+    },
+    {
+      "label": "rtt-threshold",
+      "bin": "/tmp/srtla-bench/bins/srtla_send-c984555d8998684611b5f3838577392eb8ebaa9e-0ca536cd1d8feef4",
+      "args": ["--mode", "rtt-threshold"],
+      "env": {},
+      "stats_file": true,
+      "effective_config": {
+        "adaptive_features": ["stall", "loss", "queue", "deadline", "rejoin", "sole", "pref", "ratecap"],
+        "adaptive_tuning": {"stall_attempts": 32, "loss_enter": 0.1, "deadline_hold_fraction": 0.5, "ratecap_loss_backoff": 0.85}
+      }
+    },
+    {
+      "label": "edpf",
+      "bin": "/tmp/srtla-bench/bins/srtla_send-c984555d8998684611b5f3838577392eb8ebaa9e-0ca536cd1d8feef4",
+      "args": ["--mode", "edpf"],
+      "env": {},
+      "stats_file": true,
+      "effective_config": {
+        "adaptive_features": ["stall", "loss", "queue", "deadline", "rejoin", "sole", "pref", "ratecap"],
+        "adaptive_tuning": {"stall_attempts": 32, "loss_enter": 0.1, "deadline_hold_fraction": 0.5, "ratecap_loss_backoff": 0.85}
+      }
+    },
+    {
+      "label": "adaptive",
+      "bin": "/tmp/srtla-bench/bins/srtla_send-c984555d8998684611b5f3838577392eb8ebaa9e-0ca536cd1d8feef4",
+      "args": ["--mode", "adaptive"],
+      "env": {"SRTLA_ADAPTIVE_FEATURES": "all"},
+      "stats_file": true,
+      "effective_config": {
+        "adaptive_features": ["stall", "loss", "queue", "deadline", "rejoin", "sole", "pref", "ratecap"],
+        "adaptive_tuning": {
+          "stall_attempts": 32,
+          "loss_enter": 0.1,
+          "deadline_hold_fraction": 0.5,
+          "ratecap_loss_backoff": 0.85
+        }
+      }
+    },
+    {
+      "label": "upstream-classic",
+      "bin": "/tmp/srtla-bench/externals/upstream-srtla_send",
+      "args": ["--mode", "classic"],
+      "env": {},
+      "stats_file": false
+    },
+    {
+      "label": "upstream-enhanced",
+      "bin": "/tmp/srtla-bench/externals/upstream-srtla_send",
+      "args": ["--mode", "enhanced"],
+      "env": {},
+      "stats_file": false
+    }
+  ],
+  "receivers": [
+    {
+      "name": "ceralive",
+      "bin": "/tmp/srtla-bench/externals/ceralive-srtla_rec"
+    }
+  ],
+  "cells": [
+    {"candidate": "classic", "receiver": "ceralive", "scenario": "A", "srt_profile": "production", "runs": 5},
+    {"candidate": "classic", "receiver": "ceralive", "scenario": "B1", "srt_profile": "production", "runs": 5},
+    {"candidate": "classic", "receiver": "ceralive", "scenario": "B2", "srt_profile": "production", "runs": 5},
+    {"candidate": "classic", "receiver": "ceralive", "scenario": "C", "srt_profile": "production", "runs": 5},
+    {"candidate": "classic", "receiver": "ceralive", "scenario": "D", "srt_profile": "production", "runs": 5},
+    {"candidate": "classic", "receiver": "ceralive", "scenario": "E", "srt_profile": "production", "runs": 5},
+    {"candidate": "classic", "receiver": "ceralive", "scenario": "F", "srt_profile": "production", "runs": 5},
+    {"candidate": "classic", "receiver": "ceralive", "scenario": "G", "srt_profile": "production", "runs": 5},
+    {"candidate": "classic", "receiver": "ceralive", "scenario": "H", "srt_profile": "production", "runs": 5},
+    {"candidate": "classic", "receiver": "ceralive", "scenario": "I", "srt_profile": "production", "runs": 5},
+    {"candidate": "classic", "receiver": "ceralive", "scenario": "J", "srt_profile": "production", "runs": 5},
+    {"candidate": "classic", "receiver": "ceralive", "scenario": "K", "srt_profile": "production", "runs": 5},
+    {"candidate": "classic", "receiver": "ceralive", "scenario": "L", "srt_profile": "production", "runs": 5},
+    {"candidate": "enhanced", "receiver": "ceralive", "scenario": "A", "srt_profile": "production", "runs": 5},
+    {"candidate": "enhanced", "receiver": "ceralive", "scenario": "B1", "srt_profile": "production", "runs": 5},
+    {"candidate": "enhanced", "receiver": "ceralive", "scenario": "B2", "srt_profile": "production", "runs": 5},
+    {"candidate": "enhanced", "receiver": "ceralive", "scenario": "C", "srt_profile": "production", "runs": 5},
+    {"candidate": "enhanced", "receiver": "ceralive", "scenario": "D", "srt_profile": "production", "runs": 5},
+    {"candidate": "enhanced", "receiver": "ceralive", "scenario": "E", "srt_profile": "production", "runs": 5},
+    {"candidate": "enhanced", "receiver": "ceralive", "scenario": "F", "srt_profile": "production", "runs": 5},
+    {"candidate": "enhanced", "receiver": "ceralive", "scenario": "G", "srt_profile": "production", "runs": 5},
+    {"candidate": "enhanced", "receiver": "ceralive", "scenario": "H", "srt_profile": "production", "runs": 5},
+    {"candidate": "enhanced", "receiver": "ceralive", "scenario": "I", "srt_profile": "production", "runs": 5},
+    {"candidate": "enhanced", "receiver": "ceralive", "scenario": "J", "srt_profile": "production", "runs": 5},
+    {"candidate": "enhanced", "receiver": "ceralive", "scenario": "K", "srt_profile": "production", "runs": 5},
+    {"candidate": "enhanced", "receiver": "ceralive", "scenario": "L", "srt_profile": "production", "runs": 5},
+    {"candidate": "rtt-threshold", "receiver": "ceralive", "scenario": "A", "srt_profile": "production", "runs": 5},
+    {"candidate": "rtt-threshold", "receiver": "ceralive", "scenario": "B1", "srt_profile": "production", "runs": 5},
+    {"candidate": "rtt-threshold", "receiver": "ceralive", "scenario": "B2", "srt_profile": "production", "runs": 5},
+    {"candidate": "rtt-threshold", "receiver": "ceralive", "scenario": "C", "srt_profile": "production", "runs": 5},
+    {"candidate": "rtt-threshold", "receiver": "ceralive", "scenario": "D", "srt_profile": "production", "runs": 5},
+    {"candidate": "rtt-threshold", "receiver": "ceralive", "scenario": "E", "srt_profile": "production", "runs": 5},
+    {"candidate": "rtt-threshold", "receiver": "ceralive", "scenario": "F", "srt_profile": "production", "runs": 5},
+    {"candidate": "rtt-threshold", "receiver": "ceralive", "scenario": "G", "srt_profile": "production", "runs": 5},
+    {"candidate": "rtt-threshold", "receiver": "ceralive", "scenario": "H", "srt_profile": "production", "runs": 5},
+    {"candidate": "rtt-threshold", "receiver": "ceralive", "scenario": "I", "srt_profile": "production", "runs": 5},
+    {"candidate": "rtt-threshold", "receiver": "ceralive", "scenario": "J", "srt_profile": "production", "runs": 5},
+    {"candidate": "rtt-threshold", "receiver": "ceralive", "scenario": "K", "srt_profile": "production", "runs": 5},
+    {"candidate": "rtt-threshold", "receiver": "ceralive", "scenario": "L", "srt_profile": "production", "runs": 5},
+    {"candidate": "edpf", "receiver": "ceralive", "scenario": "A", "srt_profile": "production", "runs": 5},
+    {"candidate": "edpf", "receiver": "ceralive", "scenario": "B1", "srt_profile": "production", "runs": 5},
+    {"candidate": "edpf", "receiver": "ceralive", "scenario": "B2", "srt_profile": "production", "runs": 5},
+    {"candidate": "edpf", "receiver": "ceralive", "scenario": "C", "srt_profile": "production", "runs": 5},
+    {"candidate": "edpf", "receiver": "ceralive", "scenario": "D", "srt_profile": "production", "runs": 5},
+    {"candidate": "edpf", "receiver": "ceralive", "scenario": "E", "srt_profile": "production", "runs": 5},
+    {"candidate": "edpf", "receiver": "ceralive", "scenario": "F", "srt_profile": "production", "runs": 5},
+    {"candidate": "edpf", "receiver": "ceralive", "scenario": "G", "srt_profile": "production", "runs": 5},
+    {"candidate": "edpf", "receiver": "ceralive", "scenario": "H", "srt_profile": "production", "runs": 5},
+    {"candidate": "edpf", "receiver": "ceralive", "scenario": "I", "srt_profile": "production", "runs": 5},
+    {"candidate": "edpf", "receiver": "ceralive", "scenario": "J", "srt_profile": "production", "runs": 5},
+    {"candidate": "edpf", "receiver": "ceralive", "scenario": "K", "srt_profile": "production", "runs": 5},
+    {"candidate": "edpf", "receiver": "ceralive", "scenario": "L", "srt_profile": "production", "runs": 5},
+    {"candidate": "adaptive", "receiver": "ceralive", "scenario": "A", "srt_profile": "production", "runs": 5},
+    {"candidate": "adaptive", "receiver": "ceralive", "scenario": "B1", "srt_profile": "production", "runs": 5},
+    {"candidate": "adaptive", "receiver": "ceralive", "scenario": "B2", "srt_profile": "production", "runs": 5},
+    {"candidate": "adaptive", "receiver": "ceralive", "scenario": "C", "srt_profile": "production", "runs": 5},
+    {"candidate": "adaptive", "receiver": "ceralive", "scenario": "D", "srt_profile": "production", "runs": 5},
+    {"candidate": "adaptive", "receiver": "ceralive", "scenario": "E", "srt_profile": "production", "runs": 5},
+    {"candidate": "adaptive", "receiver": "ceralive", "scenario": "F", "srt_profile": "production", "runs": 5},
+    {"candidate": "adaptive", "receiver": "ceralive", "scenario": "G", "srt_profile": "production", "runs": 5},
+    {"candidate": "adaptive", "receiver": "ceralive", "scenario": "H", "srt_profile": "production", "runs": 5},
+    {"candidate": "adaptive", "receiver": "ceralive", "scenario": "I", "srt_profile": "production", "runs": 5},
+    {"candidate": "adaptive", "receiver": "ceralive", "scenario": "J", "srt_profile": "production", "runs": 5},
+    {"candidate": "adaptive", "receiver": "ceralive", "scenario": "K", "srt_profile": "production", "runs": 5},
+    {"candidate": "adaptive", "receiver": "ceralive", "scenario": "L", "srt_profile": "production", "runs": 5},
+    {"candidate": "upstream-classic", "receiver": "ceralive", "scenario": "A", "srt_profile": "production", "runs": 5},
+    {"candidate": "upstream-classic", "receiver": "ceralive", "scenario": "B1", "srt_profile": "production", "runs": 5},
+    {"candidate": "upstream-classic", "receiver": "ceralive", "scenario": "B2", "srt_profile": "production", "runs": 5},
+    {"candidate": "upstream-classic", "receiver": "ceralive", "scenario": "C", "srt_profile": "production", "runs": 5},
+    {"candidate": "upstream-classic", "receiver": "ceralive", "scenario": "D", "srt_profile": "production", "runs": 5},
+    {"candidate": "upstream-classic", "receiver": "ceralive", "scenario": "E", "srt_profile": "production", "runs": 5},
+    {"candidate": "upstream-classic", "receiver": "ceralive", "scenario": "F", "srt_profile": "production", "runs": 5},
+    {"candidate": "upstream-classic", "receiver": "ceralive", "scenario": "G", "srt_profile": "production", "runs": 5},
+    {"candidate": "upstream-classic", "receiver": "ceralive", "scenario": "H", "srt_profile": "production", "runs": 5},
+    {"candidate": "upstream-classic", "receiver": "ceralive", "scenario": "I", "srt_profile": "production", "runs": 5},
+    {"candidate": "upstream-classic", "receiver": "ceralive", "scenario": "J", "srt_profile": "production", "runs": 5},
+    {"candidate": "upstream-classic", "receiver": "ceralive", "scenario": "K", "srt_profile": "production", "runs": 5},
+    {"candidate": "upstream-classic", "receiver": "ceralive", "scenario": "L", "srt_profile": "production", "runs": 5},
+    {"candidate": "upstream-enhanced", "receiver": "ceralive", "scenario": "A", "srt_profile": "production", "runs": 5},
+    {"candidate": "upstream-enhanced", "receiver": "ceralive", "scenario": "B1", "srt_profile": "production", "runs": 5},
+    {"candidate": "upstream-enhanced", "receiver": "ceralive", "scenario": "B2", "srt_profile": "production", "runs": 5},
+    {"candidate": "upstream-enhanced", "receiver": "ceralive", "scenario": "C", "srt_profile": "production", "runs": 5},
+    {"candidate": "upstream-enhanced", "receiver": "ceralive", "scenario": "D", "srt_profile": "production", "runs": 5},
+    {"candidate": "upstream-enhanced", "receiver": "ceralive", "scenario": "E", "srt_profile": "production", "runs": 5},
+    {"candidate": "upstream-enhanced", "receiver": "ceralive", "scenario": "F", "srt_profile": "production", "runs": 5},
+    {"candidate": "upstream-enhanced", "receiver": "ceralive", "scenario": "G", "srt_profile": "production", "runs": 5},
+    {"candidate": "upstream-enhanced", "receiver": "ceralive", "scenario": "H", "srt_profile": "production", "runs": 5},
+    {"candidate": "upstream-enhanced", "receiver": "ceralive", "scenario": "I", "srt_profile": "production", "runs": 5},
+    {"candidate": "upstream-enhanced", "receiver": "ceralive", "scenario": "J", "srt_profile": "production", "runs": 5},
+    {"candidate": "upstream-enhanced", "receiver": "ceralive", "scenario": "K", "srt_profile": "production", "runs": 5},
+    {"candidate": "upstream-enhanced", "receiver": "ceralive", "scenario": "L", "srt_profile": "production", "runs": 5}
+  ]
+}
