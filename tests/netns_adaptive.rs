@@ -127,18 +127,14 @@ fn receiver_restart_recovers_within_18s() {
     // Use a 3-consecutive-second settling window (t=17..20s) instead of a single trailing
     // sample, matching the bench_support/live.rs settling contract. This avoids brittle
     // single-sample precondition checks that fail on transient rate dips.
-    // Require ≥70% of samples to be ≥90% of offered rate, allowing for transient dips.
     let settling_window = run
         .samples
         .iter()
         .filter(|s| s.t >= 17.0 && s.t < 20.0)
         .collect::<Vec<_>>();
-    let healthy_samples = settling_window
+    let before_healthy = settling_window
         .iter()
-        .filter(|s| s.sink_bps >= 0.9 * 12_800_000.0)
-        .count();
-    let before_healthy = !settling_window.is_empty()
-        && (healthy_samples as f64 / settling_window.len() as f64) >= 0.7;
+        .all(|s| s.sink_bps >= 0.9 * 12_800_000.0);
     let registered = run
         .samples
         .iter()
@@ -164,9 +160,10 @@ fn receiver_restart_recovers_within_18s() {
             .is_some_and(|d| d <= profile.receiver_restart_budget.unwrap()),
         "receiver kill/respawn exceeded 2s",
     );
-    // NOTE: pre_healthy is informational only. The settling window (t=17..20s) has
-    // inherent measurement variability due to rolling-window sink sampling. The real
-    // test requirements are the REG3 and sink90 deadlines below, which are deterministic.
+    checks.require(
+        before_healthy,
+        "pre-restart sink below 90% offered rate (3s settling window)",
+    );
     checks.require(
         registered.is_some_and(|s| s.t - restart <= 18.0),
         "receiver REG3 recovery exceeded 18s",
