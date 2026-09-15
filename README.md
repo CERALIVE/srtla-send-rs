@@ -78,6 +78,24 @@ The scheduler state (BLEST + IoDS) is owned per send-loop (no thread-local), so 
 
 #### Adaptive Mode [PARTIAL]
 
+**Final Todo 30 status (2026-09-15): scoped completion with documented findings,
+not scheduler acceptance.** Nine non-adaptive targets have historical privileged
+passes; the literal ten-target all-pass bar remains unmet. I passes with its blocking
+three-second pre-restart assertion restored and is closed as a non-issue for this
+task. The genuine RPC-to-telemetry priority-snapshot fix (`361d644`) is retained.
+
+G spans **0/61, 4/61, 29/61 and 44/61** demoted snapshots (0–72.13%) across clean
+isolated observations; identical current code both passes and fails. This exceeds
+the earlier small-sample 0–13% band and needs Wave 6 / Todo 32's **N=5+ statistical
+C2 campaign**, not more single-run tuning. Exact `d168aa6` Twins **passes full-rate
+health**, while failing its old share floor and stale clear-RPC snapshot. Thus earlier
+current-state Twins health failures are unresolved, not proven pre-existing or fixed.
+D's documented ignore and Twins' informational preference-share ceiling remain
+separate dispositions; G and Twins-health checks are still blocking. No scheduler
+change or additional health waiver was made to close this investigation. See the
+[final scoped findings](docs/notes/scheduler-evaluation-2026-09.md#final-todo-30-disposition--scoped-completion-with-documented-findings);
+older run narratives below remain historical, not the current acceptance verdict.
+
 Adaptive has a [known baseline-topology throughput limitation](docs/notes/scheduler-evaluation-2026-09.md#known-limitation-adaptive-mode-baseline-topology-throughput-instability-scenario-a-discovered-post-todo-28),
 discovered by the post-Todo-28 smoke campaign on three equal10Mbit/s links with normal
 jitter. The owner retained the `d168aa6` wire-rate baseline and reverted subsequent

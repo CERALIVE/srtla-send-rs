@@ -1,5 +1,115 @@
 # Scheduler evaluation — September 2026
 
+## Final Todo 30 disposition — scoped completion with documented findings
+
+The owner ended the single-run investigation on 2026-09-15 and authorized scoped
+completion, following Todo 29's distinction between delivered evaluation work and
+performance acceptance. **The literal "every target passes" bar is not met.** Nine
+non-adaptive targets have historical privileged-pass evidence; `netns_adaptive`
+retains four separately characterized findings: D coupling (explicit ignore),
+Twins preferred-share ceiling (informational), Twins full-rate health (baseline
+health passes, earlier current failures unresolved), and G's wide demotion variance
+(deferred to Wave 6 / Todo 32's N=5+ campaign, not more single-run diagnostics).
+
+I's restored blocking precondition passes and is closed as a non-issue for Todo 30;
+that scoped decision does not invent a cause for the earlier un-reproduced failures.
+The genuine priority-snapshot fix `361d644` stays. No scheduler code or additional
+assertion behavior was changed during closure. The unauthorized weakening in
+`58e7207` is reversed, not endorsed. No fresh ten-target gate pass is claimed.
+See the final Todo 30 subsection under KNOWN LIMITATION below for exact numbers,
+the Twins baseline comparison, gate provenance and the limits of each conclusion.
+
+## Intermediate correction record — 2026-09-15, before final owner disposition
+
+This status supersedes the completion claim in `b8e809c`; earlier sections below
+retain their historical run context. `361d644` (immediate shared snapshot refresh
+after pool-control RPC application) is retained. `58e7207` is reversed in the
+working tree, without a new commit: I's `before_healthy` requirement is blocking
+again and retains the legitimate `17 <= t < 20` settling window. No assertion
+threshold, production code, or frozen `src/connection/wire_rate*` file was changed.
+
+### I: required wire-budget capture performed; earlier failure not reproduced
+
+One fresh isolated exact-filter run on the pinned nightly passed with the restored
+assertion. The harness already launches the sender with housekeeping at `debug`;
+the outer command's `RUST_LOG` is not relied upon because the sender uses `env -i`.
+The receiver was the explicit CeraLive `srtla/build/srtla_rec` build, not the
+PATH-selected binary. The test used a 180s timeout and one test thread.
+
+- Receiver process restart: **221.092875ms** (readiness-inclusive operation:
+  2.276443712s; these are distinct measurements).
+- REG3 recovery: **17.455938485s** after process respawn, within 18s.
+- Sink recovery: **19.773828501s**, within 25s.
+- `t=15..20s`: **26 samples**, sink range **12.707296–12.907328 Mbit/s**.
+- Blocking `t=17..20s`: **15 samples**, all above **11.52 Mbit/s**;
+  range **12.738880–12.886272 Mbit/s**, `pre_healthy=true`.
+
+The final-five-second housekeeping events are below. Both links report the same
+**11,313,708.49898476 bps** budget and **`DemandLimited`** phase in every row,
+with socket generation 0. UTC is retained verbatim rather than presenting a
+sub-millisecond event/measurement-clock alignment the harness does not record;
+these fall at approximately t=15.8, 16.8, 18.8 and 19.8s. The logger's rate-tick
+guard can omit an adjacent one-second tick; no missing rows are interpolated.
+
+| UTC (2026-09-15) | `lte-a` attempted_wire_bytes | `lte-b` attempted_wire_bytes |
+| --- | ---: | ---: |
+| 05:00:21.712 | 21,011,144 | 20,992,680 |
+| 05:00:22.712 | 21,831,852 | 21,809,632 |
+| 05:00:24.712 | 23,469,040 | 23,448,624 |
+| 05:00:25.712 | 24,279,312 | 24,278,656 |
+
+`attempted_wire_bytes` is the cumulative kernel-accepted byte counter exposed by
+`BatchSender::wire_sample` / `WireBudget::totals`, **not bytes in that single
+housekeeping interval**. `target_bps` is the separate soft RateCap target, not the
+hard wire budget; substituting it would produce the wrong attribution.
+
+The sink measurement was also traced: `tests/netns_adaptive/observe.rs` sums the
+latest ten complete 100ms UDP sink buckets and multiplies bytes by eight, producing
+a trailing one-second useful-receiver rate. It is not telemetry wire bitrate or an
+average over the whole three-second settling window. The assertion requires every
+sampled trailing rate in that window to meet the target. Overlapping sampling does
+not itself prove brittleness or authorize relaxing the requirement.
+
+**Attribution limit:** neither low sink nor low/Draining wire budgets reproduced
+in this run. It does not explain the historical failing runs, prove permanent
+reliability, or establish that their root cause matches scenario A. Consequently
+the KNOWN LIMITATION section's confirmed scope is **not extended to I**.
+
+### G: high demotion reproduces twice in fresh isolation — review required
+
+Six empty leftover test namespaces were removed before the I run. No test
+namespaces/processes remained after I or between the two G runs; noninteractive
+sudo worked, with no test sudo-heartbeat process. An unrelated systemd-user receiver
+in the host network namespace was preserved, not mistaken for a leaked test process.
+Each G invocation was an independent exact-filter run with the shared host
+measurement lock, explicit CeraLive receiver, a 180s bound and one test thread.
+
+| Run | Marginal netdev bytes | Demoted snapshots | Result |
+| --- | ---: | ---: | --- |
+| G1 | 3,778,380 | 29/61 (47.54%) | FAIL: unchanged ≤10% demotion requirement |
+| G2 | 3,535,562 | 44/61 (72.13%) | FAIL: unchanged ≤10% demotion requirement |
+
+Both satisfy the 3MB carriage requirement and 55-snapshot minimum. Neither resembles
+the previously reported 0/61 isolated band. High demotion is therefore reproducible
+in fresh test isolation, not adequately explained by accumulated test namespaces or
+processes. This is a real unresolved failure; its cause, and whether a particular
+code change induced it, are **not established**. No scheduler fix was attempted.
+
+**At this intermediate point the owner's Step 3 stop boundary was reached.** Twins' reported failure of "both
+links must remain Healthy after full-rate restoration" has not been compared
+against `d168aa6` in this correction round. Its pre-existing/regression status is
+unproven, and even a confirmed pre-existing failure still needs consultation rather
+than an automatic waiver. D's existing documented ignore and Twins' accepted
+priority-share ceiling disposition remain distinct from this unresolved health
+requirement. The full adaptive target and ten-target gate were not run; there is
+no new full-gate result or completion claim, and no new commit.
+
+Retained local evidence bundle: `todo30-attribution.9xPKZn`, containing `run.log`,
+`g1.log`, `g2.log` and harness directories `adpt_s_eb6b_0` (I), `adpt_s_89f9_0`
+(G1), `adpt_s_fcd4_0` (G2), each with observations, sink buckets and sender logs.
+The following endpoint comparison and final disposition supersede this intermediate
+record's pending-work/commit status, not its measurements.
+
 ## Recovery-load scope (Todo 28, round 8)
 
 Adaptive mode has no aggregate admission or source-backpressure mechanism; an
@@ -527,6 +637,124 @@ redesign of the wire-rate controller's decrease factor or minimum exploration de
 neither is in scope for Todo28.
 
 ## KNOWN LIMITATION: Adaptive mode baseline-topology throughput instability (scenario A, discovered post-Todo-28)
+
+### Todo 30 final findings: wider reliability scope, not a green adaptive gate
+
+**Owner disposition (2026-09-15): scoped completion with documented findings.**
+Evaluation, assertion restoration and the legitimate snapshot fix are delivered;
+stable adaptive behavior is not certified. The investigation stops here. Wave 6 /
+Todo 32's dedicated **N=5+ statistical C2 campaign** owns the next reliability work.
+No new ignore, tolerance change or scheduler fix is introduced to obtain closure.
+
+#### G — 0–72% demotion, wider than the earlier 0–13% band
+
+The exact unchanged requirement is at least 3,000,000 marginal netdev bytes,
+at least 55 fresh snapshots, and no more than 10% Stalled/Degraded snapshots.
+Fresh isolated observations are:
+
+| Revision / run | Marginal bytes | Demoted | Outcome |
+| --- | ---: | ---: | --- |
+| Current, correction G1 | 3,778,380 | 29/61 (47.54%) | FAIL |
+| Current, correction G2 | 3,535,562 | 44/61 (72.13%) | FAIL |
+| Exact `d168aa6`, endpoint comparison | 5,764,114 | 4/61 (6.56%) | PASS |
+| Current, endpoint comparison | 7,106,018 | 0/61 (0%) | PASS |
+
+"Current" is `b8e809c` with I's staged assertion restoration; G is unchanged.
+The only post-`d168aa6` production-source edit is `361d644`'s snapshot refresh in
+the pool-control receive arm. G's supporting harness, network-sim, dependencies and
+toolchain are unchanged; G sends no priority RPCs. The 29/61, 44/61 and 0/61 results
+occurred on identical current source. Both endpoint builds passed this comparison.
+There is **no identified causal commit**; the owner classifies this as a deeper
+scheduler-reliability characteristic, not a test-assertion defect or a regression
+assigned to today's changes. The comparison did not instrument RPC-branch reachability.
+
+Test namespaces/processes were absent before and after runs, noninteractive sudo
+worked, and the same CeraLive receiver and SRT tool were used. No accumulated test
+contamination was observed; other time-dependent host variance is not thereby
+mathematically excluded. The earlier 0/61 ×3 and reported 0–13% band were based on
+too few runs to capture the observed tail. Neither these counts nor the clean
+endpoint pair estimate a reliable pass probability. The 44/61 observation is
+**72.13%**, conventionally summarized as 72%, not an upper bound on future behavior.
+More single-run diagnostic cycles cannot resolve this reliability question. G's
+assertion stays blocking; deferral of statistical characterization is not a CI waiver.
+
+#### Twins — baseline health passes; two different baseline failures remain distinct
+
+The final authorized diagnostic ran only `twins_on_one_ip_bond_under_adaptive` at
+**exact `d168aa6ea2a5ba5e1b3771a64c5015a3c4574a03`**, in a clean detached worktree,
+using the pinned nightly/default test profile, explicit CeraLive receiver, one test
+thread and a 180s bound. No test namespaces/processes remained before or afterward.
+The full test **failed (exit 101, 112.67s)**, but not on health:
+
+- Stalled at obstruction+1.835312746s; Rejoining at restore+2.863482797s;
+  Healthy at restore+4.854316076s, within the 9s deadline.
+- Full rate restored at t=38.071s. The shared "both links must remain Healthy
+  after full-rate restoration" check **passed**, as did the final-15-second check.
+  All **93** samples at t=45.047296826..60.080275532 had both links Healthy.
+- LegacyControl bytes were `[10,464,756, 140]`: the unmapped second twin remained
+  dead weight, as required.
+- Failure 1: the first snapshot after the t=25.050s clear RPC still reported
+  `modem-a.priority = Some(0.2)`, observed at t=25.911s instead of `None`.
+- Failure 2: final preferred share **0.5010552614224213 (50.105526%)** failed the
+  baseline's old `[55%,70%)` requirement; final netdev bytes were
+  `[12,798,190, 12,852,326]`.
+
+`Checks::require` accumulates failures and `finish` reports them together. The
+old assertion failures did **not** prevent evaluation of the health assertions;
+the earlier "masked because never reached" explanation was wrong.
+
+**Baseline full-rate health passes; earlier current-state health failures remain
+unresolved.** This does not confirm a pre-existing health failure at `d168aa6`.
+A single baseline pass versus historical current failures also does not identify
+a causal commit or exclude intermittency. No additional comparison or mechanism
+investigation was authorized. Scoped closure records this limit rather than calling
+Twins-health fixed, proven pre-existing, or non-blocking. Its assertions stay intact.
+
+The **separate Twins-share disposition** remains informational: the preference is a
+bounded ranking multiplier, not a share allocator. Even ideal proportional use of
+the 1.2x ceiling gives `1.2/(1+1.2) = 54.545%`, below the old 55% floor; this arithmetic
+is not a universal traffic-share bound or a guarantee. The owner-accepted removal
+of that blocking share range does not waive mapping, RPC snapshots, recovery or health.
+
+#### I, D and the genuine priority-snapshot fix
+
+- **I: closed as resolved/non-issue for Todo 30.** With the blocking `17 <= t < 20`
+  precondition restored, all 15 samples passed (12.738880–12.886272 Mbit/s versus
+  11.52 Mbit/s required). REG3 recovered in 17.455938485s, sink in 19.773828501s;
+  both links had 11,313,708.49898476 bps / `DemandLimited` budgets. The earlier
+  reported 2/3 failure pattern did not reproduce. This is a scoped owner disposition,
+  not proof of permanent reliability or a retroactive cause for those failures.
+  The blocking assertion remains; no low/Draining attribution to scenario A was found.
+- **D: existing explicit ignore is unchanged.** Reason:
+  `wire-rate/stall-detector coupling: 4/5 historical pass rate; N-run statistical evaluation deferred to Todo 32`.
+  This is a documented non-blocking default-gate disposition, not a fresh pass.
+- **Priority snapshots: genuine fix retained in `361d644`.** Pool-control mutation
+  previously left cached per-link stats stale until housekeeping; immediate
+  `adaptive_state.update_stats()` after application refreshes the inputs used by
+  subsequent telemetry snapshots. Earlier before/after evidence established the
+  fix; the new baseline clear-RPC mismatch independently reproduces the old defect.
+  This fixes RPC-to-telemetry staleness, not scheduler health or measured wire share.
+
+#### Gate accounting and evidence boundary
+
+The nine non-adaptive targets have historical clean privileged-pass evidence:
+`netns_basic` (2), `netns_bond` (5), `netns_edpf` (1), `netns_failure` (2),
+`netns_impairment` (3), `netns_pr19_parity` (2), `netns_scenario` (2),
+`netns_twin` (8), `netns_unconnected` (2): **27 tests**, no self-skips in that
+recorded nine-target gate. That evidence predates the current ten-target gate;
+it is not a fresh all-target run at final HEAD. The owner ended testing after the
+single Twins baseline comparison. The current script fails fast on adaptive,
+so its complete ten-target success line must not be claimed.
+
+`netns_adaptive` has the four findings above; I is not a fifth outstanding finding.
+**Todo 30's literal every-target-passes bar remains unmet.** Scoped completion
+delivers an honest evaluation/decision record, not scheduler acceptance. The owner
+may mark complete-with-documented-findings or retain an open dependency on Todo 32.
+
+Local evidence bundles: `todo30-attribution.9xPKZn` (I, G1, G2) and
+`g-bisection.AGlV6w` (G endpoint pair, `twins-baseline.log`, mapped
+`adpt_s_59df_0`, legacy `adpt_s_59df_12`, raw observations and host checks).
+No future campaign result, full-gate pass, or hardware validation is implied.
 
 ### Decision and discovery
 

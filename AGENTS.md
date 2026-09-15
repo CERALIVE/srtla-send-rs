@@ -485,17 +485,23 @@ mutations. Two existing unprivileged helper tests are included through shared mo
 `NETNS_ADAPTIVE_TEST_TIMEOUT_SECONDS` defaults to 360s in the bounded gate. Set
 `SRTLA_REC_BIN` explicitly for CeraLive receiver provenance;
 `NETNS_ADAPTIVE_ARTIFACT_DIR` optionally preserves observations/sink/log evidence.
-The protected legacy twin suite is unchanged. **The new adaptive target is currently
-red under real privileges** on D/G/twin health/rejoin and final-share assertions;
-the latest receiver-restart scenario passes. Deadline-settled loss is regression-tested,
-but a separately captured G run and mapped twins still demote on queue delay;
-do not interpret its unprivileged self-skip as integration validation or close the
-adaptive integration milestone before those failures are resolved. Preserve thresholds.
+The protected legacy twin suite is unchanged. **Todo 30 closes only as a scoped
+evaluation with documented findings, not a green adaptive gate.** Nine non-adaptive
+targets have historical privileged-pass evidence (27 tests); no fresh ten-target
+pass is claimed. I passes with its blocking precondition restored. D remains
+explicitly ignored, Twins-share informational, Twins-health unresolved, and G's
+wide reliability variance deferred to Wave 6 / Todo 32's N=5+ C2 campaign.
+G and Twins-health assertions stay blocking. No self-skip is integration validation.
 
-**Oracle consult #16 — test assertion corrections (Todo 30): COMPLETE.** Three of four adaptive
-integration assertions were corrected to match the actual implemented behavior and
-known architectural constraints, without changing any scheduler code. Additionally,
-a priority-snapshot bug was fixed and the receiver-restart test flakiness was resolved:
+**Oracle consult #16 / Todo 30: scoped completion; unconditional success claim withdrawn.**
+The priority-snapshot fix is retained. Removing I's blocking precondition in
+`58e7207` was unauthorized: the required wire-budget attribution had not been done.
+The final correction restores that commit's parent version of the test, including
+the legitimate settling window, in a separate restoration commit. The owner ended
+single-run investigation after the baseline Twins comparison. Accepted D and
+Twins-share dispositions do not waive G or Twins-health, and the literal
+every-target-passes bar remains unmet. Final findings are under KNOWN LIMITATION
+in `docs/notes/scheduler-evaluation-2026-09.md`; later round narratives are historical.
 
 1. **Twins preferred-share assertion removed as blocking.** The priority mechanism is a
    bounded RANKING bias (max 1.2x multiplier via `score × (1 + p·clamp(...))`), not a
@@ -516,17 +522,19 @@ a priority-snapshot bug was fixed and the receiver-restart test flakiness was re
    evaluation deferred to Todo 32"`, moving its N-run statistical evaluation into the
    planned scheduler-redesign scope.
 
-3. **I's receiver-restart precondition fixed to use a 3-consecutive-second settling
-    window.** The original single-trailing-sample check was brittle: a transient rate dip
-    in that one sample would fail the test even if the overall pre-restart state was
-    healthy. The precondition now uses a 3-consecutive-second settling window (t=17..20s),
-    matching the bench_support/live.rs settling contract. However, the settling window
-    itself had inherent measurement variability due to rolling-window sink sampling, so
-    the `before_healthy` check was removed as a blocking requirement and kept as
-    informational output only. The real test requirements are deterministic: REG3 recovery
-    within 18s and sink recovery within 25s, both of which are met consistently. This
-    avoids single-sample noise while keeping the test honest about what is actually
-    testable.
+3. **I's receiver-restart precondition is BLOCKING again.** The legitimate settling
+   window (`t >= 17.0 && t < 20.0`) remains; every sampled sink rate in that window
+   must reach 90% of 12.8 Mbit/s. The 70% sample-fraction rule and informational-only
+   treatment are removed. Rolling-window measurement alone is not evidence of a
+   brittle assertion. The fresh isolated run passed all 15 settling samples
+   (12.738880–12.886272 Mbit/s), with REG3 recovery in 17.455938485s and sink recovery
+   in 19.773828501s. Both links' final-five-second wire-budget events report
+   11,313,708.49898476 bps and `DemandLimited`, not low/Draining. This run does not
+   reproduce or explain the earlier precondition failures; it does not justify
+   extending scenario A's known limitation to I. Exact event counters and measurement
+   semantics are recorded in `docs/notes/scheduler-evaluation-2026-09.md`. The owner
+   closes I as resolved/non-issue for Todo 30 on this restored-check evidence,
+   not as a claim of permanent reliability or a reason to remove the precondition.
 
 **Priority-snapshot bug fix (commit 361d644):** After applying a pool control RPC request
 (e.g., `set-link-priority`), the telemetry snapshot was not refreshed immediately. The
@@ -535,17 +543,26 @@ application by up to one housekeeping interval. Fix: call `adaptive_state.update
 immediately after applying a pool control request in the event loop. The priority snapshot
 now correctly reflects the applied value immediately after the RPC.
 
-**Receiver-restart test flakiness resolved (commit 58e7207):** The `before_healthy` check
-required ≥70% of samples in the settling window to be ≥90% of offered rate. This was too
-strict because the sink measurement uses a rolling-window calculation with inherent
-variability. The real test requirements are the deterministic REG3 and sink90 deadlines,
-which are met consistently. Removing the `before_healthy` blocking requirement fixed the
-flakiness while keeping the metric as informational output.
+**G's wide-variance reliability characteristic:** identical current source produced
+29/61, 44/61 and 0/61 demoted snapshots; exact `d168aa6` produced 4/61 in the endpoint
+comparison. All met 3MB carriage, but the first two failed the unchanged ≤10% demotion
+condition. No test namespace/process contamination was observed. The earlier 0–13%
+band and 0/61 ×3 sampled too little to characterize the now-observed 72.13% tail.
+The owner assigns this to deeper scheduler reliability, not an assertion defect or
+an identified commit regression. Both endpoints passed; that is not causal proof
+excluding all code or host effects. Wave 6 / Todo 32 must characterize it with N=5+
+statistical runs; more single-run diagnostic cycles are out of scope. No new waiver.
 
-No scheduler constants, formulas, or production mechanisms were changed. The test
-corrections and bug fixes reflect already-established architectural realities (priority
-mechanism ceiling, wire-rate coupling, settling-window methodology, RPC snapshot timing)
-that the tests now honestly represent.
+**Final Twins baseline comparison:** exact `d168aa6` failed overall, but full-rate
+health PASSED (all 93 final-window samples Healthy; recovery at restore+4.854316s).
+Failures were the old clear-RPC snapshot staleness (`Some(0.2)` after clear) and
+50.105526% preferred share versus the old 55% floor. The harness accumulates failures,
+so those failures did not hide the health assertions. This does NOT confirm a
+pre-existing full-rate health failure. Earlier current-state health failures remain
+unresolved; a single baseline pass identifies no causal mechanism. The owner ended
+diagnosis here, not by ignoring or loosening health checks. `361d644` stays; all
+`src/connection/wire_rate*` files remain at `d168aa6`. Scoped completion records the
+findings and future work honestly; it is not scheduler acceptance or a full-gate pass.
 
 **Recovery-load scope and new evidence (Todo 28 round 8):** four oracle consults
 justify testing recovery under feasible load, not assuming aggregate admission that
