@@ -684,6 +684,25 @@ changes, bounded worker processes, and the A/B runner's shared host measurement 
 Live campaign validation remains separate from the unprivileged gate; no hardware
 performance claim is implied.
 
+**Failure interpretation and reconnect capture:** inspect an attempt's `reason` and
+`detail` before interpreting its metrics. Failed records initialize goodput to zero,
+`no_traffic` to true, and observations to empty; those are **unavailable measurement
+placeholders**, not proof of a dead network. Source traffic and the 30-second settling
+gate precede the first logged `OfferedRate` event, so `events: []` with
+`settle_timeout` can coexist with substantial delivered warm-up traffic. Inspect the
+raw sink CSV's numeric `bytes` column, not its file size. The settling criterion is
+unchanged and failures never count toward N.
+
+Scenario I can reconnect the downstream SRT socket after the SRTLA receiver restarts.
+Its socket-relative CSV `Time` then resets. The campaign collector now brackets the
+first flushed row of **each SocketID** against the monotonic clock, retaining the
+offset and uncertainty in `clocks.json` (`csv_socket_clocks`). It preserves the real
+outage gap and raw CSV rows, and sums explicitly interval-valued counters across
+socket changes. Cumulative capture still rejects socket/counter resets; backwards
+aligned times still fail. This repairs collection, not receiver recovery time or
+scheduler performance. I's two-second process kill/respawn budget is unchanged.
+Use a fresh output directory for a corrected campaign; do not rewrite old failures.
+
 The [smoke tooling](scripts/bench/README.md#smoke-campaign) builds the clean current
 revision into a SHA-addressed, read-only `test-internals` artifact and defines the
 classic/enhanced/adaptive A+D matrix. The owner-calibrated smoke gate requires at least

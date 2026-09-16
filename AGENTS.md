@@ -1170,6 +1170,27 @@ Smoke forces A+D/two runs/full windows; never truncate D. CSV parsing explicitly
 its uncertainty are recorded; no report-cadence assumption. Ramps use real FIFO source
 control; pre-replug counters are sampled; receiver restart has its explicit budget.
 
+**Failed-record fields are placeholders until collection succeeds.** Always read
+`reason`/`detail`: zero goodput, `no_traffic: true`, and `events: []` do NOT establish
+zero warm-up traffic or failed topology setup. All-link registration and source start
+precede settling; the first timeline event follows settling. Raw sink `bytes` are
+the traffic evidence. Never use CSV file size as a delivered-byte count, and never
+count `.exhausted.json` as another attempt: it copies the last `.failed-N.json`.
+`BENCH_MAX_RETRIES=2` means two TOTAL attempts, not three.
+
+**Reconnect CSV clocks are per SocketID.** `tests/bench_support/csv_capture.rs`
+polls complete receiver CSV rows during measurement and brackets each new socket's
+first observation against the monotonic clock. Offsets/uncertainties are retained
+in `clocks.json` under `csv_socket_clocks`; the original scalar offset describes
+only the initial socket. `SrtStats::parse_intervals_with_clock` preserves raw rows,
+uses these independent epochs without compressing outage gaps, and normalizes
+explicit interval counters across sockets. `window` permits socket changes only
+for interval captures; cumulative resets and backwards aligned times still fail.
+The default parser contract and RunRecord v1 shape remain unchanged. The 2026-09 C1
+incident reproduced I's `invalid field Time ordering` after a successful restart;
+it was a collector bug, NOT a violation of the unchanged two-second restart budget.
+Fresh campaign output is required operationally; original failed evidence is immutable.
+
 The old A/B `measurement_lock` is extracted to `tests/support/measurement_lock.rs`.
 Its local mutex is retained and a kernel file lock serializes separate binaries and
 worktrees. The file-lock functions have a test-only Clippy MSRV of 1.89 under the
