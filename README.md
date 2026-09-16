@@ -637,14 +637,18 @@ and **zero non-model queue drops**. But removing NAK-off gives back B1/C's gains
 `classic`/B1 **2/3→0/3** settled, `classic`/C **3/3→0/3**, useful goodput **−21% / −46%**
 versus both options. **B1/C are unresolved again; this is not full C1 acceptance.**
 
-Keep three independent axes distinct: **receiver presets** (`balanced`,
+Keep three distinct concepts apart: **receiver presets** (`balanced`,
 `low-latency`, `resilient`, `low-latency-fec`, `classic`) express latency/FEC intent;
 **sender modes** (`classic`, `enhanced`, `rtt-threshold`, `edpf`, `adaptive`) choose
 local per-packet paths across bonded links; **receiver policy** (freeze, NAK reports,
 `lossmaxttl`) handles loss/reordering. The receiver cannot observe sender mode, and
 G's catastrophic signature occurs with both classic and enhanced. Sender `classic`
-does **not** imply receiver `classic`/L2. **Both L1 and L2 freeze; L1 keeps NAK on,
-L2 turns it off.** No scheduler or deployed receiver preset is changed here.
+does **not** imply receiver `classic`/L2. They are **not** independently choosable,
+though: the sender's scheduler consumes the receiver's NAK stream as its link-quality
+signal on every mode, so receiver NAK policy shapes sender scheduling (see the
+[interop correction and coupling record](docs/notes/receiver-policy-evaluation-2026-09.md#7-interop-mechanics-no-negotiation-but-a-real-effect-on-the-peer),
+sections 7–8). **Both L1 and L2 freeze; L1 keeps NAK on, L2 turns it off.** No
+scheduler or deployed receiver preset is changed here.
 
 The earlier upstream/BELABOX-pedigree justification for L2 is **retired**. Both
 BELABOX and irlserver ship freeze+NAK-off as their single receiver mode, which matters
