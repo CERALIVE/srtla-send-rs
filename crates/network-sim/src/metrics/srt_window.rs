@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::error::delta;
-use super::srt_stats::SrtStats;
+use super::srt_stats::{CaptureSemantics, SrtStats};
 use super::{MetricError, Window, rate_number};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -39,7 +39,9 @@ impl SrtStats {
         let end = &self.rows[last];
         for pair in self.rows[first..=last].windows(2) {
             let (a, b) = (&pair[0], &pair[1]);
-            if a.socket_id != b.socket_id {
+            if self.capture_semantics == CaptureSemantics::CumulativePacketsIntervalBelated
+                && a.socket_id != b.socket_id
+            {
                 return Err(MetricError::CounterReset("SocketID".into()));
             }
             for (before, after, name) in [

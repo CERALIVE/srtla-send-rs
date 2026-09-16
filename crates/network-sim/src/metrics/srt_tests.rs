@@ -82,3 +82,55 @@ fn explicit_interval_capture_is_normalized_without_rewriting_raw_rows() {
     assert_eq!(window.pkt_belated_sum, 10);
     assert_eq!(stats.rows[2].raw, csv.lines().nth(3).unwrap());
 }
+
+#[test]
+fn reconnected_interval_capture_keeps_outage_and_counts_both_sockets() {
+    // Given a reconnect after an 18-second gap, with a new socket-relative clock.
+    let csv = CSV.replace("stamp,90002,999,6000", "stamp,90002,997,500");
+    // When each socket is aligned with independently observed monotonic offsets.
+    let stats = SrtStats::parse_intervals_with_clock(&csv, 0, |socket, time| {
+        Ok(time + if socket == 997 { 19_500 } else { 0 })
+    })
+    .unwrap();
+    // Then the gap survives, and interval counters are summed across the reconnect.
+    assert_eq!(
+        stats.rows.iter().map(|r| r.t_ms).collect::<Vec<_>>(),
+        [1000, 2000, 20000]
+    );
+    let metrics = stats.window(Window::new(1000, 20000).unwrap(), 1).unwrap();
+    assert_eq!(metrics.pkt_recv_unique, 300);
+    assert_eq!(metrics.pkt_drop_total, 13);
+    assert_eq!(metrics.viewer_loss_ratio, 13.0 / 313.0);
+    assert_eq!(metrics.pkt_belated_sum, 10);
+    assert_eq!(stats.rows[2].socket_id, 997);
+    assert_eq!(stats.rows[2].raw, csv.lines().nth(3).unwrap());
+    assert_eq!(
+        stats
+            .window(Window::new(2000, 19000).unwrap(), 0)
+            .unwrap()
+            .pkt_recv_total,
+        0
+    );
+}
+
+#[test]
+fn mapped_interval_clock_still_rejects_backwards_time() {
+    // Given a backwards timestamp within one socket, not a new clock epoch.
+    let csv = CSV.replace("999,6000", "999,500");
+    // When an unchanged socket clock is applied, then ordering remains mandatory.
+    assert!(matches!(
+        SrtStats::parse_intervals_with_clock(&csv, 0, |_, time| Ok(time)),
+        Err(MetricError::InvalidField(name)) if name == "Time ordering"
+    ));
+}
+
+#[test]
+fn cumulative_capture_still_rejects_socket_changes() {
+    // Given globally ordered times but a different cumulative counter owner.
+    let csv = CSV.replace("999,6000", "997,6000");
+    // When windowed, then the explicit interval exception does not hide a cumulative reset.
+    assert!(matches!(
+        SrtStats::parse(&csv, 0).unwrap().window(Window::new(1000, 6000).unwrap(), 1),
+        Err(MetricError::CounterReset(name)) if name == "SocketID"
+    ));
+}
