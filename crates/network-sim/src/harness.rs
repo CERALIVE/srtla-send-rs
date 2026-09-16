@@ -749,7 +749,7 @@ impl SrtProfile {
             uri
         } else {
             let receiver_options = if *self == Self::PRODUCTION {
-                "&reorderfreeze=1&nakreport=0"
+                "&reorderfreeze=1"
             } else {
                 ""
             };
@@ -1232,7 +1232,7 @@ mod srt_profile_tests {
         for (profile, expected) in [
             (
                 SrtProfile::PRODUCTION,
-                "srt://:4001?mode=listener&latency=2000&lossmaxttl=40&reorderfreeze=1&nakreport=0",
+                "srt://:4001?mode=listener&latency=2000&lossmaxttl=40&reorderfreeze=1",
             ),
             (
                 SrtProfile::STRICT,
@@ -1241,7 +1241,7 @@ mod srt_profile_tests {
         ] {
             // Given an explicit preset; when composing the listener URI.
             let uri = profile.listener_uri(4001);
-            // Then both knobs are emitted in the libsrt URI syntax.
+            // Then tuning is exact: production freezes reordering without disabling NAK reports.
             assert_eq!(uri, expected);
         }
     }
@@ -1271,7 +1271,7 @@ mod srt_profile_tests {
                 "-statspf:csv",
                 "-stats",
                 "1000",
-                "srt://:4001?mode=listener&latency=2000&lossmaxttl=40&reorderfreeze=1&nakreport=0",
+                "srt://:4001?mode=listener&latency=2000&lossmaxttl=40&reorderfreeze=1",
                 "udp://127.0.0.1:9999"
             ]
         );

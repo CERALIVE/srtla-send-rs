@@ -616,21 +616,42 @@ timeout --foreground --kill-after=10s 120s cargo test --test netns_bond -- --noc
 
 ### Receiver-side benchmark metrics
 
-The production listener preset is `latency=2000&lossmaxttl=40&reorderfreeze=1&nakreport=0`.
+The provisional C1 production listener URI is
+`mode=listener&latency=2000&lossmaxttl=40&reorderfreeze=1`: freeze on, NAK reports
+**on** by default (L1's policy shape, retaining the bench's 2000 ms latency).
 STRICT and LEGACY_DEFAULT retain their existing tuning, and caller URIs are unchanged.
 This receiver-profile correction does not change scenario loads or settling thresholds.
 
 `reorderfreeze` is a CeraLive-only libsrt option, so the bench needs an
 `srt-live-transmit` built from the CeraLive SRT fork (`github.com/CERALIVE/srt`,
 apps enabled, plus a local `reorderfreeze` row in `apps/socketoptions.hpp`). Point
-`SRT_LIVE_TRANSMIT_BIN` at it for every privileged run; the PATH fallback is a vanilla
-tool that silently runs the listener unfrozen with NAK reports on, and under bonding
-reorder that produces premature loss reports, retransmission amplification, and
-`settle_timeout` failures that look like scheduler bugs. The preset matches the
-`classic`/L2 production receiver profile (freeze on, NAK off), chosen for its evidence
-pedigree, not the `balanced`/L1 production default (freeze on, NAK on). Measured
-effect and limits, including the `nakreport=0` retransmission cost on real loss, are
-in `AGENTS.md` → BENCH RECEIVER-PROFILE DEPENDENCY.
+`SRT_LIVE_TRANSMIT_BIN` at it for every privileged run; a vanilla PATH fallback
+does not apply freeze. Enabling freeze alone does **not** fix jitter/reorder settling.
+
+**Why drop `nakreport=0`: a real trade-off, not a pure win.** The fixed-build
+four-condition `classic`/G factorial isolated NAK-off as the real Gilbert-Elliott
+loss regression: NAK-off alone and freeze+NAK-off each settled **0/3**, with roughly
+**44–46% received retransmissions** and thousands of non-model queue drops on every
+link. Freeze-only settled **3/3**; revalidation measured **1.43–1.70%** retransmissions
+and **zero non-model queue drops**. But removing NAK-off gives back B1/C's gains:
+`classic`/B1 **2/3→0/3** settled, `classic`/C **3/3→0/3**, useful goodput **−21% / −46%**
+versus both options. **B1/C are unresolved again; this is not full C1 acceptance.**
+
+Keep three independent axes distinct: **receiver presets** (`balanced`,
+`low-latency`, `resilient`, `low-latency-fec`, `classic`) express latency/FEC intent;
+**sender modes** (`classic`, `enhanced`, `rtt-threshold`, `edpf`, `adaptive`) choose
+local per-packet paths across bonded links; **receiver policy** (freeze, NAK reports,
+`lossmaxttl`) handles loss/reordering. The receiver cannot observe sender mode, and
+G's catastrophic signature occurs with both classic and enhanced. Sender `classic`
+does **not** imply receiver `classic`/L2. **Both L1 and L2 freeze; L1 keeps NAK on,
+L2 turns it off.** No scheduler or deployed receiver preset is changed here.
+
+The earlier upstream/BELABOX-pedigree justification for L2 is **retired**. Both
+BELABOX and irlserver ship freeze+NAK-off as their single receiver mode, which matters
+for interop expectations but proves usage, not correctness under our conditions;
+the G factorial outranks that pedigree. Wire compatibility with third-party NAK-off
+receivers remains, with a real-loss performance caveat. Full evidence, limitations
+and fork-build prerequisites: `AGENTS.md` → BENCH RECEIVER-PROFILE DEPENDENCY.
 
 `network_sim::metrics` supplies receiver CSV windowing, a pcap-free 100 ms UDP sink,
 1 Hz link/telemetry collectors, optional control-command deltas, CPU/RSS readings,

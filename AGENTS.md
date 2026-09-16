@@ -1087,7 +1087,10 @@ invocation to the fork build. Never hardcode the path in a tracked file (Rule D)
 
 **Why the fork and not a vanilla libsrt.** `SrtProfile::PRODUCTION::listener_uri()`
 (`harness.rs`) emits
-`mode=listener&latency=2000&lossmaxttl=40&reorderfreeze=1&nakreport=0`.
+`mode=listener&latency=2000&lossmaxttl=40&reorderfreeze=1`.
+This is the **provisional C1 baseline: freeze on, NAK reports on by default**.
+The `nakreport=0` suffix introduced by `1c4679d` is removed, not replaced with a
+caller-side option. It caused a factorial-proven real-loss regression (below).
 `reorderfreeze` is `SRTO_REORDERFREEZE`, a CeraLive-only socket option (see
 `../srt/AGENTS.md` → SANCTIONED CERALIVE PATCH); Haivision/srt has no such concept, so a
 vanilla `srt-live-transmit` neither knows the option nor sets it. The stray host binary
@@ -1105,44 +1108,61 @@ assuming a fresh checkout carries it. `STRICT`, `LEGACY_DEFAULT`, and the
 unchanged. The one env var selects BOTH endpoint executables, so a fork build also puts
 the caller on fork libsrt 1.5.6 (with no new options on its side).
 
-**What happens without it.** The receiver session runs bare `lossmaxttl=40`: no freeze,
-default `nakreport`. Bonding heterogeneous-latency links reorders packets by
-construction, and a stock receiver under sustained reordering emits periodic NAK loss
-reports for packets that are merely late, not lost. Retransmission amplification
-follows, then genuine queue overflow, and the run fails the 30 s warm-up settling gate
-(`settle_timeout`). Campaign C1 measured every cell this way, and those failures were
-read for several investigations as scenario or scheduler defects before the receiver
-binary was checked.
+**The three axes are independent — matching names do not couple them.**
 
-**Which production profile this is, and why.** The URI is `irl-srt-server`'s
-`classic`/L2 profile (`kSrtProfileTable`: freeze on, NAK **off**, 2000 ms,
-`lossmaxttl=40`). It is NOT the production default. That is `balanced`/L1
-(`ceralive-platform/apps/api/lib/receiver/profile-routing.ts`,
-`DEFAULT_RECEIVER_PROFILE = 'balanced'`: freeze on, NAK **on**, 1500 ms). Both L1 and
-L2 freeze; the difference is NAK on vs off. `classic`/L2 was chosen deliberately for
-evidence pedigree, not representativeness: (a) it is upstream
-`irlserver/irl-srt-server`'s single, one-and-only mode (`git show
-irlserver/main:Dockerfile` builds against `irlserver/srt`'s `belabox` branch and sets
-`SRTO_SRTLAPATCHES`, which bundles freeze-on + NAK-off as one inseparable option;
-`CERALIVE/srt` does not define that flag and reaches the same shape through
-`SRTO_REORDERFREEZE` plus standard `SRTO_NAKREPORT=0`), and (b) it is the only one of
-the five production receiver profiles with an explicit A/B calibration record behind
-`lossmaxttl=40` ("Task 1 A/B tie-break for BELABOX parity",
-`../docs/RECEIVER-CONTROL-AUDIT.md`, workspace root). Do not assume bench results
-transfer to `balanced`/L1 without separate validation; NAK-on is a different receiver.
+- **Receiver preset** (`balanced` / `low-latency` / `resilient` /
+  `low-latency-fec` / `classic`) expresses latency and FEC intent.
+- **Sender scheduling mode** (`classic` / `enhanced` / `rtt-threshold` / `edpf` /
+  `adaptive`) selects a local per-packet path across bonded links.
+- **Receiver policy** (freeze / NAK reports / `lossmaxttl`) handles loss and
+  reordering, independently of that sender selection algorithm.
 
-**What the correction does and does not fix** (targeted N=2-3 trials per cell, not a
-campaign). Settling improved where the root cause was the library's periodic NAK report
-ignoring reorder tolerance for freshly reordered packets: `classic`/B1 0/2→2/3,
-`classic`/C 0/2→3/3. `enhanced`/G did not move (0/2→0/3) and `enhanced`/A got worse
-(1/2→0/3). Those two have a separate, scheduler-side cause, `enhanced`'s unconditional
-`MIN_SWITCH_INTERVAL_MS=15` switch cooldown defeating its own per-packet load feedback,
-which no receiver-side change can reach. There is also a real cost: `classic`/F, a
-genuine configured-loss scenario that already passed, saw its received-retransmission
-fraction roughly quadruple (~1.2%→~5.5%) under `nakreport=0` while goodput and drops
-stayed healthy. `nakreport=0` trades fewer redundant NAK cycles for slower recovery when
-loss is real. The trial was a binary+profile intervention, not a freeze-only or NAK-only
-factorial; do not attribute the whole delta to freeze.
+The receiver cannot observe which scheduling mode produced its traffic. Sender
+`--mode classic` therefore does **not** imply receiver `classic`/L2 or NAK-off.
+Both L1 and L2 have freeze **on**; their policy distinction is NAK **on** (L1)
+versus **off** (L2). The corrected bench uses **L1's policy shape**, retaining its
+existing 2000 ms latency rather than copying `balanced`/L1's 1500 ms preset.
+No receiver deployment, preset routing, FEC negotiation, or sender default changes
+are implemented here; `adaptive` remains experimental and unaccepted.
+
+**Why NAK-off was removed (2026-09-16).** A four-condition, fixed-fork-build
+`classic`/G factorial isolated the listener options: bare and freeze-only each
+settled **3/3** with **zero non-model queue drops on every link**; NAK-off alone
+and freeze+NAK-off each settled **0/3**, with roughly **44–46% received
+retransmissions** and thousands of non-model queue drops on **all four links**.
+The freeze-only revalidation also settled **3/3**, with **1.43–1.70% received
+retransmissions** and zero non-model queue drops. G exercises real Gilbert-Elliott
+burst loss. NAK-off, not freeze or the fork build alone, is the isolated regression
+trigger under these conditions. The same catastrophic signature occurs with both
+`classic` and `enhanced` senders: the earlier claim that this G regression was a
+separate enhanced-cooldown defect is retired. The unaccepted cooldown candidate is
+not a receiver-independent G solution; sender divergence remains a separate open
+question, not something this URI correction resolves.
+
+**Known trade-off — B1/C are UNRESOLVED again, not fixed.** Removing NAK-off gives
+back its jitter/reorder gains: in controlled revalidation, `classic`/B1 went
+**2/3→0/3** settled and `classic`/C **3/3→0/3**, with useful goodput **−21% on B1**
+and **−46% on C** versus freeze+NAK-off. Freeze alone did not preserve those gains.
+The earlier vanilla-listener failures involved premature NAKs for late originals,
+retransmission amplification and real queue overflow; merely installing the fork
+and enabling freeze does not clear them. This is a deliberate real-loss versus
+reorder trade-off, **not a pure improvement or full C1 acceptance**. Scenario loads,
+the 30 s settling gate and campaign criteria stay unchanged. These are targeted
+small-N netns observations, not hardware validation or a new campaign.
+
+**Retired rationale: upstream/BELABOX pedigree is not correctness evidence.**
+BELABOX and `irlserver/irl-srt-server` do ship freeze+NAK-off as their single receiver
+mode. The latter builds against `irlserver/srt`'s `belabox` branch and sets
+`SRTO_SRTLAPATCHES`, bundling both behaviors; CeraLive exposes them separately as
+`SRTO_REORDERFREEZE` and standard `SRTO_NAKREPORT`. This remains relevant to interop
+expectations, but matching upstream proves a configuration is **used**, not that it
+is **correct under our conditions**. The prior pedigree/BELABOX-parity justification
+for choosing `classic`/L2 is explicitly withdrawn; the G factorial outranks it.
+Preserve wire compatibility with third-party NAK-off receivers, with the documented
+real-loss performance caveat, rather than copying their policy locally. Freeze/NAK
+are unilateral receiver options, unlike negotiated FEC; no negotiation change does
+not mean zero interop risk, because NAK-on changes feedback volume. Cross-pair
+validation remains separate from this code-and-docs correction.
 
 Workspace-level receiver documentation for the full evidence chain:
 `../docs/RECEIVER-CONTROL-AUDIT.md`, `../docs/DEFERRED-WORK.md` §14,
@@ -1150,13 +1170,14 @@ Workspace-level receiver documentation for the full evidence chain:
 
 ## BENCHMARK METRICS (network-sim)
 
-`SrtProfile::PRODUCTION` adds `reorderfreeze=1&nakreport=0` to the listener URI,
-alongside the existing 2000ms latency and lossmaxttl 40. STRICT and LEGACY_DEFAULT
-remain unchanged, as do caller URIs. This receiver-profile correction does not
+`SrtProfile::PRODUCTION` adds only `reorderfreeze=1` to the listener URI, leaving
+NAK reports on alongside the existing 2000ms latency and lossmaxttl 40. STRICT and
+LEGACY_DEFAULT remain unchanged, as do caller URIs. This receiver-profile correction does not
 change scenario loads, settling thresholds, or sender scheduling. The option only
 takes effect on a fork-built `srt-live-transmit`; see BENCH RECEIVER-PROFILE
 DEPENDENCY above for the `SRT_LIVE_TRANSMIT_BIN` requirement, the profile choice,
-and its measured limits.
+and its measured limits: G's NAK-off regression is corrected, but B1/C are unresolved
+again under this provisional baseline.
 
 **Reference-backed scenarios (Todo 12):** `network_sim::scenarios::all()` returns
 13 profiles (A–L, B1/B2). `scenarios::Profile` wraps the unchanged temporal `Profile`
