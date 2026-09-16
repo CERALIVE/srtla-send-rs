@@ -1108,17 +1108,26 @@ assuming a fresh checkout carries it. `STRICT`, `LEGACY_DEFAULT`, and the
 unchanged. The one env var selects BOTH endpoint executables, so a fork build also puts
 the caller on fork libsrt 1.5.6 (with no new options on its side).
 
-**The three axes are independent — matching names do not couple them.**
+**The three axes are distinct concepts — matching names do not couple them. They
+are NOT independently choosable.**
 
 - **Receiver preset** (`balanced` / `low-latency` / `resilient` /
   `low-latency-fec` / `classic`) expresses latency and FEC intent.
 - **Sender scheduling mode** (`classic` / `enhanced` / `rtt-threshold` / `edpf` /
   `adaptive`) selects a local per-packet path across bonded links.
 - **Receiver policy** (freeze / NAK reports / `lossmaxttl`) handles loss and
-  reordering, independently of that sender selection algorithm.
+  reordering. It is set on the receiver alone, but it is **consumed by the
+  sender's scheduler**: `handle_nak` (`src/connection/congestion/mod.rs`, "common
+  to both classic and enhanced") decrements the carrying link's window by
+  `WINDOW_DECR` on every NAK, `classic.rs` selects on that window via
+  `get_score()`, and `quality.rs`/`enhanced.rs` also read `total_nak_count()`.
+  The receiver's NAK policy therefore shapes sender scheduling on every mode.
+  The correction record and the resulting (unconfirmed) two-factor model are in
+  the evaluation note below, sections 7 and 8.
 
-The receiver cannot observe which scheduling mode produced its traffic. Sender
-`--mode classic` therefore does **not** imply receiver `classic`/L2 or NAK-off.
+The receiver cannot observe which scheduling mode produced its traffic; the
+coupling runs one way, sender reading receiver. Sender `--mode classic`
+therefore does **not** imply receiver `classic`/L2 or NAK-off.
 Both L1 and L2 have freeze **on**; their policy distinction is NAK **on** (L1)
 versus **off** (L2). The corrected bench uses **L1's policy shape**, retaining its
 existing 2000 ms latency rather than copying `balanced`/L1's 1500 ms preset.
@@ -1160,12 +1169,19 @@ is **correct under our conditions**. The prior pedigree/BELABOX-parity justifica
 for choosing `classic`/L2 is explicitly withdrawn; the G factorial outranks it.
 Preserve wire compatibility with third-party NAK-off receivers, with the documented
 real-loss performance caveat, rather than copying their policy locally. Freeze/NAK
-are unilateral receiver options, unlike negotiated FEC; no negotiation change does
-not mean zero interop risk, because NAK-on changes feedback volume. Cross-pair
-validation remains separate from this code-and-docs correction.
+are set per side and never negotiated, unlike FEC, but they are **not** without
+effect on the peer: a third-party SRTLA sender's scheduler is shaped by our NAK
+policy exactly as ours is (above). Cross-pair validation remains separate from this
+code-and-docs correction and is a scheduling-behaviour test, not only an
+amplification check. **Untested hypothesis, recorded so it is not lost:** this
+scheduler's NAK-reaction constants descend from a lineage whose receivers ship
+NAK-off, so the NAK-on baseline may feed it repeat-penalties its tuning never
+anticipated. That is a candidate explanation for the B1/C regression, not grounds
+to change `46170c6` or to retune any constant.
 
 The full investigation record (factorial tables, the B1/C trade-off, the falsified
-cross-link-delay-spread hypothesis, and the unresolved upstream comparison) is
+cross-link-delay-spread hypothesis, the unresolved upstream comparison, and the
+NAK-to-scheduler coupling correction) is
 [`docs/notes/receiver-policy-evaluation-2026-09.md`](docs/notes/receiver-policy-evaluation-2026-09.md).
 
 Workspace-level receiver documentation for the full evidence chain:

@@ -262,7 +262,10 @@ is two distinct mechanisms sharing one symptom: G's collapse is plausibly a
 genuine-loss-recovery failure (5% GE bursts with the NAK follow-up removed),
 while A's degradation is something else that happens to also read as "worse
 under NAK-off". That would explain why every single-axis hypothesis explained
-some scenarios and failed others.
+some scenarios and failed others. Section 7 develops this into a two-factor
+model once the sender-side half of the mechanism is on the table: the property
+that discriminates is not a property of the topology at all, but of how the
+sender's scheduler reacts to the receiver's NAK stream on that topology.
 
 **Why this matters for policy.** The mechanism was worth finding because it
 would have unlocked a topology-keyed receiver policy: serve NAK-off only to
@@ -278,7 +281,9 @@ The practical decision never needed the mechanism. NAK-off is unsafe as a
 general default (it destroys A and G); freeze-only is safe on A and G and costs
 B1/C; therefore the committed baseline stands and NAK-off is not a broad
 production preset. An independent architecture review reached the same
-conclusion before the last three diagnostics ran.
+conclusion before the last three diagnostics ran. One part of that review is
+retracted in section 8: it treated sender scheduling and receiver recovery
+policy as independent configuration axes, and they are not.
 
 ## 5. Two methodological corrections
 
@@ -346,31 +351,173 @@ loss patterns differ from a 5% GE model; users tolerate degradation that our
 binary gate calls failure; something in our setup does not generalise; a latent
 problem nobody isolated) are all unconfirmed. This note does not invent a
 resolution. The sender-side divergence is a separately scoped investigation
-(section 9) and the receiver-baseline decision was deliberately kept independent
-of it.
+(section 10) and the receiver-baseline decision was deliberately kept independent
+of it. Section 8.4 qualifies that independence: the baseline choice is entangled
+with the scheduler's tuning, even though the two investigations remain separate.
 
-## 7. Interop mechanics (settled)
+## 7. Interop mechanics: no negotiation, but a real effect on the peer
 
-`SRTO_NAKREPORT` and `SRTO_REORDERFREEZE` are unilateral per-side receiver
-options. Each end of an SRT connection sets them for itself; nothing about them
-is negotiated in the handshake. A sender retransmits whatever a NAK requests and
-neither knows nor cares whether that NAK came from initial loss detection or a
-periodic follow-up. Changing our receiver's NAK policy therefore carries no
-negotiation cost in either direction: our sender to a third-party receiver is
-governed entirely by their configuration, and a third-party sender to our
-receiver simply sees a different NAK cadence. This is unlike FEC, which is
-genuinely negotiated (`SRTO_PACKETFILTER` plus a `receiver_supports_fec`
-capability gate, a real two-sided handshake). A minor supporting point: SRT's
-sender-side `SRTO_RETRANSMITALGO` "efficient" algorithm, default-on since 1.4.4,
-is documented as working best when the receiver does send periodic NAK reports.
+**Correction (2026-09-16, later the same day).** The first committed version of
+this section stated that `SRTO_NAKREPORT` and `SRTO_REORDERFREEZE` carry "no
+interop cost in either direction". Half of that is right and half is wrong, and
+the wrong half is the important one. It is corrected here rather than softened.
 
-One caveat is worth keeping. "No negotiation cost" is not "no interop risk".
-Enabling NAK reports changes feedback volume, so a third-party sender facing our
-receiver must handle repeated NAKs and loss ranges without retransmission,
-CPU, or logging amplification. That deserves one cross-pair test rather than an
-assumption; it was not run as part of this investigation.
+**The negotiation half stands.** Both are unilateral per-side receiver options.
+Each end of an SRT connection sets them for itself; nothing about them is
+negotiated in the handshake. The *SRT* sender retransmits whatever a NAK requests
+and neither knows nor cares whether that NAK came from initial loss detection or
+a periodic follow-up. This is unlike FEC, which is genuinely negotiated
+(`SRTO_PACKETFILTER` plus a `receiver_supports_fec` capability gate, a real
+two-sided handshake). A minor supporting point: SRT's sender-side
+`SRTO_RETRANSMITALGO` "efficient" algorithm, default-on since 1.4.4, is
+documented as working best when the receiver does send periodic NAK reports.
 
-## 8. Retired reasoning: pedigree is not correctness
+**The "no effect on the sender" half is wrong.** The SRT sender is not the only
+sender in the path. The *SRTLA* sender sits between the SRT caller and the wire,
+and it consumes the receiver's NAK stream as its primary link-quality signal.
+Verified in source:
+
+- `src/connection/congestion/mod.rs`, `handle_nak(&mut self, window: &mut i32,
+  seq: i32, label: &str)`, doc-commented "Handle NAK reception (common to both
+  classic and enhanced)". Its body performs
+  `*window = (*window - WINDOW_DECR).max(WINDOW_MIN * WINDOW_MULT)`
+  (`WINDOW_DECR = 100`, `src/protocol/constants.rs`). Every NAK decrements that
+  link's congestion window.
+- `src/sender/selection/classic.rs` selects on `c.get_score()`, which
+  `src/connection/mod.rs` defines as `window / (in_flight + queued + 1)`. Window
+  changes are therefore scheduling changes, even in the simplest mode with no
+  quality scoring at all.
+- `src/sender/selection/quality.rs` and `src/sender/selection/enhanced.rs`
+  additionally read `conn.total_nak_count()` for quality scoring (exponential
+  NAK-age decay with a 2 s half-life, a 0.5 maximum penalty, and a 0.7 burst
+  multiplier from five NAKs).
+
+BELABOX's own `srtla` README says the same thing from the other direction: *"The
+NAKs sent by SRT are used by srtla to balance the traffic between the links and
+lower `lossmaxttl` values will create a stronger bias towards using the faster
+networks disproportionately."*
+
+So the corrected statement is: NAK reports and freeze require no negotiation,
+but they are not without effect on the peer. The receiver's NAK policy directly
+shapes the SRTLA sender's scheduling behaviour, on every mode. A third-party
+SRTLA sender facing our receiver has its scheduler shaped by our NAK policy in
+exactly the same way. That is a real behavioural interop consideration even
+though it breaks no wire compatibility, and it is more than the "feedback
+volume" caveat the first version of this section allowed for: the volume is not
+just something the peer has to absorb, it is an input the peer acts on.
+
+The cross-pair test this implies (a third-party NAK-off-tuned sender against a
+NAK-on CeraLive receiver) is still unrun, and it should now be read as a
+scheduling-behaviour test, not only a retransmission/CPU/logging amplification
+check.
+
+## 8. The NAK-to-scheduler coupling, and what it reframes
+
+This is the most important mechanistic result of the investigation, and it was
+found after the first version of this note was committed. Three claims are made
+below at three distinct confidence levels; do not collapse them.
+
+### 8.1 The coupling (PROVEN in source)
+
+`nakreport=0` does not merely remove SRT's periodic recovery follow-up. It
+suppresses the feedback stream the SRTLA scheduler uses to weight links. Per the
+citations in section 7, every NAK is a window decrement on the link that carried
+the sequence, and every selector reads that window. Turning periodic NAK reports
+off at the receiver therefore blinds the sender's scheduler to a large share of
+the loss signal it was built around, and turning them on feeds it a signal at a
+cadence and volume it may or may not have been tuned for. This is not a
+hypothesis. It is what the code does.
+
+### 8.2 Why BELABOX plausibly ships NAK-off (well-supported INFERENCE)
+
+SRT's periodic NAK re-reports the *entire* standing loss list every cycle (SRT
+cookbook: *"This report includes all the packets in the receiver's loss list"*),
+at a live-mode interval of `(RTT + 4 × RTTVar) / 2`, floored at 20 ms. On a
+single-path transport a standing loss list is a list of real losses, so
+re-reporting it is harmless and helps recovery. On a bonded path it is not: a
+packet in flight on the slow link of a heterogeneous bond creates a sequence gap
+at the receiver that persists for the duration of that link's extra delay, and
+is not a loss at all. With periodic NAK on, that one non-loss is re-reported on
+every cycle until the packet lands, and in SRTLA each report is a window
+penalty on the link that carried it. A single reordering event becomes repeated
+scheduler punishment of the slower link. BELABOX's README describes exactly this
+outcome when it warns that a low `lossmaxttl` "may prevent link aggregation from
+working by sending most of the traffic through a single link". Periodic NAK was
+designed for a transport where re-reporting is free; on a bond it doubles as a
+repeat-penalty generator.
+
+This is labelled an inference, not a proof: no packet-level trace of the
+NAK/window sequence was taken in any trial (section 1), and BELABOX has not
+documented its reasoning. It is, however, the only reading found that makes
+both the upstream/BELABOX default and our G result coherent at the same time.
+
+### 8.3 The two-factor model (CONSISTENT with all observations, NOT confirmed)
+
+Put 8.1 and 8.2 together and NAK-off has two effects with opposite sign:
+
+- a **scheduling benefit** that scales with how much *spurious*,
+  reordering-driven NAK traffic the topology would otherwise generate;
+- a **recovery cost** that scales with how much *genuine* loss the topology
+  carries, because the periodic follow-up is the only path that re-requests a
+  loss whose first NAK was itself lost or ignored.
+
+Net effect is benefit minus cost. Reading the matrix in section 3 through that
+lens:
+
+| Scenario | Spurious NAK (reordering) | Genuine loss | Observed net |
+|---|---|---|---|
+| B1, C | high (heterogeneous delays) | modest | helps |
+| A | low (homogeneous) | modest | hurts |
+| G | low (homogeneous) | high (5% GE) | strongly hurts |
+
+That fits 4/4, which no single topology property managed (section 4). The
+falsification result in section 4 is also consistent with it rather than
+against it: A-spread raised the spurious-NAK benefit, but A runs 24 Mbps
+(about 2280 pps) against B1's 9.6 Mbps (about 912 pps), so at the same 0.2%
+per-packet probability its *absolute* genuine-loss rate is roughly 2.5× higher.
+The cost may simply have scaled faster than the benefit there, which is a
+different claim from "spread does not matter". Nothing in these trials
+separates the two terms, so this remains a **model** that is consistent with
+every observation to date and has not been experimentally confirmed. A
+confirming design would have to vary reordering and genuine loss independently
+on one fixed build and count NAK frames per link, not just aggregate
+retransmission fractions.
+
+### 8.4 An UNTESTED hypothesis about our own baseline
+
+This scheduler descends from `irlserver/srtla_send`, whose receiver ships
+`SRTO_SRTLAPATCHES` (freeze plus NAK-off), and BELABOX ships NAK-off
+unconditionally (section 6). The scheduler's constants (`WINDOW_DECR`, the NAK
+decay half-life, the burst thresholds, the quality multipliers) were therefore
+plausibly tuned against a receiver that never sent periodic NAK reports. The
+committed baseline (`46170c6`) is NAK-**on**, which feeds the same scheduler
+repeat-penalties its tuning may never have anticipated. That is a coherent
+candidate explanation for the B1/C regression under freeze-only (section 2),
+which was previously unexplained.
+
+Two things follow, and they must be kept apart. It does **not** mean `46170c6`
+is wrong: NAK-off genuinely destroys A and G, and that evidence stands
+unchanged. It does mean the receiver-policy choice **cannot be made
+independently of the scheduler's tuning**. "Which receiver baseline?" is
+entangled with "which scheduler, tuned how?" in a way none of the prior
+analysis accounted for. The mis-tuning claim is a hypothesis; nothing has been
+run against it. Do not act on it as established, and do not retune constants on
+its strength alone.
+
+### 8.5 What this retracts in the "independent axes" framing
+
+The architecture guidance that presets, sender scheduling modes and receiver
+policy are three distinct *concepts* still stands, and so does the
+name-collision correction in section 9: a receiver `classic` preset and a sender
+`--mode classic` are unrelated things, and the receiver cannot observe which
+scheduling mode produced its traffic. What does not stand is the stronger claim
+that the three can be chosen *independently*. Receiver policy and scheduler
+behaviour are coupled through the NAK feedback loop, in one direction: the
+sender reads the receiver's policy through its NAK stream, the receiver reads
+nothing of the sender's. Any document that presents them as orthogonal
+configuration axes is stating something this investigation has disproved.
+
+## 9. Retired reasoning: pedigree is not correctness
 
 When `classic`/L2 was first chosen as the bench baseline, part of the
 justification was that it "matches upstream's one-and-only mode, strongest
@@ -383,11 +530,15 @@ them.
 
 A related confusion is also retired: the name collision between the sender
 `classic` scheduling mode and the receiver `classic` preset implies a coupling
-that does not exist. The receiver cannot observe the sender's scheduler, and G's
-failure crossed `classic` and `enhanced` identically. Sender `--mode classic`
-does not select receiver L2 or NAK-off, and no document should say it does.
+between those two *names* that does not exist. The receiver cannot observe the
+sender's scheduler, and G's failure crossed `classic` and `enhanced` identically.
+Sender `--mode classic` does not select receiver L2 or NAK-off, and no document
+should say it does. This is a narrower statement than "the axes are
+independent": the sender's scheduler does observe the receiver's NAK policy,
+on every mode (section 8), so the coupling that does not exist is the one
+implied by the shared name, not the one that runs through the NAK stream.
 
-## 9. What remains open
+## 10. What remains open
 
 - **B1 and C are unresolved** under the shipped freeze-only baseline. They settle
   only under NAK-off, which is unsafe on A and G. No discriminator that would
@@ -408,7 +559,15 @@ does not select receiver L2 or NAK-off, and no document should say it does.
   "bandwidth-saver" claim) belongs to a different repository and owner. Nothing
   in this repo implements or schedules it.
 - **One cross-pair interop test** for a third-party NAK-off sender against a
-  NAK-on CeraLive receiver (section 7) has not been run.
+  NAK-on CeraLive receiver (section 7) has not been run. After section 8 it is
+  a scheduling-behaviour test, not only an amplification check.
+- **The two-factor model (section 8.3) is unconfirmed.** A design that varies
+  reordering and genuine loss independently on one fixed build, and counts NAK
+  frames per link rather than aggregate retransmission fractions, has not been
+  run.
+- **The mis-tuned-for-NAK-on hypothesis (section 8.4) is untested.** No trial
+  has varied the scheduler's NAK-reaction constants against the NAK-on baseline,
+  and no constant has been changed on the strength of it.
 - **Hardware validation.** Every number here is a small-N netns observation
   under host load above 2 (the existing load-warning limitation applies to all
   trials, clean and failing arms alike). None of it is bonded-hardware evidence.
