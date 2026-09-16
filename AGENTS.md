@@ -1164,6 +1164,10 @@ are unilateral receiver options, unlike negotiated FEC; no negotiation change do
 not mean zero interop risk, because NAK-on changes feedback volume. Cross-pair
 validation remains separate from this code-and-docs correction.
 
+The full investigation record (factorial tables, the B1/C trade-off, the falsified
+cross-link-delay-spread hypothesis, and the unresolved upstream comparison) is
+[`docs/notes/receiver-policy-evaluation-2026-09.md`](docs/notes/receiver-policy-evaluation-2026-09.md).
+
 Workspace-level receiver documentation for the full evidence chain:
 `../docs/RECEIVER-CONTROL-AUDIT.md`, `../docs/DEFERRED-WORK.md` §14,
 `../docs/receive-profile-coverage.md`.
