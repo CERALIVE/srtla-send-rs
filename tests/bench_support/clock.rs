@@ -65,6 +65,7 @@ pub fn sink(path: &Path, offset: i64) -> Result<SinkSeries> {
 }
 
 pub struct CsvClock {
+    pub socket_id: u64,
     pub offset_ms: i64,
     pub uncertainty_ms: i64,
 }
@@ -90,6 +91,7 @@ impl CsvClock {
                 let stats = SrtStats::parse_with_semantics(&text, 0, CaptureSemantics::Interval)?;
                 let row = stats.rows.last().context("first CSV row")?;
                 return Ok(Self {
+                    socket_id: row.socket_id,
                     offset_ms: before + (after - before) / 2 - row.t_ms,
                     uncertainty_ms: after - before,
                 });

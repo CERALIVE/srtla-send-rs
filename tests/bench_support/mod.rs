@@ -1,6 +1,7 @@
 mod bounded;
 mod clock;
 mod collect;
+mod csv_capture;
 mod edge_tests;
 mod live;
 pub mod record;

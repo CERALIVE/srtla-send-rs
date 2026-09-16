@@ -10,6 +10,7 @@ use network_sim::scenarios::{self, Profile};
 
 use super::clock::{self, Clock, CsvClock};
 use super::collect::{self, Edges, Measurement, Sampler};
+use super::csv_capture::Capture;
 use super::record::{Request, RunFailure, check_config};
 use super::stack::Stack;
 use crate::manifest::{Settle, measurement_rate};
@@ -110,7 +111,12 @@ fn measure(request: &mut Request, profile: &Profile, stack: &mut Stack) -> Resul
     let start_control = control::query(&stack.control, Duration::from_secs(1))?;
     let start_cpu = CpuSample::sample(pid, clock.now_ms())?;
     let (start_tx, start_rx) = std::sync::mpsc::channel();
-    let run_result = std::thread::scope(|scope| -> Result<Edges> {
+    let run_result = std::thread::scope(|scope| -> Result<(Edges, Capture)> {
+        let (stop_csv, csv_stopped) = std::sync::mpsc::channel();
+        let csv_path = &request.result.record.raw.stats_csv_path;
+        let initial_clock = &csv_clock;
+        let csv_collector =
+            scope.spawn(move || Capture::run(csv_path, (clock, initial_clock), csv_stopped));
         let sampler_ref = &sampler;
         let collector = scope.spawn(move || {
             start_rx.recv().context("measurement never started")?;
@@ -166,12 +172,16 @@ fn measure(request: &mut Request, profile: &Profile, stack: &mut Stack) -> Resul
         let collected = collector
             .join()
             .map_err(|_| anyhow::anyhow!("collector panicked"))?;
+        drop(stop_csv);
+        let capture = csv_collector
+            .join()
+            .map_err(|_| anyhow::anyhow!("CSV collector panicked"))?;
         samples.extend(collected?);
         scheduled?;
-        edges
+        Ok((edges?, capture?))
     });
     request.result.record.events = scheduler.log().entries.clone();
-    let edges = run_result?;
+    let (edges, capture) = run_result?;
     drop(runtime);
     samples.extend(before_replug);
     check_config(
@@ -187,6 +197,7 @@ fn measure(request: &mut Request, profile: &Profile, stack: &mut Stack) -> Resul
         &serde_json::json!({
             "measurement_monotonic_ms": origin_ms, "sink_origin_monotonic_ms": stack.sink_origin_ms,
             "csv_offset_monotonic_ms": csv_clock.offset_ms, "csv_calibration_uncertainty_ms": csv_clock.uncertainty_ms,
+            "csv_socket_clocks": capture.clocks,
             "capture_semantics": "interval"
         }),
     )?;
@@ -195,7 +206,7 @@ fn measure(request: &mut Request, profile: &Profile, stack: &mut Stack) -> Resul
         Measurement {
             profile,
             log: scheduler.log(),
-            csv_clock: &csv_clock,
+            stats: capture.stats,
             origin_ms,
             sink_origin_ms: stack.sink_origin_ms,
             samples,

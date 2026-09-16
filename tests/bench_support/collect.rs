@@ -12,7 +12,7 @@ use network_sim::metrics::{
 use network_sim::profile::EventLog;
 use network_sim::{Namespace, scenarios};
 
-use super::clock::{self, Clock, CsvClock};
+use super::clock::{self, Clock};
 use super::record::{RunFailure, check_config};
 
 pub struct Sampler<'a> {
@@ -60,7 +60,7 @@ pub struct Edges {
 pub struct Measurement<'a> {
     pub profile: &'a scenarios::Profile,
     pub log: &'a EventLog,
-    pub csv_clock: &'a CsvClock,
+    pub stats: network_sim::metrics::srt_stats::SrtStats,
     pub origin_ms: i64,
     pub sink_origin_ms: i64,
     pub samples: Vec<Sample>,
@@ -82,12 +82,11 @@ pub fn finish(record: &mut RunRecord, measurement: Measurement<'_>) -> Result<()
         );
         std::thread::sleep(Duration::from_millis(20));
     }
-    let csv = clock::complete_csv(&record.raw.stats_csv_path)?;
-    let stats = network_sim::metrics::srt_stats::SrtStats::parse_with_semantics(
-        &csv,
-        m.csv_clock.offset_ms - m.origin_ms,
-        network_sim::metrics::srt_stats::CaptureSemantics::Interval,
-    )?;
+    let mut stats = m.stats;
+    stats.clock_offset_ms -= m.origin_ms;
+    for row in &mut stats.rows {
+        row.t_ms -= m.origin_ms;
+    }
     let window = stats.window(record.window, record.raw.sink_series.bytes(record.window)?)?;
     record.useful_goodput_bps = record.raw.sink_series.useful_goodput_bps(record.window)?;
     record.viewer_loss_ratio = window.viewer_loss_ratio;
