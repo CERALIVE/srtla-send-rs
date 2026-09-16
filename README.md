@@ -616,6 +616,22 @@ timeout --foreground --kill-after=10s 120s cargo test --test netns_bond -- --noc
 
 ### Receiver-side benchmark metrics
 
+The production listener preset is `latency=2000&lossmaxttl=40&reorderfreeze=1&nakreport=0`.
+STRICT and LEGACY_DEFAULT retain their existing tuning, and caller URIs are unchanged.
+This receiver-profile correction does not change scenario loads or settling thresholds.
+
+`reorderfreeze` is a CeraLive-only libsrt option, so the bench needs an
+`srt-live-transmit` built from the CeraLive SRT fork (`github.com/CERALIVE/srt`,
+apps enabled, plus a local `reorderfreeze` row in `apps/socketoptions.hpp`). Point
+`SRT_LIVE_TRANSMIT_BIN` at it for every privileged run; the PATH fallback is a vanilla
+tool that silently runs the listener unfrozen with NAK reports on, and under bonding
+reorder that produces premature loss reports, retransmission amplification, and
+`settle_timeout` failures that look like scheduler bugs. The preset matches the
+`classic`/L2 production receiver profile (freeze on, NAK off), chosen for its evidence
+pedigree, not the `balanced`/L1 production default (freeze on, NAK on). Measured
+effect and limits, including the `nakreport=0` retransmission cost on real loss, are
+in `AGENTS.md` → BENCH RECEIVER-PROFILE DEPENDENCY.
+
 `network_sim::metrics` supplies receiver CSV windowing, a pcap-free 100 ms UDP sink,
 1 Hz link/telemetry collectors, optional control-command deltas, CPU/RSS readings,
 impairment episodes, source-load intervals, and the serde `RunRecord` schema.

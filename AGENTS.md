@@ -1074,7 +1074,89 @@ aarch64 cross-build env (mirrors the PINNED TOOLCHAIN note): linker
 `gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross binutils-aarch64-linux-gnu pkg-config`,
 `PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig`.
 
+## BENCH RECEIVER-PROFILE DEPENDENCY (CeraLive SRT fork)
+
+The bench harness (`crates/network-sim`, `tests/bench_scheduler.rs`, every
+`netns_*` target that spawns an SRT listener) needs an `srt-live-transmit` built from
+**CeraLive's own SRT fork** (`github.com/CERALIVE/srt`, sibling checkout `../srt`) on
+the receiver side. Nothing enforces that: `find_srt_live_transmit_binary()` resolves
+`SRT_LIVE_TRANSMIT_BIN` and otherwise falls back to whatever `srt-live-transmit` is on
+`PATH` (`crates/network-sim/src/harness.rs`, `resolve_external_binary`), the same
+convention `SRTLA_REC_BIN`/`SRTLA_REPO` follow for the SRTLA receiver. Set it per
+invocation to the fork build. Never hardcode the path in a tracked file (Rule D).
+
+**Why the fork and not a vanilla libsrt.** `SrtProfile::PRODUCTION::listener_uri()`
+(`harness.rs`) emits
+`mode=listener&latency=2000&lossmaxttl=40&reorderfreeze=1&nakreport=0`.
+`reorderfreeze` is `SRTO_REORDERFREEZE`, a CeraLive-only socket option (see
+`../srt/AGENTS.md` → SANCTIONED CERALIVE PATCH); Haivision/srt has no such concept, so a
+vanilla `srt-live-transmit` neither knows the option nor sets it. The stray host binary
+Campaign C1 fell back to (`/usr/bin/srt-live-transmit`, not dpkg-tracked, loading
+`/usr/local/lib/libsrt.so.1.5.5`) was exactly that. Build per the fork's `AGENTS.md`
+BUILD section with the apps enabled (`cmake -B build -DENABLE_APPS=ON ...`, shared not
+static). **One extra prerequisite:** the fork's `apps/socketoptions.hpp` URI-option
+table needs a `reorderfreeze` row beside `nakreport`
+(`{"reorderfreeze",0,SRTO_REORDERFREEZE,SocketOption::PRE,SocketOption::BOOL,nullptr}`).
+Without it the listener never applies the option ("reorderfreeze=1 was not applied
+before listen") and the bench silently runs unfrozen. As of 2026-09-16 that row is a
+local, uncommitted edit, not yet upstreamed to `CERALIVE/srt`; check the fork before
+assuming a fresh checkout carries it. `STRICT`, `LEGACY_DEFAULT`, and the
+`mode=caller&latency=2000&lossmaxttl=40` caller URI do not carry the option and are
+unchanged. The one env var selects BOTH endpoint executables, so a fork build also puts
+the caller on fork libsrt 1.5.6 (with no new options on its side).
+
+**What happens without it.** The receiver session runs bare `lossmaxttl=40`: no freeze,
+default `nakreport`. Bonding heterogeneous-latency links reorders packets by
+construction, and a stock receiver under sustained reordering emits periodic NAK loss
+reports for packets that are merely late, not lost. Retransmission amplification
+follows, then genuine queue overflow, and the run fails the 30 s warm-up settling gate
+(`settle_timeout`). Campaign C1 measured every cell this way, and those failures were
+read for several investigations as scenario or scheduler defects before the receiver
+binary was checked.
+
+**Which production profile this is, and why.** The URI is `irl-srt-server`'s
+`classic`/L2 profile (`kSrtProfileTable`: freeze on, NAK **off**, 2000 ms,
+`lossmaxttl=40`). It is NOT the production default. That is `balanced`/L1
+(`ceralive-platform/apps/api/lib/receiver/profile-routing.ts`,
+`DEFAULT_RECEIVER_PROFILE = 'balanced'`: freeze on, NAK **on**, 1500 ms). Both L1 and
+L2 freeze; the difference is NAK on vs off. `classic`/L2 was chosen deliberately for
+evidence pedigree, not representativeness: (a) it is upstream
+`irlserver/irl-srt-server`'s single, one-and-only mode (`git show
+irlserver/main:Dockerfile` builds against `irlserver/srt`'s `belabox` branch and sets
+`SRTO_SRTLAPATCHES`, which bundles freeze-on + NAK-off as one inseparable option;
+`CERALIVE/srt` does not define that flag and reaches the same shape through
+`SRTO_REORDERFREEZE` plus standard `SRTO_NAKREPORT=0`), and (b) it is the only one of
+the five production receiver profiles with an explicit A/B calibration record behind
+`lossmaxttl=40` ("Task 1 A/B tie-break for BELABOX parity",
+`../docs/RECEIVER-CONTROL-AUDIT.md`, workspace root). Do not assume bench results
+transfer to `balanced`/L1 without separate validation; NAK-on is a different receiver.
+
+**What the correction does and does not fix** (targeted N=2-3 trials per cell, not a
+campaign). Settling improved where the root cause was the library's periodic NAK report
+ignoring reorder tolerance for freshly reordered packets: `classic`/B1 0/2→2/3,
+`classic`/C 0/2→3/3. `enhanced`/G did not move (0/2→0/3) and `enhanced`/A got worse
+(1/2→0/3). Those two have a separate, scheduler-side cause, `enhanced`'s unconditional
+`MIN_SWITCH_INTERVAL_MS=15` switch cooldown defeating its own per-packet load feedback,
+which no receiver-side change can reach. There is also a real cost: `classic`/F, a
+genuine configured-loss scenario that already passed, saw its received-retransmission
+fraction roughly quadruple (~1.2%→~5.5%) under `nakreport=0` while goodput and drops
+stayed healthy. `nakreport=0` trades fewer redundant NAK cycles for slower recovery when
+loss is real. The trial was a binary+profile intervention, not a freeze-only or NAK-only
+factorial; do not attribute the whole delta to freeze.
+
+Workspace-level receiver documentation for the full evidence chain:
+`../docs/RECEIVER-CONTROL-AUDIT.md`, `../docs/DEFERRED-WORK.md` §14,
+`../docs/receive-profile-coverage.md`.
+
 ## BENCHMARK METRICS (network-sim)
+
+`SrtProfile::PRODUCTION` adds `reorderfreeze=1&nakreport=0` to the listener URI,
+alongside the existing 2000ms latency and lossmaxttl 40. STRICT and LEGACY_DEFAULT
+remain unchanged, as do caller URIs. This receiver-profile correction does not
+change scenario loads, settling thresholds, or sender scheduling. The option only
+takes effect on a fork-built `srt-live-transmit`; see BENCH RECEIVER-PROFILE
+DEPENDENCY above for the `SRT_LIVE_TRANSMIT_BIN` requirement, the profile choice,
+and its measured limits.
 
 **Reference-backed scenarios (Todo 12):** `network_sim::scenarios::all()` returns
 13 profiles (A–L, B1/B2). `scenarios::Profile` wraps the unchanged temporal `Profile`

@@ -748,8 +748,13 @@ impl SrtProfile {
         if *self == Self::LEGACY_DEFAULT {
             uri
         } else {
+            let receiver_options = if *self == Self::PRODUCTION {
+                "&reorderfreeze=1&nakreport=0"
+            } else {
+                ""
+            };
             format!(
-                "{uri}&latency={}&lossmaxttl={}",
+                "{uri}&latency={}&lossmaxttl={}{receiver_options}",
                 self.latency_ms, self.lossmaxttl
             )
         }
@@ -1227,7 +1232,7 @@ mod srt_profile_tests {
         for (profile, expected) in [
             (
                 SrtProfile::PRODUCTION,
-                "srt://:4001?mode=listener&latency=2000&lossmaxttl=40",
+                "srt://:4001?mode=listener&latency=2000&lossmaxttl=40&reorderfreeze=1&nakreport=0",
             ),
             (
                 SrtProfile::STRICT,
@@ -1266,7 +1271,7 @@ mod srt_profile_tests {
                 "-statspf:csv",
                 "-stats",
                 "1000",
-                "srt://:4001?mode=listener&latency=2000&lossmaxttl=40",
+                "srt://:4001?mode=listener&latency=2000&lossmaxttl=40&reorderfreeze=1&nakreport=0",
                 "udp://127.0.0.1:9999"
             ]
         );
