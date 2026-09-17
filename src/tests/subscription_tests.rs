@@ -48,6 +48,7 @@ fn snapshot_json(last_updated_ms: u64, conns: &[TelemetryConn]) -> String {
             conns,
             session_bytes_sent: 0,
             bind_map: &BindMapReport::default(),
+            receiver_nak_report: None,
         },
     )
 }

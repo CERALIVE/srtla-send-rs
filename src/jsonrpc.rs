@@ -146,6 +146,7 @@ fn status_result(config: &DynamicConfig, stats: &SharedStats) -> Value {
         "bind_map_status": live.bind_map.bind_map_status,
         "disposition": live.bind_map.disposition,
         "links": link_identities(&live),
+        "receiver": live.receiver,
     });
     if let Some(ms) = stats.negotiated_latency_ms() {
         result["negotiated_latency_ms"] = json!(ms);

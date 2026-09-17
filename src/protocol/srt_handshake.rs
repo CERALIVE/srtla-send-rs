@@ -2,9 +2,16 @@
 
 use super::{SRT_TYPE_HANDSHAKE, get_packet_type};
 
-/// Receiver TSBPD delay in milliseconds from a complete v5 conclusion HSRSP.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HsrspInfo {
+    pub srt_version: u32,
+    pub flags: u32,
+    pub tsbpd_delay_ms: u32,
+}
+
+/// Receiver capabilities from a complete v5 conclusion HSRSP.
 /// Unknown extensions are skipped; malformed/truncated input silently returns `None`.
-pub fn parse_hsrsp_tsbpd_delay_ms(buf: &[u8]) -> Option<u32> {
+pub fn parse_hsrsp(buf: &[u8]) -> Option<HsrspInfo> {
     let header = buf.get(..64)?;
     if get_packet_type(header)? != SRT_TYPE_HANDSHAKE
         || header[16..20] != 5_u32.to_be_bytes()
@@ -15,7 +22,7 @@ pub fn parse_hsrsp_tsbpd_delay_ms(buf: &[u8]) -> Option<u32> {
     }
 
     let mut extensions = buf.get(64..)?;
-    let mut delay = None;
+    let mut info = None;
     while !extensions.is_empty() {
         let descriptor = extensions.get(..4)?;
         let command = u16::from_be_bytes([descriptor[0], descriptor[1]]);
@@ -25,16 +32,88 @@ pub fn parse_hsrsp_tsbpd_delay_ms(buf: &[u8]) -> Option<u32> {
         if command == 2 {
             // SRT version at E+4, flags at E+8, latency at E+12 (receiver high half).
             let latency = block.get(12..16)?;
-            delay = Some(u32::from(u16::from_be_bytes([latency[0], latency[1]])));
+            info = Some(HsrspInfo {
+                srt_version: u32::from_be_bytes(block.get(4..8)?.try_into().ok()?),
+                flags: u32::from_be_bytes(block.get(8..12)?.try_into().ok()?),
+                tsbpd_delay_ms: u32::from(u16::from_be_bytes([latency[0], latency[1]])),
+            });
         }
         extensions = extensions.get(end..)?;
     }
-    delay
+    info
+}
+
+pub fn parse_hsrsp_tsbpd_delay_ms(buf: &[u8]) -> Option<u32> {
+    parse_hsrsp(buf).map(|info| info.tsbpd_delay_ms)
 }
 
 #[cfg(test)]
 mod tests {
     use super::parse_hsrsp_tsbpd_delay_ms;
+
+    #[test]
+    fn captured_hsrsp_decodes_version_and_nak_on_flags() {
+        let info = super::parse_hsrsp(HSRSP).unwrap();
+        assert_eq!(info.srt_version, 0x010505);
+        assert_eq!(info.flags, 0xbf);
+        assert_ne!(info.flags & crate::protocol::SRT_OPT_NAKREPORT, 0);
+        assert_eq!(info.tsbpd_delay_ms, 2000);
+    }
+
+    #[test]
+    fn captured_hsrsp_decodes_nak_off_flags() {
+        let packet = include_bytes!("../../tests/fixtures/srt-hsrsp-nak-off.bin");
+        let info = super::parse_hsrsp(packet).unwrap();
+        assert_eq!(info.flags, 0xaf);
+        assert_eq!(info.flags & crate::protocol::SRT_OPT_NAKREPORT, 0);
+        assert_eq!(info.srt_version, 0x010505);
+        assert_eq!(info.tsbpd_delay_ms, 2000);
+    }
+
+    #[test]
+    fn clearing_nak_bit_preserves_other_hsrsp_fields() {
+        let mut packet = HSRSP.to_vec();
+        packet[72..76].copy_from_slice(&0xaf_u32.to_be_bytes());
+        let info = super::parse_hsrsp(&packet).unwrap();
+        assert_eq!(info.flags & crate::protocol::SRT_OPT_NAKREPORT, 0);
+        assert_eq!(info.flags, 0xaf);
+        assert_eq!(info.srt_version, 0x010505);
+        assert_eq!(info.tsbpd_delay_ms, 2000);
+    }
+
+    #[test]
+    fn hsrsp_fields_follow_extension_walk_and_preserve_unknown_bits() {
+        let mut packet = HSRSP[..64].to_vec();
+        packet.extend_from_slice(&[0, 99, 0, 1, 0, 0, 0, 0]);
+        packet.extend_from_slice(&HSRSP[64..]);
+        packet[76..80].copy_from_slice(&0x010506_u32.to_be_bytes());
+        packet[80..84].copy_from_slice(&0x8000_00bf_u32.to_be_bytes());
+        assert_eq!(
+            super::parse_hsrsp(&packet),
+            Some(super::HsrspInfo {
+                srt_version: 0x010506,
+                flags: 0x8000_00bf,
+                tsbpd_delay_ms: 2000,
+            })
+        );
+    }
+
+    #[test]
+    fn hsrsp_flag_constants_match_srt_wire_bits() {
+        use crate::protocol::*;
+        assert_eq!(
+            [
+                SRT_OPT_TSBPDSND,
+                SRT_OPT_TSBPDRCV,
+                SRT_OPT_TLPKTDROP,
+                SRT_OPT_NAKREPORT,
+                SRT_OPT_REXMITFLG,
+                SRT_OPT_STREAM,
+                SRT_OPT_FILTERCAP
+            ],
+            [1, 2, 8, 16, 32, 64, 128]
+        );
+    }
 
     const HSRSP: &[u8] = include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),

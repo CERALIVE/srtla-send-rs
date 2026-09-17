@@ -62,6 +62,7 @@ fn doc(last_updated_ms: u64, conns: &[TelemetryConn], session_bytes_sent: u64) -
             conns,
             session_bytes_sent,
             bind_map: &BindMapReport::default(),
+            receiver_nak_report: None,
         },
     )
 }

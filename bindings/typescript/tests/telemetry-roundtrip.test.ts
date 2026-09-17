@@ -51,7 +51,39 @@ const PRODUCER_ORDERED_FIXTURES: string[] = [
 	'telemetry-degraded-startup',
 	'telemetry-degraded-reload',
 	'telemetry-adaptive',
+	'telemetry-receiver-flags',
 ];
+
+describe('receiver NAK observation', () => {
+	test.each([true, false])(
+		'preserves explicit %s without changing schema version',
+		async (flag) => {
+			const base = telemetrySchema.parse(JSON.parse(await readBytes('telemetry-golden')));
+			const bytes = JSON.stringify({ ...base, receiver_nak_report: flag });
+			const { once, serialized } = roundTrip(bytes);
+			expect(once.receiver_nak_report).toBe(flag);
+			expect(once.schema_version).toBe(1);
+			expect(serialized).toBe(bytes);
+		},
+	);
+	test('unknown stays omitted and has the conservative NAK-on policy fallback', async () => {
+		const { once } = roundTrip(await readBytes('telemetry-legacy-producer'));
+		expect(Object.hasOwn(once, 'receiver_nak_report')).toBe(false);
+		expect(once.receiver_nak_report ?? true).toBe(true);
+	});
+	test.each([null, 0, 'false'])('rejects a non-boolean receiver flag: %s', async (flag) => {
+		const base = telemetrySchema.parse(JSON.parse(await readBytes('telemetry-golden')));
+		expect(telemetrySchema.safeParse({ ...base, receiver_nak_report: flag }).success).toBe(false);
+	});
+	test('stripping the receiver flag falsifies byte parity', async () => {
+		const bytes = await readBytes('telemetry-receiver-flags');
+		const parsed = telemetrySchema.parse(JSON.parse(bytes));
+		expect(parsed.receiver_nak_report).toBe(false);
+		expect(JSON.stringify(parsed)).toBe(bytes);
+		delete parsed.receiver_nak_report;
+		expect(JSON.stringify(parsed)).not.toBe(bytes);
+	});
+});
 
 describe('byte parity: parse(serialize(x)) preserves every sender field', () => {
 	test('a stripped health field falsifies adaptive byte parity', async () => {

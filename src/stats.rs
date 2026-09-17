@@ -31,6 +31,10 @@ use crate::sender::calculate_quality_multiplier;
 use crate::sender::pool_control::{PoolControlHandle, PoolControlReceiver};
 use crate::utils::now_ms;
 
+#[path = "receiver_handshake.rs"]
+mod receiver_handshake;
+pub use receiver_handshake::ReceiverHandshake;
+
 /// Per-link statistics.
 ///
 /// Fields match `ConnectionInfo` (extended keepalive format) where applicable,
@@ -136,6 +140,7 @@ pub struct StatsSnapshot {
 
     /// Per-link details
     pub links: Vec<LinkStats>,
+    pub receiver: ReceiverHandshake,
 }
 
 impl Default for StatsSnapshot {
@@ -151,6 +156,7 @@ impl Default for StatsSnapshot {
             session_bytes_sent: 0,
             bind_map: BindMapReport::default(),
             links: Vec::new(),
+            receiver: ReceiverHandshake::default(),
         }
     }
 }
@@ -206,6 +212,7 @@ pub struct SharedStats {
     session_bytes: Arc<Mutex<SessionBytes>>,
     bind_map: Arc<RwLock<BindMapReport>>,
     negotiated_latency_ms: Arc<AtomicU32>,
+    receiver: Arc<RwLock<ReceiverHandshake>>,
     pool_control: Arc<RwLock<Option<PoolControlHandle>>>,
 }
 
@@ -216,6 +223,7 @@ impl SharedStats {
             session_bytes: Arc::new(Mutex::new(SessionBytes::default())),
             bind_map: Arc::new(RwLock::new(BindMapReport::default())),
             negotiated_latency_ms: Arc::new(AtomicU32::new(0)),
+            receiver: Arc::default(),
             pool_control: Arc::default(),
         }
     }
@@ -240,6 +248,22 @@ impl SharedStats {
     pub fn negotiated_latency_ms(&self) -> Option<u32> {
         let ms = self.negotiated_latency_ms.load(Ordering::Relaxed);
         (ms != 0).then_some(ms)
+    }
+
+    pub fn receiver_handshake(&self) -> ReceiverHandshake {
+        self.receiver
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Bond-scoped: pool rebuilds never clear this; a new encoder HSRSP replaces it.
+    pub fn set_receiver_handshake(&self, info: crate::protocol::srt_handshake::HsrspInfo) {
+        self.set_negotiated_latency_ms(info.tsbpd_delay_ms);
+        *self
+            .receiver
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = info.into();
     }
 
     /// Publish from the receive path without coupling to housekeeping or configuration.
@@ -356,6 +380,7 @@ impl SharedStats {
             .read()
             .map(|guard| guard.clone())
             .unwrap_or_default();
+        snapshot.receiver = self.receiver_handshake();
         snapshot
     }
 
@@ -368,3 +393,7 @@ impl SharedStats {
 #[cfg(test)]
 #[path = "stats_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "receiver_handshake_tests.rs"]
+mod receiver_handshake_tests;

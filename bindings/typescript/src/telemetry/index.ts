@@ -199,6 +199,8 @@ export const telemetrySchema = z.object({
 	 * OPTIONAL: a producer predating ADR-003 omits it. Absent means UNKNOWN.
 	 */
 	disposition: bindMapDispositionSchema.optional(),
+	/** Bond-level HSRSP observation. Unknown is omitted; policy must use `value ?? true`. */
+	receiver_nak_report: z.boolean().optional(),
 });
 
 export type ConnectionTelemetry = z.output<typeof connectionTelemetrySchema>;

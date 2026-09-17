@@ -27,6 +27,17 @@ async fn packet_io_hsrsp_publishes_latency_and_forwards_identical_bytes() {
     assert_eq!(incoming.forward_to_client.len(), 1);
     assert_eq!(incoming.forward_to_client[0].as_slice(), HSRSP);
     assert_eq!(consumer.negotiated_latency_ms(), Some(2000));
+    assert_eq!(
+        consumer.receiver_handshake().receiver_nak_report,
+        Some(true)
+    );
+    assert_eq!(
+        consumer
+            .receiver_handshake()
+            .receiver_srt_version
+            .as_deref(),
+        Some("1.5.5")
+    );
 }
 
 #[tokio::test]
@@ -38,6 +49,7 @@ async fn packet_io_invalid_hsrsp_still_forwards_and_preserves_known_latency() {
     let (forwarder, _rx) = tokio::sync::mpsc::unbounded_channel();
     let stats = SharedStats::new();
     stats.set_negotiated_latency_ms(500);
+    let before = stats.receiver_handshake();
     let mut packet = HSRSP.to_vec();
     packet[65] ^= 1;
     // When parsing fails inside receive processing.
@@ -49,6 +61,7 @@ async fn packet_io_invalid_hsrsp_still_forwards_and_preserves_known_latency() {
     assert_eq!(incoming.forward_to_client.len(), 1);
     assert_eq!(incoming.forward_to_client[0].as_slice(), packet);
     assert_eq!(stats.negotiated_latency_ms(), Some(500));
+    assert_eq!(stats.receiver_handshake(), before);
 }
 
 #[tokio::test]
@@ -83,4 +96,5 @@ async fn packet_io_drain_sniffs_the_real_udp_handshake() {
     assert_eq!(incoming.forward_to_client.len(), 1);
     assert_eq!(incoming.forward_to_client[0].as_slice(), HSRSP);
     assert_eq!(stats.negotiated_latency_ms(), Some(2000));
+    assert_eq!(stats.receiver_handshake().receiver_nak_report, Some(true));
 }

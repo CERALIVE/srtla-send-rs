@@ -98,7 +98,7 @@ fn handshake_payloads(path: &Path) -> Result<Vec<Vec<u8>>> {
         .collect()
 }
 
-fn capture_latency(latency_ms: u16) -> Result<()> {
+fn capture_latency(latency_ms: u16, nak_report: bool) -> Result<()> {
     // Given: an isolated one-link bond and real caller/listener, ready before dialing.
     ensure!(
         network_sim::test_util::check_privileges(),
@@ -130,7 +130,7 @@ fn capture_latency(latency_ms: u16) -> Result<()> {
     };
     let ips = dir.path().join("ips.txt");
     fs::write(&ips, format!("{}\n", topo.sender_ips[0]))?;
-    let uri = format!("srt://:4001?mode=listener&latency={latency_ms}");
+    let uri = format!("srt://:4001?mode=listener&latency={latency_ms}&nakreport={nak_report}");
     let listener = NamespaceProcess::spawn(
         &topo.receiver_ns,
         "srt-live-transmit",
@@ -201,6 +201,9 @@ fn capture_latency(latency_ms: u16) -> Result<()> {
         })?;
     // Then: live latency and byte-identical client-side forwarding, without debug hooks.
     assert_eq!(decoded.high_ms, latency_ms);
+    let flags_offset = decoded.extension_offset + 8;
+    let flags = u32::from_be_bytes(raw[flags_offset..flags_offset + 4].try_into()?);
+    assert_eq!(flags & (1 << 4) != 0, nak_report);
     assert!(
         forwarded.contains(raw),
         "HSRSP never reached the caller-side capture"
@@ -215,10 +218,12 @@ fn capture_latency(latency_ms: u16) -> Result<()> {
     );
     println!("raw={:02x?}", raw);
     if latency_ms == 2000 && std::env::var("UPDATE_GOLDEN").as_deref() == Ok("1") {
-        fs::write(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/srt-hsrsp-latency2000.bin"),
-            raw,
-        )?;
+        let fixture = if nak_report {
+            "tests/fixtures/srt-hsrsp-latency2000.bin"
+        } else {
+            "tests/fixtures/srt-hsrsp-nak-off.bin"
+        };
+        fs::write(Path::new(env!("CARGO_MANIFEST_DIR")).join(fixture), raw)?;
     }
     if artifacts.is_some() {
         println!("capture_artifacts={}", dir.keep().display());
@@ -229,11 +234,34 @@ fn capture_latency(latency_ms: u16) -> Result<()> {
 #[test]
 #[ignore = "privileged live SRT pair; requires SRTLA_REC_BIN, tcpdump and tshark"]
 fn hsrsp_reports_listener_latency_2000() -> Result<()> {
-    capture_latency(2000)
+    capture_latency(2000, true)
 }
 
 #[test]
 #[ignore = "privileged failure QA: different listener latency must change the field"]
 fn hsrsp_reports_listener_latency_500() -> Result<()> {
-    capture_latency(500)
+    capture_latency(500, true)
+}
+
+#[test]
+fn hsrsp_reports_listener_nak_off() -> Result<()> {
+    // Given a real listener with periodic NAK disabled (optional privileged lane).
+    if !network_sim::test_util::check_privileges()
+        || std::env::var_os("SRTLA_REC_BIN").is_none()
+        || [
+            "srt-live-transmit",
+            "tcpdump",
+            "tshark",
+            "ip",
+            "ss",
+            "timeout",
+        ]
+        .iter()
+        .any(|tool| check_binary(tool).is_none())
+    {
+        eprintln!("SKIP: HSRSP capture requires sudo, capture tools and SRTLA_REC_BIN");
+        return Ok(());
+    }
+    // When negotiating, Then the captured receiver flags have bit 4 clear.
+    capture_latency(2000, false)
 }

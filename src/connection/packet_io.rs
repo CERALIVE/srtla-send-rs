@@ -8,7 +8,7 @@ use tracing::{debug, warn};
 
 use super::SrtlaConnection;
 use super::incoming::SrtlaIncoming;
-use crate::protocol::srt_handshake::parse_hsrsp_tsbpd_delay_ms;
+use crate::protocol::srt_handshake::parse_hsrsp;
 use crate::protocol::*;
 use crate::registration::{RegistrationEvent, SrtlaRegistrationManager};
 use crate::stats::SharedStats;
@@ -224,9 +224,9 @@ impl SrtlaConnection {
                 }
             } else {
                 if pt == SRT_TYPE_HANDSHAKE
-                    && let Some(ms) = parse_hsrsp_tsbpd_delay_ms(data)
+                    && let Some(info) = parse_hsrsp(data)
                 {
-                    stats.set_negotiated_latency_ms(ms);
+                    stats.set_receiver_handshake(info);
                 }
                 incoming
                     .forward_to_client

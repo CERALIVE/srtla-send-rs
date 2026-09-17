@@ -514,8 +514,8 @@ and first-post-RPC snapshots despite successful bounded recovery and final healt
 Do not deploy or call the adaptive milestone complete. See the evaluation note
 for the measured limits and explicit stop boundary.
 
-`tests/netns_hsrsp_spike.rs` is an explicitly ignored, one-link live-handshake
-spike. Point `SRTLA_REC_BIN` at an out-of-tree CeraLive receiver build, install
+`tests/netns_hsrsp_spike.rs` contains two explicitly ignored, one-link live-handshake
+latency spikes. Point `SRTLA_REC_BIN` at an out-of-tree CeraLive receiver build, install
 `tcpdump` and `tshark`, and run
 `timeout --foreground --kill-after=10s 90s cargo test --test netns_hsrsp_spike -- --ignored --nocapture`.
 It captures the first three seconds of caller negotiation at listener latencies
@@ -526,6 +526,10 @@ regenerates `tests/fixtures/srt-hsrsp-latency2000.bin` (raw SRT UDP payload, 80 
 `HSRSP_CAPTURE_DIR` optionally names an existing directory in which unique capture
 subdirectories and process logs are retained. The captured fixture now also pins the
 production HSRSP parser described below.
+Its additional `hsrsp_reports_listener_nak_off` case self-skips without the tools,
+privileges and `SRTLA_REC_BIN`. Run that filter without `--ignored` under the same
+timeout; `UPDATE_GOLDEN=1` writes the separate `srt-hsrsp-nak-off.bin` capture.
+The original NAK-on capture remains unchanged.
 
 `tests/netns_twin.rs` covers the duplicate-IP twin case that a single-subnet veth
 topology cannot express: two uplinks on ONE source address, each behind its own NAT
@@ -1077,7 +1081,26 @@ not authenticated and has no stream/socket-generation freshness guarantee.
 `SharedStats::negotiated_latency_ms() -> Option<u32>` reads a shared atomic directly,
 without snapshot locks, configuration reads or awaiting housekeeping. This is
 the observation consumed by the shared deadline gate in every mode.
-The frozen stats-file telemetry shape and TypeScript bindings are unchanged.
+The required stats-file telemetry fields remain unchanged; receiver flags are
+an optional additive observation as described next.
+
+The same parser also reads the receiver's **SRT version and handshake flags**.
+`get-status` adds a `receiver` object with optional `nak_report`, `srt_version`
+(for example `"1.5.6"`), and `rexmit_flag`. Before any HSRSP it is `{}`.
+The 30-second log adds `receiver: nak_report=on|off|unknown srt=<version|unknown>`.
+File/event telemetry adds top-level optional `receiver_nak_report` after
+`disposition`, preserved by the TypeScript reader in producer order. Unknown is
+omitted, never null; **schema_version remains 1**. The frozen older reader accepts
+the additive field (and strips it until it knows that field).
+
+Receiver observations are cached **once per bond**, not per uplink. A SIGHUP-added
+or re-registered link inherits the same observation; an encoder's new valid HSRSP
+updates it. Malformed handshakes never erase it. Policy consumers must interpret
+unknown conservatively as NAK-on (`nak_report_enabled()` in Rust, `value ?? true`
+in TS), while keeping unknown visibly distinct from on. This addition does not
+change scheduling or NAK handling, nor authenticate these receiver claims.
+The new `telemetry-receiver-flags` fixture pins explicit NAK-off across Rust and TS;
+all older fixtures, including the frozen legacy producer, keep their exact bytes.
 
 Run `cargo test --lib srt_handshake`, `cargo test --lib packet_io`, and
 `cargo test --test parser_proptest`. `cargo test --test negotiated_latency` runs

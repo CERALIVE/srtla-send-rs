@@ -14,6 +14,14 @@ const HSRSP: &[u8] = include_bytes!("fixtures/srt-hsrsp-latency2000.bin");
 #[derive(Debug, Deserialize)]
 struct Status {
     negotiated_latency_ms: Option<u32>,
+    receiver: Receiver,
+}
+
+#[derive(Debug, Deserialize)]
+struct Receiver {
+    nak_report: Option<bool>,
+    srt_version: Option<String>,
+    rexmit_flag: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -30,7 +38,7 @@ impl Drop for Sender {
     }
 }
 
-async fn forwarded_status(reply: &[u8]) -> Status {
+async fn forwarded_status(replies: &[&[u8]]) -> Status {
     let dir = tempfile::tempdir().unwrap();
     let ips = dir.path().join("ips");
     std::fs::write(&ips, "127.0.0.1\n").unwrap();
@@ -87,9 +95,15 @@ async fn forwarded_status(reply: &[u8]) -> Status {
             break peer;
         }
     };
-    receiver.send_to(reply, peer).await.unwrap();
-    let (n, _) = client.recv_from(&mut buf).await.unwrap();
-    assert_eq!(&buf[..n], reply, "sender must preserve the entire datagram");
+    for reply in replies {
+        receiver.send_to(reply, peer).await.unwrap();
+        let (n, _) = client.recv_from(&mut buf).await.unwrap();
+        assert_eq!(
+            &buf[..n],
+            *reply,
+            "sender must preserve the entire datagram"
+        );
+    }
 
     let stream = loop {
         match UnixStream::connect(&control).await {
@@ -116,10 +130,13 @@ async fn forwarded_status(reply: &[u8]) -> Status {
 #[tokio::test]
 async fn captured_hsrsp_reaches_client_and_live_status() {
     // Given the real fixture, When forwarded by the binary, Then status exposes 2000 ms.
-    let status = tokio::time::timeout(Duration::from_secs(10), forwarded_status(HSRSP))
+    let status = tokio::time::timeout(Duration::from_secs(10), forwarded_status(&[HSRSP]))
         .await
         .unwrap();
     assert_eq!(status.negotiated_latency_ms, Some(2000));
+    assert_eq!(status.receiver.nak_report, Some(true));
+    assert_eq!(status.receiver.srt_version.as_deref(), Some("1.5.5"));
+    assert_eq!(status.receiver.rexmit_flag, Some(true));
 }
 
 #[tokio::test]
@@ -127,8 +144,36 @@ async fn malformed_hsrsp_reaches_client_without_inventing_latency() {
     // Given a flipped extension type, When forwarded by the binary, Then delay stays unknown.
     let mut reply = HSRSP.to_vec();
     reply[65] ^= 1;
-    let status = tokio::time::timeout(Duration::from_secs(10), forwarded_status(&reply))
+    let status = tokio::time::timeout(Duration::from_secs(10), forwarded_status(&[&reply]))
         .await
         .unwrap();
     assert_eq!(status.negotiated_latency_ms, None);
+    assert_eq!(status.receiver.nak_report, None);
+    assert_eq!(status.receiver.srt_version, None);
+    assert_eq!(status.receiver.rexmit_flag, None);
+}
+
+#[tokio::test]
+async fn encoder_reconnect_updates_live_receiver_flags_without_housekeeping() {
+    let off = include_bytes!("fixtures/srt-hsrsp-nak-off.bin");
+    let status = tokio::time::timeout(Duration::from_secs(10), forwarded_status(&[HSRSP, off]))
+        .await
+        .unwrap();
+    assert_eq!(status.receiver.nak_report, Some(false));
+    assert_eq!(status.receiver.rexmit_flag, Some(true));
+    assert_eq!(status.receiver.srt_version.as_deref(), Some("1.5.5"));
+}
+
+#[tokio::test]
+async fn malformed_reconnect_preserves_live_receiver_flags() {
+    let mut malformed = HSRSP.to_vec();
+    malformed.push(0);
+    let status = tokio::time::timeout(
+        Duration::from_secs(10),
+        forwarded_status(&[HSRSP, &malformed]),
+    )
+    .await
+    .unwrap();
+    assert_eq!(status.receiver.nak_report, Some(true));
+    assert_eq!(status.receiver.srt_version.as_deref(), Some("1.5.5"));
 }

@@ -18,6 +18,15 @@ pub const SRT_TYPE_SHUTDOWN: u16 = 0x8005;
 #[allow(dead_code)] // justified: used in integration_tests.rs for protocol validation
 pub const SRT_TYPE_DATA: u16 = 0x0000;
 
+// SRT handshake option bits (srtcore/handshake.h, SrtOptions).
+pub const SRT_OPT_TSBPDSND: u32 = 1 << 0;
+pub const SRT_OPT_TSBPDRCV: u32 = 1 << 1;
+pub const SRT_OPT_TLPKTDROP: u32 = 1 << 3;
+pub const SRT_OPT_NAKREPORT: u32 = 1 << 4;
+pub const SRT_OPT_REXMITFLG: u32 = 1 << 5;
+pub const SRT_OPT_STREAM: u32 = 1 << 6;
+pub const SRT_OPT_FILTERCAP: u32 = 1 << 7;
+
 // Packet size constants
 pub const SRTLA_ID_LEN: usize = 256;
 pub const SRTLA_TYPE_REG1_LEN: usize = 2 + SRTLA_ID_LEN;

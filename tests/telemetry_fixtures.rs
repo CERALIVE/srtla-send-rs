@@ -109,6 +109,7 @@ fn document(conns: &[TelemetryConn], bind_map: &BindMapReport) -> String {
             conns,
             session_bytes_sent: 1_620_000_000,
             bind_map,
+            receiver_nak_report: None,
         },
     )
 }
@@ -162,6 +163,22 @@ fn adaptive_fixture_reports_health_priority_and_held_weight() {
     let produced = document(&conns, &active());
     // Then both committed copies are those exact bytes; all older fixtures stay unchanged.
     assert_fixture("telemetry-adaptive", &produced);
+}
+
+#[test]
+fn receiver_flags_fixture_preserves_explicit_nak_off() {
+    let produced = build_telemetry_json(
+        FIXED_MS,
+        &TelemetryInputs {
+            conns: &mapped_conns(),
+            session_bytes_sent: 1_620_000_000,
+            bind_map: &active(),
+            receiver_nak_report: Some(false),
+        },
+    );
+    assert_fixture("telemetry-receiver-flags", &produced);
+    assert_eq!(value(&produced)["receiver_nak_report"], false);
+    assert!(produced.ends_with(",\"receiver_nak_report\":false}"));
 }
 
 // ---- The legacy fixture: an OLD producer's bytes ---------------------------

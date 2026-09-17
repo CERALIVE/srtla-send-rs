@@ -49,7 +49,7 @@ const CURRENT_CONN_KEYS: [&str; 8] = [
 
 /// Every fixture in the cross-language matrix. `tests/telemetry_fixtures.rs`
 /// documents what each one proves.
-const FIXTURES: [&str; 9] = [
+const FIXTURES: [&str; 10] = [
     "telemetry-legacy-producer",
     "telemetry-golden",
     "telemetry-mapped",
@@ -59,7 +59,26 @@ const FIXTURES: [&str; 9] = [
     "telemetry-degraded-reload",
     "telemetry-unknown-fields",
     "telemetry-adaptive",
+    "telemetry-receiver-flags",
 ];
+
+#[test]
+fn receiver_flags_are_only_an_additive_top_level_tail() {
+    let mut receiver = parse(&rust_fixture_path("telemetry-receiver-flags"));
+    assert_eq!(
+        receiver
+            .as_object_mut()
+            .unwrap()
+            .remove("receiver_nak_report"),
+        Some(serde_json::json!(false))
+    );
+    assert_eq!(receiver, parse(&rust_fixture_path("telemetry-mapped")));
+    assert!(
+        parse(&rust_fixture_path("telemetry-legacy-producer"))
+            .get("receiver_nak_report")
+            .is_none()
+    );
+}
 
 const ADAPTIVE_CONN_KEYS: [&str; 12] = [
     "bitrate_bps",

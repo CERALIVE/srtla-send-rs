@@ -137,6 +137,8 @@ struct TelemetryDoc<'a> {
     bytes_sent_total: u64,
     #[serde(flatten)]
     bind_map: &'a BindMapReport,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    receiver_nak_report: Option<bool>,
 }
 
 /// Everything a snapshot document is built from, other than its timestamp.
@@ -148,6 +150,7 @@ pub struct TelemetryInputs<'a> {
     pub conns: &'a [TelemetryConn],
     pub session_bytes_sent: u64,
     pub bind_map: &'a BindMapReport,
+    pub receiver_nak_report: Option<bool>,
 }
 
 /// Serialize one snapshot to the exact ADR-001 JSON object (compact,
@@ -161,6 +164,7 @@ pub fn build_telemetry_json(last_updated_ms: u64, inputs: &TelemetryInputs<'_>) 
         connections: inputs.conns.iter().map(ConnRecord::from).collect(),
         bytes_sent_total: inputs.session_bytes_sent,
         bind_map: inputs.bind_map,
+        receiver_nak_report: inputs.receiver_nak_report,
     };
     // The doc is plain scalars / strings, so serialization cannot fail; fall back
     // to an empty object defensively rather than panicking on the hot path.
@@ -180,6 +184,7 @@ pub fn build_telemetry_json_from_stats(last_updated_ms: u64, stats: &StatsSnapsh
             conns: &conns_from_stats(stats),
             session_bytes_sent: stats.session_bytes_sent,
             bind_map: &stats.bind_map,
+            receiver_nak_report: stats.receiver.receiver_nak_report,
         },
     )
 }
@@ -286,6 +291,7 @@ mod tests {
                 conns,
                 session_bytes_sent: session_bytes,
                 bind_map: &legacy(),
+                receiver_nak_report: None,
             },
         )
     }
@@ -341,6 +347,7 @@ mod tests {
                 conns: &[],
                 session_bytes_sent: 0,
                 bind_map: &legacy(),
+                receiver_nak_report: None,
             },
         );
         assert!(doc.contains("\"connections\":[]"), "got {doc}");
@@ -499,6 +506,7 @@ mod tests {
                 conns: &[],
                 session_bytes_sent: 0,
                 bind_map: &report,
+                receiver_nak_report: None,
             },
         );
 
@@ -557,6 +565,7 @@ mod tests {
                 conns: &[sample_conn()],
                 session_bytes_sent: 0,
                 bind_map: &legacy(),
+                receiver_nak_report: None,
             },
         );
 
@@ -594,6 +603,7 @@ mod tests {
                 conns: &[],
                 session_bytes_sent: 0,
                 bind_map: &legacy(),
+                receiver_nak_report: None,
             },
         );
         assert!(doc.contains("\"connections\":[]"), "got {doc}");

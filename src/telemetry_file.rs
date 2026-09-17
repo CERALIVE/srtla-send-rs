@@ -264,6 +264,7 @@ mod tests {
                 conns,
                 session_bytes_sent: 0,
                 bind_map: &BindMapReport::default(),
+                receiver_nak_report: None,
             },
         )
     }

@@ -949,7 +949,7 @@ well-formed but unorderable republication refused as `stale-generation`; an
 unplug/replug recovering on a genuinely new ifindex; and a route-removal blackhole
 reported on the route axis, confirmed by ACK timeout, never reading healthy.
 
-**`tests/netns_hsrsp_spike.rs` — ignored live HSRSP visibility spike.** Requires
+**`tests/netns_hsrsp_spike.rs` — live HSRSP visibility spike.** The latency tests are ignored and require
 an explicit `SRTLA_REC_BIN` pointing at an out-of-tree CeraLive receiver build,
 unattended sudo, `srt-live-transmit`, `tcpdump`, and `tshark`; explicit execution
 fails on absent prerequisites. Run under a 90-second outer timeout with `--ignored`.
@@ -964,6 +964,10 @@ The high half `[76,78)` and low half `[78,80)` both decode to 2000 here; the
 500ms control changes both to 500. This symmetric capture alone does not distinguish
 directional half semantics. Extension lengths are walked, not assumed fixed by
 the decoder. `HSRSP_CAPTURE_DIR` optionally preserves unique pcap/log directories.
+The additive `hsrsp_reports_listener_nak_off` test self-skips without these
+prerequisites and `SRTLA_REC_BIN`. With `UPDATE_GOLDEN=1` it writes the separate
+`srt-hsrsp-nak-off.bin` capture; it does not rewrite the original NAK-on fixture.
+Both 80-byte captures report SRT 1.5.5: flags `0xBF` on and `0xAF` off.
 
 **Production subscription-concurrency invariant (BLOCKING, separate target).**
 `tests/subscription_loom.rs` uses Loom to enumerate schedules while racing the real
@@ -1872,8 +1876,9 @@ stream-identity binding or generation/freshness fencing: Todo 22 must not invent
 those guarantees. No adaptive deadline gate is enabled by this plumbing alone.
 
 `get-status` adds optional `negotiated_latency_ms`, omitted for unknown (not null).
-The 30-second status log prints the value or `None`. `StatsSnapshot`, ADR-001 file
-telemetry, CLI and TS bindings remain unchanged. Stats tests were extracted into
+The 30-second status log prints the value or `None`. The flags extension below
+additionally exposes receiver observations; CLI and capabilities remain unchanged.
+Stats tests were extracted into
 `src/stats_tests.rs`; module/test names retain the `stats::tests` path.
 Gates: `cargo test --lib srt_handshake` (real fixture + byte-flip/truncation controls),
 `cargo test --lib packet_io` (byte-preserving receive paths), atomic/status tests,
@@ -1885,6 +1890,41 @@ registration with a loopback UDP test peer, checking the returned datagram verba
 and querying the live Unix `get-status`. Both captured-HSRSP and flipped-type cases
 are bounded to ten seconds; temporary paths and ports are per test. This exercises
 production handle propagation, not a second live-libsrt capture or hardware gate.
+
+### Receiver handshake flags (bonded-path convergence, Todo 7)
+
+`parse_hsrsp` reuses the same complete extension walk and returns `HsrspInfo`:
+packed SRT version at E+4, flags at E+8, receiver TSBPD delay at E+12.
+`parse_hsrsp_tsbpd_delay_ms` is its compatibility projection; the original nine
+fixture tests remain unchanged. Flag constants follow SRT's `SrtOptions`:
+TSBPDSND bit 0, TSBPDRCV 1, TLPKTDROP 3, NAKREPORT 4, REXMITFLG 5,
+STREAM 6, FILTERCAP 7. Version is three bytes, major.minor.patch.
+
+`SharedStats::set_receiver_handshake` preserves the atomic latency observation and
+stores a single bond-level `ReceiverHandshake` under its own lock, independent
+of housekeeping snapshots. `receiver_handshake()` and `StatsSnapshot::receiver`
+expose optional `receiver_nak_report`, `receiver_srt_version`, and
+`receiver_rexmit_flag`. SIGHUP additions/reorders and uplink re-registration retain
+the cache; a later valid encoder HSRSP replaces it. Malformed packets never clear
+it and forwarding stays byte-identical. These are unauthenticated, last-observed
+claims, not peer authentication or freshness proof.
+
+The 30-second log adds `receiver: nak_report=on|off|unknown srt=<version|unknown>`.
+`get-status` adds `receiver: {nak_report?, srt_version?, rexmit_flag?}` (empty object
+before observation). File/event telemetry adds only optional top-level
+`receiver_nak_report`, after `disposition`; unknown is omitted, never null, and
+schema_version stays 1. TS declares it in that producer order. The tenth fixture,
+`telemetry-receiver-flags`, is generated in both directories by the existing
+UPDATE_GOLDEN command; every older fixture is unchanged. Frozen `@ceralive/srtla`
+Zod accepts and strips this unknown additive key, so emission needs no gate.
+
+Policy MUST treat unknown as NAK-on (`ReceiverHandshake::nak_report_enabled()` or
+TS `receiver_nak_report ?? true`), without turning unknown telemetry into true.
+This todo does not alter scheduler/NAK policy; later consumers must use that fallback.
+Tests cover both real captures, bit clearing, arbitrary bytes/extensions, malformed
+lengths, typed state, live binary reconnect/invalid forwarding, optional-field
+serialization and cross-language byte parity. `hello.capabilities` and the
+pre-spawn capabilities document are untouched.
 
 ## DUPLICATE DATA PROBES (scheduler evaluation, Todo 19)
 

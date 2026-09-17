@@ -406,6 +406,7 @@ pub async fn run_sender_with_config(
                         status_elapsed_ms = status_elapsed_ms.saturating_add(HOUSEKEEPING_INTERVAL_MS);
                         if status_elapsed_ms >= STATUS_LOG_INTERVAL_MS {
                             info!(negotiated_latency_ms = ?shared_stats.negotiated_latency_ms(), "SRT handshake status");
+                            info!("{}", shared_stats.receiver_handshake());
                             log_connection_status(&connections, last_selected_idx, &config);
                             status_elapsed_ms = status_elapsed_ms.saturating_sub(STATUS_LOG_INTERVAL_MS);
                         }
