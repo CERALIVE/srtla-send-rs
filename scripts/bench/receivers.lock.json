@@ -1,5 +1,47 @@
 {
   "schema_version": 1,
   "receivers": {},
-  "candidates": {}
+  "candidates": {
+    "task36-p1-diagnostic": {
+      "enhanced": {
+        "srtla_send_bin": "/mnt/development/ceralive/.worktrees/srtla-send-rs-adaptive-scheduler/target/release/srtla_send",
+        "srtla_send_sha256": "bd8bb7a25037b613026fc222612ffda2710fa2985355bbd82b201530e1c0fe57"
+      }
+    }
+  },
+  "host": {
+    "measured_at": "2026-09-17",
+    "cpu_model": "Intel(R) Core(TM) i7-14700K",
+    "hardware_threads": 28,
+    "physical_cores": 20,
+    "numa_nodes": 1,
+    "online_cpus": [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27],
+    "reserved_cpus": [0,1,2,3],
+    "smt_siblings": [[0,1],[2,3],[4,5],[6,7],[8,9],[10,11],[12,13],[14,15],[16],[17],[18],[19],[20],[21],[22],[23],[24],[25],[26],[27]],
+    "parallel_lanes": 1,
+    "port_base": 20000,
+    "core_map": [
+      {
+        "lane": 0,
+        "cpus": [4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27],
+        "port_range": [20000,20099],
+        "netns_prefix": "bpc0-",
+        "artifact_directory": "lane-0"
+      }
+    ],
+    "allocation_status": "CPU mask used by diagnostic; port range and bpc prefix reserved only, not wired into legacy runner",
+    "isolation": {
+      "status": "terminal_fallback",
+      "parallel_isolation_proven": false,
+      "passwordless_sudo": true,
+      "privileged_netns": true,
+      "quiet_host": false,
+      "p1_successful_runs": 3,
+      "tested_parallelism": [1],
+      "unrun_parallelism": [2,4,6,8],
+      "reason": "Host is busy with unrelated workloads; runner serializes whole campaigns and has no lane dispatcher or host-map consumer. No P=2 statistical comparison was performed.",
+      "evidence": "docs/evidence/bpc/parallel/spike.json",
+      "report": "docs/evidence/bpc/parallel/report.md"
+    }
+  }
 }
