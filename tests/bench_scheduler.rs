@@ -8,6 +8,8 @@ mod c1_contract;
 mod checkpoint;
 #[path = "bench_support/lineage_tests.rs"]
 mod lineage_tests;
+#[path = "bench_support/m1_tests.rs"]
+mod m1_tests;
 #[path = "bench_support/manifest.rs"]
 mod manifest;
 #[path = "support/measurement_lock.rs"]

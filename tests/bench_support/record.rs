@@ -85,7 +85,7 @@ pub fn prepare(
         .iter()
         .find(|r| r.name == cell.receiver)
         .context("receiver")?;
-    let profile = manifest.scenario(&cell.scenario)?;
+    let profile = manifest.cell_profile(cell)?;
     let receiver = receiver.resolve(
         manifest
             .receiver_defaults

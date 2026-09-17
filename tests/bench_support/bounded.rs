@@ -13,7 +13,7 @@ pub fn execute(mut request: Request) -> Result<Attempt> {
     let log = std::fs::File::create(request.artifacts.join("worker.log"))?;
     let seconds = request
         .manifest
-        .scenario(&request.result.record.scenario.id)?
+        .cell_profile(&request.manifest.cells[request.work.cell])?
         .timeline
         .duration
         .as_secs()

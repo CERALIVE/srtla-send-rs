@@ -35,6 +35,21 @@ pub struct Candidate {
     pub effective_config: Option<EffectiveConfig>,
     #[serde(default)]
     pub stats_file: bool,
+    #[serde(default = "covering_default")]
+    pub control_socket: bool,
+}
+
+impl Candidate {
+    pub fn runtime_args(&self, control: &str, stats: &str) -> Vec<String> {
+        let mut args = self.args.clone();
+        if self.control_socket {
+            args.extend(["--control-socket".into(), control.into()]);
+        }
+        if self.stats_file {
+            args.extend(["--stats-file".into(), stats.into()]);
+        }
+        args
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,6 +112,8 @@ impl From<ReceiverInput> for Receiver {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Cell {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offered_mbit_override: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub priority_sidecar: Option<network_sim::bond::PrioritySidecar>,
     #[serde(default)]

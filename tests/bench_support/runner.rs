@@ -41,6 +41,10 @@ pub fn campaign(smoke: bool) -> Result<()> {
         .unwrap_or_else(|_| "2".into())
         .parse::<u32>()?;
     ensure!(max_attempts > 0, "BENCH_MAX_RETRIES must be positive");
+    ensure!(
+        manifest.campaign != "m1-ttl" || max_attempts == 1,
+        "M1 requires exactly one attempt per planned index (BENCH_MAX_RETRIES=1)"
+    );
     let output = std::env::var_os("BENCH_OUT_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(".omo/evidence/bench").join(&manifest.campaign));

@@ -717,7 +717,7 @@ class DecisionTests(unittest.TestCase):
 class Arguments(argparse.Namespace):
     self_test: bool = False
     summary: Path | None = None
-    rule: Literal["d1", "lineage-d1", "ablation"] = "d1"
+    rule: Literal["d1", "lineage-d1", "ablation", "m1-ttl"] = "d1"
     candidates: str = ",".join(CANDIDATES)
     scenarios: str = ",".join(SCENARIOS)
     n: int = 10
@@ -730,7 +730,7 @@ def main() -> int:
     _ = parser.add_argument("--self-test", action="store_true")
     _ = parser.add_argument("--summary", type=Path)
     _ = parser.add_argument(
-        "--rule", choices=("d1", "lineage-d1", "ablation"), default="d1"
+        "--rule", choices=("d1", "lineage-d1", "ablation", "m1-ttl"), default="d1"
     )
     _ = parser.add_argument("--candidates", default=",".join(CANDIDATES))
     _ = parser.add_argument("--scenarios", default=",".join(SCENARIOS))
@@ -745,6 +745,21 @@ def main() -> int:
         return int(not result.wasSuccessful())
     if args.summary is None or args.out is None:
         parser.error("--summary and --out are required")
+    if args.rule == "m1-ttl":
+        from m1_models import M1Summary
+        from m1_rule import decide as decide_m1
+        from report import EvidenceError
+
+        if args.summary.resolve() == args.out.resolve():
+            parser.error("summary and output paths must be distinct")
+        try:
+            args.out.unlink(missing_ok=True)
+            decision = decide_m1(M1Summary.model_validate_json(args.summary.read_bytes()))
+            _ = args.out.write_text(decision.model_dump_json(indent=2) + "\n", encoding="utf-8")
+        except (OSError, ValidationError, EvidenceError) as error:
+            print(str(error), file=sys.stderr)
+            return 1
+        return 0
     try:
         summary = Summary.model_validate_json(args.summary.read_text(encoding="utf-8"))
         request = RuleRequest(

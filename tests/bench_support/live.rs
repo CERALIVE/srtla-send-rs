@@ -18,7 +18,7 @@ use crate::manifest::{Settle, measurement_rate};
 pub fn execute(request: &mut Request) -> Result<()> {
     let profile = request
         .manifest
-        .scenario(&request.manifest.cells[request.work.cell].scenario)?;
+        .cell_profile(&request.manifest.cells[request.work.cell])?;
     let mut stack = Stack::start(request, &profile)?;
     let result = match request.result.record.sink.as_str() {
         "sls" => super::conformance::measure(request, &profile, &mut stack),
@@ -26,7 +26,7 @@ pub fn execute(request: &mut Request) -> Result<()> {
         _ => anyhow::bail!("unsupported sink"),
     };
     stack.logs(&request.artifacts)?;
-    stack.finish_pcaps(result.is_err())?;
+    stack.finish_pcaps(result.is_err() || request.result.record.scenario.id == "S-FREEZE-NORDR")?;
     result
 }
 
@@ -77,14 +77,27 @@ fn measure(request: &mut Request, profile: &Profile, stack: &mut Stack) -> Resul
     let warmup_start = clock.now_ms();
     (runtime.processes.offered_rate)(profile.warmup_offered_bps)?;
     let csv_clock = CsvClock::observe(&request.result.record.raw.stats_csv_path, clock)?;
-    settle(
+    let settled = settle(
         profile,
         (clock, warmup_start),
         (
             &request.result.record.raw.sink_series_path,
             stack.sink_origin_ms,
         ),
-    )?;
+    );
+    let settle_failed = match settled {
+        Ok(()) => false,
+        Err(error)
+            if request.manifest.campaign == "m1-ttl"
+                && matches!(
+                    error.downcast_ref::<RunFailure>(),
+                    Some(RunFailure::SettleTimeout)
+                ) =>
+        {
+            true
+        }
+        Err(error) => return Err(error),
+    };
     let requested = request
         .manifest
         .candidates
@@ -228,5 +241,7 @@ fn measure(request: &mut Request, profile: &Profile, stack: &mut Stack) -> Resul
             samples,
             edges,
         },
-    )
+    )?;
+    ensure!(!settle_failed, RunFailure::SettleTimeout);
+    Ok(())
 }

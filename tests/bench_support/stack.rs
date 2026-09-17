@@ -66,26 +66,7 @@ impl Stack {
         for (i, link) in profile.timeline.links.iter().enumerate() {
             topo.apply_impairment(i, &link.base)?;
         }
-        let mut pcaps = Vec::new();
-        if std::env::var("BENCH_PCAP_ON_FAIL").as_deref() == Ok("1") {
-            for i in 0..topo.link_count() {
-                let path = request.artifacts.join(format!("link-{i}.pcap"));
-                let process = NamespaceProcess::spawn_process_only(
-                    &topo.sender_ns,
-                    "tcpdump",
-                    &[
-                        "-U",
-                        "-n",
-                        "-i",
-                        topo.sender_iface(i),
-                        "-w",
-                        utf8(&path)?,
-                        "udp",
-                    ],
-                )?;
-                pcaps.push((process, path));
-            }
-        }
+        let pcaps = super::capture::start(request, &topo)?;
         let (sink, sink_origin_ms, listener, sls_capture) = match cell.sink.as_str() {
             "slt" => {
                 let sink = network_sim::metrics::sink::spawn(
@@ -138,11 +119,7 @@ impl Stack {
             &control_directory.path(),
         )?;
         let stats = request.artifacts.join("sender.json");
-        let mut extra = candidate.args.clone();
-        extra.extend(["--control-socket".into(), utf8(&control)?.into()]);
-        if candidate.stats_file {
-            extra.extend(["--stats-file".into(), utf8(&stats)?.into()]);
-        }
+        let extra = candidate.runtime_args(utf8(&control)?, utf8(&stats)?);
         let args = topo.sender_args(
             (5555, 5000),
             &extra.iter().map(String::as_str).collect::<Vec<_>>(),
@@ -170,7 +147,11 @@ impl Stack {
             sender.log_snapshot().join("\n"),
         )?;
         readiness?;
-        wait_for_registered_uplinks(&sender, links.len(), Duration::from_secs(30))?;
+        if candidate.control_socket {
+            wait_for_registered_uplinks(&sender, links.len(), Duration::from_secs(30))?;
+        } else {
+            super::foreign::wait_registered(&sender, links.len())?;
+        }
         if control.exists() {
             ensure!(
                 std::process::Command::new("sudo")
@@ -248,6 +229,10 @@ impl Stack {
     pub fn finish_pcaps(&mut self, keep: bool) -> Result<()> {
         for (process, path) in &mut self.pcaps {
             process.stop_process_only()?;
+            std::fs::write(
+                path.with_extension("capture.log"),
+                process.log_snapshot().join("\n"),
+            )?;
             if !keep {
                 std::fs::remove_file(path)?;
             }

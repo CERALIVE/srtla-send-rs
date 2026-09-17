@@ -1,17 +1,18 @@
 //! Campaign boundary and paired work ordering.
 use std::collections::{BTreeMap, BTreeSet};
-use std::time::Duration;
 
 use anyhow::{Context, Result, ensure};
 use network_sim::harness::SrtProfile;
 use network_sim::profile::Action;
-use network_sim::scenarios::{self, Profile};
+use network_sim::scenarios::Profile;
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
 
 #[path = "model.rs"]
 mod model;
 pub use model::*;
+#[path = "diagnostic_profiles.rs"]
+mod diagnostic_profiles;
 #[path = "priorities.rs"]
 mod priorities;
 #[cfg(test)]
@@ -112,6 +113,7 @@ impl Manifest {
         let mut ids = BTreeSet::new();
         let mut covering = BTreeMap::new();
         for cell in &self.cells {
+            self.cell_profile(cell)?;
             ensure!(
                 covering
                     .insert(&cell.cell_id, cell.covering)
@@ -162,51 +164,6 @@ impl Manifest {
         }
         priorities::validate(self)?;
         Ok(())
-    }
-
-    pub fn scenario(&self, id: &str) -> Result<Profile> {
-        if id == "SLS" {
-            ensure!(
-                self.cells
-                    .iter()
-                    .filter(|c| c.scenario == "SLS")
-                    .all(|c| c.sink == "sls"),
-                "SLS smoke profile is conformance-only"
-            );
-            ensure!(
-                self.window_secs_override.is_none(),
-                "SLS smoke window is fixed at 20s"
-            );
-            let mut profile = scenarios::scenario_a();
-            profile.timeline.links.truncate(2);
-            for link in &mut profile.timeline.links {
-                link.base = network_sim::ImpairmentConfig {
-                    delay_ms: Some(5),
-                    rate_kbit: Some(10_000),
-                    ..Default::default()
-                };
-            }
-            profile.offered_bps = 1_000_000;
-            profile.warmup_offered_bps = 1_000_000;
-            profile.timeline.duration = Duration::from_secs(20);
-            profile.timeline.events = vec![network_sim::profile::TimedEvent::new(
-                Duration::ZERO,
-                None,
-                Action::OfferedRate { bps: 1_000_000 },
-            )];
-            profile.timeline.validate()?;
-            return Ok(profile);
-        }
-        let mut profile = scenarios::all()
-            .into_iter()
-            .find(|(name, _)| *name == id)
-            .map(|(_, profile)| profile)
-            .ok_or_else(|| ManifestError::UnknownScenario(id.into()))?;
-        if let Some(seconds) = self.window_secs_override {
-            profile.timeline.duration = Duration::from_secs(seconds);
-        }
-        profile.validate()?;
-        Ok(profile)
     }
 
     pub fn order(&self) -> Vec<Work> {

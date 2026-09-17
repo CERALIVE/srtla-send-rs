@@ -1,0 +1,4499 @@
+{
+  "schema_version": 1,
+  "spike": "M1",
+  "groups": [],
+  "manifest_sha256": "47c5bcb60e3f9d3909f2b13d9310ba62cf8044ec09535ccc16b9787f2d0cfb5c",
+  "cells": [
+    {
+      "candidate": "classic",
+      "scenario": "A",
+      "receiver": "ours-old",
+      "ttl": 40,
+      "freeze_enabled": false,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 9691374.933333334,
+          "retrans_ratio": 0.3919163223140496,
+          "fingerprint": "434ed3669d6b1fffc9afe2127d03f430ffc2e12154076215ac366f8091923c61",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 9814903.466666669,
+          "retrans_ratio": 0.40781944651251834,
+          "fingerprint": "434ed3669d6b1fffc9afe2127d03f430ffc2e12154076215ac366f8091923c61",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 9743313.066666666,
+          "retrans_ratio": 0.29667700487372617,
+          "fingerprint": "434ed3669d6b1fffc9afe2127d03f430ffc2e12154076215ac366f8091923c61",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 9749863.822222224,
+        "median": 9743313.066666666,
+        "sd": 62024.2608632518,
+        "ci_lower": 9691374.933333334,
+        "ci_upper": 9814903.466666669,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.36547092456676467,
+        "median": 0.3919163223140496,
+        "sd": 0.060105572785451075,
+        "ci_lower": 0.29667700487372617,
+        "ci_upper": 0.40781944651251834,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "A",
+      "receiver": "ours-old",
+      "ttl": 40,
+      "freeze_enabled": false,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 9698627.555555556,
+          "retrans_ratio": 0.40679666710290974,
+          "fingerprint": "9fcc731160425ccc503afb8ebd7f55ac0ad8d757e93839be6c4865e343fb31cc",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 9637565.155555556,
+          "retrans_ratio": 0.38480645374013583,
+          "fingerprint": "9fcc731160425ccc503afb8ebd7f55ac0ad8d757e93839be6c4865e343fb31cc",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 9696054.044444444,
+          "retrans_ratio": 0.3679147110667488,
+          "fingerprint": "9fcc731160425ccc503afb8ebd7f55ac0ad8d757e93839be6c4865e343fb31cc",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 9677415.585185185,
+        "median": 9696054.044444444,
+        "sd": 34535.46432450696,
+        "ci_lower": 9637565.155555556,
+        "ci_upper": 9698627.555555556,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.3865059439699315,
+        "median": 0.38480645374013583,
+        "sd": 0.019496610643400726,
+        "ci_lower": 0.3679147110667488,
+        "ci_upper": 0.40679666710290974,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "classic",
+      "scenario": "B1",
+      "receiver": "ours-old",
+      "ttl": 40,
+      "freeze_enabled": false,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4361867.377777778,
+          "retrans_ratio": 0.2361522895195068,
+          "fingerprint": "419b37cac5b52279b731ed29c80ec01fb9b0586faf9af13fc898a40891274fc8",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4469019.022222222,
+          "retrans_ratio": 0.25230100365385505,
+          "fingerprint": "419b37cac5b52279b731ed29c80ec01fb9b0586faf9af13fc898a40891274fc8",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4366546.488888889,
+          "retrans_ratio": 0.23261496359282607,
+          "fingerprint": "419b37cac5b52279b731ed29c80ec01fb9b0586faf9af13fc898a40891274fc8",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 4399144.296296296,
+        "median": 4366546.488888889,
+        "sd": 60558.49661785675,
+        "ci_lower": 4361867.377777778,
+        "ci_upper": 4469019.022222222,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.2403560855887293,
+        "median": 0.2361522895195068,
+        "sd": 0.010494711495073004,
+        "ci_lower": 0.23261496359282607,
+        "ci_upper": 0.25230100365385505,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "B1",
+      "receiver": "ours-old",
+      "ttl": 40,
+      "freeze_enabled": false,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4365376.711111112,
+          "retrans_ratio": 0.25010805359458294,
+          "fingerprint": "e7444e630c2d0b207eace5c504cb9781a9e49b6146f4f68b418b67d4302647b6",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4412401.777777778,
+          "retrans_ratio": 0.2576695684558447,
+          "fingerprint": "e7444e630c2d0b207eace5c504cb9781a9e49b6146f4f68b418b67d4302647b6",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4327475.911111111,
+          "retrans_ratio": 0.2541457958469095,
+          "fingerprint": "e7444e630c2d0b207eace5c504cb9781a9e49b6146f4f68b418b67d4302647b6",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 4368418.133333334,
+        "median": 4365376.711111112,
+        "sd": 42544.545997360234,
+        "ci_lower": 4327475.911111111,
+        "ci_upper": 4412401.777777778,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.2539744726324457,
+        "median": 0.2541457958469095,
+        "sd": 0.00378366759667539,
+        "ci_lower": 0.25010805359458294,
+        "ci_upper": 0.2576695684558447,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "classic",
+      "scenario": "C",
+      "receiver": "ours-old",
+      "ttl": 40,
+      "freeze_enabled": false,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 10484659.733333332,
+          "retrans_ratio": 0.4090811362842323,
+          "fingerprint": "a23aafb0ed1fb8f3eadfb7c394ec6bfcad929b47b0309c22b57a355790014f35",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 10605907.2,
+          "retrans_ratio": 0.31032464438848434,
+          "fingerprint": "a23aafb0ed1fb8f3eadfb7c394ec6bfcad929b47b0309c22b57a355790014f35",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 11601856.0,
+          "retrans_ratio": 0.32666230705639937,
+          "fingerprint": "a23aafb0ed1fb8f3eadfb7c394ec6bfcad929b47b0309c22b57a355790014f35",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 10897474.31111111,
+        "median": 10605907.2,
+        "sd": 613017.4628627999,
+        "ci_lower": 10484659.733333332,
+        "ci_upper": 11601856.0,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.348689362576372,
+        "median": 0.32666230705639937,
+        "sd": 0.05293490865250172,
+        "ci_lower": 0.31032464438848434,
+        "ci_upper": 0.4090811362842323,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "C",
+      "receiver": "ours-old",
+      "ttl": 40,
+      "freeze_enabled": false,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 10957191.466666669,
+          "retrans_ratio": 0.3762893774284593,
+          "fingerprint": "36579eb123bcaddb1794e97e42a94adbd74539ded075ebe3d14757601de96254",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 12007184.0,
+          "retrans_ratio": 0.3256915359890913,
+          "fingerprint": "36579eb123bcaddb1794e97e42a94adbd74539ded075ebe3d14757601de96254",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 11457096.0,
+          "retrans_ratio": 0.29940562772734114,
+          "fingerprint": "36579eb123bcaddb1794e97e42a94adbd74539ded075ebe3d14757601de96254",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 11473823.822222224,
+        "median": 11457096.0,
+        "sd": 525196.101509865,
+        "ci_lower": 10957191.466666669,
+        "ci_upper": 12007184.0,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.3337955137149639,
+        "median": 0.3256915359890913,
+        "sd": 0.039077277070723934,
+        "ci_lower": 0.29940562772734114,
+        "ci_upper": 0.3762893774284593,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "classic",
+      "scenario": "G",
+      "receiver": "ours-old",
+      "ttl": 40,
+      "freeze_enabled": false,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 9281250.844444444,
+          "retrans_ratio": 0.15985138690173997,
+          "fingerprint": "acb4fa1a23cef9a9f65cd2288226a04e1f384f9fe3831d748dffdc2e182ab840",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 9008224.711111112,
+          "retrans_ratio": 0.17333079159319448,
+          "fingerprint": "acb4fa1a23cef9a9f65cd2288226a04e1f384f9fe3831d748dffdc2e182ab840",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 8921193.244444445,
+          "retrans_ratio": 0.14679982289565602,
+          "fingerprint": "acb4fa1a23cef9a9f65cd2288226a04e1f384f9fe3831d748dffdc2e182ab840",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 9070222.933333334,
+        "median": 9008224.711111112,
+        "sd": 187864.85434608825,
+        "ci_lower": 8921193.244444445,
+        "ci_upper": 9281250.844444444,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.15999400046353016,
+        "median": 0.15985138690173997,
+        "sd": 0.013266059285953997,
+        "ci_lower": 0.14679982289565602,
+        "ci_upper": 0.17333079159319448,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "G",
+      "receiver": "ours-old",
+      "ttl": 40,
+      "freeze_enabled": false,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4839838.577777778,
+          "retrans_ratio": 0.28088881653915027,
+          "fingerprint": "4381882e5cedae13873fdfa80058ae7f1e23572dfb68f5b88e6885204f19a1c2",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4344086.755555555,
+          "retrans_ratio": 0.3257880542906406,
+          "fingerprint": "4381882e5cedae13873fdfa80058ae7f1e23572dfb68f5b88e6885204f19a1c2",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4573831.111111111,
+          "retrans_ratio": 0.3277439024390244,
+          "fingerprint": "4381882e5cedae13873fdfa80058ae7f1e23572dfb68f5b88e6885204f19a1c2",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 4585918.814814814,
+        "median": 4573831.111111111,
+        "sd": 248096.85960282717,
+        "ci_lower": 4344086.755555555,
+        "ci_upper": 4839838.577777778,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.3114735910896051,
+        "median": 0.3257880542906406,
+        "sd": 0.026505238373225326,
+        "ci_lower": 0.28088881653915027,
+        "ci_upper": 0.3277439024390244,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "classic",
+      "scenario": "A",
+      "receiver": "new-40",
+      "ttl": 40,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 9777470.577777777,
+          "retrans_ratio": 0.3087824970104965,
+          "fingerprint": "5e64e6de7a08c87456ae0c890a04cc86ae0b5281e370d7d48243daa4abf4a638",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 9740505.6,
+          "retrans_ratio": 0.3187011024182077,
+          "fingerprint": "5e64e6de7a08c87456ae0c890a04cc86ae0b5281e370d7d48243daa4abf4a638",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 9831748.266666668,
+          "retrans_ratio": 0.32928663515255696,
+          "fingerprint": "5e64e6de7a08c87456ae0c890a04cc86ae0b5281e370d7d48243daa4abf4a638",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 9783241.48148148,
+        "median": 9777470.577777777,
+        "sd": 45894.26491708131,
+        "ci_lower": 9740505.6,
+        "ci_upper": 9831748.266666668,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.3189234115270871,
+        "median": 0.3187011024182077,
+        "sd": 0.010253876644571695,
+        "ci_lower": 0.3087824970104965,
+        "ci_upper": 0.32928663515255696,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "A",
+      "receiver": "new-40",
+      "ttl": 40,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 9728339.91111111,
+          "retrans_ratio": 0.40175903715860795,
+          "fingerprint": "559fbb09ab8ed245697ac9d4f4ebe976a3961f8bca59f64070efe0aa51287d50",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 9729743.644444443,
+          "retrans_ratio": 0.29779990087702285,
+          "fingerprint": "559fbb09ab8ed245697ac9d4f4ebe976a3961f8bca59f64070efe0aa51287d50",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 9778874.311111111,
+          "retrans_ratio": 0.3811589174184594,
+          "fingerprint": "559fbb09ab8ed245697ac9d4f4ebe976a3961f8bca59f64070efe0aa51287d50",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 9745652.62222222,
+        "median": 9729743.644444443,
+        "sd": 28779.386308439527,
+        "ci_lower": 9728339.91111111,
+        "ci_upper": 9778874.311111111,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.3602392851513634,
+        "median": 0.3811589174184594,
+        "sd": 0.05504633289099456,
+        "ci_lower": 0.29779990087702285,
+        "ci_upper": 0.40175903715860795,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "classic",
+      "scenario": "B1",
+      "receiver": "new-40",
+      "ttl": 40,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4374500.977777778,
+          "retrans_ratio": 0.2383267590129346,
+          "fingerprint": "61ad3b864d8913a83d3bc5a4659e3a08b889a20cede8d8d0503e49500b5eefef",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4390409.955555555,
+          "retrans_ratio": 0.2500574052812859,
+          "fingerprint": "61ad3b864d8913a83d3bc5a4659e3a08b889a20cede8d8d0503e49500b5eefef",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4403745.422222222,
+          "retrans_ratio": 0.24247948951686416,
+          "fingerprint": "61ad3b864d8913a83d3bc5a4659e3a08b889a20cede8d8d0503e49500b5eefef",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 4389552.118518519,
+        "median": 4390409.955555555,
+        "sd": 14641.082473732173,
+        "ci_lower": 4374500.977777778,
+        "ci_upper": 4403745.422222222,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.2436212179370282,
+        "median": 0.24247948951686416,
+        "sd": 0.005948081481230212,
+        "ci_lower": 0.2383267590129346,
+        "ci_upper": 0.2500574052812859,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "B1",
+      "receiver": "new-40",
+      "ttl": 40,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4377308.444444444,
+          "retrans_ratio": 0.27468324169256514,
+          "fingerprint": "9894e2b0859ca56fec45598ffeb1a5299f56f6386471189aba2fd0d5a7a4ea18",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4387602.488888889,
+          "retrans_ratio": 0.19836704397847468,
+          "fingerprint": "9894e2b0859ca56fec45598ffeb1a5299f56f6386471189aba2fd0d5a7a4ea18",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4552541.155555556,
+          "retrans_ratio": 0.21018793273986153,
+          "fingerprint": "9894e2b0859ca56fec45598ffeb1a5299f56f6386471189aba2fd0d5a7a4ea18",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 4439150.696296296,
+        "median": 4387602.488888889,
+        "sd": 98333.81425545027,
+        "ci_lower": 4377308.444444444,
+        "ci_upper": 4552541.155555556,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.2277460728036338,
+        "median": 0.21018793273986153,
+        "sd": 0.04107623059943937,
+        "ci_lower": 0.19836704397847468,
+        "ci_upper": 0.27468324169256514,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "classic",
+      "scenario": "C",
+      "receiver": "new-40",
+      "ttl": 40,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 10864018.666666666,
+          "retrans_ratio": 0.3098721638444549,
+          "fingerprint": "3ecf434a63b44b55ccd2cb6dd505ba0c198cdcf403143c02cc63da002d668f70",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 11035625.066666666,
+          "retrans_ratio": 0.28653872144884446,
+          "fingerprint": "3ecf434a63b44b55ccd2cb6dd505ba0c198cdcf403143c02cc63da002d668f70",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 11861722.133333333,
+          "retrans_ratio": 0.2933306432291338,
+          "fingerprint": "3ecf434a63b44b55ccd2cb6dd505ba0c198cdcf403143c02cc63da002d668f70",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 11253788.622222222,
+        "median": 11035625.066666666,
+        "sd": 533431.8649829166,
+        "ci_lower": 10864018.666666666,
+        "ci_upper": 11861722.133333333,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.2965805095074777,
+        "median": 0.2933306432291338,
+        "sd": 0.012001400194462936,
+        "ci_lower": 0.28653872144884446,
+        "ci_upper": 0.3098721638444549,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "C",
+      "receiver": "new-40",
+      "ttl": 40,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 10880337.066666666,
+          "retrans_ratio": 0.26563937758367323,
+          "fingerprint": "eb8888457efe6085f59e29d786c31284098e4699a537f35b36711cf37403d936",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 11196528.0,
+          "retrans_ratio": 0.29197137896564423,
+          "fingerprint": "eb8888457efe6085f59e29d786c31284098e4699a537f35b36711cf37403d936",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 11500962.666666666,
+          "retrans_ratio": 0.29535277897240003,
+          "fingerprint": "eb8888457efe6085f59e29d786c31284098e4699a537f35b36711cf37403d936",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 11192609.244444445,
+        "median": 11196528.0,
+        "sd": 310331.35730645724,
+        "ci_lower": 10880337.066666666,
+        "ci_upper": 11500962.666666666,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.2843211785072392,
+        "median": 0.29197137896564423,
+        "sd": 0.016267013580010124,
+        "ci_lower": 0.26563937758367323,
+        "ci_upper": 0.29535277897240003,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "classic",
+      "scenario": "G",
+      "receiver": "new-40",
+      "ttl": 40,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 10204439.466666669,
+          "retrans_ratio": 0.11633221607974578,
+          "fingerprint": "43c8b4d4444e2a9d0c67a6946218d5612e5c46cf1699195ea5f9022c15a958da",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12804153.6,
+          "retrans_ratio": 0.006141749402130589,
+          "fingerprint": "43c8b4d4444e2a9d0c67a6946218d5612e5c46cf1699195ea5f9022c15a958da",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12802281.955555556,
+          "retrans_ratio": 0.003341748242857921,
+          "fingerprint": "43c8b4d4444e2a9d0c67a6946218d5612e5c46cf1699195ea5f9022c15a958da",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 11936958.340740742,
+        "median": 12802281.955555556,
+        "sd": 1500405.6493263417,
+        "ci_lower": 10204439.466666669,
+        "ci_upper": 12804153.6,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.0419385712415781,
+        "median": 0.006141749402130589,
+        "sd": 0.06444199559179989,
+        "ci_lower": 0.003341748242857921,
+        "ci_upper": 0.11633221607974578,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "G",
+      "receiver": "new-40",
+      "ttl": 40,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4538035.911111111,
+          "retrans_ratio": 0.25592998181895055,
+          "fingerprint": "b1cc776be8d0fd151405a5ae2d1fe56e3ac62825373b7e3f1d9e164e9273cb48",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 4261734.4,
+          "retrans_ratio": 0.285441379003954,
+          "fingerprint": "b1cc776be8d0fd151405a5ae2d1fe56e3ac62825373b7e3f1d9e164e9273cb48",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4460830.577777778,
+          "retrans_ratio": 0.31133694074171836,
+          "fingerprint": "b1cc776be8d0fd151405a5ae2d1fe56e3ac62825373b7e3f1d9e164e9273cb48",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 4420200.296296296,
+        "median": 4460830.577777778,
+        "sd": 142561.37657345724,
+        "ci_lower": 4261734.4,
+        "ci_upper": 4538035.911111111,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.28423610052154097,
+        "median": 0.285441379003954,
+        "sd": 0.027723136482592402,
+        "ci_lower": 0.25592998181895055,
+        "ci_upper": 0.31133694074171836,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "classic",
+      "scenario": "A",
+      "receiver": "new-200",
+      "ttl": 200,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 18090145.422222223,
+          "retrans_ratio": 0.07776161838502155,
+          "fingerprint": "dd95d5e05ea8e78a06add8019a0fdf4eec2ebd13ba8123cca05dd9ff83074d88",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 14235259.733333332,
+          "retrans_ratio": 0.17317620834904038,
+          "fingerprint": "dd95d5e05ea8e78a06add8019a0fdf4eec2ebd13ba8123cca05dd9ff83074d88",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 22233498.31111111,
+          "retrans_ratio": 0.056137153513605154,
+          "fingerprint": "dd95d5e05ea8e78a06add8019a0fdf4eec2ebd13ba8123cca05dd9ff83074d88",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 18186301.155555557,
+        "median": 18090145.422222223,
+        "sd": 3999986.1912952685,
+        "ci_lower": 14235259.733333332,
+        "ci_upper": 22233498.31111111,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.10235832674922236,
+        "median": 0.07776161838502155,
+        "sd": 0.062275867203581865,
+        "ci_lower": 0.056137153513605154,
+        "ci_upper": 0.17317620834904038,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "A",
+      "receiver": "new-200",
+      "ttl": 200,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 10060088.888888888,
+          "retrans_ratio": 0.24830490174908224,
+          "fingerprint": "7f3faa582cec001bb9535a69731b32fa72e08d5dc43931aa92770d44de8076d1",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 10280007.111111112,
+          "retrans_ratio": 0.25018863856850276,
+          "fingerprint": "7f3faa582cec001bb9535a69731b32fa72e08d5dc43931aa92770d44de8076d1",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 20030572.8,
+          "retrans_ratio": 0.07188547420101024,
+          "fingerprint": "7f3faa582cec001bb9535a69731b32fa72e08d5dc43931aa92770d44de8076d1",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 13456889.6,
+        "median": 10280007.111111112,
+        "sd": 5694038.471646291,
+        "ci_lower": 10060088.888888888,
+        "ci_upper": 20030572.8,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.19012633817286506,
+        "median": 0.24830490174908224,
+        "sd": 0.10240392351228159,
+        "ci_lower": 0.07188547420101024,
+        "ci_upper": 0.25018863856850276,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "classic",
+      "scenario": "B1",
+      "receiver": "new-200",
+      "ttl": 200,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4813869.511111111,
+          "retrans_ratio": 0.28635841941301854,
+          "fingerprint": "ff43a04e08c772937285c9a806e1367b44e08d8287d2dddeb71cb4654df20238",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4589974.044444445,
+          "retrans_ratio": 0.3112051681889062,
+          "fingerprint": "ff43a04e08c772937285c9a806e1367b44e08d8287d2dddeb71cb4654df20238",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4532888.888888889,
+          "retrans_ratio": 0.2782902041164916,
+          "fingerprint": "ff43a04e08c772937285c9a806e1367b44e08d8287d2dddeb71cb4654df20238",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 4645577.481481481,
+        "median": 4589974.044444445,
+        "sd": 148513.75079044237,
+        "ci_lower": 4532888.888888889,
+        "ci_upper": 4813869.511111111,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.2919512639061388,
+        "median": 0.28635841941301854,
+        "sd": 0.017155426171193047,
+        "ci_lower": 0.2782902041164916,
+        "ci_upper": 0.3112051681889062,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "B1",
+      "receiver": "new-200",
+      "ttl": 200,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 9595453.155555556,
+          "retrans_ratio": 0.0036014990022874387,
+          "fingerprint": "3ce5d5262b963d72fd7c39682b95dc1c64c57418b358f6507857f76a176ac381",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 9597090.844444444,
+          "retrans_ratio": 0.004598652035329327,
+          "fingerprint": "3ce5d5262b963d72fd7c39682b95dc1c64c57418b358f6507857f76a176ac381",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 9597324.8,
+          "retrans_ratio": 0.004304684079964979,
+          "fingerprint": "3ce5d5262b963d72fd7c39682b95dc1c64c57418b358f6507857f76a176ac381",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 9596622.933333334,
+        "median": 9597090.844444444,
+        "sd": 1019.7886239468056,
+        "ci_lower": 9595453.155555556,
+        "ci_upper": 9597324.8,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.004168278372527249,
+        "median": 0.004304684079964979,
+        "sd": 0.0005123801621768257,
+        "ci_lower": 0.0036014990022874387,
+        "ci_upper": 0.004598652035329327,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "classic",
+      "scenario": "C",
+      "receiver": "new-200",
+      "ttl": 200,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 10867177.066666666,
+          "retrans_ratio": 0.3533172234794727,
+          "fingerprint": "9e671980170e2e920d46829adcbb1a90f796b7f3980a1c68f164d9008fce5da8",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 15332452.8,
+          "retrans_ratio": 0.1982249134230554,
+          "fingerprint": "9e671980170e2e920d46829adcbb1a90f796b7f3980a1c68f164d9008fce5da8",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 14756571.2,
+          "retrans_ratio": 0.22527298218324343,
+          "fingerprint": "9e671980170e2e920d46829adcbb1a90f796b7f3980a1c68f164d9008fce5da8",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 13652067.02222222,
+        "median": 14756571.2,
+        "sd": 2428913.121690504,
+        "ci_lower": 10867177.066666666,
+        "ci_upper": 15332452.8,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.2589383730285905,
+        "median": 0.22527298218324343,
+        "sd": 0.0828457908721768,
+        "ci_lower": 0.1982249134230554,
+        "ci_upper": 0.3533172234794727,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "C",
+      "receiver": "new-200",
+      "ttl": 200,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 11723103.466666669,
+          "retrans_ratio": 0.2916886331858711,
+          "fingerprint": "615c10699747009afacfc30a3b5e2a164f00793495255fd99425d4014f0931ca",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 22399021.866666667,
+          "retrans_ratio": 0.06626567586901616,
+          "fingerprint": "615c10699747009afacfc30a3b5e2a164f00793495255fd99425d4014f0931ca",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 10621523.733333332,
+          "retrans_ratio": 0.37131600293560973,
+          "fingerprint": "615c10699747009afacfc30a3b5e2a164f00793495255fd99425d4014f0931ca",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 14914549.68888889,
+        "median": 11723103.466666669,
+        "sd": 6505102.790284709,
+        "ci_lower": 10621523.733333332,
+        "ci_upper": 22399021.866666667,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.24309010399683237,
+        "median": 0.2916886331858711,
+        "sd": 0.15822543502977743,
+        "ci_lower": 0.06626567586901616,
+        "ci_upper": 0.37131600293560973,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "classic",
+      "scenario": "G",
+      "receiver": "new-200",
+      "ttl": 200,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12803685.688888889,
+          "retrans_ratio": 0.002811846754351888,
+          "fingerprint": "5541b18170c81afb03addb83dc0899f9b30ec9ddad0f33bd5f20f9e5596329ea",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12802048.0,
+          "retrans_ratio": 0.0023475046210720885,
+          "fingerprint": "5541b18170c81afb03addb83dc0899f9b30ec9ddad0f33bd5f20f9e5596329ea",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12805557.333333334,
+          "retrans_ratio": 0.0025382591618186533,
+          "fingerprint": "5541b18170c81afb03addb83dc0899f9b30ec9ddad0f33bd5f20f9e5596329ea",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 12803763.674074074,
+        "median": 12803685.688888889,
+        "sd": 1755.9659387196286,
+        "ci_lower": 12802048.0,
+        "ci_upper": 12805557.333333334,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.0025658701790808765,
+        "median": 0.0025382591618186533,
+        "sd": 0.00023339918678178778,
+        "ci_lower": 0.0023475046210720885,
+        "ci_upper": 0.002811846754351888,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "G",
+      "receiver": "new-200",
+      "ttl": 200,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12803685.688888889,
+          "retrans_ratio": 0.006418769366976538,
+          "fingerprint": "bb1451663b1e8ea93e8641459f4f19434024209d4f3b2b6fd1f53c93f3637a81",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12804153.6,
+          "retrans_ratio": 0.005472600753841693,
+          "fingerprint": "bb1451663b1e8ea93e8641459f4f19434024209d4f3b2b6fd1f53c93f3637a81",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12801580.08888889,
+          "retrans_ratio": 0.00751907412185323,
+          "fingerprint": "bb1451663b1e8ea93e8641459f4f19434024209d4f3b2b6fd1f53c93f3637a81",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 12803139.792592593,
+        "median": 12803685.688888889,
+        "sd": 1370.8544541579613,
+        "ci_lower": 12801580.08888889,
+        "ci_upper": 12804153.6,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.006470148080890487,
+        "median": 0.006418769366976538,
+        "sd": 0.0010242036617185615,
+        "ci_lower": 0.005472600753841693,
+        "ci_upper": 0.00751907412185323,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "classic",
+      "scenario": "A",
+      "receiver": "new-500",
+      "ttl": 500,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12073042.48888889,
+          "retrans_ratio": 0.3550211083306271,
+          "fingerprint": "d7a4d429a41e634ff2db13e20a279e9b749a75624eab0df2e26145c3ab100dfc",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 16503926.755555555,
+          "retrans_ratio": 0.19460984017549357,
+          "fingerprint": "d7a4d429a41e634ff2db13e20a279e9b749a75624eab0df2e26145c3ab100dfc",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12837375.288888888,
+          "retrans_ratio": 0.28480420055444383,
+          "fingerprint": "d7a4d429a41e634ff2db13e20a279e9b749a75624eab0df2e26145c3ab100dfc",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 13804781.51111111,
+        "median": 12837375.288888888,
+        "sd": 2368562.8438452403,
+        "ci_lower": 12073042.48888889,
+        "ci_upper": 16503926.755555555,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.2781450496868549,
+        "median": 0.28480420055444383,
+        "sd": 0.08041269772549932,
+        "ci_lower": 0.19460984017549357,
+        "ci_upper": 0.3550211083306271,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "A",
+      "receiver": "new-500",
+      "ttl": 500,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 16792861.866666667,
+          "retrans_ratio": 0.15562576148244694,
+          "fingerprint": "42fc9cfeb0f5720d9c362a6c0f8ef49cc16817791b3cbfb5a83d856ee16d0c63",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 14038269.155555556,
+          "retrans_ratio": 0.23565268358033992,
+          "fingerprint": "42fc9cfeb0f5720d9c362a6c0f8ef49cc16817791b3cbfb5a83d856ee16d0c63",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 13600070.4,
+          "retrans_ratio": 0.306389792685212,
+          "fingerprint": "42fc9cfeb0f5720d9c362a6c0f8ef49cc16817791b3cbfb5a83d856ee16d0c63",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 14810400.474074073,
+        "median": 14038269.155555556,
+        "sd": 1730785.7802693928,
+        "ci_lower": 13600070.4,
+        "ci_upper": 16792861.866666667,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.23255607924933294,
+        "median": 0.23565268358033992,
+        "sd": 0.07542970233876166,
+        "ci_lower": 0.15562576148244694,
+        "ci_upper": 0.306389792685212,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "classic",
+      "scenario": "B1",
+      "receiver": "new-500",
+      "ttl": 500,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4589740.088888889,
+          "retrans_ratio": 0.2426684575777927,
+          "fingerprint": "962653081e3911513ee0389c3341a87cbdb521ec314f58898f5e6dff9946e4d4",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4414975.288888888,
+          "retrans_ratio": 0.251614301191766,
+          "fingerprint": "962653081e3911513ee0389c3341a87cbdb521ec314f58898f5e6dff9946e4d4",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4754444.8,
+          "retrans_ratio": 0.23511147526844625,
+          "fingerprint": "962653081e3911513ee0389c3341a87cbdb521ec314f58898f5e6dff9946e4d4",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 4586386.725925926,
+        "median": 4589740.088888889,
+        "sd": 169759.59774302976,
+        "ci_lower": 4414975.288888888,
+        "ci_upper": 4754444.8,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.24313141134600166,
+        "median": 0.2426684575777927,
+        "sd": 0.008261147650748805,
+        "ci_lower": 0.23511147526844625,
+        "ci_upper": 0.251614301191766,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "B1",
+      "receiver": "new-500",
+      "ttl": 500,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 9601068.08888889,
+          "retrans_ratio": 0.004454722492697176,
+          "fingerprint": "807f04dcb55194cc42eb9eb4aa1f587570e69c7201d3a897b038ab2dd90b27e3",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 9599430.4,
+          "retrans_ratio": 0.003918800506279817,
+          "fingerprint": "807f04dcb55194cc42eb9eb4aa1f587570e69c7201d3a897b038ab2dd90b27e3",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 9600132.266666668,
+          "retrans_ratio": 0.004746142238232001,
+          "fingerprint": "807f04dcb55194cc42eb9eb4aa1f587570e69c7201d3a897b038ab2dd90b27e3",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 9600210.251851851,
+        "median": 9600132.266666668,
+        "sd": 821.6249089631452,
+        "ci_lower": 9599430.4,
+        "ci_upper": 9601068.08888889,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.004373221745736331,
+        "median": 0.004454722492697176,
+        "sd": 0.00041964909647679657,
+        "ci_lower": 0.003918800506279817,
+        "ci_upper": 0.004746142238232001,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "classic",
+      "scenario": "C",
+      "receiver": "new-500",
+      "ttl": 500,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 16801810.666666668,
+          "retrans_ratio": 0.1318032661417624,
+          "fingerprint": "9149c98a692b77fad3c5b9a8b43aeb8ce6656dc32a5663bd9f5dbf8bb6de471e",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 16181009.6,
+          "retrans_ratio": 0.17092325768350752,
+          "fingerprint": "9149c98a692b77fad3c5b9a8b43aeb8ce6656dc32a5663bd9f5dbf8bb6de471e",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 18214141.866666667,
+          "retrans_ratio": 0.08430592437888051,
+          "fingerprint": "9149c98a692b77fad3c5b9a8b43aeb8ce6656dc32a5663bd9f5dbf8bb6de471e",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 17065654.044444446,
+        "median": 16801810.666666668,
+        "sd": 1041929.3159510272,
+        "ci_lower": 16181009.6,
+        "ci_upper": 18214141.866666667,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.12901081606805015,
+        "median": 0.1318032661417624,
+        "sd": 0.04337613330233394,
+        "ci_lower": 0.08430592437888051,
+        "ci_upper": 0.17092325768350752,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "C",
+      "receiver": "new-500",
+      "ttl": 500,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 15859905.6,
+          "retrans_ratio": 0.17872886273631486,
+          "fingerprint": "7eae607a7871c64a101a1711851fc5932b1127c303ea99d86471a8229ad5f5ce",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 16497376.0,
+          "retrans_ratio": 0.19493806169540928,
+          "fingerprint": "7eae607a7871c64a101a1711851fc5932b1127c303ea99d86471a8229ad5f5ce",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 15817091.733333332,
+          "retrans_ratio": 0.15603366856597234,
+          "fingerprint": "7eae607a7871c64a101a1711851fc5932b1127c303ea99d86471a8229ad5f5ce",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 16058124.444444446,
+        "median": 15859905.6,
+        "sd": 381004.86032099323,
+        "ci_lower": 15817091.733333332,
+        "ci_upper": 16497376.0,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.1765668643325655,
+        "median": 0.17872886273631486,
+        "sd": 0.019542098889725388,
+        "ci_lower": 0.15603366856597234,
+        "ci_upper": 0.19493806169540928,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "classic",
+      "scenario": "G",
+      "receiver": "new-500",
+      "ttl": 500,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12805323.377777778,
+          "retrans_ratio": 0.0026681671325371184,
+          "fingerprint": "e26074a1f9364d8e091665bb6b6e65b019c425999de0efdf9c69297adee5f257",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12804153.6,
+          "retrans_ratio": 0.002469180631456635,
+          "fingerprint": "e26074a1f9364d8e091665bb6b6e65b019c425999de0efdf9c69297adee5f257",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 10942335.288888888,
+          "retrans_ratio": 0.06044678055190539,
+          "fingerprint": "e26074a1f9364d8e091665bb6b6e65b019c425999de0efdf9c69297adee5f257",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 12183937.422222221,
+        "median": 12804153.6,
+        "sd": 1075259.1479352436,
+        "ci_lower": 10942335.288888888,
+        "ci_upper": 12805323.377777778,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.021861376105299715,
+        "median": 0.0026681671325371184,
+        "sd": 0.033416088582268355,
+        "ci_lower": 0.002469180631456635,
+        "ci_upper": 0.06044678055190539,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "G",
+      "receiver": "new-500",
+      "ttl": 500,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12805557.333333334,
+          "retrans_ratio": 0.0036573001158748553,
+          "fingerprint": "1af2f5f131af1f9c15bde30d70ba27b46a4f1f5f7b64e24b05c74abb2f611419",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12802515.91111111,
+          "retrans_ratio": 0.0037299920330267256,
+          "fingerprint": "1af2f5f131af1f9c15bde30d70ba27b46a4f1f5f7b64e24b05c74abb2f611419",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12803685.688888889,
+          "retrans_ratio": 0.004513466710880218,
+          "fingerprint": "1af2f5f131af1f9c15bde30d70ba27b46a4f1f5f7b64e24b05c74abb2f611419",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 12803919.644444445,
+        "median": 12803685.688888889,
+        "sd": 1534.1491729749473,
+        "ci_lower": 12802515.91111111,
+        "ci_upper": 12805557.333333334,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.003966919619927266,
+        "median": 0.0037299920330267256,
+        "sd": 0.0004747170954122616,
+        "ci_lower": 0.0036573001158748553,
+        "ci_upper": 0.004513466710880218,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "B1",
+      "receiver": "new-40",
+      "ttl": 40,
+      "freeze_enabled": true,
+      "offered_mbit": 24,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4495222.044444445,
+          "retrans_ratio": 0.2437402950310559,
+          "fingerprint": "c0af38543730aa3f105ef257eaeebc7337c9827e5f1f6313e5bfaa1ba7b9d093",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4398832.355555556,
+          "retrans_ratio": 0.2537625012137101,
+          "fingerprint": "c0af38543730aa3f105ef257eaeebc7337c9827e5f1f6313e5bfaa1ba7b9d093",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4511598.933333334,
+          "retrans_ratio": 0.24138771134824344,
+          "fingerprint": "c0af38543730aa3f105ef257eaeebc7337c9827e5f1f6313e5bfaa1ba7b9d093",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 4468551.111111111,
+        "median": 4495222.044444445,
+        "sd": 60930.938607420394,
+        "ci_lower": 4398832.355555556,
+        "ci_upper": 4511598.933333334,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.24629683586433648,
+        "median": 0.2437402950310559,
+        "sd": 0.006571588988044455,
+        "ci_lower": 0.24138771134824344,
+        "ci_upper": 0.2537625012137101,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "B1",
+      "receiver": "new-200",
+      "ttl": 200,
+      "freeze_enabled": true,
+      "offered_mbit": 24,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 5507313.777777778,
+          "retrans_ratio": 0.2033465321241538,
+          "fingerprint": "7cfd9a800bea941923d449f3c4fda965306e13a1a81d2bf71d4a464ab1cc3ff6",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 5432214.044444445,
+          "retrans_ratio": 0.18257689825768983,
+          "fingerprint": "7cfd9a800bea941923d449f3c4fda965306e13a1a81d2bf71d4a464ab1cc3ff6",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 5381445.688888889,
+          "retrans_ratio": 0.18403002458910311,
+          "fingerprint": "7cfd9a800bea941923d449f3c4fda965306e13a1a81d2bf71d4a464ab1cc3ff6",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 5440324.503703703,
+        "median": 5432214.044444445,
+        "sd": 63324.78671249043,
+        "ci_lower": 5381445.688888889,
+        "ci_upper": 5507313.777777778,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.1899844849903156,
+        "median": 0.18403002458910311,
+        "sd": 0.011594659190288742,
+        "ci_lower": 0.18257689825768983,
+        "ci_upper": 0.2033465321241538,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "B1",
+      "receiver": "new-500",
+      "ttl": 500,
+      "freeze_enabled": true,
+      "offered_mbit": 24,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 5250664.533333333,
+          "retrans_ratio": 0.18993257738277655,
+          "fingerprint": "bddeba94b904b1aa9793f710542f45adf49fe69250882a4fcdc7d1114c211ca0",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 5357114.311111111,
+          "retrans_ratio": 0.1554757771816317,
+          "fingerprint": "bddeba94b904b1aa9793f710542f45adf49fe69250882a4fcdc7d1114c211ca0",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 5262830.222222222,
+          "retrans_ratio": 0.14745578340920995,
+          "fingerprint": "bddeba94b904b1aa9793f710542f45adf49fe69250882a4fcdc7d1114c211ca0",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 5290203.022222222,
+        "median": 5262830.222222222,
+        "sd": 58265.267802650524,
+        "ci_lower": 5250664.533333333,
+        "ci_upper": 5357114.311111111,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.16428804599120606,
+        "median": 0.1554757771816317,
+        "sd": 0.022567932287813917,
+        "ci_lower": 0.14745578340920995,
+        "ci_upper": 0.18993257738277655,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "S-FREEZE-NORDR",
+      "receiver": "new-40",
+      "ttl": 40,
+      "freeze_enabled": true,
+      "offered_mbit": 6,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 6001427.911111111,
+          "retrans_ratio": 0.012433324379293145,
+          "fingerprint": "95c3c52410e769d7e5cfe22eadc3a2dd1ca605fc355eef4324bf2620b3839c09",
+          "freeze": {
+            "gaps": 346,
+            "nak_observed": 324,
+            "repaired": 345,
+            "censored": 1,
+            "first_nak_ms": 74.83349609375,
+            "recovery_ms": 149.5791015625,
+            "pcap_sha256": "d11ef074628b79f04a71546a529b2ad26ba0337aede2029dfe5b088def288f87",
+            "recovery_lower_bound_ms": 149.576171875,
+            "recovery_upper_bound_ms": 149.5855712890625
+          }
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 6001661.866666666,
+          "retrans_ratio": 0.012170774783076096,
+          "fingerprint": "95c3c52410e769d7e5cfe22eadc3a2dd1ca605fc355eef4324bf2620b3839c09",
+          "freeze": {
+            "gaps": 358,
+            "nak_observed": 327,
+            "repaired": 357,
+            "censored": 1,
+            "first_nak_ms": 74.912841796875,
+            "recovery_ms": 149.787841796875,
+            "pcap_sha256": "9aaf80300f89e429db6af2ad08da6f371d7f67776ad1769b1cb194a3d7f5f5d9",
+            "recovery_lower_bound_ms": 149.782958984375,
+            "recovery_upper_bound_ms": 149.7933349609375
+          }
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 6000492.088888889,
+          "retrans_ratio": 0.011322203032047591,
+          "fingerprint": "95c3c52410e769d7e5cfe22eadc3a2dd1ca605fc355eef4324bf2620b3839c09",
+          "freeze": {
+            "gaps": 321,
+            "nak_observed": 310,
+            "repaired": 321,
+            "censored": 0,
+            "first_nak_ms": 74.9644775390625,
+            "recovery_ms": 149.55078125,
+            "pcap_sha256": "de5795882b3a36615a13c987790e7cae7675421b98c3c647d05484c757a1f637",
+            "recovery_lower_bound_ms": 149.55078125,
+            "recovery_upper_bound_ms": 149.55078125
+          }
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 6001193.955555555,
+        "median": 6001427.911111111,
+        "sd": 618.9882178415725,
+        "ci_lower": 6000492.088888889,
+        "ci_upper": 6001661.866666666,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.01197543406480561,
+        "median": 0.012170774783076096,
+        "sd": 0.0005807462089734336,
+        "ci_lower": 0.011322203032047591,
+        "ci_upper": 0.012433324379293145,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "S-FREEZE-NORDR",
+      "receiver": "new-200",
+      "ttl": 200,
+      "freeze_enabled": true,
+      "offered_mbit": 6,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 5999556.266666667,
+          "retrans_ratio": 0.012581028729239383,
+          "fingerprint": "ca0937d0b161d8e26e356811022896e4365d4d389e27b175dfdbb25d7677d21b",
+          "freeze": {
+            "gaps": 346,
+            "nak_observed": 313,
+            "repaired": 342,
+            "censored": 4,
+            "first_nak_ms": 345.627197265625,
+            "recovery_ms": 420.2955322265625,
+            "pcap_sha256": "3594fef0910c00cccf7cf719eacaabccd4fa96ffeadfa894af01506ed82d480c",
+            "recovery_lower_bound_ms": 420.2869873046875,
+            "recovery_upper_bound_ms": 420.299072265625
+          }
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 6000024.177777777,
+          "retrans_ratio": 0.01326941514860978,
+          "fingerprint": "ca0937d0b161d8e26e356811022896e4365d4d389e27b175dfdbb25d7677d21b",
+          "freeze": {
+            "gaps": 340,
+            "nak_observed": 330,
+            "repaired": 333,
+            "censored": 7,
+            "first_nak_ms": 346.0455322265625,
+            "recovery_ms": 420.85302734375,
+            "pcap_sha256": "2a8c509c8ed3b9cade965b5ce2921547f63703679087b7071a0f587333a00e19",
+            "recovery_lower_bound_ms": 420.830078125,
+            "recovery_upper_bound_ms": 420.9410400390625
+          }
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 6000492.088888889,
+          "retrans_ratio": 0.011621663086836452,
+          "fingerprint": "ca0937d0b161d8e26e356811022896e4365d4d389e27b175dfdbb25d7677d21b",
+          "freeze": {
+            "gaps": 323,
+            "nak_observed": 314,
+            "repaired": 321,
+            "censored": 2,
+            "first_nak_ms": 345.9405517578125,
+            "recovery_ms": 420.595947265625,
+            "pcap_sha256": "e052525f7c84f9d1caa577a13e7da0fbe0a748187908c25edc0c343292cf8168",
+            "recovery_lower_bound_ms": 420.560791015625,
+            "recovery_upper_bound_ms": 420.60693359375
+          }
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 6000024.177777777,
+        "median": 6000024.177777777,
+        "sd": 467.911111111287,
+        "ci_lower": 5999556.266666667,
+        "ci_upper": 6000492.088888889,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.012490702321561872,
+        "median": 0.012581028729239383,
+        "sd": 0.0008275813308748008,
+        "ci_lower": 0.011621663086836452,
+        "ci_upper": 0.01326941514860978,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "S-FREEZE-NORDR",
+      "receiver": "new-500",
+      "ttl": 500,
+      "freeze_enabled": true,
+      "offered_mbit": 6,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 5999790.222222222,
+          "retrans_ratio": 0.013194231359312672,
+          "fingerprint": "9559a4850b868540b047bf2dd1e477aaf5b955c63a48fa1e5c4666041184da34",
+          "freeze": {
+            "gaps": 350,
+            "nak_observed": 322,
+            "repaired": 347,
+            "censored": 3,
+            "first_nak_ms": 871.138671875,
+            "recovery_ms": 945.464111328125,
+            "pcap_sha256": "dbc5d2c92463a08577ac7f70ce8b0dc77b0240a3eb0c61e61931363e1b4a0861",
+            "recovery_lower_bound_ms": 945.446044921875,
+            "recovery_upper_bound_ms": 945.492431640625
+          }
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 5999322.311111111,
+          "retrans_ratio": 0.01326941514860978,
+          "fingerprint": "9559a4850b868540b047bf2dd1e477aaf5b955c63a48fa1e5c4666041184da34",
+          "freeze": {
+            "gaps": 346,
+            "nak_observed": 321,
+            "repaired": 341,
+            "censored": 5,
+            "first_nak_ms": 884.387939453125,
+            "recovery_ms": 959.08203125,
+            "pcap_sha256": "838d04c03b61843fe1399f33b6495a7fee35880e2dea45bb1287efa16befb593",
+            "recovery_lower_bound_ms": 959.0511474609375,
+            "recovery_upper_bound_ms": 959.0941162109375
+          }
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 6000492.088888889,
+          "retrans_ratio": 0.01200337475072864,
+          "fingerprint": "9559a4850b868540b047bf2dd1e477aaf5b955c63a48fa1e5c4666041184da34",
+          "freeze": {
+            "gaps": 328,
+            "nak_observed": 309,
+            "repaired": 327,
+            "censored": 1,
+            "first_nak_ms": 870.865966796875,
+            "recovery_ms": 945.64501953125,
+            "pcap_sha256": "1b612da3af85ac5bd8b1a1b02c0652c4e13896e34555bff8c19c2a89bc940c7d",
+            "recovery_lower_bound_ms": 945.6314697265625,
+            "recovery_upper_bound_ms": 945.6500244140625
+          }
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 5999868.207407407,
+        "median": 5999790.222222222,
+        "sd": 588.7752365522063,
+        "ci_lower": 5999322.311111111,
+        "ci_upper": 6000492.088888889,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.012822340419550363,
+        "median": 0.013194231359312672,
+        "sd": 0.0007102406110429964,
+        "ci_lower": 0.01200337475072864,
+        "ci_upper": 0.01326941514860978,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "S-FREEZE-NORDR",
+      "receiver": "thaw-40",
+      "ttl": 40,
+      "freeze_enabled": false,
+      "offered_mbit": 6,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 6000258.133333334,
+          "retrans_ratio": 0.012048655078469745,
+          "fingerprint": "c653e5f28d5f958c320253af6ffb5f38afb3df7f9c8f0d1929420ccab9e6100d",
+          "freeze": {
+            "gaps": 331,
+            "nak_observed": 331,
+            "repaired": 331,
+            "censored": 0,
+            "first_nak_ms": 0.1328125,
+            "recovery_ms": 75.001953125,
+            "pcap_sha256": "d6f275af299d062f256ff9271bdc5ff59b99f45424889a4a84c58b6f784d1f08",
+            "recovery_lower_bound_ms": 75.001953125,
+            "recovery_upper_bound_ms": 75.001953125
+          }
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 6001895.822222223,
+          "retrans_ratio": 0.012169373104533764,
+          "fingerprint": "c653e5f28d5f958c320253af6ffb5f38afb3df7f9c8f0d1929420ccab9e6100d",
+          "freeze": {
+            "gaps": 329,
+            "nak_observed": 329,
+            "repaired": 329,
+            "censored": 0,
+            "first_nak_ms": 0.132080078125,
+            "recovery_ms": 74.90283203125,
+            "pcap_sha256": "0af2887197574944c207f9576ced5e245176baf3356b0c0b73b297d1cdbf4ddf",
+            "recovery_lower_bound_ms": 74.90283203125,
+            "recovery_upper_bound_ms": 74.90283203125
+          }
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 6001895.822222223,
+          "retrans_ratio": 0.011512337388234392,
+          "fingerprint": "c653e5f28d5f958c320253af6ffb5f38afb3df7f9c8f0d1929420ccab9e6100d",
+          "freeze": {
+            "gaps": 334,
+            "nak_observed": 334,
+            "repaired": 334,
+            "censored": 0,
+            "first_nak_ms": 0.134033203125,
+            "recovery_ms": 74.907470703125,
+            "pcap_sha256": "8826be2eb53f6f8b704c1bc5a0da97aabbccb3f0f953b0ad796c37495c03e480",
+            "recovery_lower_bound_ms": 74.907470703125,
+            "recovery_upper_bound_ms": 74.907470703125
+          }
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 6001349.925925926,
+        "median": 6001895.822222223,
+        "sd": 945.5201208488113,
+        "ci_lower": 6000258.133333334,
+        "ci_upper": 6001895.822222223,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.0119101218570793,
+        "median": 0.012048655078469745,
+        "sd": 0.0003497392931811749,
+        "ci_lower": 0.011512337388234392,
+        "ci_upper": 0.012169373104533764,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "S-FREEZE-NORDR",
+      "receiver": "thaw-200",
+      "ttl": 200,
+      "freeze_enabled": false,
+      "offered_mbit": 6,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 6001193.955555555,
+          "retrans_ratio": 0.012765468067162463,
+          "fingerprint": "21a228bf073c102acc3e679dea6a8063d6443c78b72629e7150d641999acddec",
+          "freeze": {
+            "gaps": 357,
+            "nak_observed": 337,
+            "repaired": 357,
+            "censored": 0,
+            "first_nak_ms": 0.14990234375,
+            "recovery_ms": 75.0380859375,
+            "pcap_sha256": "51eef9e25e8d7cf5a539b90ad0d504881d45895fe334ffee1bbb4b7760ed611e",
+            "recovery_lower_bound_ms": 75.0380859375,
+            "recovery_upper_bound_ms": 75.0380859375
+          }
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 6001193.955555555,
+          "retrans_ratio": 0.01364559776150868,
+          "fingerprint": "21a228bf073c102acc3e679dea6a8063d6443c78b72629e7150d641999acddec",
+          "freeze": {
+            "gaps": 355,
+            "nak_observed": 349,
+            "repaired": 354,
+            "censored": 1,
+            "first_nak_ms": 0.146240234375,
+            "recovery_ms": 75.14404296875,
+            "pcap_sha256": "920232e5a71d558409af70842db17632ad683cd2402ab27b63f62a929f960d74",
+            "recovery_lower_bound_ms": 75.14306640625,
+            "recovery_upper_bound_ms": 75.14501953125
+          }
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 6001193.955555555,
+          "retrans_ratio": 0.012082853855005751,
+          "fingerprint": "21a228bf073c102acc3e679dea6a8063d6443c78b72629e7150d641999acddec",
+          "freeze": {
+            "gaps": 337,
+            "nak_observed": 337,
+            "repaired": 336,
+            "censored": 1,
+            "first_nak_ms": 0.157958984375,
+            "recovery_ms": 75.2186279296875,
+            "pcap_sha256": "cb68987ef69cee51a14311594fb337ed3e4b5683627e7506069e6b2d47beb4de",
+            "recovery_lower_bound_ms": 75.218017578125,
+            "recovery_upper_bound_ms": 75.21923828125
+          }
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 6001193.955555555,
+        "median": 6001193.955555555,
+        "sd": 0.0,
+        "ci_lower": 6001193.955555555,
+        "ci_upper": 6001193.955555555,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.01283130656122563,
+        "median": 0.012765468067162463,
+        "sd": 0.0007834495260087836,
+        "ci_lower": 0.012082853855005751,
+        "ci_upper": 0.01364559776150868,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "S-FREEZE-NORDR",
+      "receiver": "thaw-500",
+      "ttl": 500,
+      "freeze_enabled": false,
+      "offered_mbit": 6,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 6002129.777777778,
+          "retrans_ratio": 0.012052817442039,
+          "fingerprint": "4a6b1572b732ea94db5179f8fd7b32d603212d32c69137c27fa78e85737b812c",
+          "freeze": {
+            "gaps": 317,
+            "nak_observed": 314,
+            "repaired": 317,
+            "censored": 0,
+            "first_nak_ms": 315.0013427734375,
+            "recovery_ms": 390.044921875,
+            "pcap_sha256": "77435974aac3da2b271497046e093efdee00632c6900ca81c5b153deccca7bd4",
+            "recovery_lower_bound_ms": 390.044921875,
+            "recovery_upper_bound_ms": 390.044921875
+          }
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 6000258.133333334,
+          "retrans_ratio": 0.013117017604418364,
+          "fingerprint": "4a6b1572b732ea94db5179f8fd7b32d603212d32c69137c27fa78e85737b812c",
+          "freeze": {
+            "gaps": 336,
+            "nak_observed": 321,
+            "repaired": 336,
+            "censored": 0,
+            "first_nak_ms": 314.493896484375,
+            "recovery_ms": 360.3408203125,
+            "pcap_sha256": "2b16a9d98105237ab25c20cbe8e9869b813d55e5587c3114d4ee09ab94f37c1d",
+            "recovery_lower_bound_ms": 360.3408203125,
+            "recovery_upper_bound_ms": 360.3408203125
+          }
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 6001193.955555555,
+          "retrans_ratio": 0.012044495588799388,
+          "fingerprint": "4a6b1572b732ea94db5179f8fd7b32d603212d32c69137c27fa78e85737b812c",
+          "freeze": {
+            "gaps": 336,
+            "nak_observed": 325,
+            "repaired": 335,
+            "censored": 1,
+            "first_nak_ms": 344.5400390625,
+            "recovery_ms": 390.5029296875,
+            "pcap_sha256": "53e67dd52063d4b0959093c7282db95ce75c2f9105463be92817437143e8b656",
+            "recovery_lower_bound_ms": 390.406494140625,
+            "recovery_upper_bound_ms": 397.433837890625
+          }
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 6001193.955555555,
+        "median": 6001193.955555555,
+        "sd": 935.8222222221084,
+        "ci_lower": 6000258.133333334,
+        "ci_upper": 6002129.777777778,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.012404776878418919,
+        "median": 0.012052817442039,
+        "sd": 0.0006168325965280205,
+        "ci_lower": 0.012044495588799388,
+        "ci_upper": 0.013117017604418364,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "S-FREEZE-NORDR",
+      "receiver": "new-40",
+      "ttl": 40,
+      "freeze_enabled": true,
+      "offered_mbit": 2,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 2000553.9555555556,
+          "retrans_ratio": 0.013842746400885937,
+          "fingerprint": "642fa07bf3ad93fac665eb1b54b48724a7d2e0f2909acc322ac7c6b2a2e49fb3",
+          "freeze": {
+            "gaps": 110,
+            "nak_observed": 108,
+            "repaired": 108,
+            "censored": 2,
+            "first_nak_ms": 210.496337890625,
+            "recovery_ms": 285.4794921875,
+            "pcap_sha256": "30978a22af13f410a8e251e56f76497adf1e2f55522e1a05759eb9fc2ee2e56c",
+            "recovery_lower_bound_ms": 285.45751953125,
+            "recovery_upper_bound_ms": 285.5269775390625
+          }
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 1999852.088888889,
+          "retrans_ratio": 0.012972613371770709,
+          "fingerprint": "642fa07bf3ad93fac665eb1b54b48724a7d2e0f2909acc322ac7c6b2a2e49fb3",
+          "freeze": {
+            "gaps": 117,
+            "nak_observed": 115,
+            "repaired": 116,
+            "censored": 1,
+            "first_nak_ms": 210.16796875,
+            "recovery_ms": 285.0999755859375,
+            "pcap_sha256": "0d6c85328f42ba6232861dc0b9709acbb8b4a3d76514ff16039317e2b788bb7c",
+            "recovery_lower_bound_ms": 285.094970703125,
+            "recovery_upper_bound_ms": 285.10498046875
+          }
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 2000553.9555555556,
+          "retrans_ratio": 0.013194367446501829,
+          "fingerprint": "642fa07bf3ad93fac665eb1b54b48724a7d2e0f2909acc322ac7c6b2a2e49fb3",
+          "freeze": {
+            "gaps": 118,
+            "nak_observed": 117,
+            "repaired": 118,
+            "censored": 0,
+            "first_nak_ms": 210.462158203125,
+            "recovery_ms": 285.5533447265625,
+            "pcap_sha256": "d128fb02e6190c3b23c204bd49a0ca612a513cc37aace59aa8e645e314aaae2c",
+            "recovery_lower_bound_ms": 285.5533447265625,
+            "recovery_upper_bound_ms": 285.5533447265625
+          }
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 2000320.0,
+        "median": 2000553.9555555556,
+        "sd": 405.22290893524325,
+        "ci_lower": 1999852.088888889,
+        "ci_upper": 2000553.9555555556,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.01333657573971949,
+        "median": 0.013194367446501829,
+        "sd": 0.0004521617753461929,
+        "ci_lower": 0.012972613371770709,
+        "ci_upper": 0.013842746400885937,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "S-FREEZE-NORDR",
+      "receiver": "new-200",
+      "ttl": 200,
+      "freeze_enabled": true,
+      "offered_mbit": 2,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 2000320.0,
+          "retrans_ratio": 0.012863162563761368,
+          "fingerprint": "35c5c471048cd9b72e42279af89925fd175119c3102b8d3147e5c2f28af12dad",
+          "freeze": {
+            "gaps": 119,
+            "nak_observed": 117,
+            "repaired": 117,
+            "censored": 2,
+            "first_nak_ms": 1050.416015625,
+            "recovery_ms": 1125.202880859375,
+            "pcap_sha256": "915974a804d445e6e9404e51b2bd69eac118915681160d070f2bbbafc800f6dd",
+            "recovery_lower_bound_ms": 1125.18505859375,
+            "recovery_upper_bound_ms": 1125.2578125
+          }
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 1999852.088888889,
+          "retrans_ratio": 0.01163563829787234,
+          "fingerprint": "35c5c471048cd9b72e42279af89925fd175119c3102b8d3147e5c2f28af12dad",
+          "freeze": {
+            "gaps": 103,
+            "nak_observed": 101,
+            "repaired": 101,
+            "censored": 2,
+            "first_nak_ms": 1050.343994140625,
+            "recovery_ms": 1125.18310546875,
+            "pcap_sha256": "ecb1235d6e9ae06e58c096e39473b3863264af44181bfbb574833f927f15ee89",
+            "recovery_lower_bound_ms": 1125.114013671875,
+            "recovery_upper_bound_ms": 1125.205078125
+          }
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 2000320.0,
+          "retrans_ratio": 0.012089618456078083,
+          "fingerprint": "35c5c471048cd9b72e42279af89925fd175119c3102b8d3147e5c2f28af12dad",
+          "freeze": {
+            "gaps": 115,
+            "nak_observed": 114,
+            "repaired": 114,
+            "censored": 1,
+            "first_nak_ms": 1050.364013671875,
+            "recovery_ms": 1125.328125,
+            "pcap_sha256": "d7aa5fc31ac124923dd055fd0af4a7c141643dbeb06e18c122ea728ac07946cc",
+            "recovery_lower_bound_ms": 1125.316162109375,
+            "recovery_upper_bound_ms": 1125.340087890625
+          }
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 2000164.0296296298,
+        "median": 2000320.0,
+        "sd": 270.148605956784,
+        "ci_lower": 1999852.088888889,
+        "ci_upper": 2000320.0,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.012196139772570598,
+        "median": 0.012089618456078083,
+        "sd": 0.0006206561439211517,
+        "ci_lower": 0.01163563829787234,
+        "ci_upper": 0.012863162563761368,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "S-FREEZE-NORDR",
+      "receiver": "new-500",
+      "ttl": 500,
+      "freeze_enabled": true,
+      "offered_mbit": 2,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 1979965.8666666667,
+          "retrans_ratio": 0.0,
+          "fingerprint": "99f8512ced5a3750af77bb652c806dd3bc99ca69c1ccdeb92970da52a16ab087",
+          "freeze": {
+            "gaps": 114,
+            "nak_observed": 0,
+            "repaired": 0,
+            "censored": 114,
+            "first_nak_ms": null,
+            "recovery_ms": null,
+            "pcap_sha256": "1f25e3bff750f7edabc9dadc949f6852ff4804e5c0a2d732d055cc6332dd3b00",
+            "recovery_lower_bound_ms": 26482.7041015625,
+            "recovery_upper_bound_ms": null
+          }
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 1979965.8666666667,
+          "retrans_ratio": 0.0,
+          "fingerprint": "99f8512ced5a3750af77bb652c806dd3bc99ca69c1ccdeb92970da52a16ab087",
+          "freeze": {
+            "gaps": 103,
+            "nak_observed": 0,
+            "repaired": 0,
+            "censored": 103,
+            "first_nak_ms": null,
+            "recovery_ms": null,
+            "pcap_sha256": "6011d9c3a10bd57528962b943fa185f8a3b4122961a519f483d135bbb418b3e8",
+            "recovery_lower_bound_ms": 25980.518798828125,
+            "recovery_upper_bound_ms": null
+          }
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 1979030.0444444444,
+          "retrans_ratio": 0.0,
+          "fingerprint": "99f8512ced5a3750af77bb652c806dd3bc99ca69c1ccdeb92970da52a16ab087",
+          "freeze": {
+            "gaps": 115,
+            "nak_observed": 0,
+            "repaired": 0,
+            "censored": 115,
+            "first_nak_ms": null,
+            "recovery_ms": null,
+            "pcap_sha256": "cd91f7b0edc40929e0356a987f92894043ad5a19ace2175a57a45f151eaf05c0",
+            "recovery_lower_bound_ms": 29415.5458984375,
+            "recovery_upper_bound_ms": null
+          }
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 1979653.925925926,
+        "median": 1979965.8666666667,
+        "sd": 540.2972119137024,
+        "ci_lower": 1979030.0444444444,
+        "ci_upper": 1979965.8666666667,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.0,
+        "median": 0.0,
+        "sd": 0.0,
+        "ci_lower": 0.0,
+        "ci_upper": 0.0,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "S-FREEZE-NORDR",
+      "receiver": "thaw-40",
+      "ttl": 40,
+      "freeze_enabled": false,
+      "offered_mbit": 2,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 2000553.9555555556,
+          "retrans_ratio": 0.016027412401901184,
+          "fingerprint": "a2ad63f3d91754074783a8cfd75a58f637a0c4768346e8be6f7b979b3caa920d",
+          "freeze": {
+            "gaps": 112,
+            "nak_observed": 112,
+            "repaired": 112,
+            "censored": 0,
+            "first_nak_ms": 0.1546630859375,
+            "recovery_ms": 75.204345703125,
+            "pcap_sha256": "25cdb866e64f8e34b7d201f39e06e19049a54842254e6c0bc2c058df5d62ef19",
+            "recovery_lower_bound_ms": 75.204345703125,
+            "recovery_upper_bound_ms": 75.204345703125
+          }
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 2000086.0444444444,
+          "retrans_ratio": 0.012299168975069252,
+          "fingerprint": "a2ad63f3d91754074783a8cfd75a58f637a0c4768346e8be6f7b979b3caa920d",
+          "freeze": {
+            "gaps": 101,
+            "nak_observed": 101,
+            "repaired": 101,
+            "censored": 0,
+            "first_nak_ms": 0.156005859375,
+            "recovery_ms": 75.238037109375,
+            "pcap_sha256": "0ec148ed369bdfca7bcb93e0a97db056e499519a6aad46c6aad530342e8c5a89",
+            "recovery_lower_bound_ms": 75.238037109375,
+            "recovery_upper_bound_ms": 75.238037109375
+          }
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 2000320.0,
+          "retrans_ratio": 0.013166629785350742,
+          "fingerprint": "a2ad63f3d91754074783a8cfd75a58f637a0c4768346e8be6f7b979b3caa920d",
+          "freeze": {
+            "gaps": 102,
+            "nak_observed": 102,
+            "repaired": 101,
+            "censored": 1,
+            "first_nak_ms": 0.141845703125,
+            "recovery_ms": 75.398193359375,
+            "pcap_sha256": "c960131e3dfd2d67ebb9ad0ecdac382031b320fa1c653431f3c4cc6394e6f7e2",
+            "recovery_lower_bound_ms": 75.3839111328125,
+            "recovery_upper_bound_ms": 75.400146484375
+          }
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 2000320.0,
+        "median": 2000320.0,
+        "sd": 233.9555555556435,
+        "ci_lower": 2000086.0444444444,
+        "ci_upper": 2000553.9555555556,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.013831070387440393,
+        "median": 0.013166629785350742,
+        "sd": 0.0019509127985914234,
+        "ci_lower": 0.012299168975069252,
+        "ci_upper": 0.016027412401901184,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "S-FREEZE-NORDR",
+      "receiver": "thaw-200",
+      "ttl": 200,
+      "freeze_enabled": false,
+      "offered_mbit": 2,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 2000320.0,
+          "retrans_ratio": 0.014733577046637863,
+          "fingerprint": "cb66fbd815dcb3648b704824dcafaae265117e597c0f804deb3f76a27a6a0b0a",
+          "freeze": {
+            "gaps": 114,
+            "nak_observed": 114,
+            "repaired": 114,
+            "censored": 0,
+            "first_nak_ms": 367.595458984375,
+            "recovery_ms": 442.808349609375,
+            "pcap_sha256": "a063141402622c69b76e705cafd31632b26fe58e3dee8252f4eed613b4398dab",
+            "recovery_lower_bound_ms": 442.808349609375,
+            "recovery_upper_bound_ms": 442.808349609375
+          }
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 2000086.0444444444,
+          "retrans_ratio": 0.01362428001772264,
+          "fingerprint": "cb66fbd815dcb3648b704824dcafaae265117e597c0f804deb3f76a27a6a0b0a",
+          "freeze": {
+            "gaps": 107,
+            "nak_observed": 107,
+            "repaired": 107,
+            "censored": 0,
+            "first_nak_ms": 405.76416015625,
+            "recovery_ms": 480.5361328125,
+            "pcap_sha256": "f136b6ec5f55561a2f7096c72925546a3943c2d91ba3d05bb5d54420e4cb2458",
+            "recovery_lower_bound_ms": 480.5361328125,
+            "recovery_upper_bound_ms": 480.5361328125
+          }
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 2000787.911111111,
+          "retrans_ratio": 0.012847491416546683,
+          "fingerprint": "cb66fbd815dcb3648b704824dcafaae265117e597c0f804deb3f76a27a6a0b0a",
+          "freeze": {
+            "gaps": 111,
+            "nak_observed": 111,
+            "repaired": 111,
+            "censored": 0,
+            "first_nak_ms": 510.73583984375,
+            "recovery_ms": 600.671875,
+            "pcap_sha256": "c0cb14550c5fab699128a4a76f3ad6579a05a42e60a08e3de6c3e201296d49f9",
+            "recovery_lower_bound_ms": 600.671875,
+            "recovery_upper_bound_ms": 600.671875
+          }
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 2000397.9851851852,
+        "median": 2000320.0,
+        "sd": 357.3730141962672,
+        "ci_lower": 2000086.0444444444,
+        "ci_upper": 2000787.911111111,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.013735116160302395,
+        "median": 0.01362428001772264,
+        "sd": 0.000947915206590537,
+        "ci_lower": 0.012847491416546683,
+        "ci_upper": 0.014733577046637863,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "S-FREEZE-NORDR",
+      "receiver": "thaw-500",
+      "ttl": 500,
+      "freeze_enabled": false,
+      "offered_mbit": 2,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 1990025.9555555556,
+          "retrans_ratio": 0.004660969925646432,
+          "fingerprint": "39e86fb2150ada9f4085f31ac090a6f6e158405499a9c63df2eec4e2ee5ccfec",
+          "freeze": {
+            "gaps": 112,
+            "nak_observed": 45,
+            "repaired": 41,
+            "censored": 71,
+            "first_nak_ms": 1725.35302734375,
+            "recovery_ms": 1799.56787109375,
+            "pcap_sha256": "7d3c08841f65e465fb6c2d980a2cc7bca4d725deba2419b8fe1e272c6b918f20",
+            "recovery_lower_bound_ms": 25207.255493164062,
+            "recovery_upper_bound_ms": null
+          }
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 1992365.5111111111,
+          "retrans_ratio": 0.005328005328005328,
+          "fingerprint": "39e86fb2150ada9f4085f31ac090a6f6e158405499a9c63df2eec4e2ee5ccfec",
+          "freeze": {
+            "gaps": 91,
+            "nak_observed": 50,
+            "repaired": 46,
+            "censored": 45,
+            "first_nak_ms": 1762.6168212890625,
+            "recovery_ms": 1815.1104736328125,
+            "pcap_sha256": "0a5931f97695ea3fc72f6550e258548535adba8598cb7638934afa48bde5522a",
+            "recovery_lower_bound_ms": 2009.72705078125,
+            "recovery_upper_bound_ms": 2009.72705078125
+          }
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 1987218.4888888889,
+          "retrans_ratio": 0.00499278819482969,
+          "fingerprint": "39e86fb2150ada9f4085f31ac090a6f6e158405499a9c63df2eec4e2ee5ccfec",
+          "freeze": {
+            "gaps": 114,
+            "nak_observed": 46,
+            "repaired": 40,
+            "censored": 74,
+            "first_nak_ms": 1755.00390625,
+            "recovery_ms": 1799.972412109375,
+            "pcap_sha256": "d803b284276cc09614a3aa3fe508f2b87d0ada0c1bf654a3158ec635d2f9905a",
+            "recovery_lower_bound_ms": 29632.530883789062,
+            "recovery_upper_bound_ms": null
+          }
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 1989869.9851851852,
+        "median": 1990025.9555555556,
+        "sd": 2577.053454303509,
+        "ci_lower": 1987218.4888888889,
+        "ci_upper": 1992365.5111111111,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.004993921149493817,
+        "median": 0.00499278819482969,
+        "sd": 0.0003335191444126211,
+        "ci_lower": 0.004660969925646432,
+        "ci_upper": 0.005328005328005328,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "belabox-c",
+      "scenario": "B1",
+      "receiver": "new-40",
+      "ttl": 40,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 9614637.51111111,
+          "retrans_ratio": 0.009996369357376257,
+          "fingerprint": "f84b99e1e900c1072e97e8144e863e6db1afaf9742c22fb2298484042d16ea94",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 7735974.4,
+          "retrans_ratio": 0.45200057422940465,
+          "fingerprint": "f84b99e1e900c1072e97e8144e863e6db1afaf9742c22fb2298484042d16ea94",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 9610660.266666668,
+          "retrans_ratio": 0.009638904361725317,
+          "fingerprint": "f84b99e1e900c1072e97e8144e863e6db1afaf9742c22fb2298484042d16ea94",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 8987090.725925924,
+        "median": 9610660.266666668,
+        "sd": 1083500.3462699645,
+        "ci_lower": 7735974.4,
+        "ci_upper": 9614637.51111111,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.15721194931616875,
+        "median": 0.009996369357376257,
+        "sd": 0.25529450048714947,
+        "ci_lower": 0.009638904361725317,
+        "ci_upper": 0.45200057422940465,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "belabox-c",
+      "scenario": "C",
+      "receiver": "new-40",
+      "ttl": 40,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 14772363.2,
+          "retrans_ratio": 0.5736720854018625,
+          "fingerprint": "30390c5ef43f7eba36a6fbaf1efa5ac85d2a89c1db449df9e1561f9c08dbbf90",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 14293865.6,
+          "retrans_ratio": 0.5719364544311382,
+          "fingerprint": "30390c5ef43f7eba36a6fbaf1efa5ac85d2a89c1db449df9e1561f9c08dbbf90",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 14101905.066666666,
+          "retrans_ratio": 0.5773006577523625,
+          "fingerprint": "30390c5ef43f7eba36a6fbaf1efa5ac85d2a89c1db449df9e1561f9c08dbbf90",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 14389377.955555553,
+        "median": 14293865.6,
+        "sd": 345283.1949082266,
+        "ci_lower": 14101905.066666666,
+        "ci_upper": 14772363.2,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.5743030658617877,
+        "median": 0.5736720854018625,
+        "sd": 0.002737201412659307,
+        "ci_lower": 0.5719364544311382,
+        "ci_upper": 0.5773006577523625,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "belabox-c",
+      "scenario": "G",
+      "receiver": "new-40",
+      "ttl": 40,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12799240.533333331,
+          "retrans_ratio": 0.01099416047869656,
+          "fingerprint": "d6d4064070737af85e92837e5a7f9cbc1f94044dcedeebea659d0dbcf5492de2",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12800176.355555557,
+          "retrans_ratio": 0.011031598680534277,
+          "fingerprint": "d6d4064070737af85e92837e5a7f9cbc1f94044dcedeebea659d0dbcf5492de2",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12801580.08888889,
+          "retrans_ratio": 0.010667401083264482,
+          "fingerprint": "d6d4064070737af85e92837e5a7f9cbc1f94044dcedeebea659d0dbcf5492de2",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 12800332.325925926,
+        "median": 12800176.355555557,
+        "sd": 1177.5504731051526,
+        "ci_lower": 12799240.533333331,
+        "ci_upper": 12801580.08888889,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.010897720080831771,
+        "median": 0.01099416047869656,
+        "sd": 0.00020033855150597353,
+        "ci_lower": 0.010667401083264482,
+        "ci_upper": 0.011031598680534277,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "belabox-c",
+      "scenario": "B1",
+      "receiver": "new-200",
+      "ttl": 200,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 9616041.244444445,
+          "retrans_ratio": 0.0035363266102480307,
+          "fingerprint": "18420d6d5c8e1a7849f334599cd3f6587bc76f4a4343e23ac10d6df47681e611",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 9616977.066666666,
+          "retrans_ratio": 0.003390657397243566,
+          "fingerprint": "18420d6d5c8e1a7849f334599cd3f6587bc76f4a4343e23ac10d6df47681e611",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 9615339.377777778,
+          "retrans_ratio": 0.004047793221165569,
+          "fingerprint": "18420d6d5c8e1a7849f334599cd3f6587bc76f4a4343e23ac10d6df47681e611",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 9616119.22962963,
+        "median": 9616041.244444445,
+        "sd": 821.6249089631452,
+        "ci_lower": 9615339.377777778,
+        "ci_upper": 9616977.066666666,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.0036582590762190554,
+        "median": 0.0035363266102480307,
+        "sd": 0.0003451195698069639,
+        "ci_lower": 0.003390657397243566,
+        "ci_upper": 0.004047793221165569,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "belabox-c",
+      "scenario": "C",
+      "receiver": "new-200",
+      "ttl": 200,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 18829854.4,
+          "retrans_ratio": 0.265893853355468,
+          "fingerprint": "b75c60b67f9da959b7d63c60c26e1817b436ac4b2535e2a51ace0cf1df258a1c",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 17684057.066666666,
+          "retrans_ratio": 0.2856165701216254,
+          "fingerprint": "b75c60b67f9da959b7d63c60c26e1817b436ac4b2535e2a51ace0cf1df258a1c",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 16087485.866666667,
+          "retrans_ratio": 0.4121049738939269,
+          "fingerprint": "b75c60b67f9da959b7d63c60c26e1817b436ac4b2535e2a51ace0cf1df258a1c",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 17533799.111111112,
+        "median": 17684057.066666666,
+        "sd": 1377345.048657018,
+        "ci_lower": 16087485.866666667,
+        "ci_upper": 18829854.4,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.3212051324570067,
+        "median": 0.2856165701216254,
+        "sd": 0.07933682794958742,
+        "ci_lower": 0.265893853355468,
+        "ci_upper": 0.4121049738939269,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "belabox-c",
+      "scenario": "G",
+      "receiver": "new-200",
+      "ttl": 200,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12800410.311111111,
+          "retrans_ratio": 0.009122768986198425,
+          "fingerprint": "191cb1b3bbe687f4b1485bd9d3a4173a570b3640ae0f5c58d3976ebeea88d9c6",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12799006.577777777,
+          "retrans_ratio": 0.009139513040965249,
+          "fingerprint": "191cb1b3bbe687f4b1485bd9d3a4173a570b3640ae0f5c58d3976ebeea88d9c6",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12801814.044444444,
+          "retrans_ratio": 0.009015031073854604,
+          "fingerprint": "191cb1b3bbe687f4b1485bd9d3a4173a570b3640ae0f5c58d3976ebeea88d9c6",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 12800410.31111111,
+        "median": 12800410.311111111,
+        "sd": 1403.7333333333954,
+        "ci_lower": 12799006.577777777,
+        "ci_upper": 12801814.044444444,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.009092437700339425,
+        "median": 0.009122768986198425,
+        "sd": 0.00006755686649282297,
+        "ci_lower": 0.009015031073854604,
+        "ci_upper": 0.009139513040965249,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "belabox-c",
+      "scenario": "B1",
+      "receiver": "new-500",
+      "ttl": 500,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 9599430.4,
+          "retrans_ratio": 0.0039423732113306725,
+          "fingerprint": "cddfa14d91e493396966db50a1498c7afb67396ef4ed3809b1654a071271e783",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 9600600.177777778,
+          "retrans_ratio": 0.0037492391965916008,
+          "fingerprint": "cddfa14d91e493396966db50a1498c7afb67396ef4ed3809b1654a071271e783",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 9601068.08888889,
+          "retrans_ratio": 0.004186442740659608,
+          "fingerprint": "cddfa14d91e493396966db50a1498c7afb67396ef4ed3809b1654a071271e783",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 9600366.222222224,
+        "median": 9600600.177777778,
+        "sd": 843.5387517352139,
+        "ci_lower": 9599430.4,
+        "ci_upper": 9601068.08888889,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.003959351716193961,
+        "median": 0.0039423732113306725,
+        "sd": 0.00021909572555609328,
+        "ci_lower": 0.0037492391965916008,
+        "ci_upper": 0.004186442740659608,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "belabox-c",
+      "scenario": "C",
+      "receiver": "new-500",
+      "ttl": 500,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 22404987.733333334,
+          "retrans_ratio": 0.002550702028081123,
+          "fingerprint": "d51d87ce41314f831ff6fb9072fb5d40fccf53d440515f34562550a53aed3431",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 22405689.6,
+          "retrans_ratio": 0.0026440376560879163,
+          "fingerprint": "d51d87ce41314f831ff6fb9072fb5d40fccf53d440515f34562550a53aed3431",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 22406566.933333337,
+          "retrans_ratio": 0.0020060102251883076,
+          "fingerprint": "d51d87ce41314f831ff6fb9072fb5d40fccf53d440515f34562550a53aed3431",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 22405748.088888895,
+        "median": 22405689.6,
+        "sd": 791.2230232968476,
+        "ci_lower": 22404987.733333334,
+        "ci_upper": 22406566.933333337,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.0024002499697857826,
+        "median": 0.002550702028081123,
+        "sd": 0.0003445963102371632,
+        "ci_lower": 0.0020060102251883076,
+        "ci_upper": 0.0026440376560879163,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "belabox-c",
+      "scenario": "G",
+      "receiver": "new-500",
+      "ttl": 500,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12801346.133333333,
+          "retrans_ratio": 0.003162141533093447,
+          "fingerprint": "dd66219eea5d13dbbfb3dbf2a2f38c25aed469cfceb3f9d0d1e64fa8f26b8c85",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12797836.8,
+          "retrans_ratio": 0.0025627044711014177,
+          "fingerprint": "dd66219eea5d13dbbfb3dbf2a2f38c25aed469cfceb3f9d0d1e64fa8f26b8c85",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12799942.4,
+          "retrans_ratio": 0.0028542859740023634,
+          "fingerprint": "dd66219eea5d13dbbfb3dbf2a2f38c25aed469cfceb3f9d0d1e64fa8f26b8c85",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 12799708.444444446,
+        "median": 12799942.4,
+        "sd": 1766.325709655632,
+        "ci_lower": 12797836.8,
+        "ci_upper": 12801346.133333333,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.0028597106593990763,
+        "median": 0.0028542859740023634,
+        "sd": 0.00029975534729367035,
+        "ci_lower": 0.0025627044711014177,
+        "ci_upper": 0.003162141533093447,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "irlserver-rust",
+      "scenario": "B1",
+      "receiver": "new-40",
+      "ttl": 40,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 8122001.066666666,
+          "retrans_ratio": 0.2999696448446828,
+          "fingerprint": "84a6509281fdaf2d3cc366e8320f99e75d5479836d55185d50b35bcadffc29a7",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 8060704.711111112,
+          "retrans_ratio": 0.303877094296256,
+          "fingerprint": "84a6509281fdaf2d3cc366e8320f99e75d5479836d55185d50b35bcadffc29a7",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 8099307.377777778,
+          "retrans_ratio": 0.2975231635680979,
+          "fingerprint": "84a6509281fdaf2d3cc366e8320f99e75d5479836d55185d50b35bcadffc29a7",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 8094004.385185185,
+        "median": 8099307.377777778,
+        "sd": 30990.354933851075,
+        "ci_lower": 8060704.711111112,
+        "ci_upper": 8122001.066666666,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.30045663423634555,
+        "median": 0.2999696448446828,
+        "sd": 0.0032048366456423273,
+        "ci_lower": 0.2975231635680979,
+        "ci_upper": 0.303877094296256,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "irlserver-rust",
+      "scenario": "C",
+      "receiver": "new-40",
+      "ttl": 40,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 12231781.333333334,
+          "retrans_ratio": 0.5678466076696165,
+          "fingerprint": "d20f6760ca05cc49719b28b0b077687f4144ef94cd02876a5b940089114d0190",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 12339868.8,
+          "retrans_ratio": 0.5744420484462025,
+          "fingerprint": "d20f6760ca05cc49719b28b0b077687f4144ef94cd02876a5b940089114d0190",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 12383209.066666666,
+          "retrans_ratio": 0.5699240867617619,
+          "fingerprint": "d20f6760ca05cc49719b28b0b077687f4144ef94cd02876a5b940089114d0190",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 12318286.4,
+        "median": 12339868.8,
+        "sd": 77986.79117605573,
+        "ci_lower": 12231781.333333334,
+        "ci_upper": 12383209.066666666,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.5707375809591936,
+        "median": 0.5699240867617619,
+        "sd": 0.0033721342450004506,
+        "ci_lower": 0.5678466076696165,
+        "ci_upper": 0.5744420484462025,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "irlserver-rust",
+      "scenario": "G",
+      "receiver": "new-40",
+      "ttl": 40,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12803919.644444443,
+          "retrans_ratio": 0.017213892919196803,
+          "fingerprint": "d5e5c2394001bc74aaf6472ebfd228107d6b477057c41e4b5e3a0dee3a44db3b",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12803451.733333332,
+          "retrans_ratio": 0.009799498294562453,
+          "fingerprint": "d5e5c2394001bc74aaf6472ebfd228107d6b477057c41e4b5e3a0dee3a44db3b",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12802515.91111111,
+          "retrans_ratio": 0.00962319677902757,
+          "fingerprint": "d5e5c2394001bc74aaf6472ebfd228107d6b477057c41e4b5e3a0dee3a44db3b",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 12803295.762962962,
+        "median": 12803451.733333332,
+        "sd": 714.7460283920772,
+        "ci_lower": 12802515.91111111,
+        "ci_upper": 12803919.644444443,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.01221219599759561,
+        "median": 0.009799498294562453,
+        "sd": 0.0043324934654031646,
+        "ci_lower": 0.00962319677902757,
+        "ci_upper": 0.017213892919196803,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "irlserver-rust",
+      "scenario": "B1",
+      "receiver": "new-200",
+      "ttl": 200,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 9594985.244444445,
+          "retrans_ratio": 0.0026299768659442347,
+          "fingerprint": "34c046c99686b31fce8264341cb0d887d16b052be5fda4b163a74a5fed46cfd5",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 9597792.711111112,
+          "retrans_ratio": 0.0032631989090200664,
+          "fingerprint": "34c046c99686b31fce8264341cb0d887d16b052be5fda4b163a74a5fed46cfd5",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 9594985.244444445,
+          "retrans_ratio": 0.003166638248118286,
+          "fingerprint": "34c046c99686b31fce8264341cb0d887d16b052be5fda4b163a74a5fed46cfd5",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 9595921.066666668,
+        "median": 9594985.244444445,
+        "sd": 1620.8916357409732,
+        "ci_lower": 9594985.244444445,
+        "ci_upper": 9597792.711111112,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.0030199380076941958,
+        "median": 0.003166638248118286,
+        "sd": 0.00034114990746685986,
+        "ci_lower": 0.0026299768659442347,
+        "ci_upper": 0.0032631989090200664,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "irlserver-rust",
+      "scenario": "C",
+      "receiver": "new-200",
+      "ttl": 200,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 22401302.933333337,
+          "retrans_ratio": 0.010062637971247375,
+          "fingerprint": "d0f4c7e12a1740747915d0a47e41008744d2c736f7db8bd81f8936361e618469",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 22402355.733333334,
+          "retrans_ratio": 0.011296530017607003,
+          "fingerprint": "d0f4c7e12a1740747915d0a47e41008744d2c736f7db8bd81f8936361e618469",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 22400952.0,
+          "retrans_ratio": 0.0087865226457977,
+          "fingerprint": "d0f4c7e12a1740747915d0a47e41008744d2c736f7db8bd81f8936361e618469",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 22401536.88888889,
+        "median": 22401302.933333337,
+        "sd": 730.5259880792353,
+        "ci_lower": 22400952.0,
+        "ci_upper": 22402355.733333334,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.010048563544884025,
+        "median": 0.010062637971247375,
+        "sd": 0.001255062874417993,
+        "ci_lower": 0.0087865226457977,
+        "ci_upper": 0.011296530017607003,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "irlserver-rust",
+      "scenario": "G",
+      "receiver": "new-200",
+      "ttl": 200,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12799708.444444444,
+          "retrans_ratio": 0.00990509869014542,
+          "fingerprint": "6f3da54cc250a2e475b8d53e3ef622c96b14a7c0415320d8ebb17e672a65dae9",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12801112.177777778,
+          "retrans_ratio": 0.01773728768054984,
+          "fingerprint": "6f3da54cc250a2e475b8d53e3ef622c96b14a7c0415320d8ebb17e672a65dae9",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12800176.355555557,
+          "retrans_ratio": 0.01674015127074596,
+          "fingerprint": "6f3da54cc250a2e475b8d53e3ef622c96b14a7c0415320d8ebb17e672a65dae9",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 12800332.325925926,
+        "median": 12800176.355555557,
+        "sd": 714.7460283928901,
+        "ci_lower": 12799708.444444444,
+        "ci_upper": 12801112.177777778,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.01479417921381374,
+        "median": 0.01674015127074596,
+        "sd": 0.0042633204817517315,
+        "ci_lower": 0.00990509869014542,
+        "ci_upper": 0.01773728768054984,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "irlserver-rust",
+      "scenario": "B1",
+      "receiver": "new-500",
+      "ttl": 500,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 9597792.711111112,
+          "retrans_ratio": 0.0030924320638940294,
+          "fingerprint": "ad7775ca83a1713d62e7f10716f9b07b920f55d8d7afbf4a97bb430ef7304f25",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 9596155.022222225,
+          "retrans_ratio": 0.0027527405602923265,
+          "fingerprint": "ad7775ca83a1713d62e7f10716f9b07b920f55d8d7afbf4a97bb430ef7304f25",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 9597558.755555555,
+          "retrans_ratio": 0.0022419339116872988,
+          "fingerprint": "ad7775ca83a1713d62e7f10716f9b07b920f55d8d7afbf4a97bb430ef7304f25",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 9597168.82962963,
+        "median": 9597558.755555555,
+        "sd": 885.7414379925696,
+        "ci_lower": 9596155.022222225,
+        "ci_upper": 9597792.711111112,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.0026957021786245517,
+        "median": 0.0027527405602923265,
+        "sd": 0.0004281084085418375,
+        "ci_lower": 0.0022419339116872988,
+        "ci_upper": 0.0030924320638940294,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "irlserver-rust",
+      "scenario": "C",
+      "receiver": "new-500",
+      "ttl": 500,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 22403057.6,
+          "retrans_ratio": 0.002582084545716938,
+          "fingerprint": "8ee7d4ca04cc9c74a3843445b424c3db0341ad10458080fe170d55e832806d17",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 22405338.666666668,
+          "retrans_ratio": 0.0025426240504157114,
+          "fingerprint": "8ee7d4ca04cc9c74a3843445b424c3db0341ad10458080fe170d55e832806d17",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 22396740.8,
+          "retrans_ratio": 0.002386504550736619,
+          "fingerprint": "8ee7d4ca04cc9c74a3843445b424c3db0341ad10458080fe170d55e832806d17",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 22401712.355555553,
+        "median": 22403057.6,
+        "sd": 4453.997054997762,
+        "ci_lower": 22396740.8,
+        "ci_upper": 22405338.666666668,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.0025037377156230892,
+        "median": 0.0025426240504157114,
+        "sd": 0.00010342627269861522,
+        "ci_lower": 0.002386504550736619,
+        "ci_upper": 0.002582084545716938,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "irlserver-rust",
+      "scenario": "G",
+      "receiver": "new-500",
+      "ttl": 500,
+      "freeze_enabled": true,
+      "offered_mbit": null,
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12802515.91111111,
+          "retrans_ratio": 0.008230973787514246,
+          "fingerprint": "242a69d825db6b7dba90270cb5a26559c0cd14ecdfa949b0a2d828f6f46ac8aa",
+          "freeze": null
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12802048.0,
+          "retrans_ratio": 0.006838905775075988,
+          "fingerprint": "242a69d825db6b7dba90270cb5a26559c0cd14ecdfa949b0a2d828f6f46ac8aa",
+          "freeze": null
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12804153.6,
+          "retrans_ratio": 0.0078683570428245,
+          "fingerprint": "242a69d825db6b7dba90270cb5a26559c0cd14ecdfa949b0a2d828f6f46ac8aa",
+          "freeze": null
+        }
+      ],
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 12802905.837037036,
+        "median": 12802515.91111111,
+        "sd": 1105.6308202928956,
+        "ci_lower": 12802048.0,
+        "ci_upper": 12804153.6,
+        "nonfinite_rate": 0.0
+      },
+      "retransmit": {
+        "n": 3,
+        "missing": 0,
+        "mean": 0.007646078868471577,
+        "median": 0.0078683570428245,
+        "sd": 0.0007221627433679346,
+        "ci_lower": 0.006838905775075988,
+        "ci_upper": 0.008230973787514246,
+        "nonfinite_rate": 0.0
+      }
+    }
+  ],
+  "warnings": [
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--A@--production--slt:4001--fec:off run 1: failed (settle_timeout)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--classic run 0: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--classic run 0: loadavg>2 (7.79)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--classic run 1: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--classic run 1: loadavg>2 (8.99)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--classic run 2: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--classic run 2: loadavg>2 (10.75)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--enhanced run 0: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--enhanced run 0: loadavg>2 (8.11)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--enhanced run 1: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--enhanced run 1: loadavg>2 (8.82)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--enhanced run 2: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--enhanced run 2: loadavg>2 (12.02)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off run 0: failed (settle_timeout)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off run 1: failed (settle_timeout)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off run 2: failed (settle_timeout)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--belabox-c run 0: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--belabox-c run 0: loadavg>2 (8.92)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--belabox-c run 1: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--belabox-c run 1: loadavg>2 (11.21)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--belabox-c run 2: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--belabox-c run 2: loadavg>2 (10.59)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--classic run 0: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--classic run 0: loadavg>2 (10.88)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--classic run 1: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--classic run 1: loadavg>2 (5.6)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--classic run 2: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--classic run 2: loadavg>2 (9.54)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--enhanced run 0: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--enhanced run 0: loadavg>2 (10.56)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--enhanced run 1: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--enhanced run 1: loadavg>2 (8.97)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--enhanced run 2: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--enhanced run 2: loadavg>2 (4.14)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--irlserver-rust run 0: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--irlserver-rust run 0: loadavg>2 (13.25)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--irlserver-rust run 1: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--irlserver-rust run 1: loadavg>2 (8.77)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--irlserver-rust run 2: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--irlserver-rust run 2: loadavg>2 (5.75)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@offered-24--production--slt:4001--fec:off--enhanced run 0: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@offered-24--production--slt:4001--fec:off--enhanced run 0: loadavg>2 (9.63)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@offered-24--production--slt:4001--fec:off--enhanced run 1: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@offered-24--production--slt:4001--fec:off--enhanced run 1: loadavg>2 (9.75)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@offered-24--production--slt:4001--fec:off--enhanced run 2: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@offered-24--production--slt:4001--fec:off--enhanced run 2: loadavg>2 (11.58)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--belabox-c run 0: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--belabox-c run 0: loadavg>2 (11.16)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--belabox-c run 1: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--belabox-c run 1: loadavg>2 (5.42)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--belabox-c run 2: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--belabox-c run 2: loadavg>2 (5.08)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--classic run 0: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--classic run 0: loadavg>2 (12.04)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--classic run 1: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--classic run 1: loadavg>2 (9.7)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--classic run 2: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--classic run 2: loadavg>2 (6.12)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--enhanced run 0: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--enhanced run 0: loadavg>2 (11.67)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--enhanced run 1: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--enhanced run 1: loadavg>2 (6.44)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--enhanced run 2: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--enhanced run 2: loadavg>2 (5.14)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--irlserver-rust run 0: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--irlserver-rust run 0: loadavg>2 (9.93)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--irlserver-rust run 1: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--irlserver-rust run 1: loadavg>2 (8.66)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--irlserver-rust run 2: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--irlserver-rust run 2: loadavg>2 (5.84)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--belabox-c run 0: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--belabox-c run 0: loadavg>2 (4.57)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--belabox-c run 1: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--belabox-c run 1: loadavg>2 (3.48)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--belabox-c run 2: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--belabox-c run 2: loadavg>2 (5.11)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--classic run 0: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--classic run 0: loadavg>2 (4.95)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--classic run 1: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--classic run 1: loadavg>2 (3.98)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--classic run 2: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--classic run 2: loadavg>2 (5.07)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--enhanced run 0: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--enhanced run 0: loadavg>2 (3.27)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--enhanced run 1: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--enhanced run 1: loadavg>2 (3.29)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--enhanced run 2: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--enhanced run 2: loadavg>2 (4.44)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--irlserver-rust run 0: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--irlserver-rust run 0: loadavg>2 (5.03)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--irlserver-rust run 1: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--irlserver-rust run 1: loadavg>2 (3.05)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--irlserver-rust run 2: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--irlserver-rust run 2: loadavg>2 (4.16)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 0: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 0: loadavg>2 (3.56)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 1: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 1: loadavg>2 (2.91)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 2: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 2: loadavg>2 (3.68)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 0: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 0: loadavg>2 (3.71)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 1: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 1: loadavg>2 (3.12)",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 2: loadavg>2",
+    "new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 2: loadavg>2 (3.65)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--A@--production--slt:4001--fec:off run 0: failed (settle_timeout)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--A@--production--slt:4001--fec:off run 1: failed (settle_timeout)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--A@--production--slt:4001--fec:off run 2: failed (settle_timeout)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--classic run 0: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--classic run 0: loadavg>2 (6.47)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--classic run 1: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--classic run 1: loadavg>2 (6.11)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--classic run 2: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--classic run 2: loadavg>2 (5.0)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--enhanced run 0: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--enhanced run 0: loadavg>2 (3.05)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--enhanced run 1: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--enhanced run 1: loadavg>2 (4.47)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--enhanced run 2: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--enhanced run 2: loadavg>2 (4.35)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off run 0: failed (settle_timeout)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off run 1: failed (settle_timeout)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off run 2: failed (settle_timeout)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--belabox-c run 0: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--belabox-c run 0: loadavg>2 (4.63)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--belabox-c run 1: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--belabox-c run 1: loadavg>2 (4.4)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--belabox-c run 2: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--belabox-c run 2: loadavg>2 (5.71)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--classic run 0: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--classic run 0: loadavg>2 (4.25)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--classic run 1: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--classic run 1: loadavg>2 (4.35)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--classic run 2: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--classic run 2: loadavg>2 (3.71)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--enhanced run 0: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--enhanced run 0: loadavg>2 (6.09)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--enhanced run 1: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--enhanced run 1: loadavg>2 (4.08)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--enhanced run 2: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--enhanced run 2: loadavg>2 (7.13)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--irlserver-rust run 0: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--irlserver-rust run 0: loadavg>2 (4.24)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--irlserver-rust run 1: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--irlserver-rust run 1: loadavg>2 (3.75)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--irlserver-rust run 2: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--irlserver-rust run 2: loadavg>2 (5.42)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@offered-24--production--slt:4001--fec:off run 0: failed (settle_timeout)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@offered-24--production--slt:4001--fec:off run 1: failed (settle_timeout)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@offered-24--production--slt:4001--fec:off run 2: failed (settle_timeout)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@offered-24--production--slt:4001--fec:off--enhanced run 0: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@offered-24--production--slt:4001--fec:off--enhanced run 0: loadavg>2 (10.56)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@offered-24--production--slt:4001--fec:off--enhanced run 1: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@offered-24--production--slt:4001--fec:off--enhanced run 1: loadavg>2 (10.3)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@offered-24--production--slt:4001--fec:off--enhanced run 2: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--B1@offered-24--production--slt:4001--fec:off--enhanced run 2: loadavg>2 (9.38)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--C@--production--slt:4001--fec:off run 0: failed (settle_timeout)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--C@--production--slt:4001--fec:off run 1: failed (settle_timeout)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--C@--production--slt:4001--fec:off run 2: failed (settle_timeout)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--belabox-c run 0: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--belabox-c run 0: loadavg>2 (10.78)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--belabox-c run 1: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--belabox-c run 1: loadavg>2 (10.06)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--belabox-c run 2: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--belabox-c run 2: loadavg>2 (9.2)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--classic run 0: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--classic run 0: loadavg>2 (9.7)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--classic run 1: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--classic run 1: loadavg>2 (8.39)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--classic run 2: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--classic run 2: loadavg>2 (10.81)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--enhanced run 0: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--enhanced run 0: loadavg>2 (11.52)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--enhanced run 1: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--enhanced run 1: loadavg>2 (9.91)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--enhanced run 2: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--enhanced run 2: loadavg>2 (11.34)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--irlserver-rust run 0: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--irlserver-rust run 0: loadavg>2 (8.88)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--irlserver-rust run 1: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--irlserver-rust run 1: loadavg>2 (8.74)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--irlserver-rust run 2: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--irlserver-rust run 2: loadavg>2 (9.34)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--G@--production--slt:4001--fec:off run 0: failed (settle_timeout)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--G@--production--slt:4001--fec:off run 2: failed (settle_timeout)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--belabox-c run 0: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--belabox-c run 0: loadavg>2 (10.65)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--belabox-c run 1: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--belabox-c run 1: loadavg>2 (5.38)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--belabox-c run 2: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--belabox-c run 2: loadavg>2 (4.66)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--classic run 0: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--classic run 0: loadavg>2 (9.55)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--classic run 1: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--classic run 1: loadavg>2 (3.67)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--classic run 2: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--classic run 2: loadavg>2 (4.73)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--enhanced run 0: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--enhanced run 0: loadavg>2 (12.52)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--enhanced run 1: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--enhanced run 1: loadavg>2 (3.83)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--enhanced run 2: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--enhanced run 2: loadavg>2 (5.6)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--irlserver-rust run 0: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--irlserver-rust run 0: loadavg>2 (10.26)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--irlserver-rust run 1: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--irlserver-rust run 1: loadavg>2 (4.03)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--irlserver-rust run 2: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--irlserver-rust run 2: loadavg>2 (4.02)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 0: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 0: loadavg>2 (4.21)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 1: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 1: loadavg>2 (5.34)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 2: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 2: loadavg>2 (4.13)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 0: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 0: loadavg>2 (2.93)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 1: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 1: loadavg>2 (3.21)",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 2: loadavg>2",
+    "new-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 2: loadavg>2 (3.24)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--classic run 0: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--classic run 0: loadavg>2 (3.86)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--classic run 1: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--classic run 1: loadavg>2 (5.96)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--classic run 2: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--classic run 2: loadavg>2 (4.08)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--enhanced run 0: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--enhanced run 0: loadavg>2 (2.93)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--enhanced run 1: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--enhanced run 1: loadavg>2 (7.15)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--enhanced run 2: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--A@--production--slt:4001--fec:off--enhanced run 2: loadavg>2 (5.32)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off run 0: failed (settle_timeout)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off run 1: failed (settle_timeout)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off run 2: failed (settle_timeout)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--belabox-c run 0: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--belabox-c run 0: loadavg>2 (5.69)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--belabox-c run 1: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--belabox-c run 1: loadavg>2 (6.39)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--belabox-c run 2: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--belabox-c run 2: loadavg>2 (12.31)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--classic run 0: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--classic run 0: loadavg>2 (4.01)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--classic run 1: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--classic run 1: loadavg>2 (5.19)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--classic run 2: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--classic run 2: loadavg>2 (9.23)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--enhanced run 0: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--enhanced run 0: loadavg>2 (4.13)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--enhanced run 1: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--enhanced run 1: loadavg>2 (6.54)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--enhanced run 2: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--enhanced run 2: loadavg>2 (4.6)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--irlserver-rust run 0: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--irlserver-rust run 0: loadavg>2 (3.97)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--irlserver-rust run 1: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--irlserver-rust run 1: loadavg>2 (4.09)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--irlserver-rust run 2: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off--irlserver-rust run 2: loadavg>2 (7.1)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--B1@offered-24--production--slt:4001--fec:off--enhanced run 0: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--B1@offered-24--production--slt:4001--fec:off--enhanced run 0: loadavg>2 (3.92)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--B1@offered-24--production--slt:4001--fec:off--enhanced run 1: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--B1@offered-24--production--slt:4001--fec:off--enhanced run 1: loadavg>2 (4.78)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--B1@offered-24--production--slt:4001--fec:off--enhanced run 2: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--B1@offered-24--production--slt:4001--fec:off--enhanced run 2: loadavg>2 (4.47)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--belabox-c run 0: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--belabox-c run 0: loadavg>2 (5.4)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--belabox-c run 1: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--belabox-c run 1: loadavg>2 (3.34)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--belabox-c run 2: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--belabox-c run 2: loadavg>2 (4.42)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--classic run 0: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--classic run 0: loadavg>2 (4.12)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--classic run 1: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--classic run 1: loadavg>2 (4.62)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--classic run 2: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--classic run 2: loadavg>2 (5.23)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--enhanced run 0: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--enhanced run 0: loadavg>2 (3.5)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--enhanced run 1: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--enhanced run 1: loadavg>2 (4.59)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--enhanced run 2: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--enhanced run 2: loadavg>2 (3.96)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--irlserver-rust run 0: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--irlserver-rust run 0: loadavg>2 (5.59)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--irlserver-rust run 1: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--irlserver-rust run 1: loadavg>2 (4.75)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--irlserver-rust run 2: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--C@--production--slt:4001--fec:off--irlserver-rust run 2: loadavg>2 (3.23)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--belabox-c run 0: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--belabox-c run 0: loadavg>2 (5.32)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--belabox-c run 1: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--belabox-c run 1: loadavg>2 (4.83)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--belabox-c run 2: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--belabox-c run 2: loadavg>2 (5.7)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--classic run 0: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--classic run 0: loadavg>2 (4.79)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--classic run 1: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--classic run 1: loadavg>2 (4.76)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--classic run 2: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--classic run 2: loadavg>2 (5.58)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--enhanced run 0: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--enhanced run 0: loadavg>2 (4.89)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--enhanced run 1: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--enhanced run 1: loadavg>2 (5.52)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--enhanced run 2: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--enhanced run 2: loadavg>2 (3.93)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--irlserver-rust run 0: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--irlserver-rust run 0: loadavg>2 (3.86)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--irlserver-rust run 1: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--irlserver-rust run 1: loadavg>2 (5.75)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--irlserver-rust run 2: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--G@--production--slt:4001--fec:off--irlserver-rust run 2: loadavg>2 (5.23)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 0: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 0: loadavg>2 (5.22)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 1: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 1: loadavg>2 (5.26)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 2: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 2: loadavg>2 (5.04)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 0: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 0: loadavg>2 (4.9)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 1: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 1: loadavg>2 (4.39)",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 2: loadavg>2",
+    "new-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D1--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 2: loadavg>2 (3.64)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--A@--production--slt:4001--fec:off run 0: failed (settle_timeout)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--A@--production--slt:4001--fec:off run 1: failed (settle_timeout)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--A@--production--slt:4001--fec:off run 2: failed (settle_timeout)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--A@--production--slt:4001--fec:off--classic run 0: loadavg>2",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--A@--production--slt:4001--fec:off--classic run 0: loadavg>2 (3.35)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--A@--production--slt:4001--fec:off--classic run 1: loadavg>2",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--A@--production--slt:4001--fec:off--classic run 1: loadavg>2 (5.02)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--A@--production--slt:4001--fec:off--classic run 2: loadavg>2",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--A@--production--slt:4001--fec:off--classic run 2: loadavg>2 (5.2)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--A@--production--slt:4001--fec:off--enhanced run 0: loadavg>2",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--A@--production--slt:4001--fec:off--enhanced run 0: loadavg>2 (4.31)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--A@--production--slt:4001--fec:off--enhanced run 1: loadavg>2",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--A@--production--slt:4001--fec:off--enhanced run 1: loadavg>2 (4.74)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--A@--production--slt:4001--fec:off--enhanced run 2: loadavg>2",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--A@--production--slt:4001--fec:off--enhanced run 2: loadavg>2 (7.14)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--B1@--production--slt:4001--fec:off run 0: failed (settle_timeout)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--B1@--production--slt:4001--fec:off run 1: failed (settle_timeout)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--B1@--production--slt:4001--fec:off run 2: failed (settle_timeout)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--B1@--production--slt:4001--fec:off--classic run 0: loadavg>2",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--B1@--production--slt:4001--fec:off--classic run 0: loadavg>2 (7.07)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--B1@--production--slt:4001--fec:off--classic run 1: loadavg>2",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--B1@--production--slt:4001--fec:off--classic run 1: loadavg>2 (6.0)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--B1@--production--slt:4001--fec:off--classic run 2: loadavg>2",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--B1@--production--slt:4001--fec:off--classic run 2: loadavg>2 (4.02)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--B1@--production--slt:4001--fec:off--enhanced run 0: loadavg>2",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--B1@--production--slt:4001--fec:off--enhanced run 0: loadavg>2 (4.78)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--B1@--production--slt:4001--fec:off--enhanced run 1: loadavg>2",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--B1@--production--slt:4001--fec:off--enhanced run 1: loadavg>2 (3.84)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--B1@--production--slt:4001--fec:off--enhanced run 2: loadavg>2",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--B1@--production--slt:4001--fec:off--enhanced run 2: loadavg>2 (4.39)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--C@--production--slt:4001--fec:off run 0: failed (settle_timeout)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--C@--production--slt:4001--fec:off run 1: failed (settle_timeout)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--C@--production--slt:4001--fec:off run 2: failed (settle_timeout)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--C@--production--slt:4001--fec:off--classic run 0: loadavg>2",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--C@--production--slt:4001--fec:off--classic run 0: loadavg>2 (3.71)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--C@--production--slt:4001--fec:off--classic run 1: loadavg>2",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--C@--production--slt:4001--fec:off--classic run 1: loadavg>2 (3.99)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--C@--production--slt:4001--fec:off--classic run 2: loadavg>2",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--C@--production--slt:4001--fec:off--classic run 2: loadavg>2 (4.16)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--C@--production--slt:4001--fec:off--enhanced run 0: loadavg>2",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--C@--production--slt:4001--fec:off--enhanced run 0: loadavg>2 (4.43)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--C@--production--slt:4001--fec:off--enhanced run 1: loadavg>2",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--C@--production--slt:4001--fec:off--enhanced run 1: loadavg>2 (4.02)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--C@--production--slt:4001--fec:off--enhanced run 2: loadavg>2",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--C@--production--slt:4001--fec:off--enhanced run 2: loadavg>2 (4.65)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--G@--production--slt:4001--fec:off run 0: failed (settle_timeout)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--G@--production--slt:4001--fec:off run 1: failed (settle_timeout)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--G@--production--slt:4001--fec:off run 2: failed (settle_timeout)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--G@--production--slt:4001--fec:off--classic run 0: loadavg>2",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--G@--production--slt:4001--fec:off--classic run 0: loadavg>2 (5.69)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--G@--production--slt:4001--fec:off--classic run 1: loadavg>2",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--G@--production--slt:4001--fec:off--classic run 1: loadavg>2 (4.74)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--G@--production--slt:4001--fec:off--classic run 2: loadavg>2",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--G@--production--slt:4001--fec:off--classic run 2: loadavg>2 (4.5)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--G@--production--slt:4001--fec:off--enhanced run 0: loadavg>2",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--G@--production--slt:4001--fec:off--enhanced run 0: loadavg>2 (3.85)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--G@--production--slt:4001--fec:off--enhanced run 1: loadavg>2",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--G@--production--slt:4001--fec:off--enhanced run 1: loadavg>2 (3.89)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--G@--production--slt:4001--fec:off--enhanced run 2: loadavg>2",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--G@--production--slt:4001--fec:off--enhanced run 2: loadavg>2 (5.4)",
+    "thaw-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 0: loadavg>2",
+    "thaw-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 0: loadavg>2 (6.2)",
+    "thaw-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 1: loadavg>2",
+    "thaw-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 1: loadavg>2 (5.32)",
+    "thaw-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 2: loadavg>2",
+    "thaw-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 2: loadavg>2 (5.2)",
+    "thaw-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 0: loadavg>2",
+    "thaw-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 0: loadavg>2 (3.69)",
+    "thaw-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 1: loadavg>2",
+    "thaw-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 1: loadavg>2 (4.12)",
+    "thaw-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 2: loadavg>2",
+    "thaw-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 2: loadavg>2 (3.59)",
+    "thaw-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 0: loadavg>2",
+    "thaw-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 0: loadavg>2 (4.02)",
+    "thaw-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 1: loadavg>2",
+    "thaw-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 1: loadavg>2 (4.13)",
+    "thaw-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 2: loadavg>2",
+    "thaw-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 2: loadavg>2 (4.99)",
+    "thaw-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 0: loadavg>2",
+    "thaw-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 0: loadavg>2 (3.57)",
+    "thaw-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 1: loadavg>2",
+    "thaw-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 1: loadavg>2 (3.46)",
+    "thaw-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 2: loadavg>2",
+    "thaw-40@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 2: loadavg>2 (4.88)",
+    "thaw-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 0: loadavg>2",
+    "thaw-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 0: loadavg>2 (4.53)",
+    "thaw-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 1: loadavg>2",
+    "thaw-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 1: loadavg>2 (4.07)",
+    "thaw-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 2: loadavg>2",
+    "thaw-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-2--production--slt:4001--fec:off--enhanced run 2: loadavg>2 (5.4)",
+    "thaw-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 0: loadavg>2",
+    "thaw-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 0: loadavg>2 (4.97)",
+    "thaw-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 1: loadavg>2",
+    "thaw-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 1: loadavg>2 (4.41)",
+    "thaw-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 2: loadavg>2",
+    "thaw-500@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D500%26reorderfreeze%3D0--S-FREEZE-NORDR@offered-6--production--slt:4001--fec:off--enhanced run 2: loadavg>2 (6.37)"
+  ],
+  "freeze_scope": "Entire receiver capture, including warmup; gap detection to first NAK / first repair; unrepaired gaps retained as right-censored lower bounds"
+}

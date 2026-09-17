@@ -1,6 +1,45 @@
 use crate::{manifest, manifest_json};
 
 #[test]
+fn m1_offered_override_is_diagnostic_and_preserves_catalog_warmup() {
+    // Given an overloaded B1 diagnostic, not a mutated catalog entry.
+    let mut json = manifest_json();
+    json["cells"][0]["scenario"] = "B1".into();
+    json["cells"][0]["variant"] = "offered-24".into();
+    json["cells"][0]["covering"] = false.into();
+    json["cells"][0]["offered_mbit_override"] = 24.into();
+    // When resolving the per-cell profile, then only the measurement rate changes.
+    let parsed = manifest::parse(&json.to_string()).unwrap();
+    let profile = parsed.cell_profile(&parsed.cells[0]).unwrap();
+    assert_eq!(profile.offered_bps, 24_000_000);
+    assert_eq!(profile.warmup_offered_bps, 9_600_000);
+    assert_eq!(manifest::measurement_rate(&profile).unwrap(), 24_000_000);
+    assert_eq!(network_sim::scenarios::scenario_b1().offered_bps, 9_600_000);
+}
+
+#[test]
+fn m1_freeze_diagnostic_has_one_ordered_lossy_link_and_low_rate_warmup() {
+    // Given the low-pps freeze arm.
+    let mut json = manifest_json();
+    json["cells"][0]["scenario"] = "S-FREEZE-NORDR".into();
+    json["cells"][0]["variant"] = "offered-2".into();
+    json["cells"][0]["covering"] = false.into();
+    json["cells"][0]["offered_mbit_override"] = 2.into();
+    // When resolving, then no jitter, GE, extra link or overload is inherited.
+    let parsed = manifest::parse(&json.to_string()).unwrap();
+    let profile = parsed.cell_profile(&parsed.cells[0]).unwrap();
+    assert_eq!(profile.timeline.links.len(), 1);
+    let link = &profile.timeline.links[0].base;
+    assert_eq!(link.delay_ms, Some(60));
+    assert_eq!(link.rate_kbit, Some(8_000));
+    assert_eq!(link.loss_percent, Some(1.0));
+    assert_eq!(link.gemodel, None);
+    assert_eq!(link.jitter_ms, None);
+    assert_eq!(profile.warmup_offered_bps, 2_000_000);
+    assert_eq!(profile.offered_bps, 2_000_000);
+}
+
+#[test]
 fn manifest_sls_accepts_only_explicit_noncovering_conformance_ports() {
     // Given each bonded alias as an explicit conformance-only cell.
     for port in [4002, 4003] {

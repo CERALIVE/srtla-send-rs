@@ -56,6 +56,7 @@ class Document(BaseModel):
 
 
 class Cell(Document):
+    offered_mbit_override: Annotated[int, Field(gt=0, le=1000)] | None = None
     cell_id: str = ""
     covering: bool = True
     variant: str = ""
@@ -280,6 +281,14 @@ class RunRecord(Envelope):
     load_intervals: tuple[LoadInterval, ...]
     loadavg_1m: Positive
     warnings: tuple[str, ...]
+
+
+class RawPaths(Document):
+    stats_csv_path: Path
+
+
+class CapturedRun(RunRecord):
+    raw: RawPaths
 
 
 class Stats(Document):
@@ -820,8 +829,11 @@ def validate_sls(record: RunRecord) -> None:
 
 
 def load_records(
-    manifest: Manifest, roots: Sequence[Path], *, smoke_coverage: bool = False
+    manifest: Manifest, roots: Sequence[Path], *, smoke_coverage: bool = False,
+    m1_outcomes: bool = False,
 ) -> LoadedRecords:
+    if m1_outcomes and (manifest.campaign != "m1-ttl" or smoke_coverage):
+        raise EvidenceError("M1 outcome coverage is restricted to m1-ttl")
     if smoke_coverage:
         required = {
             (name, "A", "ceralive", "production", 2) for name in ("classic", "enhanced")
@@ -892,6 +904,7 @@ def load_records(
         for path in root.rglob("*.json")
         if not {"stale", "artifacts", "raw"}.intersection(path.relative_to(root).parts)
         and path.name != "manifest.json"
+        and not (m1_outcomes and path.name.endswith(".exhausted.json"))
     }
     for path, envelope, text in live_documents(sorted(paths)):
         key = (
@@ -909,13 +922,17 @@ def load_records(
                     f"{envelope.cell_id} run {envelope.run_index}: "
                     + f"{envelope.status} ({envelope.reason or 'unspecified'})"
                 )
-                continue
+                if not m1_outcomes:
+                    continue
+                if envelope.reason != "settle_timeout":
+                    raise EvidenceError(f"M1 missing measurement: {path}: {envelope.reason}")
+                record = RunRecord.model_validate_json(text)
             case "ok":
                 record = RunRecord.model_validate_json(text)
             case _:
                 assert_never(envelope.status)
         cell = expected[key]
-        if smoke_coverage and record.run_index >= cell.runs:
+        if (smoke_coverage or m1_outcomes) and record.run_index >= cell.runs:
             raise EvidenceError(f"unexpected run index {record.run_index} in {cell.id}")
         receiver = receivers[cell.receiver]
         kind = receiver.kind or (
@@ -1966,6 +1983,14 @@ def main() -> int:
         manifest = Manifest.model_validate_json(
             args.manifest.read_text(encoding="utf-8")
         )
+        if manifest.campaign == "m1-ttl":
+            sys.modules.setdefault("report", sys.modules[__name__])
+            from m1_report import render
+
+            text, document = render(args.manifest, args.results)
+            publish(args.out, text)
+            publish(args.json, document)
+            return 0
         summary = build_summary(
             manifest, args.results, smoke_coverage=args.smoke_coverage
         )

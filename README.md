@@ -817,6 +817,27 @@ no new live run or scheduler change was used to obtain the scoped pass.
 
 ### Statistical reports and retention decisions
 
+#### M1 receiver TTL spike
+
+`scripts/bench/manifests/m1-ttl.json` declares 65 cells and 195 one-attempt outcomes:
+the four-scenario core sweep, overloaded B1 diagnostic, two-rate one-link freeze
+control, and pinned BELABOX/irlserver sender interoperability arms. Catalog scenarios
+are unchanged. Its 60ms/8Mbit, no-jitter diagnostic uses seeded 1% netem loss and
+retains receiver-side packet captures for gap-to-NAK and gap-to-repair timing.
+Configured netem delay is not silently halved; the decision uses the specified
+60ms recovery-penalty threshold. The genuine old receiver build has stock periodic
+NAK and no working freeze URI option; it is not mislabeled as freeze-on.
+
+Use `BENCH_MAX_RETRIES=1` and the normal privileged campaign command. M1 retains
+full-window measurements after a settle timeout without turning that failure into
+a success. `report.py` requires all planned outcomes and produces a separate M1
+summary, never D-1 covering evidence; missing/infrastructure failures still block.
+`decide.py --summary <summary.json> --rule m1-ttl --out <spike.json>` applies the
+frozen core/foreign thresholds, upstream-parity fallback, freeze cap, and controller
+trigger. Re-running it on the same summary produces identical bytes. See
+[`docs/evidence/bpc/m1-ttl/`](docs/evidence/bpc/m1-ttl/) for the measured decision;
+the campaign does not itself change deployed receiver or scheduler defaults.
+
 #### SLS conformance cells (not covering-set metrics)
 
 An explicit manifest cell may select `sink: "sls"`, `port: 4002` (bonded) or

@@ -1,5 +1,32 @@
 # srtla-send-rs
 
+## M1 RECEIVER TTL CAMPAIGN (Todo 16)
+
+`scripts/bench/manifests/m1-ttl.json` declares 65 cells / 195 one-attempt runs:
+32 core cells (A/B1/C/G, classic/enhanced, old40/new40/new200/new500), three
+B1 enhanced 24Mbit diagnostics, twelve one-link freeze diagnostics (2/6Mbit,
+three TTLs, freeze on/off), and eighteen pinned BELABOX/irlserver foreign-sender
+cells. `offered_mbit_override` requires a named, noncovering variant and changes
+only measurement load; the freeze fixture additionally uses that rate for warmup.
+The reference scenario catalog is unchanged. Freeze uses one 60ms/8Mbit link,
+no jitter, 1% netem loss seeded with 42+run_index, and receiver-loopback capture.
+The netem delay is verbatim; the decision's 60ms penalty threshold is task-defined,
+not a claim that bidirectional measured RTT equals that configured one-way delay.
+
+Candidate `control_socket` defaults true; explicit false omits the unsupported
+flag and uses BELABOX registration logs. No foreign sender binary is emulated.
+The old SRT lineage genuinely lacks the freeze URI row and remains default-off;
+its manifest says freeze0 rather than falsely claiming freeze-on.
+
+M1 alone measures the full window after a settling timeout, retaining failed status
+and reason. It requires `BENCH_MAX_RETRIES=1`. The M1 reporter requires every
+declared outcome, preserves measured failures, and refuses infrastructure failures;
+ordinary reporting still requires successful records. M1 summaries have empty D-1
+`groups` and a separate `cells` collection. `decide.py --rule m1-ttl` validates the
+complete matrix before applying the joint core/foreign rule, explicit core-failure
+TTL200 fallback, freeze cap, and 24Mbit controller trigger. No production default is
+changed by this benchmark plumbing. See `docs/evidence/bpc/m1-ttl/` for results.
+
 ## SHARED SCHEDULER ADMISSION (bonded-path convergence, Todo 32)
 
 **Current contract; supersedes older adaptive-only/legacy-unchanged implementation
