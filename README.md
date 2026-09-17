@@ -657,6 +657,11 @@ the G factorial outranks that pedigree. Wire compatibility with third-party NAK-
 receivers remains, with a real-loss performance caveat. Full evidence, limitations
 and fork-build prerequisites: `AGENTS.md` → BENCH RECEIVER-PROFILE DEPENDENCY.
 
+The B1/C-versus-A/G split now has a source-verified root cause at the receiver (the
+periodic NAK re-report bypasses the reorder tolerance; NAK-off trades it for FASTREXMIT):
+see the [root-cause section](docs/notes/receiver-policy-evaluation-2026-09.md#11-root-cause-source-verified-supersedes-83-84),
+which retires the earlier two-factor and mis-tuned-constants hypotheses.
+
 `network_sim::metrics` supplies receiver CSV windowing, a pcap-free 100 ms UDP sink,
 1 Hz link/telemetry collectors, optional control-command deltas, CPU/RSS readings,
 impairment episodes, source-load intervals, and the serde `RunRecord` schema.

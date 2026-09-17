@@ -571,3 +571,158 @@ implied by the shared name, not the one that runs through the NAK stream.
 - **Hardware validation.** Every number here is a small-N netns observation
   under host load above 2 (the existing load-warning limitation applies to all
   trials, clean and failing arms alike). None of it is bonded-hardware evidence.
+
+## 11. Root cause (source-verified, supersedes §8.3-8.4)
+
+**Dated 2026-09-17.** Sections 8.3 and 8.4 above are kept as history. They are no
+longer the explanation. Every claim in this section was read in source at the
+cited lines; nothing here rests on a trial. External repositories are cited as
+plain text (repository, path, line range, commit), never as links.
+
+### 11.1 Stock SRT inserts a gap into the loss list immediately; `LOSSMAXTTL` only delays the FIRST report
+
+When the receiver detects a sequence gap it inserts the range into
+`m_pRcvLossList` at once. If `initial_loss_ttl` (the `SRTO_LOSSMAXTTL` value) is
+nonzero, the same range is *also* pushed onto `m_FreshLoss` with that TTL, and
+that second record is what defers the first LOSSREPORT. CERALIVE/srt
+`srtcore/core.cpp:11107-11114` (immediate insert plus the `m_FreshLoss` push).
+The TTL machinery then runs in two phases on each incoming packet: records whose
+TTL has reached zero are moved into a LOSSREPORT (phase 1) and the rest are
+decremented (phase 2), `srtcore/core.cpp:11221-11261`. So the reorder tolerance
+is a property of `m_FreshLoss`, not of the loss list. The loss list already
+holds the gap from the first millisecond.
+
+### 11.2 The periodic NAK timer re-reports the WHOLE loss list and consults neither `m_FreshLoss` nor the tolerance
+
+`checkNAKTimer` (`srtcore/core.cpp:11984-12024`) runs only under
+`bRcvNakReport` (`SRTO_NAKREPORT=1`). It reads `m_pRcvLossList->getLossLength()`
+and, once `m_tsNextNAKTime` has passed, calls `sendCtrl(UMSG_LOSSREPORT)` with
+no arguments. That no-argument path (`srtcore/core.cpp:8195-8208`) serialises
+the entire loss list via `getLossArray` and sends it. It does not look at
+`m_FreshLoss`, and it does not know the TTL exists.
+
+The interval is set right after (`srtcore/core.cpp:8220-8232`): `SRTT + 4 x
+RTTVar`, handed to the congestion controller's `updateNAKInterval`, then floored
+at `m_tdMinNakInterval`. The UDT default floor is 300 ms
+(`srtcore/core.cpp:1126`), but LiveCC overrides it: `m_iMinNakInterval_us =
+20000` (`srtcore/congctl.cpp:87`) and its `updateNAKInterval` divides by
+`m_iNakReportAccel = 2`. Under live mode the periodic re-report therefore fires
+every `max((SRTT + 4 x RTTVar) / 2, 20 ms)`.
+
+Put 11.1 and 11.2 together: under `NAKREPORT=1` a packet that is merely late
+(in flight on the slow link of a heterogeneous bond) is in `m_pRcvLossList` from
+the moment the gap is seen, and the periodic timer NAKs it on its next tick,
+tens of milliseconds later, regardless of `lossmaxttl=40`. **The reorder
+tolerance is bypassed within one NAK-timer tick.** `LOSSMAXTTL` only governs the
+first, gap-triggered report; the periodic re-report has always ignored it.
+That is the mechanism behind the B1/C regression under freeze-only (§2): every
+late-but-not-lost packet on the slower link is NAKed, and every such NAK is a
+window decrement on that link (§7, §8.1). `reorderfreeze` does not help here
+because the periodic path never consults the fresh-loss state that freeze
+operates on.
+
+### 11.3 Under `NAKREPORT=0` the encoder's SRT sender runs LiveCC FASTREXMIT
+
+The receiver's NAK policy is advertised to the peer, and the SRT *sender* reads
+it as `m_bPeerNakReport`. `srtcore/core.cpp:12157-12177`: when the congestion
+controller's `rexmitMethod()` is `SRM_FASTREXMIT` (LiveCC) and the peer does
+send periodic NAK reports, the sender returns early and does nothing. When the
+peer does **not** send them, an RTO with packets in flight inserts *every*
+packet from `m_iSndLastAck` to `m_iSndCurrSeqNo` into the sender loss list, and
+all of them are retransmitted. This is blind bulk retransmission of everything
+since the last ACK, on every RTO.
+
+That is the A/G catastrophe under NAK-off (§1: 44-46% received
+retransmissions, thousands of non-model queue drops). It is not, as §8.3
+proposed, the cost of losing "the only path that re-requests a loss whose first
+NAK was itself lost". The dominant cost is the encoder retransmitting whole
+ACK-to-tip spans on each timeout. Under real loss (G's Gilbert-Elliott model,
+A's homogeneous loss at 2280 pps) those spans are large and frequent, and the
+bond fills with copies.
+
+### 11.4 The sender's NAK penalty is ALREADY once per (link, send event); "no dedup" is RETRACTED
+
+`SrtlaConnection::handle_nak` (`src/connection/ack_nak.rs:81-99`) begins with
+`self.packet_log.remove(&seq)`. Only a hit reaches
+`self.congestion.handle_nak(&mut self.window, ...)`, and the removal means a
+second NAK for the same sequence on the same link cannot hit again. The
+dispatch above it (`src/sender/packet_handler.rs:96-130`) tries the
+`SequenceTracker` owner first and otherwise walks the pool, stopping at the
+first connection whose log holds the sequence. A re-reported NAK therefore
+costs a link one `WINDOW_DECR` per *send event*, not per report. The only way
+the same sequence penalises a link twice is if the encoder retransmitted it and
+the retransmission was scheduled onto that link, which re-registers it in the
+log. That is a new send event, and one penalty for it is correct.
+
+`CongestionController::handle_nak` (`src/connection/congestion/mod.rs:59-116`)
+is the window arithmetic: `window = max(window - WINDOW_DECR, WINDOW_MIN x
+WINDOW_MULT)` with `WINDOW_DECR = 100`, plus burst tracking and the
+fast-recovery flag. It is an additive decrease on a loss signal, the shape RFC
+5681 §3.2 gives fast retransmit/fast recovery (halve on loss, then grow), except
+that the SRTLA window is decremented by a constant rather than halved, and RFC
+5681 §4.3 (restart after idle) has no analogue. None of that is new, and none
+of it is the defect.
+
+BELABOX's C sender is the same shape. BELABOX/srtla `srtla_send.c:258-276` at
+`37862da`, `register_nak`: walk each connection's `pkt_log`, on a hit set the
+slot to `-1`, apply `window -= WINDOW_DECR; window = max(window,
+WINDOW_MIN*WINDOW_MULT)`, and `return`. One hit per logged send, one decrement
+per hit, same constants. The earlier suggestion that this fork lacks a
+deduplication step BELABOX has, or vice versa, is withdrawn: both dedup on log
+removal, identically.
+
+### 11.5 Where BELABOX and irlserver landed: NAK-on, gated by fresh-loss membership; production still pins NAK-off
+
+The `belabox` SRT branch resolved the same tension in mid-2026, upstream of this
+investigation. onsmith/srt commit `c3dac255` (2026-06-29, "Send periodic NAK
+reports under SRTLA patches") turns periodic NAK reports back **on** under the
+SRTLA patches. `2c71e55` (2026-06-29, "Exclude losses still within the
+reordering tolerance from periodic NAK reports") makes the periodic path skip
+loss-list entries that are still within the reorder tolerance, and `b5690bc`
+(2026-07-05, "fix(srt): gate srtla periodic nak by fresh-loss membership")
+pins that gate to `m_FreshLoss` membership. Together they are exactly the fix
+11.2 implies: keep periodic NAK for genuine loss, and stop it from re-reporting
+a gap that the tolerance has not yet given up on.
+
+Production irlserver does not ship that yet. irlserver/irl-srt-server
+`Dockerfile:8-15` at `a86dd8a` pins
+`SRT_COMMIT=f2297192ce9ab572464e84228efbc46f8c1eabf4`, an irlserver/srt merge
+commit dated 2026-06-08, three weeks before `c3dac255`. So the deployed
+irlserver receiver is still pre-gate and still NAK-off, which is the pedigree §6
+and §9 discuss, and it does not contradict the direction the branch itself has
+since taken.
+
+### 11.6 What this retires and what it keeps
+
+- **§8.3, the two-factor model, is retired as an explanation.** Its
+  "scheduling benefit" term is real but was mis-attributed to repeat penalties
+  on the SRTLA window; the actual mechanism is 11.2 (the periodic re-report
+  bypasses the reorder tolerance, so late packets are NAKed once each, and the
+  SRTLA window is decremented once each). Its "recovery cost" term named the
+  wrong cost; the actual one is 11.3 (FASTREXMIT). The table in §8.3 still
+  reads correctly, because both real mechanisms have the same sign as the two
+  it proposed. The table was never the problem; the mechanisms under it were.
+- **§8.4, the mis-tuned-constants hypothesis, is retired.** 11.4 shows the
+  sender's per-NAK reaction is one decrement per logged send in both this fork
+  and BELABOX C, with the same constants. The B1/C regression is produced at
+  the receiver by 11.2, and no scheduler constant reproduces or removes it.
+  Nothing in 11.1-11.5 supports retuning `WINDOW_DECR`, the NAK decay half-life,
+  the burst thresholds or the quality multipliers on this evidence.
+- **§8.1 stands.** The NAK-to-scheduler coupling is exactly as described. What
+  changes is that the *receiver's* periodic path, not the sender's reaction to
+  it, is the thing that needs a gate.
+- **§8.2 is superseded, not contradicted.** BELABOX's NAK-off default is still
+  the coherent choice for a pre-gate receiver facing a bond; 11.5 records that
+  the branch has since moved to a gated NAK-on instead.
+- **The corrective direction is on the receiver.** A CeraLive receiver that
+  keeps `NAKREPORT=1` and gates the periodic re-report by `m_FreshLoss`
+  membership (the shape of `b5690bc`) would address B1/C without reintroducing
+  the FASTREXMIT cost on A/G. That is a receiver change in a different
+  repository, listed here as the source-implied direction, not as something
+  this repository implements, schedules or has measured.
+- **Open items in §10 that this closes:** "the two-factor model is unconfirmed"
+  and "the mis-tuned-for-NAK-on hypothesis is untested". Both are answered from
+  source and need no further trial. **Open items it does not close:** B1/C
+  remain unresolved under the shipped baseline until a gated receiver exists
+  and is measured; the upstream sender-side divergence, the C1 scenario-mix
+  question, the cross-pair interop test and hardware validation are unchanged.

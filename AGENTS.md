@@ -1173,11 +1173,22 @@ are set per side and never negotiated, unlike FEC, but they are **not** without
 effect on the peer: a third-party SRTLA sender's scheduler is shaped by our NAK
 policy exactly as ours is (above). Cross-pair validation remains separate from this
 code-and-docs correction and is a scheduling-behaviour test, not only an
-amplification check. **Untested hypothesis, recorded so it is not lost:** this
-scheduler's NAK-reaction constants descend from a lineage whose receivers ship
-NAK-off, so the NAK-on baseline may feed it repeat-penalties its tuning never
-anticipated. That is a candidate explanation for the B1/C regression, not grounds
-to change `46170c6` or to retune any constant.
+amplification check.
+
+**Root cause (source-verified, 2026-09-17).** Stock SRT inserts a detected gap into
+`m_pRcvLossList` at once; `LOSSMAXTTL` delays only the FIRST report via `m_FreshLoss`
+(CERALIVE/srt `srtcore/core.cpp:11107-11114`, `:11221-11261`). Under `NAKREPORT=1` the
+periodic timer re-reports the WHOLE loss list every `max((SRTT+4·RTTVar)/2, 20 ms)`
+consulting neither `m_FreshLoss` nor the tolerance (`core.cpp:11984-12024`, `:8195-8232`,
+`congctl.cpp:87`), so a late-not-lost packet is NAKed within one tick: that is B1/C.
+Under `NAKREPORT=0` the encoder's LiveCC FASTREXMIT retransmits everything since the
+last ACK on RTO (`core.cpp:12157-12177`): that is A/G. The sender's NAK penalty is
+already once per (link, send event) via `packet_log` removal, identical to BELABOX C
+(`src/connection/ack_nak.rs:81-99`, BELABOX/srtla `srtla_send.c:258-276` @`37862da`),
+so the "no dedup" and "mis-tuned constants" hypotheses are RETRACTED; the belabox SRT
+branch itself moved to NAK-on gated by fresh-loss membership (onsmith/srt `b5690bc`,
+2026-07-05) while production irlserver still pins pre-gate `f2297192` (NAK-off). Full
+record: §11 of the evaluation note below. No scheduler constant changes on this evidence.
 
 The full investigation record (factorial tables, the B1/C trade-off, the falsified
 cross-link-delay-spread hypothesis, the unresolved upstream comparison, and the
