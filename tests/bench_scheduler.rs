@@ -10,6 +10,8 @@ mod checkpoint;
 mod lineage_tests;
 #[path = "bench_support/m1_tests.rs"]
 mod m1_tests;
+#[path = "bench_support/m2_tests.rs"]
+mod m2_tests;
 #[path = "bench_support/manifest.rs"]
 mod manifest;
 #[path = "support/measurement_lock.rs"]

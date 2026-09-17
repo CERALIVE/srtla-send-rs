@@ -104,7 +104,8 @@ impl SrtlaConnection {
     #[inline]
     pub fn handle_nak(&mut self, seq: i32) -> bool {
         let sent = self.packet_log.get(&seq);
-        if sent.is_some()
+        if crate::adaptive_env::premature_nak_rule_enabled()
+            && sent.is_some()
             && let Some(accepted_at) = self.delivery.sent_ms(seq)
             // Widen age only for comparison with the fractional RTT-derived threshold.
             && (now_ms().saturating_sub(accepted_at) as f64) < self.premature_nak_threshold_ms()

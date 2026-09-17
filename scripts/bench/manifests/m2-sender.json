@@ -1,0 +1,37 @@
+{
+  "campaign": "m2-sender",
+  "seed": 20260913,
+  "caller_bin": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/ours-new/srt-live-transmit",
+  "candidates": [
+    {"label":"enhanced","bin":"target/m2-srtla_send","args":["--mode","enhanced"],"env":{"RUST_LOG":"info"},"stats_file":true,"effective_config":{"adaptive_features":["stall","loss","queue","deadline","rejoin","sole","pref","ratecap","quality"],"adaptive_tuning":{"stall_attempts":32,"loss_enter":0.1,"deadline_hold_fraction":0.5,"ratecap_loss_backoff":0.85}}},
+    {"label":"enhanced-rule-disabled","bin":"target/m2-srtla_send","args":["--mode","enhanced"],"env":{"RUST_LOG":"info","SRTLA_DISABLE_PREMATURE_NAK_RULE":"1"},"stats_file":true,"effective_config":{"adaptive_features":["stall","loss","queue","deadline","rejoin","sole","pref","ratecap","quality"],"adaptive_tuning":{"stall_attempts":32,"loss_enter":0.1,"deadline_hold_fraction":0.5,"ratecap_loss_backoff":0.85}}},
+    {"label":"adaptive","bin":"target/m2-srtla_send","args":["--mode","adaptive"],"env":{"RUST_LOG":"info"},"stats_file":true,"effective_config":{"adaptive_features":["stall","loss","queue","deadline","rejoin","sole","pref","ratecap","quality"],"adaptive_tuning":{"stall_attempts":32,"loss_enter":0.1,"deadline_hold_fraction":0.5,"ratecap_loss_backoff":0.85}}}
+  ],
+  "receivers": [
+    {"name":"ours-old","lineage":"ours-old","kind":"ceralive","bin":"lock:ours-old","srt_live_transmit_bin":"lock:ours-old","listener_uri_extra":"&nakreport=1&lossmaxttl=40&reorderfreeze=0"},
+    {"name":"ours-new","lineage":"ours-new","kind":"ceralive","bin":"lock:ours-new","srt_live_transmit_bin":"lock:ours-new","listener_uri_extra":"&nakreport=1&periodicnakgate=1&lossmaxttl=200&reorderfreeze=1"},
+    {"name":"irlserver-prod","lineage":"irlserver-prod","kind":"irlserver","bin":"lock:irlserver-prod","srt_live_transmit_bin":"lock:irlserver-prod","listener_uri_extra":"&srtlapatches=1&lossmaxttl=200"},
+    {"name":"irlserver-next","lineage":"irlserver-next","kind":"irlserver","bin":"lock:irlserver-next","srt_live_transmit_bin":"lock:irlserver-next","listener_uri_extra":"&srtlapatches=1&lossmaxttl=200"}
+  ],
+  "cells": [
+    {"candidate":"enhanced","scenario":"B1","receiver":"ours-old","srt_profile":"production","runs":3},
+    {"candidate":"enhanced-rule-disabled","scenario":"B1","receiver":"ours-old","srt_profile":"production","runs":3},
+    {"candidate":"enhanced","scenario":"C","receiver":"ours-old","srt_profile":"production","runs":3},
+    {"candidate":"enhanced-rule-disabled","scenario":"C","receiver":"ours-old","srt_profile":"production","runs":3},
+    {"candidate":"enhanced","scenario":"A","receiver":"ours-old","srt_profile":"production","runs":3},
+    {"candidate":"enhanced-rule-disabled","scenario":"A","receiver":"ours-old","srt_profile":"production","runs":3},
+    {"candidate":"enhanced","scenario":"G","receiver":"ours-old","srt_profile":"production","runs":3},
+    {"candidate":"enhanced-rule-disabled","scenario":"G","receiver":"ours-old","srt_profile":"production","runs":3},
+    {"candidate":"enhanced","scenario":"G","receiver":"irlserver-prod","srt_profile":"production","runs":1,"variant":"rexmit-capture","covering":false},
+    {"candidate":"enhanced","scenario":"G","receiver":"irlserver-prod","srt_profile":"production","runs":3},
+    {"candidate":"adaptive","scenario":"G","receiver":"irlserver-prod","srt_profile":"production","runs":3},
+    {"candidate":"enhanced","scenario":"F","receiver":"irlserver-prod","srt_profile":"production","runs":3},
+    {"candidate":"adaptive","scenario":"F","receiver":"irlserver-prod","srt_profile":"production","runs":3},
+    {"candidate":"enhanced","scenario":"A","receiver":"irlserver-prod","srt_profile":"production","runs":3},
+    {"candidate":"adaptive","scenario":"A","receiver":"irlserver-prod","srt_profile":"production","runs":3},
+    {"candidate":"enhanced","scenario":"S-HSRSP","receiver":"ours-old","srt_profile":"production","runs":1,"covering":false},
+    {"candidate":"enhanced","scenario":"S-HSRSP","receiver":"ours-new","srt_profile":"production","runs":1,"covering":false},
+    {"candidate":"enhanced","scenario":"S-HSRSP","receiver":"irlserver-prod","srt_profile":"production","runs":1,"covering":false},
+    {"candidate":"enhanced","scenario":"S-HSRSP","receiver":"irlserver-next","srt_profile":"production","runs":1,"covering":false}
+  ]
+}

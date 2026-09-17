@@ -81,16 +81,7 @@ impl Stack {
                     .context("sink origin")?
                     .parse::<i64>()?
                     / 1_000_000;
-                let listener_args = receiver.listener_argv(
-                    manifest::preset(&cell.srt_profile)?,
-                    cell.port,
-                    Some(&request.result.record.raw.stats_csv_path),
-                )?;
-                let listener = NamespaceProcess::spawn_process_only(
-                    &topo.receiver_ns,
-                    utf8(&request.srt_binary)?,
-                    &listener_args.iter().map(String::as_str).collect::<Vec<_>>(),
-                )?;
+                let listener = super::numeric_sink::listener(request, &topo)?;
                 (Some(sink), sink_origin_ms, listener, None)
             }
             "sls" => {
@@ -175,7 +166,7 @@ impl Stack {
         }
         let caller = NamespaceProcess::spawn_process_only(
             &topo.sender_ns,
-            utf8(&request.srt_binary)?,
+            utf8(super::numeric_sink::caller(request)?)?,
             &["udp://:6000", &caller_uri],
         )?;
         wait_for_udp_listener(&topo.sender_ns, 6000, Duration::from_secs(5))?;

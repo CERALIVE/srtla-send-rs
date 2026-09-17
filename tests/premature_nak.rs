@@ -19,7 +19,7 @@ impl Drop for Sender {
     }
 }
 
-async fn run_reports(measured: bool) {
+async fn run_reports(measured: bool, bypass: bool) {
     // Given a real sender process and one loopback receiver speaking registration.
     let binary = std::path::Path::new(env!("CARGO_BIN_EXE_srtla_send"));
     let dir = tempfile::tempdir_in(binary.parent().unwrap()).unwrap();
@@ -33,6 +33,10 @@ async fn run_reports(measured: bool) {
     drop(reservation);
     let _sender = Sender(
         Command::new(&executable)
+            .env(
+                "SRTLA_DISABLE_PREMATURE_NAK_RULE",
+                if bypass { "1" } else { "0" },
+            )
             .args([
                 port.to_string(),
                 "127.0.0.1".into(),
@@ -120,8 +124,9 @@ async fn run_reports(measured: bool) {
         }
     };
     // Then wire status proves retained flight without RTT-free blanket forgiveness.
-    assert_eq!(first.in_flight, i32::from(measured));
-    assert_eq!(first.nak_count, u32::from(!measured));
+    let protected = measured && !(bypass && cfg!(feature = "test-internals"));
+    assert_eq!(first.in_flight, i32::from(protected));
+    assert_eq!(first.nak_count, u32::from(!protected));
     // When the same NAK is mature, Then it is forwarded and ordinary loss is recorded.
     receiver.send_to(&nak, peer).await.unwrap();
     let len = encoder.recv(&mut buf).await.unwrap();
@@ -138,14 +143,23 @@ async fn run_reports(measured: bool) {
 
 #[tokio::test]
 async fn premature_nak_binary_preserves_encoder_reports_and_in_flight_data() {
-    tokio::time::timeout(Duration::from_secs(10), run_reports(true))
+    tokio::time::timeout(Duration::from_secs(10), run_reports(true, false))
         .await
         .unwrap();
 }
 
 #[tokio::test]
 async fn premature_nak_binary_without_rtt_keeps_normal_penalty() {
-    tokio::time::timeout(Duration::from_secs(10), run_reports(false))
+    tokio::time::timeout(Duration::from_secs(10), run_reports(false, false))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn premature_nak_bypass_is_effective_only_in_test_internals_builds() {
+    // Given a measured link and the process-local M2 escape hatch, When immediate
+    // NAKs arrive, Then only a test-internals binary takes the mature penalty path.
+    tokio::time::timeout(Duration::from_secs(10), run_reports(true, true))
         .await
         .unwrap();
 }

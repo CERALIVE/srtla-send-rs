@@ -114,6 +114,16 @@ This is the deliberate pre-campaign behavior change, not a throughput acceptance
 hardware-performance claim. Existing historical G/twin limitations are not waived.
 No benchmark campaign is part of this change.
 
+Todo 17's M2 campaign subsequently compared K=3 against a test-only bypass over
+all three full-window outcomes per arm, including settle timeouts. B1/C settle-rate
+deltas were both zero; neither A nor G met the frozen >5%, disjoint-CI regression
+predicate, so production keeps K=3 and no confirmation run was triggered. The bypass
+environment variable is compiled only with `test-internals`; release binaries cannot
+disable this rule. The same campaign established R-bit observability for the locked
+caller build (69,278 DATA, 639 repeats, zero misclassified flags), retained NAK-off
+blindness as a known G limitation, and decoded irlserver-prod HSRSP as unknown/None
+under the fail-safe rule. Portable evidence: `docs/evidence/bpc/m2-sender/`.
+
 ### Todo 32 gate disposition — baseline-reproduced privileged failures
 
 On 2026-09-17 both blocking signatures were reproduced from a clean detached

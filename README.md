@@ -81,6 +81,14 @@ NAK frame unchanged. This is automatic, with no new tuning flag; per-link status
 show lifetime `premature_naks`, while telemetry JSON is unchanged. Unit/property and
 loopback coverage do not establish a real-bond throughput improvement.
 
+The M2 sender-mechanism campaign kept the production cap at three: B1/C settling
+was 0/3 in both ON and test-bypass arms, while neither A nor G crossed the frozen
+>5% goodput-regression rule with non-overlapping confidence intervals. Its bypass
+exists only in `test-internals` builds and is not a CLI or deployable tuning option.
+The retained capture also validated the retransmission bit for this caller build;
+NAK-off blindness remains present on G. See
+[`docs/evidence/bpc/m2-sender/`](docs/evidence/bpc/m2-sender/).
+
 #### Enhanced Mode (Default)
 
 **Cooldown candidate (2026-09-16):** See [evaluation](docs/notes/enhanced-cooldown-evaluation-2026-09.md) — unaccepted, reverted.

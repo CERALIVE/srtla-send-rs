@@ -8,6 +8,7 @@ mod csv_capture;
 mod edge_tests;
 mod foreign;
 mod live;
+pub mod numeric_sink;
 pub mod record;
 pub mod runner;
 mod sls_config;

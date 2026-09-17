@@ -115,6 +115,28 @@ to test retry/exhaustion. Exhaustion files retain `status: failed`; the filename
 campaign exit signal exhaustion. Never change these contracts merely to match an
 obsolete example invocation.
 
+## M2 sender-mechanism reduction
+
+`manifests/m2-sender.json` freezes 47 one-attempt outcomes. Unlike an ordinary
+covering campaign, a `settle_timeout` with a complete full-window record is an M2
+measurement, not an absent run. Reduce it explicitly with `--m2-outcomes`; that flag
+is rejected for every other campaign and still rejects infrastructure or incomplete-
+metric failures:
+
+```bash
+uv run scripts/bench/report.py --m2-outcomes \
+  --results /absolute/path/to/results \
+  --manifest scripts/bench/manifests/m2-sender.json \
+  --out docs/evidence/bpc/m2-sender/report.md \
+  --json docs/evidence/bpc/m2-sender/summary.json
+```
+
+`enhanced-rule-disabled` uses `SRTLA_DISABLE_PREMATURE_NAK_RULE=1`, read only by a
+`test-internals` build at startup. It is not a release setting. The M2 reducer also
+checks the retained REXMIT pcap with `check_rexmit_bit.py` and reads only concrete
+`receiver: nak_report=on|off` status lines; an absent/mismatched HSRSP observation
+stays null rather than gaining a parser heuristic.
+
 ## Ablation: the bench passes the env per candidate
 
 A candidate is a binary plus the environment it runs under. The two ablation

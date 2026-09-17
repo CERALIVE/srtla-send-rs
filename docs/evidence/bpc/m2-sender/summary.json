@@ -1,0 +1,885 @@
+{
+  "schema_version": 1,
+  "spike": "M2",
+  "manifest_sha256": "987769f6a4d70af52a065704ab0ddfe4d4c4f1f79d238ba9eb86f511600491e2",
+  "cells": [
+    {
+      "candidate": "enhanced",
+      "scenario": "B1",
+      "receiver": "ours-old",
+      "variant": "",
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4487501.511111111
+        },
+        {
+          "run_index": 1,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4479780.977777778
+        },
+        {
+          "run_index": 2,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4435797.333333333
+        }
+      ],
+      "settle_rate": 0.0,
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 4467693.274074074,
+        "median": 4479780.977777778,
+        "sd": 27891.12646596461,
+        "ci_lower": 4435797.333333333,
+        "ci_upper": 4487501.511111111,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced-rule-disabled",
+      "scenario": "B1",
+      "receiver": "ours-old",
+      "variant": "",
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4381051.733333333
+        },
+        {
+          "run_index": 1,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4468551.111111111
+        },
+        {
+          "run_index": 2,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4423865.6
+        }
+      ],
+      "settle_rate": 0.0,
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 4424489.481481481,
+        "median": 4423865.6,
+        "sd": 43753.0250262969,
+        "ci_lower": 4381051.733333333,
+        "ci_upper": 4468551.111111111,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "C",
+      "receiver": "ours-old",
+      "variant": "",
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 11966651.2
+        },
+        {
+          "run_index": 1,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 11278821.866666667
+        },
+        {
+          "run_index": 2,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 12381103.466666669
+        }
+      ],
+      "settle_rate": 0.0,
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 11875525.51111111,
+        "median": 11966651.2,
+        "sd": 556762.1573043974,
+        "ci_lower": 11278821.866666667,
+        "ci_upper": 12381103.466666669,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced-rule-disabled",
+      "scenario": "C",
+      "receiver": "ours-old",
+      "variant": "",
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 11607120.0
+        },
+        {
+          "run_index": 1,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 10685920.0
+        },
+        {
+          "run_index": 2,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 11561323.2
+        }
+      ],
+      "settle_rate": 0.0,
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 11284787.733333334,
+        "median": 11561323.2,
+        "sd": 519139.92164291616,
+        "ci_lower": 10685920.0,
+        "ci_upper": 11607120.0,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "A",
+      "receiver": "ours-old",
+      "variant": "",
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 9914334.577777777
+        },
+        {
+          "run_index": 1,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 9867777.422222223
+        },
+        {
+          "run_index": 2,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 9986392.888888888
+        }
+      ],
+      "settle_rate": 0.0,
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 9922834.962962963,
+        "median": 9914334.577777777,
+        "sd": 59762.8617484142,
+        "ci_lower": 9867777.422222223,
+        "ci_upper": 9986392.888888888,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced-rule-disabled",
+      "scenario": "A",
+      "receiver": "ours-old",
+      "variant": "",
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 9999962.311111111
+        },
+        {
+          "run_index": 1,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 9895618.133333333
+        },
+        {
+          "run_index": 2,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 10049560.888888888
+        }
+      ],
+      "settle_rate": 0.0,
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 9981713.777777778,
+        "median": 9999962.311111111,
+        "sd": 78577.0305090661,
+        "ci_lower": 9895618.133333333,
+        "ci_upper": 10049560.888888888,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "G",
+      "receiver": "ours-old",
+      "variant": "",
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4375670.755555555
+        },
+        {
+          "run_index": 1,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4247229.155555556
+        },
+        {
+          "run_index": 2,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4341045.333333333
+        }
+      ],
+      "settle_rate": 0.0,
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 4321315.081481482,
+        "median": 4341045.333333333,
+        "sd": 66455.04707125788,
+        "ci_lower": 4247229.155555556,
+        "ci_upper": 4375670.755555555,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced-rule-disabled",
+      "scenario": "G",
+      "receiver": "ours-old",
+      "variant": "",
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4706717.866666666
+        },
+        {
+          "run_index": 1,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4358124.088888889
+        },
+        {
+          "run_index": 2,
+          "settled": false,
+          "reason": "settle_timeout",
+          "goodput_bps": 4400704.0
+        }
+      ],
+      "settle_rate": 0.0,
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 4488515.3185185185,
+        "median": 4400704.0,
+        "sd": 190164.47150116155,
+        "ci_lower": 4358124.088888889,
+        "ci_upper": 4706717.866666666,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "G",
+      "receiver": "irlserver-prod",
+      "variant": "rexmit-capture",
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12805089.422222223
+        }
+      ],
+      "settle_rate": 1.0,
+      "goodput": {
+        "n": 1,
+        "missing": 0,
+        "mean": 12805089.422222223,
+        "median": 12805089.422222223,
+        "sd": null,
+        "ci_lower": 12805089.422222223,
+        "ci_upper": 12805089.422222223,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "G",
+      "receiver": "irlserver-prod",
+      "variant": "",
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12805270.755555555
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12801814.044444444
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12803451.733333332
+        }
+      ],
+      "settle_rate": 1.0,
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 12803512.177777776,
+        "median": 12803451.733333332,
+        "sd": 1729.1480776870173,
+        "ci_lower": 12801814.044444444,
+        "ci_upper": 12805270.755555555,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "adaptive",
+      "scenario": "G",
+      "receiver": "irlserver-prod",
+      "variant": "",
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12803451.733333332
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12803451.733333332
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12803451.733333332
+        }
+      ],
+      "settle_rate": 1.0,
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 12803451.733333332,
+        "median": 12803451.733333332,
+        "sd": 0.0,
+        "ci_lower": 12803451.733333332,
+        "ci_upper": 12803451.733333332,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "F",
+      "receiver": "irlserver-prod",
+      "variant": "",
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12805089.422222223
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12803451.733333332
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12801814.044444444
+        }
+      ],
+      "settle_rate": 1.0,
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 12803451.733333332,
+        "median": 12803451.733333332,
+        "sd": 1637.6888888897374,
+        "ci_lower": 12801814.044444444,
+        "ci_upper": 12805089.422222223,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "adaptive",
+      "scenario": "F",
+      "receiver": "irlserver-prod",
+      "variant": "",
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12801814.044444444
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12803451.733333332
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12803451.733333332
+        }
+      ],
+      "settle_rate": 1.0,
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 12802905.837037036,
+        "median": 12803451.733333332,
+        "sd": 945.5201208488113,
+        "ci_lower": 12801814.044444444,
+        "ci_upper": 12803451.733333332,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "A",
+      "receiver": "irlserver-prod",
+      "variant": "",
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12664248.177777778
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 15354971.022222225
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 11550619.733333332
+        }
+      ],
+      "settle_rate": 1.0,
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 13189946.311111113,
+        "median": 12664248.177777778,
+        "sd": 1955899.0459275388,
+        "ci_lower": 11550619.733333332,
+        "ci_upper": 15354971.022222225,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "adaptive",
+      "scenario": "A",
+      "receiver": "irlserver-prod",
+      "variant": "",
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 14506648.177777778
+        },
+        {
+          "run_index": 1,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 12900075.377777778
+        },
+        {
+          "run_index": 2,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 20024022.04444445
+        }
+      ],
+      "settle_rate": 1.0,
+      "goodput": {
+        "n": 3,
+        "missing": 0,
+        "mean": 15810248.533333337,
+        "median": 14506648.177777778,
+        "sd": 3736600.6533520846,
+        "ci_lower": 12900075.377777778,
+        "ci_upper": 20024022.04444445,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "S-HSRSP",
+      "receiver": "ours-old",
+      "variant": "",
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 1000160.0
+        }
+      ],
+      "settle_rate": 1.0,
+      "goodput": {
+        "n": 1,
+        "missing": 0,
+        "mean": 1000160.0,
+        "median": 1000160.0,
+        "sd": null,
+        "ci_lower": 1000160.0,
+        "ci_upper": 1000160.0,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "S-HSRSP",
+      "receiver": "ours-new",
+      "variant": "",
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 999633.6
+        }
+      ],
+      "settle_rate": 1.0,
+      "goodput": {
+        "n": 1,
+        "missing": 0,
+        "mean": 999633.6,
+        "median": 999633.6,
+        "sd": null,
+        "ci_lower": 999633.6,
+        "ci_upper": 999633.6,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "S-HSRSP",
+      "receiver": "irlserver-prod",
+      "variant": "",
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 1002265.6
+        }
+      ],
+      "settle_rate": 1.0,
+      "goodput": {
+        "n": 1,
+        "missing": 0,
+        "mean": 1002265.6,
+        "median": 1002265.6,
+        "sd": null,
+        "ci_lower": 1002265.6,
+        "ci_upper": 1002265.6,
+        "nonfinite_rate": 0.0
+      }
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "S-HSRSP",
+      "receiver": "irlserver-next",
+      "variant": "",
+      "outcomes": [
+        {
+          "run_index": 0,
+          "settled": true,
+          "reason": null,
+          "goodput_bps": 1002265.6
+        }
+      ],
+      "settle_rate": 1.0,
+      "goodput": {
+        "n": 1,
+        "missing": 0,
+        "mean": 1002265.6,
+        "median": 1002265.6,
+        "sd": null,
+        "ci_lower": 1002265.6,
+        "ci_upper": 1002265.6,
+        "nonfinite_rate": 0.0
+      }
+    }
+  ],
+  "inflight": [
+    {
+      "scenario": "B1",
+      "on": {
+        "n": 3,
+        "missing": 0,
+        "mean": 4467693.274074074,
+        "median": 4479780.977777778,
+        "sd": 27891.12646596461,
+        "ci_lower": 4435797.333333333,
+        "ci_upper": 4487501.511111111,
+        "nonfinite_rate": 0.0
+      },
+      "off": {
+        "n": 3,
+        "missing": 0,
+        "mean": 4424489.481481481,
+        "median": 4423865.6,
+        "sd": 43753.0250262969,
+        "ci_lower": 4381051.733333333,
+        "ci_upper": 4468551.111111111,
+        "nonfinite_rate": 0.0
+      },
+      "on_settle_rate": 0.0,
+      "off_settle_rate": 0.0,
+      "settle_rate_delta": 0.0,
+      "regression": false
+    },
+    {
+      "scenario": "C",
+      "on": {
+        "n": 3,
+        "missing": 0,
+        "mean": 11875525.51111111,
+        "median": 11966651.2,
+        "sd": 556762.1573043974,
+        "ci_lower": 11278821.866666667,
+        "ci_upper": 12381103.466666669,
+        "nonfinite_rate": 0.0
+      },
+      "off": {
+        "n": 3,
+        "missing": 0,
+        "mean": 11284787.733333334,
+        "median": 11561323.2,
+        "sd": 519139.92164291616,
+        "ci_lower": 10685920.0,
+        "ci_upper": 11607120.0,
+        "nonfinite_rate": 0.0
+      },
+      "on_settle_rate": 0.0,
+      "off_settle_rate": 0.0,
+      "settle_rate_delta": 0.0,
+      "regression": false
+    },
+    {
+      "scenario": "A",
+      "on": {
+        "n": 3,
+        "missing": 0,
+        "mean": 9922834.962962963,
+        "median": 9914334.577777777,
+        "sd": 59762.8617484142,
+        "ci_lower": 9867777.422222223,
+        "ci_upper": 9986392.888888888,
+        "nonfinite_rate": 0.0
+      },
+      "off": {
+        "n": 3,
+        "missing": 0,
+        "mean": 9981713.777777778,
+        "median": 9999962.311111111,
+        "sd": 78577.0305090661,
+        "ci_lower": 9895618.133333333,
+        "ci_upper": 10049560.888888888,
+        "nonfinite_rate": 0.0
+      },
+      "on_settle_rate": 0.0,
+      "off_settle_rate": 0.0,
+      "settle_rate_delta": 0.0,
+      "regression": false
+    },
+    {
+      "scenario": "G",
+      "on": {
+        "n": 3,
+        "missing": 0,
+        "mean": 4321315.081481482,
+        "median": 4341045.333333333,
+        "sd": 66455.04707125788,
+        "ci_lower": 4247229.155555556,
+        "ci_upper": 4375670.755555555,
+        "nonfinite_rate": 0.0
+      },
+      "off": {
+        "n": 3,
+        "missing": 0,
+        "mean": 4488515.3185185185,
+        "median": 4400704.0,
+        "sd": 190164.47150116155,
+        "ci_lower": 4358124.088888889,
+        "ci_upper": 4706717.866666666,
+        "nonfinite_rate": 0.0
+      },
+      "on_settle_rate": 0.0,
+      "off_settle_rate": 0.0,
+      "settle_rate_delta": 0.0,
+      "regression": false
+    }
+  ],
+  "nak_off": [
+    {
+      "scenario": "G",
+      "enhanced": {
+        "n": 3,
+        "missing": 0,
+        "mean": 12803512.177777776,
+        "median": 12803451.733333332,
+        "sd": 1729.1480776870173,
+        "ci_lower": 12801814.044444444,
+        "ci_upper": 12805270.755555555,
+        "nonfinite_rate": 0.0
+      },
+      "adaptive": {
+        "n": 3,
+        "missing": 0,
+        "mean": 12803451.733333332,
+        "median": 12803451.733333332,
+        "sd": 0.0,
+        "ci_lower": 12803451.733333332,
+        "ci_upper": 12803451.733333332,
+        "nonfinite_rate": 0.0
+      },
+      "passes": false
+    },
+    {
+      "scenario": "F",
+      "enhanced": {
+        "n": 3,
+        "missing": 0,
+        "mean": 12803451.733333332,
+        "median": 12803451.733333332,
+        "sd": 1637.6888888897374,
+        "ci_lower": 12801814.044444444,
+        "ci_upper": 12805089.422222223,
+        "nonfinite_rate": 0.0
+      },
+      "adaptive": {
+        "n": 3,
+        "missing": 0,
+        "mean": 12802905.837037036,
+        "median": 12803451.733333332,
+        "sd": 945.5201208488113,
+        "ci_lower": 12801814.044444444,
+        "ci_upper": 12803451.733333332,
+        "nonfinite_rate": 0.0
+      },
+      "passes": true
+    },
+    {
+      "scenario": "A",
+      "enhanced": {
+        "n": 3,
+        "missing": 0,
+        "mean": 13189946.311111113,
+        "median": 12664248.177777778,
+        "sd": 1955899.0459275388,
+        "ci_lower": 11550619.733333332,
+        "ci_upper": 15354971.022222225,
+        "nonfinite_rate": 0.0
+      },
+      "adaptive": {
+        "n": 3,
+        "missing": 0,
+        "mean": 15810248.533333337,
+        "median": 14506648.177777778,
+        "sd": 3736600.6533520846,
+        "ci_lower": 12900075.377777778,
+        "ci_upper": 20024022.04444445,
+        "nonfinite_rate": 0.0
+      },
+      "passes": true
+    }
+  ],
+  "rexmit": {
+    "data_packets": 69278,
+    "originals": 68639,
+    "retransmissions": 639,
+    "flagged_originals": 0,
+    "unflagged_retransmissions": 0,
+    "passed": true,
+    "pcap_sha256": "80abefedb4f3e8a90969f40b79a9eed23fe490da97d6ad3b9a471812ff26b166"
+  },
+  "hsrsp": [
+    {
+      "receiver": "ours-old",
+      "expected": true,
+      "nak_report": true,
+      "status_line": "receiver: nak_report=on srt=1.5.6"
+    },
+    {
+      "receiver": "ours-new",
+      "expected": true,
+      "nak_report": true,
+      "status_line": "receiver: nak_report=on srt=1.5.7"
+    },
+    {
+      "receiver": "irlserver-prod",
+      "expected": false,
+      "nak_report": null,
+      "status_line": null
+    },
+    {
+      "receiver": "irlserver-next",
+      "expected": true,
+      "nak_report": true,
+      "status_line": "receiver: nak_report=on srt=1.5.6"
+    }
+  ],
+  "k_cap": 3,
+  "nak_off_outcome": "present",
+  "warnings": [
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--A@--production--slt:4001--fec:off run 0: failed (settle_timeout)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--A@--production--slt:4001--fec:off run 1: failed (settle_timeout)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--A@--production--slt:4001--fec:off run 2: failed (settle_timeout)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--B1@--production--slt:4001--fec:off run 0: failed (settle_timeout)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--B1@--production--slt:4001--fec:off run 1: failed (settle_timeout)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--B1@--production--slt:4001--fec:off run 2: failed (settle_timeout)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--C@--production--slt:4001--fec:off run 0: failed (settle_timeout)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--C@--production--slt:4001--fec:off run 1: failed (settle_timeout)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--C@--production--slt:4001--fec:off run 2: failed (settle_timeout)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--G@--production--slt:4001--fec:off run 0: failed (settle_timeout)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--G@--production--slt:4001--fec:off run 1: failed (settle_timeout)",
+    "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--G@--production--slt:4001--fec:off run 2: failed (settle_timeout)"
+  ]
+}

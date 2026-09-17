@@ -42,8 +42,8 @@ pub fn campaign(smoke: bool) -> Result<()> {
         .parse::<u32>()?;
     ensure!(max_attempts > 0, "BENCH_MAX_RETRIES must be positive");
     ensure!(
-        manifest.campaign != "m1-ttl" || max_attempts == 1,
-        "M1 requires exactly one attempt per planned index (BENCH_MAX_RETRIES=1)"
+        !matches!(manifest.campaign.as_str(), "m1-ttl" | "m2-sender") || max_attempts == 1,
+        "M1/M2 require exactly one attempt per planned index (BENCH_MAX_RETRIES=1)"
     );
     let output = std::env::var_os("BENCH_OUT_DIR")
         .map(PathBuf::from)

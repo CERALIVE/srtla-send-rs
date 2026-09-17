@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caller_bin: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub receiver_defaults: Option<network_sim::harness::ReceiverSpec>,
     pub campaign: String,
     pub candidates: Vec<Candidate>,

@@ -1,10 +1,11 @@
 //! Ablation switches for the adaptive-scheduler evaluation campaign.
 //!
-//! Two environment variables, read ONCE at startup and ONLY in a
+//! Environment variables, read ONCE at startup and ONLY in a
 //! `test-internals` build:
 //!
 //! - `SRTLA_ADAPTIVE_FEATURES` — which `SchedulerFeatures` bits every selector runs.
 //! - `SRTLA_ADAPTIVE_TUNING` — overrides for the four sweepable constants.
+//! - `SRTLA_DISABLE_PREMATURE_NAK_RULE` — M2's test-only mature-NAK control arm.
 //!
 //! The gate is COMPILE-time, not runtime: without the feature this module never
 //! names either variable, so the shipped binary contains neither string and every
@@ -69,6 +70,7 @@ mod imp {
 
     pub const FEATURES_ENV: &str = "SRTLA_ADAPTIVE_FEATURES";
     pub const TUNING_ENV: &str = "SRTLA_ADAPTIVE_TUNING";
+    pub const PREMATURE_NAK_ENV: &str = "SRTLA_DISABLE_PREMATURE_NAK_RULE";
 
     /// Token spelling and emission order for every feature bit. One table backs
     /// the parser AND the `effective_config` projection, so a campaign manifest
@@ -96,6 +98,7 @@ mod imp {
     struct Resolved {
         features: SchedulerFeatures,
         tuning: AdaptiveTuning,
+        premature_nak_rule: bool,
     }
 
     static RESOLVED: OnceLock<Resolved> = OnceLock::new();
@@ -110,6 +113,11 @@ mod imp {
         let resolved = Resolved {
             features: parse_features(std::env::var(FEATURES_ENV).ok().as_deref())?,
             tuning: parse_tuning(std::env::var(TUNING_ENV).ok().as_deref())?,
+            premature_nak_rule: match std::env::var(PREMATURE_NAK_ENV).ok().as_deref() {
+                None | Some("0") => true,
+                Some("1") => false,
+                Some(_) => bail!("{PREMATURE_NAK_ENV}: expected 0 or 1"),
+            },
         };
         let _ = RESOLVED.set(resolved);
         Ok(())
@@ -119,6 +127,12 @@ mod imp {
         RESOLVED
             .get()
             .map_or_else(SchedulerFeatures::default, |resolved| resolved.features)
+    }
+
+    pub fn premature_nak_rule_enabled() -> bool {
+        RESOLVED
+            .get()
+            .is_none_or(|resolved| resolved.premature_nak_rule)
     }
 
     pub fn tuning() -> AdaptiveTuning {
@@ -339,6 +353,11 @@ mod imp {
     #[inline(always)]
     pub fn tuning() -> AdaptiveTuning {
         AdaptiveTuning::SHIPPED
+    }
+
+    #[inline(always)]
+    pub const fn premature_nak_rule_enabled() -> bool {
+        true
     }
 }
 

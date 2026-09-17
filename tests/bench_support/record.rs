@@ -122,6 +122,10 @@ pub fn prepare(
         candidate.stats_file,
         binary_hash(srt)?,
     ))?;
+    let scenario_bytes = match &manifest.caller_bin {
+        Some(caller) => serde_json::to_vec(&(scenario_bytes, binary_hash(caller)?))?,
+        None => scenario_bytes,
+    };
     let mut env = candidate.env.clone();
     env.entry("RUST_LOG".into())
         .or_insert_with(|| "info".into());

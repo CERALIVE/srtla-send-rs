@@ -830,10 +830,13 @@ def validate_sls(record: RunRecord) -> None:
 
 def load_records(
     manifest: Manifest, roots: Sequence[Path], *, smoke_coverage: bool = False,
-    m1_outcomes: bool = False,
+    m1_outcomes: bool = False, m2_outcomes: bool = False,
 ) -> LoadedRecords:
     if m1_outcomes and (manifest.campaign != "m1-ttl" or smoke_coverage):
         raise EvidenceError("M1 outcome coverage is restricted to m1-ttl")
+    if m2_outcomes and (manifest.campaign != "m2-sender" or smoke_coverage or m1_outcomes):
+        raise EvidenceError("M2 outcome coverage is restricted to m2-sender")
+    measured_outcomes = m1_outcomes or m2_outcomes
     if smoke_coverage:
         required = {
             (name, "A", "ceralive", "production", 2) for name in ("classic", "enhanced")
@@ -904,7 +907,7 @@ def load_records(
         for path in root.rglob("*.json")
         if not {"stale", "artifacts", "raw"}.intersection(path.relative_to(root).parts)
         and path.name != "manifest.json"
-        and not (m1_outcomes and path.name.endswith(".exhausted.json"))
+        and not (measured_outcomes and path.name.endswith(".exhausted.json"))
     }
     for path, envelope, text in live_documents(sorted(paths)):
         key = (
@@ -922,17 +925,17 @@ def load_records(
                     f"{envelope.cell_id} run {envelope.run_index}: "
                     + f"{envelope.status} ({envelope.reason or 'unspecified'})"
                 )
-                if not m1_outcomes:
+                if not measured_outcomes:
                     continue
                 if envelope.reason != "settle_timeout":
-                    raise EvidenceError(f"M1 missing measurement: {path}: {envelope.reason}")
+                    raise EvidenceError(f"missing measurement: {path}: {envelope.reason}")
                 record = RunRecord.model_validate_json(text)
             case "ok":
                 record = RunRecord.model_validate_json(text)
             case _:
                 assert_never(envelope.status)
         cell = expected[key]
-        if (smoke_coverage or m1_outcomes) and record.run_index >= cell.runs:
+        if (smoke_coverage or measured_outcomes) and record.run_index >= cell.runs:
             raise EvidenceError(f"unexpected run index {record.run_index} in {cell.id}")
         receiver = receivers[cell.receiver]
         kind = receiver.kind or (
@@ -1934,6 +1937,7 @@ class ReportTests(unittest.TestCase):
 class Arguments(argparse.Namespace):
     self_test: bool = False
     smoke_coverage: bool = False
+    m2_outcomes: bool = False
     results: list[Path] | None = None
     manifest: Path | None = None
     out: Path | None = None
@@ -1958,6 +1962,11 @@ def main() -> int:
         "--smoke-coverage",
         action="store_true",
         help="Explicit one-of-two coverage for classic/A and enhanced/A only",
+    )
+    _ = parser.add_argument(
+        "--m2-outcomes",
+        action="store_true",
+        help="Retain measured settle-timeout outcomes for the frozen M2 campaign",
     )
     _ = parser.add_argument("--results", nargs="+", type=Path)
     _ = parser.add_argument("--manifest", type=Path)
@@ -1991,6 +2000,18 @@ def main() -> int:
             publish(args.out, text)
             publish(args.json, document)
             return 0
+        if manifest.campaign == "m2-sender":
+            if not args.m2_outcomes:
+                raise EvidenceError("M2 reduction requires --m2-outcomes")
+            sys.modules.setdefault("report", sys.modules[__name__])
+            from m2_report import render
+
+            text, document = render(args.manifest, args.results)
+            publish(args.out, text)
+            publish(args.json, document)
+            return 0
+        if args.m2_outcomes:
+            raise EvidenceError("M2 outcome coverage is restricted to m2-sender")
         summary = build_summary(
             manifest, args.results, smoke_coverage=args.smoke_coverage
         )

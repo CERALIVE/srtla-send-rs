@@ -9,6 +9,7 @@ use network_sim::{Namespace, NamespaceProcess};
 pub struct Source {
     pub process: NamespaceProcess,
     control: File,
+    #[allow(dead_code)]
     offered: Option<PathBuf>,
 }
 
@@ -17,6 +18,7 @@ impl Source {
         Self::start_capture(ns, pipe, (warmup_bps, None))
     }
 
+    #[allow(dead_code)]
     pub fn start_sls(ns: &Namespace, pipe: &Path, offered: PathBuf) -> Result<Self> {
         std::fs::File::create(&offered)?;
         Self::start_capture(ns, pipe, (0, Some(offered)))
@@ -56,6 +58,7 @@ impl Source {
         })
     }
 
+    #[allow(dead_code)]
     pub fn offered_bytes(&self) -> Result<u64> {
         Ok(std::fs::metadata(
             self.offered

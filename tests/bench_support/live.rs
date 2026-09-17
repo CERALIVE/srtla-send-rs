@@ -26,7 +26,11 @@ pub fn execute(request: &mut Request) -> Result<()> {
         _ => anyhow::bail!("unsupported sink"),
     };
     stack.logs(&request.artifacts)?;
-    stack.finish_pcaps(result.is_err() || request.result.record.scenario.id == "S-FREEZE-NORDR")?;
+    stack.finish_pcaps(
+        result.is_err()
+            || request.result.record.scenario.id == "S-FREEZE-NORDR"
+            || request.manifest.cells[request.work.cell].variant == "rexmit-capture",
+    )?;
     result
 }
 
@@ -88,7 +92,7 @@ fn measure(request: &mut Request, profile: &Profile, stack: &mut Stack) -> Resul
     let settle_failed = match settled {
         Ok(()) => false,
         Err(error)
-            if request.manifest.campaign == "m1-ttl"
+            if matches!(request.manifest.campaign.as_str(), "m1-ttl" | "m2-sender")
                 && matches!(
                     error.downcast_ref::<RunFailure>(),
                     Some(RunFailure::SettleTimeout)

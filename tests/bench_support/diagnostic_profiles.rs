@@ -45,6 +45,20 @@ pub fn freeze_profile() -> Profile {
 
 impl Manifest {
     pub fn scenario(&self, id: &str) -> Result<Profile> {
+        if id == "S-HSRSP" {
+            ensure!(
+                self.window_secs_override.is_none(),
+                "HSRSP window is fixed at 20s"
+            );
+            ensure!(
+                self.cells
+                    .iter()
+                    .filter(|c| c.scenario == id)
+                    .all(|c| !c.covering),
+                "HSRSP is noncovering"
+            );
+            return sls_profile();
+        }
         if id == "S-FREEZE-NORDR" {
             ensure!(
                 self.window_secs_override.is_none(),
