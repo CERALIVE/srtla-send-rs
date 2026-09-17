@@ -4,6 +4,7 @@
 //! Values are netem delays verbatim, not silently halved as RTT estimates.
 
 mod definition;
+mod dynamic;
 mod satellite;
 
 use std::time::Duration;
@@ -11,6 +12,7 @@ use std::time::Duration;
 pub use definition::{
     Profile, SourceRamp, WARMUP_SETTLE_RATIO, WARMUP_SETTLE_SECONDS, WARMUP_TIMEOUT,
 };
+pub use dynamic::{BENCH_SOAK, M6_PRIORITY_SIDECAR, validate_dynamic};
 
 use crate::bond::CarrierMode;
 use crate::impairment::DelayDistribution;
@@ -215,6 +217,14 @@ pub fn all() -> Vec<(&'static str, Profile)> {
         ("J", scenario_j()),
         ("K", scenario_k()),
         ("L", scenario_l()),
+        ("M1", dynamic::scenario_m1()),
+        ("M2", dynamic::scenario_m2()),
+        ("M3", dynamic::scenario_m3()),
+        ("M4", dynamic::scenario_m4()),
+        ("M5", dynamic::scenario_m5()),
+        ("M6", dynamic::scenario_m6()),
+        ("M7", dynamic::scenario_m7()),
+        ("M8", dynamic::scenario_m8()),
     ]
 }
 
