@@ -15,7 +15,31 @@ use crate::utils::now_ms;
 /// recognized as small and walked rather than being mistaken for a huge gap.
 const ACK_WALK_MAX_DISTANCE: u32 = 64;
 
+#[cfg(test)]
+#[path = "premature_nak_io_tests.rs"]
+mod premature_nak_io_tests;
+#[cfg(test)]
+#[path = "premature_nak_property_tests.rs"]
+mod premature_nak_property_tests;
+#[cfg(test)]
+#[path = "premature_nak_tests.rs"]
+mod premature_nak_tests;
+
 impl SrtlaConnection {
+    pub(crate) fn record_ack_round_trip(&mut self, sent_ms: u64, now: u64) {
+        if self.rtt.record_round_trip(sent_ms, now).is_some() {
+            self.premature_streak = 0;
+        }
+    }
+
+    pub(crate) fn premature_nak_threshold_ms(&self) -> f64 {
+        if self.has_rtt_sample() {
+            (self.get_rtt_min_ms() / 2.0).clamp(5.0, 500.0)
+        } else {
+            0.0
+        }
+    }
+
     /// Register a packet as in-flight. O(1) insert.
     #[inline]
     pub fn register_packet(&mut self, seq: i32, send_time_ms: u64) {
@@ -72,15 +96,27 @@ impl SrtlaConnection {
         self.in_flight_packets = self.packet_log.len() as i32;
 
         if owns_acked_seq && let Some(sent_ms) = ack_send_time_ms {
-            self.rtt.record_round_trip(sent_ms, now_ms);
+            self.record_ack_round_trip(sent_ms, now_ms);
         }
     }
 
-    /// Handle NAK for a specific sequence. O(1) remove.
+    /// Handle an owned NAK in O(1). Suppression still claims it, stopping fallback attribution.
     #[inline]
     pub fn handle_nak(&mut self, seq: i32) -> bool {
+        let sent = self.packet_log.get(&seq);
+        if sent.is_some()
+            && let Some(accepted_at) = self.delivery.sent_ms(seq)
+            // Widen age only for comparison with the fractional RTT-derived threshold.
+            && (now_ms().saturating_sub(accepted_at) as f64) < self.premature_nak_threshold_ms()
+            && self.premature_streak < 3
+        {
+            self.premature_streak += 1;
+            self.premature_nak_count = self.premature_nak_count.saturating_add(1);
+            return true;
+        }
         let sent = self.packet_log.remove(&seq);
         if let Some(queued_ms) = sent {
+            self.premature_streak = 0;
             // Normal-log removal is unique attribution. Todo 19's separate probe-log
             // lookup must not enter this branch or feed normal loss evidence.
             let debit = match self.delivery.loss_send(seq) {
@@ -129,7 +165,7 @@ impl SrtlaConnection {
             self.in_flight_packets = self.packet_log.len() as i32;
 
             if sample_rtt {
-                self.rtt.record_round_trip(sent_ms, now);
+                self.record_ack_round_trip(sent_ms, now);
             }
 
             // Stall signal (EXPERIMENTAL `stall_deselect`): this link EARNED the

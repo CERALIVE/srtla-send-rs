@@ -67,8 +67,19 @@ arrival-link/generation-fenced delivery accounting as Adaptive. They no longer
 scan other links for an SRTLA ACK or grow every link's window on a broadcast ACK.
 Only the last unambiguous original in an ACK frame supplies RTT; cumulative SRT ACKs
 still prune but never measure RTT. Probe ACKs supply health evidence without original
-rate/window credit, and probe-only NAKs are excluded. The normal `handle_nak` penalty
-is unchanged. Classic now receives the existing time-based window recovery too.
+rate/window credit, and probe-only NAKs are excluded. Classic now receives the existing
+time-based window recovery too.
+
+**In-flight-aware NAK penalties:** every mode protects a recently accepted DATA packet
+until `clamp(minimum measured RTT / 2, 5, 500)` ms after kernel acceptance, not queueing.
+Without a real RTT sample or retained acceptance timestamp, the ordinary penalty applies.
+At most three consecutive premature reports per link are suppressed; the fourth takes
+the normal window/loss penalty and resets the count. A mature penalty or accepted
+ACK/keepalive RTT sample also resets that streak. Suppression retains the in-flight
+packet and does not feed congestion or loss cohorts. The encoder still receives every
+NAK frame unchanged. This is automatic, with no new tuning flag; per-link status logs
+show lifetime `premature_naks`, while telemetry JSON is unchanged. Unit/property and
+loopback coverage do not establish a real-bond throughput improvement.
 
 #### Enhanced Mode (Default)
 

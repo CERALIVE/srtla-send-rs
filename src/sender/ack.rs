@@ -92,9 +92,7 @@ pub fn apply_srtla_ack_frame(
         sample = apply_srtla_ack_entry(connections, seq, context);
     }
     if let Some((sent_ms, now)) = sample {
-        connections[context.arrival_idx]
-            .rtt
-            .record_round_trip(sent_ms, now);
+        connections[context.arrival_idx].record_ack_round_trip(sent_ms, now);
     }
 }
 

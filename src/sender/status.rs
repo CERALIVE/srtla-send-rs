@@ -5,6 +5,10 @@ use crate::connection::SrtlaConnection;
 use crate::protocol::PKT_LOG_SIZE;
 use crate::utils::now_ms;
 
+#[cfg(test)]
+#[path = "premature_nak_status_tests.rs"]
+mod premature_nak_tests;
+
 /// Comprehensive status monitoring for connections
 ///
 /// Optimized to reduce CPU overhead:
@@ -157,6 +161,7 @@ pub(crate) fn log_connection_status(
 
         {
             info!(
+                premature_naks = conn.premature_nak_count,
                 "        health={} pref={:.2} cap={:.0}",
                 conn.health.state().as_str(),
                 conn.effective_priority()
@@ -250,7 +255,7 @@ mod tests {
         }
     }
 
-    fn capture_logs(run: impl FnOnce()) -> String {
+    pub(super) fn capture_logs(run: impl FnOnce()) -> String {
         let logs = CapturedLogs::default();
         let output = logs.0.clone();
         let subscriber = tracing_subscriber::fmt()

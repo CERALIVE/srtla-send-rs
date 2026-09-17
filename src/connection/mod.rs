@@ -146,6 +146,9 @@ pub struct SrtlaConnection {
     #[cfg(not(feature = "test-internals"))]
     pub(crate) packet_log: FxHashMap<i32, u64>,
     pub(crate) delivery: delivery::DeliveryLedger,
+    pub(crate) premature_streak: u8,
+    /// Lifetime diagnostic, status logs only; never part of telemetry JSON.
+    pub(crate) premature_nak_count: u64,
     pub(crate) loss: loss::LossTracker,
     pub(crate) probes: probe::ProbeLog,
     pub(crate) health: health::HealthMachine,
@@ -272,6 +275,8 @@ impl SrtlaConnection {
             in_flight_packets: 0,
             packet_log: FxHashMap::with_capacity_and_hasher(PKT_LOG_SIZE, Default::default()),
             delivery: delivery::DeliveryLedger::default(),
+            premature_streak: 0,
+            premature_nak_count: 0,
             loss: loss::LossTracker::new(now_ms()),
             probes: probe::ProbeLog::default(),
             health: health::HealthMachine::new(health::HealthState::Down, now_ms()),

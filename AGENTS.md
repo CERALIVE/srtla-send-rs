@@ -40,8 +40,34 @@ attribution; no cross-link first-match or broadcast window growth; only acknowle
 originals clear congestion accounting; probe ACKs prove health, not original rate or
 window growth. Only the final unambiguous original in an SRTLA ACK frame supplies RTT;
 cumulative SRT ACKs still prune all logs but never sample RTT. Probe-only NAKs are
-excluded. `handle_nak` itself is unchanged; Todo 8's in-flight-aware penalty is separate.
+excluded. Todo 8 additionally gates premature normal-DATA NAK penalties as described below.
 Historical legacy ACK adapters are compiled only for unit tests, not shipped.
+
+### In-flight-aware NAK penalty (bonded-path convergence, Todo 8)
+
+`handle_nak` peeks before removing an owned packet-log entry. With a real RTT sample
+(`has_rtt_sample()`, never the default RTT baseline), the protection threshold is
+`clamp(rtt_min_ms / 2, 5, 500)` ms. Age uses `DeliveryLedger::sent_ms`, the separate
+kernel-accept timestamp already recorded by `transmit.rs` after the batch flush returns,
+NOT the packet log's queue timestamp. Only the accepted prefix has ledger entries;
+retransmission replaces its acceptance time, recovery clears the ledger, and missing
+or evicted acceptance evidence disables protection. No second timestamp map is added.
+
+An owned NAK younger than the threshold is suppressed only while the per-link
+`premature_streak < 3`: retain its packet-log entry and in-flight count, skip congestion
+and loss-cohort accounting, increment the streak and lifetime `premature_nak_count`,
+and return handled so fallback attribution stops. The fourth consecutive premature
+NAK takes the unchanged normal penalty path. Every normal penalty and every accepted
+ACK/keepalive RTT sample resets the streak; rejected RTT samples do not. The counter
+is retained across reconnects of the same connection object and appears only as
+`premature_naks=<n>` in each link's status log, never in telemetry JSON.
+
+All NAK frames still reach the encoder byte-for-byte, independently of this gate.
+There is no flag, configuration key, ACK penalty change, or congestion-constant change.
+Tests cover actual UDP batch acceptance (queue+15ms, NAK+18ms), partial/fail-safe
+evidence semantics, cap/reset/forwarding behavior, and mature-window equivalence to
+the pre-change handler. Selection-mode golden bytes remain frozen. This is not a
+bonded-hardware performance claim or a waiver of the existing adaptive gate failures.
 
 `--stall-deselect` is accepted/ignored with one WARN per process; its tunables and
 `--earned-ack-window` are inert compatibility inputs. Shared admission replaces the

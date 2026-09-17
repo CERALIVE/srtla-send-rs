@@ -215,6 +215,7 @@ impl SrtlaConnection {
                     .handle_keepalive_response(data, &self.label)
                     .is_some()
                 {
+                    self.premature_streak = 0;
                     // Stall signal (EXPERIMENTAL `stall_deselect`): a real
                     // keepalive RTT measurement is a genuine live-return-path
                     // sample. The second (and only other) stamp site besides the
