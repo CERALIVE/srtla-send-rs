@@ -51,7 +51,8 @@ pub fn evaluate(
                     "unexpanded Periodic event".into(),
                 ));
             }
-            Action::SetImpairment(_)
+            Action::AddLink(_)
+            | Action::SetImpairment(_)
             | Action::DataBlackhole { .. }
             | Action::LinkUp(_)
             | Action::DefaultRoute(_)

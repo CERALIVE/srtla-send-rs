@@ -1,14 +1,18 @@
 //! N-link namespace bond with explicit carrier and mapping policies.
 
+mod lifecycle;
+mod priority;
 mod publication;
 mod routing;
 mod spec;
 mod wiring;
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
+pub use priority::PrioritySidecar;
 pub use routing::configure_bond_routing;
 use spec::Address;
 pub use spec::{BondConfigError, BondRow, CarrierMode, LinkSpec, MappingMode};
@@ -38,9 +42,12 @@ enum Carrier {
 
 /// Owns namespaces and launch files, but not processes. Drop process handles before this value.
 pub struct BondTopology {
-    pub sender_ns: Namespace,
+    pub sender_ns: Arc<Namespace>,
     pub receiver_ns: Namespace,
     links: Vec<Link>,
+    specs: Vec<LinkSpec>,
+    order: RefCell<Vec<usize>>,
+    priorities: Option<PrioritySidecar>,
     publisher: BindMapPublisher,
     mapping: MappingMode,
     generation: Cell<u64>,
@@ -50,42 +57,33 @@ impl BondTopology {
     /// Validate the whole configuration before creating any namespace.
     pub fn new(test_name: &str, links: &[LinkSpec], mapping: MappingMode) -> Result<Self> {
         spec::validate(links, &mapping)?;
-        let sender_ns = Namespace::new(&unique_ns_name(&format!("{test_name}_s")))?;
+        let sender_ns = Arc::new(Namespace::new(&unique_ns_name(&format!("{test_name}_s")))?);
         let receiver_ns = Namespace::new(&unique_ns_name(&format!("{test_name}_r")))?;
         let addresses = spec::addresses(links);
-        let links = links
-            .iter()
-            .zip(addresses)
-            .map(|(spec, address)| {
-                let carrier = match spec.carrier {
-                    CarrierMode::Direct => Carrier::Direct,
-                    CarrierMode::Nat => Carrier::Nat {
-                        ns: Namespace::new(&unique_ns_name("bg"))?,
-                        wan: unique_ns_name("bw"),
-                        receiver: unique_ns_name("br"),
-                    },
-                };
-                let sender = unique_ns_name("bs");
-                Ok(Link {
-                    qdisc: LinkQdisc::new(&sender_ns, &sender),
-                    sender,
-                    peer: unique_ns_name("bp"),
-                    address,
-                    carrier,
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let topo = Self {
+        let order = match &mapping {
+            MappingMode::BindMap { rows } => rows.iter().map(|row| row.iface_index).collect(),
+            MappingMode::None | MappingMode::LegacyControl => (0..links.len()).collect(),
+        };
+        let mut topo = Self {
             sender_ns,
             receiver_ns,
-            links,
+            links: Vec::new(),
+            specs: links.to_vec(),
+            order: RefCell::new(order),
+            priorities: None,
             publisher: BindMapPublisher::new()?,
             mapping,
             generation: Cell::new(1),
         };
         topo.wire()?;
-        for link in &topo.links {
-            link.qdisc.apply(&ImpairmentConfig::default())?;
+        for (spec, address) in links.iter().zip(addresses) {
+            topo.setup_link(
+                &crate::profile::LinkProfile {
+                    carrier: spec.carrier,
+                    base: ImpairmentConfig::default(),
+                },
+                address,
+            )?;
         }
         topo.publish()?;
         Ok(topo)
@@ -172,24 +170,11 @@ impl BondTopology {
 
     /// Append caller-selected scheduler/control arguments after the topology-owned positionals.
     pub fn sender_args(&self, ports: (u16, u16), extra: &[&str]) -> Result<Vec<String>> {
-        let ips = self.ips_path();
-        let mut args = vec![
-            ports.0.to_string(),
-            RECEIVER_IP.into(),
-            ports.1.to_string(),
-            ips.to_str().context("IP path is not UTF-8")?.into(),
-        ];
-        if let Some(sidecar) = self.sidecar_path() {
-            args.extend([
-                "--bind-map".into(),
-                sidecar
-                    .to_str()
-                    .context("sidecar path is not UTF-8")?
-                    .into(),
-            ]);
-        }
-        args.extend(extra.iter().map(|arg| (*arg).to_owned()));
-        Ok(args)
+        publication::launch_args(
+            ports,
+            (&self.ips_path(), self.sidecar_path().as_deref()),
+            extra,
+        )
     }
 
     /// Start only the sender; receiver/profile selection remains explicit at the stack layer.

@@ -60,9 +60,10 @@ fn measure(request: &mut Request, profile: &Profile, stack: &mut Stack) -> Resul
     let ramp_duration = Cell::new(Duration::ZERO);
     let source = &mut stack.source;
     let mut offered_rate = |bps| source.rate(bps, ramp_duration.get());
-    let mut runtime = BondRuntime::new(
+    let sender_ns = std::sync::Arc::clone(&stack.topo.sender_ns);
+    let mut runtime = BondRuntime::with_link_additions(
         &profile.timeline,
-        &stack.topo,
+        &mut stack.topo,
         ProcessEndpoints {
             sender: &mut stack.sender,
             receiver: &mut stack.receiver,
@@ -93,12 +94,13 @@ fn measure(request: &mut Request, profile: &Profile, stack: &mut Stack) -> Resul
     request.result.record.sender.effective_config = observed.cloned();
     check_config(requested.effective_config.as_ref(), observed)?;
     let pid = runtime.processes.sender.pid()?;
-    let gate = Mutex::new(());
-    let sampler = Sampler {
-        ns: &stack.topo.sender_ns,
-        ifaces: (0..stack.topo.link_count())
-            .map(|i| stack.topo.sender_iface(i).into())
+    let gate = Mutex::new(
+        (0..runtime.topology().link_count())
+            .map(|i| runtime.topology().sender_iface(i).to_owned())
             .collect(),
+    );
+    let sampler = Sampler {
+        ns: &sender_ns,
         stats_path: &stack.stats,
         clock,
         gate: &gate,
@@ -137,7 +139,7 @@ fn measure(request: &mut Request, profile: &Profile, stack: &mut Stack) -> Resul
             if matches!(event.action, Action::Replug) {
                 before_replug.push(sampler.sample()?);
             }
-            let _guard = gate.lock().expect("event sampling gate");
+            let mut ifaces = gate.lock().expect("event sampling gate");
             ramp_duration.set(
                 profile
                     .source_ramp
@@ -155,10 +157,20 @@ fn measure(request: &mut Request, profile: &Profile, stack: &mut Stack) -> Resul
                 }
                 _ => runtime.apply(event),
             };
+            applied?;
+            if matches!(event.action, Action::AddLink(_)) {
+                let iface = runtime
+                    .topology()
+                    .sender_iface(runtime.topology().link_count() - 1);
+                before_replug.push(
+                    sampler.new_link_baseline(iface, origin_ms.context("measurement origin")?)?,
+                );
+                ifaces.push(iface.to_owned());
+            }
             if event.at.is_zero() {
                 start_tx.send(()).context("start collector")?;
             }
-            applied
+            Ok(())
         });
         drop(start_tx);
         let edges = (|| -> Result<Edges> {

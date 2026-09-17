@@ -97,6 +97,8 @@ impl From<ReceiverInput> for Receiver {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Cell {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority_sidecar: Option<network_sim::bond::PrioritySidecar>,
     #[serde(default)]
     pub cell_id: String,
     #[serde(default = "covering_default")]

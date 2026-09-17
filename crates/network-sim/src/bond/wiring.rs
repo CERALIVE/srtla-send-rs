@@ -5,7 +5,7 @@ use super::{BondTopology, Carrier, RECEIVER_IP};
 
 impl BondTopology {
     pub(super) fn wire(&self) -> Result<()> {
-        for ns in [&self.sender_ns, &self.receiver_ns] {
+        for ns in [self.sender_ns.as_ref(), &self.receiver_ns] {
             for scope in ["all", "default"] {
                 relax(ns, scope)?;
             }
@@ -14,53 +14,55 @@ impl BondTopology {
             &self.receiver_ns,
             &format!("addr add {RECEIVER_IP}/32 dev lo"),
         )?;
-        for (index, link) in self.links.iter().enumerate() {
-            match &link.carrier {
-                Carrier::Direct => {}
-                Carrier::Nat { ns, wan, receiver } => {
-                    for scope in ["all", "default"] {
-                        relax(ns, scope)?;
-                    }
-                    let subnet = index + 1;
-                    ns.add_veth_link(
-                        &self.receiver_ns,
-                        wan,
-                        receiver,
-                        &format!("100.64.{subnet}.1/24"),
-                        &format!("100.64.{subnet}.2/24"),
-                    )?;
-                    relax(ns, wan)?;
-                    relax(&self.receiver_ns, receiver)?;
-                    ns.exec_checked("sysctl", &["-qw", "net.ipv4.ip_forward=1"])?;
-                    ip(
-                        ns,
-                        &format!("route replace {RECEIVER_IP} via 100.64.{subnet}.2 dev {wan}"),
-                    )?;
-                    ns.exec_checked(
-                        "iptables",
-                        &[
-                            "-t",
-                            "nat",
-                            "-A",
-                            "POSTROUTING",
-                            "-o",
-                            wan,
-                            "-j",
-                            "MASQUERADE",
-                        ],
-                    )?;
-                    ip(
-                        &self.receiver_ns,
-                        &format!(
-                            "route replace 100.64.{subnet}.0/24 dev {receiver} scope link src \
-                             {RECEIVER_IP}"
-                        ),
-                    )?;
-                }
-            }
-            self.wire_access(index, true)?;
-        }
         Ok(())
+    }
+
+    pub(super) fn wire_link(&self, index: usize) -> Result<()> {
+        let link = &self.links[index];
+        match &link.carrier {
+            Carrier::Direct => {}
+            Carrier::Nat { ns, wan, receiver } => {
+                for scope in ["all", "default"] {
+                    relax(ns, scope)?;
+                }
+                let subnet = index + 1;
+                ns.add_veth_link(
+                    &self.receiver_ns,
+                    wan,
+                    receiver,
+                    &format!("100.64.{subnet}.1/24"),
+                    &format!("100.64.{subnet}.2/24"),
+                )?;
+                relax(ns, wan)?;
+                relax(&self.receiver_ns, receiver)?;
+                ns.exec_checked("sysctl", &["-qw", "net.ipv4.ip_forward=1"])?;
+                ip(
+                    ns,
+                    &format!("route replace {RECEIVER_IP} via 100.64.{subnet}.2 dev {wan}"),
+                )?;
+                ns.exec_checked(
+                    "iptables",
+                    &[
+                        "-t",
+                        "nat",
+                        "-A",
+                        "POSTROUTING",
+                        "-o",
+                        wan,
+                        "-j",
+                        "MASQUERADE",
+                    ],
+                )?;
+                ip(
+                    &self.receiver_ns,
+                    &format!(
+                        "route replace 100.64.{subnet}.0/24 dev {receiver} scope link src \
+                         {RECEIVER_IP}"
+                    ),
+                )?;
+            }
+        }
+        self.wire_access(index, true)
     }
 
     pub(super) fn wire_access(&self, index: usize, install_rule: bool) -> Result<()> {

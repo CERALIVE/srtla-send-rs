@@ -6,14 +6,20 @@ impl Profile {
     /// Stable expansion, including restores to the state immediately before each onset.
     /// One-shot holds end at an explicit restore of the previous property value.
     pub fn expanded_events(&self) -> Result<Vec<TimedEvent>> {
-        ensure!(!self.links.is_empty(), "profile requires links");
+        ensure!(
+            !self.links.is_empty() && self.links.len() <= 253,
+            "profile requires 1..=253 links"
+        );
         for link in &self.links {
             super::qdisc::apply_commands("validation", &link.base)?;
         }
         let mut pending = Vec::new();
         let mut episode = 0;
         for event in &self.events {
-            self.validate_target(event)?;
+            ensure!(
+                event.link.is_some() == event.action.link_scoped(),
+                "action has incorrect link/global scope"
+            );
             match &event.action {
                 Action::Periodic {
                     every,
@@ -27,8 +33,8 @@ impl Profile {
                     );
                     ensure!(*until >= event.at, "periodic until precedes first onset");
                     ensure!(
-                        !matches!(**action, Action::Periodic { .. }),
-                        "nested periodic events are unsupported"
+                        !matches!(**action, Action::Periodic { .. } | Action::AddLink(_)),
+                        "nested periodic events and periodic AddLink are unsupported"
                     );
                     let mut at = event.at;
                     loop {
@@ -65,7 +71,8 @@ impl Profile {
                         }
                     }
                 }
-                Action::SetImpairment(_)
+                Action::AddLink(_)
+                | Action::SetImpairment(_)
                 | Action::DataBlackhole { .. }
                 | Action::LinkUp(_)
                 | Action::DefaultRoute(_)
@@ -76,13 +83,28 @@ impl Profile {
                 | Action::OfferedRate { .. } => pending.push((event.clone(), None)),
             }
         }
-        pending
-            .sort_by_key(|(event, marker)| (event.at, marker.is_none_or(|(_, restore)| !restore)));
+        pending.sort_by_key(|(event, marker)| {
+            (
+                event.at,
+                matches!(event.action, Action::AddLink(_)),
+                marker.is_none_or(|(_, restore)| !restore),
+            )
+        });
         let mut states = self.initial_states();
+        let mut link_count = self.links.len();
         let mut restores = vec![None; episode];
         let mut active: Vec<(Option<usize>, Action, usize)> = Vec::new();
         let mut events = Vec::with_capacity(pending.len());
         for (mut event, marker) in pending {
+            super::validation::validate_target(&event, link_count)?;
+            ensure!(
+                !matches!(event.action, Action::AddLink(_))
+                    || !active
+                        .iter()
+                        .any(|(_, action, _)| matches!(action, Action::SighupReorder(_))),
+                "AddLink overlaps periodic reorder hold"
+            );
+            super::observe_creation(&mut states, &mut link_count, &event)?;
             match marker {
                 Some((id, true)) => {
                     event.action = restores[id].take().context("missing periodic restore")?;
@@ -113,7 +135,9 @@ impl Profile {
             events.push(event);
         }
         let mut observed = self.initial_states();
+        let mut observed_links = self.links.len();
         for (i, event) in events.iter().enumerate() {
+            super::observe_creation(&mut observed, &mut observed_links, event)?;
             let prior = observed.iter().rev().find(|old| same_channel(old, event));
             let restored = prior
                 .filter(|old| old.action != event.action)
@@ -135,53 +159,6 @@ impl Profile {
         Ok(events)
     }
 
-    fn validate_target(&self, event: &TimedEvent) -> Result<()> {
-        ensure!(
-            event.link.is_some() == event.action.link_scoped(),
-            "action has incorrect link/global scope"
-        );
-        ensure!(
-            event.link.is_none_or(|i| i < self.links.len()),
-            "event link is out of range"
-        );
-        let action = match &event.action {
-            Action::Periodic { action, .. } => action.as_ref(),
-            action @ (Action::SetImpairment(_)
-            | Action::DataBlackhole { .. }
-            | Action::LinkUp(_)
-            | Action::DefaultRoute(_)
-            | Action::Replug
-            | Action::ReceiverRestart
-            | Action::SighupReorder(_)
-            | Action::CrossTraffic { .. }
-            | Action::OfferedRate { .. }) => action,
-        };
-        match action {
-            Action::SighupReorder(order) => {
-                let mut sorted = order.clone();
-                sorted.sort_unstable();
-                ensure!(
-                    sorted == (0..self.links.len()).collect::<Vec<_>>(),
-                    "reorder must be a complete permutation"
-                );
-            }
-            Action::SetImpairment(config) => {
-                super::qdisc::apply_commands("validation", config)?;
-            }
-            Action::CrossTraffic { mbit, on } => {
-                ensure!(!on || *mbit > 0, "cross-traffic requires positive mbit")
-            }
-            Action::DataBlackhole { .. }
-            | Action::LinkUp(_)
-            | Action::DefaultRoute(_)
-            | Action::Replug
-            | Action::ReceiverRestart
-            | Action::OfferedRate { .. }
-            | Action::Periodic { .. } => {}
-        }
-        Ok(())
-    }
-
     pub(crate) fn initial_states(&self) -> Vec<TimedEvent> {
         let mut states = vec![
             TimedEvent::new(
@@ -196,19 +173,11 @@ impl Profile {
             ),
         ];
         for (link, profile) in self.links.iter().enumerate() {
-            for action in [
-                Action::SetImpairment(profile.base.clone()),
-                Action::DataBlackhole { on: false },
-                Action::LinkUp(true),
-                Action::DefaultRoute(true),
-                Action::CrossTraffic { mbit: 0, on: false },
-            ] {
-                states.push(TimedEvent::new(
-                    std::time::Duration::ZERO,
-                    Some(link),
-                    action,
-                ));
-            }
+            states.extend(super::validation::link_states(
+                link,
+                profile,
+                std::time::Duration::ZERO,
+            ));
         }
         states
     }

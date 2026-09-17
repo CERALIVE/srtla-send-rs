@@ -27,9 +27,12 @@ pub fn evaluate(
     sink: &SinkSeries,
 ) -> Result<Vec<Episode>, MetricError> {
     let mut states = profile.initial_states();
+    let mut link_count = profile.links.len();
     let mut episodes = Vec::new();
     for (i, record) in log.entries.iter().enumerate() {
         let event = &record.event;
+        crate::profile::observe_creation(&mut states, &mut link_count, event)
+            .map_err(|error| MetricError::InvalidField(error.to_string()))?;
         let tracks_restore = match &event.action {
             Action::OfferedRate { .. } => {
                 states.push(event.clone());
@@ -45,7 +48,7 @@ pub fn evaluate(
             | Action::LinkUp(_)
             | Action::DefaultRoute(_)
             | Action::SighupReorder(_) => !event.horizon.is_zero(),
-            Action::Replug | Action::ReceiverRestart => false,
+            Action::AddLink(_) | Action::Replug | Action::ReceiverRestart => false,
             Action::CrossTraffic { on, .. } => *on,
         };
         let onset = i64::try_from(record.t_actual_ms).map_err(|_| MetricError::InvalidWindow)?;

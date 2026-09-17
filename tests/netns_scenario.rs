@@ -3,7 +3,17 @@
 //! Uses the random-walk scenario generator to apply evolving impairment
 //! over time and validates that srtla_send survives without crashing.
 
+#[path = "bench_support/add_link_smoke.rs"]
+mod add_link_smoke;
 mod common;
+
+#[test]
+fn add_link_mid_run_registers_and_carries() -> anyhow::Result<()> {
+    if common::skip_without_impairment_deps() {
+        return Ok(());
+    }
+    add_link_smoke::run(env!("CARGO_BIN_EXE_srtla_send"))
+}
 
 use std::thread;
 use std::thread::sleep;

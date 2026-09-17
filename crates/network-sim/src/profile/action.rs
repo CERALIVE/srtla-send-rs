@@ -9,13 +9,17 @@ impl Action {
             | Self::DefaultRoute(_)
             | Self::Replug
             | Self::CrossTraffic { .. } => true,
-            Self::ReceiverRestart | Self::SighupReorder(_) | Self::OfferedRate { .. } => false,
+            Self::AddLink(_)
+            | Self::ReceiverRestart
+            | Self::SighupReorder(_)
+            | Self::OfferedRate { .. } => false,
             Self::Periodic { action, .. } => action.link_scoped(),
         }
     }
 
     pub(crate) fn same_channel(&self, other: &Self) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
+        !matches!(self, Self::AddLink(_))
+            && std::mem::discriminant(self) == std::mem::discriminant(other)
     }
 
     pub(super) const fn reversible(&self) -> bool {
@@ -27,7 +31,9 @@ impl Action {
             | Self::CrossTraffic { .. }
             | Self::OfferedRate { .. }
             | Self::SighupReorder(_) => true,
-            Self::ReceiverRestart | Self::Replug | Self::Periodic { .. } => false,
+            Self::AddLink(_) | Self::ReceiverRestart | Self::Replug | Self::Periodic { .. } => {
+                false
+            }
         }
     }
 }

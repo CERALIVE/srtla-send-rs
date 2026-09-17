@@ -1,21 +1,13 @@
-use std::io::Write;
 use std::path::Path;
 
 use anyhow::{Context, Result, ensure};
-use sha2::{Digest, Sha256};
 
 use super::{BondTopology, MappingMode};
-use crate::twin::{BindMapPublisher, TwinRow};
+use crate::twin::TwinRow;
 
 impl BondTopology {
     pub(super) fn publish(&self) -> Result<()> {
-        let order = match &self.mapping {
-            MappingMode::BindMap { rows } => rows.iter().map(|r| r.iface_index).collect(),
-            MappingMode::None | MappingMode::LegacyControl => {
-                (0..self.link_count()).collect::<Vec<_>>()
-            }
-        };
-        self.publish_order(&order, self.generation.get())
+        self.publish_order(&self.order.borrow(), self.generation.get())
     }
 
     /// Order contains topology indices, not positions in the previously published file.
@@ -34,6 +26,7 @@ impl BondTopology {
             .context("bind-map generation overflow")?;
         self.publish_order(order, generation)?;
         self.generation.set(generation);
+        *self.order.borrow_mut() = order.to_vec();
         Ok(())
     }
 
@@ -58,68 +51,98 @@ impl BondTopology {
                 self.publisher.publish_bond_at(&rows, generation)
             }
             MappingMode::LegacyControl | MappingMode::None => {
-                let ips = order
-                    .iter()
-                    .map(|i| self.sender_ip(*i))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-                    + "\n";
-                atomic(&self.publisher.ips_path(), ips.as_bytes())
+                let ips = order.iter().map(|i| self.sender_ip(*i)).collect::<Vec<_>>();
+                self.publisher.publish_ips(&ips)
             }
         }
     }
 }
 
-impl BindMapPublisher {
-    // The twin API takes one repeated IP. Keep the heterogeneous-IP extension here
-    // so the frozen twin publication API and implementation need no restructuring.
-    fn publish_bond_at(&self, rows: &[(&str, TwinRow)], generation: u64) -> Result<()> {
-        let ips = rows
-            .iter()
-            .map(|(ip, _)| *ip)
-            .collect::<Vec<_>>()
-            .join("\n")
-            + "\n";
-        let digest: String = Sha256::digest(ips.as_bytes())
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
-        let links = rows
-            .iter()
-            .map(|(ip, row)| {
-                let priority = match row.priority {
-                    Some(value) => format!(r#","priority":{value}"#),
-                    None => String::new(),
-                };
-                // Configuration validation guarantees printable ASCII IDs; Debug escapes
-                // quotes/backslashes as JSON requires. IPs and interfaces are generated.
-                format!(
-                    r#"{{"link_id":{:?},"ip":{ip:?},"iface":{:?}{priority}}}"#,
-                    row.link_id, row.iface
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(",");
-        let sidecar = format!(
-            r#"{{"schema_version":1,"generation":{generation},"ips_file_sha256":"{digest}","links":[{links}]}}"#
-        );
-        atomic(&self.ips_path(), ips.as_bytes())?;
-        atomic(&self.sidecar_path(), sidecar.as_bytes())
+pub(super) fn launch_args(
+    ports: (u16, u16),
+    paths: (&Path, Option<&Path>),
+    extra: &[&str],
+) -> Result<Vec<String>> {
+    let mut args = vec![
+        ports.0.to_string(),
+        super::RECEIVER_IP.into(),
+        ports.1.to_string(),
+        paths.0.to_str().context("IP path is not UTF-8")?.into(),
+    ];
+    if let Some(sidecar) = paths.1 {
+        args.extend([
+            "--bind-map".into(),
+            sidecar
+                .to_str()
+                .context("sidecar path is not UTF-8")?
+                .into(),
+        ]);
     }
-}
-
-fn atomic(path: &Path, bytes: &[u8]) -> Result<()> {
-    let mut temp = tempfile::NamedTempFile::new_in(path.parent().context("publication parent")?)?;
-    temp.write_all(bytes)?;
-    temp.as_file().sync_all()?;
-    temp.persist(path)
-        .with_context(|| format!("publish {}", path.display()))?;
-    Ok(())
+    args.extend(extra.iter().map(|arg| (*arg).to_owned()));
+    Ok(args)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::twin::BindMapPublisher;
+
+    #[test]
+    fn legacy_publication_and_sender_args_stay_byte_identical() {
+        // Given: a cell with no sidecar policy.
+        let publisher = BindMapPublisher::new().unwrap();
+        // When: publishing the legacy IP list and composing its sender invocation.
+        publisher.publish_ips(&["10.10.1.1", "10.30.2.1"]).unwrap();
+        let args = launch_args(
+            (5555, 5000),
+            (Path::new("ips.txt"), None),
+            &["--mode", "classic"],
+        )
+        .unwrap();
+        // Then: exact legacy bytes/args and no sidecar artifact.
+        assert_eq!(
+            std::fs::read(publisher.ips_path()).unwrap(),
+            b"10.10.1.1\n10.30.2.1\n"
+        );
+        assert!(!publisher.sidecar_path().exists());
+        assert_eq!(
+            args,
+            ["5555", "10.99.0.1", "5000", "ips.txt", "--mode", "classic"]
+        );
+    }
+
+    #[test]
+    fn priority_sidecar_pins_valid_row_bytes_and_sender_flag() {
+        // Given: one prioritized link and an omitted priority on the other.
+        let publisher = BindMapPublisher::new().unwrap();
+        let rows = [
+            ("10.30.2.1", TwinRow::with_priority("link-1", "bs1", 0.2)),
+            ("10.10.1.1", TwinRow::new("link-0", "bs0")),
+        ];
+        // When: publishing through the shared twin writer.
+        publisher.publish_bond_at(&rows, 7).unwrap();
+        let args = launch_args(
+            (5555, 5000),
+            (Path::new("ips.txt"), Some(Path::new("map.json"))),
+            &["--mode", "classic"],
+        )
+        .unwrap();
+        // Then: optional priority is pinned byte-for-byte and the sidecar flag precedes extras.
+        assert_eq!(std::fs::read(publisher.sidecar_path()).unwrap(), br#"{"schema_version":1,"generation":7,"ips_file_sha256":"91fdc0764c18854ed9e217c3b337bfd63b3da2df65bfbb540d7a66e4e7cc70c3","links":[{"link_id":"link-1","ip":"10.30.2.1","iface":"bs1","priority":0.2},{"link_id":"link-0","ip":"10.10.1.1","iface":"bs0"}]}"#);
+        assert_eq!(
+            args,
+            [
+                "5555",
+                "10.99.0.1",
+                "5000",
+                "ips.txt",
+                "--bind-map",
+                "map.json",
+                "--mode",
+                "classic"
+            ]
+        );
+    }
 
     #[test]
     fn bond_publication_preserves_distinct_ip_order_and_priority() {

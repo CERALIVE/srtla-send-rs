@@ -17,10 +17,9 @@ use super::record::{RunFailure, check_config};
 
 pub struct Sampler<'a> {
     pub ns: &'a Namespace,
-    pub ifaces: Vec<String>,
     pub stats_path: &'a Path,
     pub clock: &'a Clock,
-    pub gate: &'a Mutex<()>,
+    pub gate: &'a Mutex<Vec<String>>,
 }
 
 pub struct Sample {
@@ -30,15 +29,25 @@ pub struct Sample {
 
 impl Sampler<'_> {
     pub fn sample(&self) -> Result<Sample> {
-        let _guard = self.gate.lock().expect("sampling gate");
+        let ifaces = self.gate.lock().expect("sampling gate");
         let t = self.clock.now_ms();
         Ok(Sample {
-            links: self
-                .ifaces
+            links: ifaces
                 .iter()
                 .map(|iface| link_counters::sample(Some(self.ns), iface, t))
                 .collect::<Result<_>>()?,
             stats: StatsFileSample::sample(self.stats_path, t)?,
+        })
+    }
+
+    pub fn new_link_baseline(&self, iface: &str, origin_ms: i64) -> Result<Sample> {
+        let mut birth = link_counters::sample(Some(self.ns), iface, origin_ms)?;
+        // AddLink creates this netdev after measurement start: its pre-birth counters are exactly zero.
+        birth.tx_bytes = 0;
+        birth.tx_packets = 0;
+        Ok(Sample {
+            links: vec![birth],
+            stats: None,
         })
     }
 

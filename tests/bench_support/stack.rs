@@ -58,7 +58,10 @@ impl Stack {
                 shared_ip_with: None,
             })
             .collect();
-        let topo = BondTopology::new("bench", &links, MappingMode::None)?;
+        let mut topo = BondTopology::new("bench", &links, MappingMode::None)?;
+        if let Some(priorities) = &cell.priority_sidecar {
+            topo.set_priority_sidecar(priorities.clone())?;
+        }
         for (i, link) in profile.timeline.links.iter().enumerate() {
             topo.apply_impairment(i, &link.base)?;
         }

@@ -6,11 +6,13 @@ pub mod qdisc;
 mod runtime;
 mod scheduler;
 pub mod traffic;
+mod validation;
 use std::time::Duration;
 
 use anyhow::{Result, ensure};
 pub use runtime::{BondRuntime, ProcessEndpoints};
 pub use scheduler::{EventLog, EventRecord, Scheduler};
+pub(crate) use validation::observe_creation;
 
 use crate::bond::CarrierMode;
 use crate::{ImpairmentConfig, Scenario, ScenarioConfig};
@@ -22,7 +24,7 @@ pub struct Profile {
     pub duration: Duration,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct LinkProfile {
     pub base: ImpairmentConfig,
     pub carrier: CarrierMode,
@@ -39,6 +41,7 @@ pub struct TimedEvent {
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Action {
+    AddLink(LinkProfile),
     SetImpairment(ImpairmentConfig),
     DataBlackhole {
         on: bool,
@@ -69,7 +72,8 @@ impl TimedEvent {
         let horizon = match &action {
             Action::Periodic { .. } => Duration::from_secs(5),
             Action::OfferedRate { .. } | Action::CrossTraffic { .. } => Duration::ZERO,
-            Action::SetImpairment(_)
+            Action::AddLink(_)
+            | Action::SetImpairment(_)
             | Action::DataBlackhole { .. }
             | Action::LinkUp(_)
             | Action::DefaultRoute(_)
