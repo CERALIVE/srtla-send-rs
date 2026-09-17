@@ -154,6 +154,10 @@ fn status_result(config: &DynamicConfig, stats: &SharedStats) -> Value {
 }
 
 #[cfg(test)]
+#[path = "scheduler_serialization_tests.rs"]
+mod scheduler_serialization_tests;
+
+#[cfg(test)]
 mod negotiated_latency_tests {
     use super::*;
 
@@ -185,6 +189,8 @@ mod negotiated_latency_tests {
         let conn = crate::test_helpers::create_test_connection().await;
         stats.update(&[conn], &DynamicConfig::new().snapshot());
         let mut snapshot = stats.get();
+        assert_eq!(link_identities(&snapshot)[0]["health"], "down");
+        snapshot.links[0].health = None;
         assert!(link_identities(&snapshot)[0].get("health").is_none());
         assert!(link_identities(&snapshot)[0].get("priority").is_none());
         snapshot.links[0].health = Some("healthy");

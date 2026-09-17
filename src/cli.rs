@@ -94,7 +94,7 @@ pub struct Cli {
     /// adaptive (experimental in 3.4.0: self-tuning health-gated scheduler)
     #[arg(long = "mode", value_enum, default_value = "enhanced")]
     pub mode: SchedulingMode,
-    /// Disable quality scoring (enhanced/rtt-threshold only)
+    /// Disable the shared quality multiplier in every scheduling mode
     #[arg(long = "no-quality")]
     pub no_quality: bool,
     /// Enable connection exploration (enhanced only)
@@ -103,23 +103,21 @@ pub struct Cli {
     /// RTT delta threshold in ms (rtt-threshold only, links within min_rtt + delta are "fast")
     #[arg(long = "rtt-delta-ms", default_value = "30")]
     pub rtt_delta_ms: u32,
-    /// [EXPERIMENTAL] Gate broadcast-ACK window growth to the earning link, with
-    /// rate-limited probe growth for the rest (default OFF; unvalidated on hardware)
+    /// [EXPERIMENTAL, retired] Accepted for compatibility; shared arrival-scoped
+    /// ACK handling always applies and this flag is ignored
     #[arg(long = "earned-ack-window")]
     pub earned_ack_window: bool,
-    /// [EXPERIMENTAL] Deselect a stalled link (high in-flight + no earned ACK/RTT
-    /// sample) so healthy links carry traffic, re-probing so a recovered link
-    /// re-enters (default OFF; unvalidated on hardware)
+    /// [EXPERIMENTAL, retired] Accepted and ignored (one warning); shared health
+    /// admission replaces the old stall mask in every mode
     #[arg(long = "stall-deselect")]
     pub stall_deselect: bool,
-    /// [EXPERIMENTAL] In-flight threshold that marks a link stall-eligible for
-    /// --stall-deselect
+    /// [EXPERIMENTAL, retired] Ignored compatibility setting for --stall-deselect
     #[arg(long = "stall-min-in-flight", default_value_t = config::STALL_MIN_IN_FLIGHT_PACKETS)]
     pub stall_min_in_flight: i32,
-    /// [EXPERIMENTAL] Earned-ACK/RTT staleness window in ms for --stall-deselect
+    /// [EXPERIMENTAL, retired] Ignored compatibility setting for --stall-deselect
     #[arg(long = "stall-ack-stale-ms", default_value_t = config::STALL_ACK_STALE_MS)]
     pub stall_ack_stale_ms: u64,
-    /// [EXPERIMENTAL] Re-probe interval in ms for --stall-deselect
+    /// [EXPERIMENTAL, retired] Ignored compatibility setting for --stall-deselect
     #[arg(long = "stall-reprobe-ms", default_value_t = config::STALL_REPROBE_INTERVAL_MS)]
     pub stall_reprobe_ms: u64,
 }

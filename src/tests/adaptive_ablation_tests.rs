@@ -80,13 +80,14 @@ fn drive(
     state: &mut AdaptiveState,
     start_ms: u64,
     picks: usize,
+    cfg: &crate::config::ConfigSnapshot,
 ) -> String {
     let mut outstanding: VecDeque<usize> = VecDeque::new();
     let mut trace = String::new();
     let (mut last, mut switched) = (None, 0);
     for step in 0..picks {
         let now = start_ms + u64::try_from(step).expect("small") * 5;
-        let selected = adaptive::select(conns, last, switched, now, &config(), state)
+        let selected = adaptive::select(conns, last, switched, now, cfg, state)
             .expect("a connected pool always yields a link");
         if last != Some(selected) {
             switched = now;
@@ -109,8 +110,11 @@ async fn ablation_trace(features: AdaptiveFeatures) -> String {
     let clock = TestClock::new(10_000);
     let mut conns = ablation_pool(&clock).await;
     let mut state = AdaptiveState::default();
-    state.features = features;
-    let mut trace = drive(&mut conns, &mut state, CLOCK_MS, RANKED_PICKS);
+    let cfg = crate::config::ConfigSnapshot {
+        features,
+        ..config()
+    };
+    let mut trace = drive(&mut conns, &mut state, CLOCK_MS, RANKED_PICKS, &cfg);
     // Nothing is admitted once every link is stalled, which is the only state in
     // which the sole-carrier election runs at all.
     for conn in conns.iter_mut() {
@@ -121,6 +125,7 @@ async fn ablation_trace(features: AdaptiveFeatures) -> String {
         &mut state,
         CLOCK_MS + 1000,
         STALLED_PICKS,
+        &cfg,
     ));
     trace
 }

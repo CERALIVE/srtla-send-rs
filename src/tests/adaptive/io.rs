@@ -106,8 +106,11 @@ async fn scenario_d_stall_ablation_selects_the_stalled_link() {
     conns[0].window = 20_000;
     conns[1].window = 100;
     let mut state = AdaptiveState::default();
-    state.features = AdaptiveFeatures::ALL - AdaptiveFeatures::STALL;
+    let features = AdaptiveFeatures::ALL - AdaptiveFeatures::STALL;
     // When the stall detector is ablated, then it really re-enters ranking.
-    assert_eq!(pick(&mut conns, &mut state, 14_000), 0);
+    assert_eq!(
+        pick_with_features(&mut conns, &mut state, 14_000, features),
+        0
+    );
     assert!(state.targets.iter().all(|t| !t.eligible()));
 }

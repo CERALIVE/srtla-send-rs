@@ -24,11 +24,8 @@ async fn scheduler_observations_follow_mode_and_effective_priority() {
             },
         );
         let links = stats.get().links;
-        // Then health is adaptive-only, but configured priority is echoed even when inactive.
-        assert_eq!(
-            links[0].health,
-            matches!(mode, SchedulingMode::Adaptive).then_some("down")
-        );
+        // Then every mode reports health and preserves the effective priority.
+        assert_eq!(links[0].health, Some("down"));
         assert_eq!(links[0].priority, Some(0.2));
         assert_eq!(links[1].priority, None);
     }
@@ -82,6 +79,7 @@ fn test_shared_stats_new() {
 fn test_shared_stats_empty_update() {
     let stats = SharedStats::new();
     let config = ConfigSnapshot {
+        features: Default::default(),
         mode: SchedulingMode::Enhanced,
         quality_enabled: true,
         exploration_enabled: false,
@@ -180,6 +178,7 @@ fn empty_update_reports_zero_session_bytes() {
 
 fn test_config() -> ConfigSnapshot {
     ConfigSnapshot {
+        features: Default::default(),
         mode: SchedulingMode::Enhanced,
         quality_enabled: true,
         exploration_enabled: false,

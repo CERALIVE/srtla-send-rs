@@ -68,7 +68,10 @@ pub(crate) fn log_connection_status(
     info!("  Mode: {}", snap.mode);
     match snap.mode {
         crate::mode::SchedulingMode::Classic => {
-            info!("    (quality/exploration/rtt-delta not applicable)");
+            info!(
+                "    Capacity ranking; shared quality: {}",
+                snap.effective_quality_enabled()
+            );
         }
         crate::mode::SchedulingMode::Enhanced => {
             info!(
@@ -152,7 +155,7 @@ pub(crate) fn log_connection_status(
             conn.current_bitrate_mbps()
         );
 
-        if matches!(snap.mode, crate::mode::SchedulingMode::Adaptive) {
+        {
             info!(
                 "        health={} pref={:.2} cap={:.0}",
                 conn.health.state().as_str(),

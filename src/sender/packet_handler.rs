@@ -12,14 +12,12 @@ use tracing::{debug, warn};
 pub(crate) use super::ack::apply_srtla_ack;
 use super::ack::apply_srtla_ack_frame;
 pub(crate) use super::ack::{AckContext, AckPolicy};
-use super::selection::adaptive::AdaptiveState;
-use super::selection::{EdpfSchedulerState, select_connection_idx_with_state};
+use super::selection::{EdpfSchedulerState, SchedulerShared, select_connection_idx_with_state};
 use super::sequence::SequenceTracker;
 use super::uplink::UplinkPacket;
 use crate::config::ConfigSnapshot;
 use crate::connection::probe::ProbeOpportunity;
 use crate::connection::{SrtlaConnection, SrtlaIncoming};
-use crate::mode::SchedulingMode;
 use crate::protocol;
 use crate::registration::SrtlaRegistrationManager;
 use crate::stats::SharedStats;
@@ -77,12 +75,14 @@ pub async fn process_connection_events_at(
     // collision, or sent by a link that has since gone — yields no sample on any
     // link rather than a guess.
     for ack in incoming.ack_numbers.iter() {
+        #[cfg(test)]
         let owner = seq_tracker.get(*ack, current_time_ms);
         for c in connections.iter_mut() {
             // SRT cumulative ACKs name the next expected sequence and may return
             // on another uplink. Adaptive path timing uses link-specific ACKs instead.
             let owns_acked_seq = match context.policy {
                 AckPolicy::Adaptive => false,
+                #[cfg(test)]
                 AckPolicy::Legacy { .. } => owner == Some(c.conn_id),
             };
             c.handle_srt_ack(*ack as i32, current_time_ms, owns_acked_seq);
@@ -107,6 +107,7 @@ pub async fn process_connection_events_at(
                     continue;
                 }
             }
+            #[cfg(test)]
             AckPolicy::Legacy { .. } => {}
         }
         // Deliberately not the per-connection nak_count: that one is reset by
@@ -315,7 +316,7 @@ pub async fn handle_srt_packet(
     registration_complete: bool,
     config_snap: &ConfigSnapshot,
     edpf_state: &mut EdpfSchedulerState,
-    adaptive_state: &mut AdaptiveState,
+    adaptive_state: &mut SchedulerShared,
 ) -> SrtPacketOutcome {
     match res {
         Ok((n, src)) => {
@@ -379,7 +380,7 @@ pub async fn handle_srt_packet(
                     packet_time_ms,
                 )
                 .await;
-                if matches!(config_snap.mode, SchedulingMode::Adaptive) {
+                {
                     let offer = ProbeOpportunity {
                         primary_conn_id: connections[sel_idx].conn_id,
                         packet: pkt,

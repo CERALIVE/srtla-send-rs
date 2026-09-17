@@ -1,5 +1,5 @@
 use super::*;
-use crate::test_helpers::create_test_connections;
+use crate::test_helpers::create_selection_test_connections as create_test_connections;
 use crate::utils::now_ms;
 
 #[test]
@@ -16,6 +16,7 @@ fn test_select_connection_idx_classic() {
     let current_time_ms = last_switch_time_ms + 100; // Within cooldown
 
     let config = ConfigSnapshot {
+        features: Default::default(),
         mode: SchedulingMode::Classic,
         quality_enabled: false,
         exploration_enabled: false,
@@ -47,6 +48,7 @@ fn test_select_connection_idx_classic() {
 fn test_select_connection_idx_empty() {
     let mut conns: Vec<SrtlaConnection> = vec![];
     let config = ConfigSnapshot {
+        features: Default::default(),
         mode: SchedulingMode::Enhanced,
         quality_enabled: false,
         exploration_enabled: false,
@@ -78,6 +80,7 @@ fn edpf_pipeline_mutates_caller_owned_state() {
     }
 
     let config = ConfigSnapshot {
+        features: Default::default(),
         mode: SchedulingMode::Edpf,
         quality_enabled: false,
         exploration_enabled: false,
@@ -109,6 +112,7 @@ fn edpf_two_states_are_independent() {
     }
 
     let config = ConfigSnapshot {
+        features: Default::default(),
         mode: SchedulingMode::Edpf,
         quality_enabled: false,
         exploration_enabled: false,

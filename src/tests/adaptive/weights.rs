@@ -146,10 +146,19 @@ async fn feature_ablation_changes_the_published_admission_too() {
     conns[1].window = 1;
     let stats = SharedStats::new();
     let mut state = AdaptiveState::new(stats.clone());
-    state.features = AdaptiveFeatures::ALL - AdaptiveFeatures::STALL;
+    let features = AdaptiveFeatures::ALL - AdaptiveFeatures::STALL;
     // When the same configured pipeline publishes and selects.
-    state.update_stats(&mut conns, &adaptive_config());
+    state.update_stats(
+        &mut conns,
+        &ConfigSnapshot {
+            features,
+            ..adaptive_config()
+        },
+    );
     // Then stats does not independently veto based on the raw health enum.
     assert!(stats.get().links[0].effective_multiplier > 0.0);
-    assert_eq!(pick(&mut conns, &mut state, 10_000), 0);
+    assert_eq!(
+        pick_with_features(&mut conns, &mut state, 10_000, features),
+        0
+    );
 }

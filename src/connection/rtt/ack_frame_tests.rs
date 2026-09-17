@@ -208,7 +208,7 @@ async fn coalesced_ack_probe_only_frame_never_samples_original_rtt() {
 }
 
 #[tokio::test]
-async fn coalesced_ack_preserves_legacy_per_sequence_rtt_sampling() {
+async fn coalesced_ack_uses_final_entry_rtt_in_enhanced_too() {
     // Given the same staggered traffic under the established enhanced mode.
     let clock = TestClock::new(1000);
     let mut conns = [staggered_originals(&clock).await];
@@ -219,7 +219,7 @@ async fn coalesced_ack_preserves_legacy_per_sequence_rtt_sampling() {
         SchedulingMode::Enhanced,
     )
     .await;
-    // Then the frozen legacy path still samples all ten congestion-log entries.
-    assert_eq!(conns[0].rtt.rtt_sample_filter.len(), 10);
+    // Then shared ACK policy samples only the final receiver-order original.
+    assert_eq!(conns[0].rtt.rtt_sample_filter.len(), 1);
     assert_eq!(conns[0].in_flight_packets, 0);
 }

@@ -13,11 +13,12 @@ fn adaptive_features_are_a_complete_bitset() {
         AdaptiveFeatures::SOLE,
         AdaptiveFeatures::PREF,
         AdaptiveFeatures::RATECAP,
+        AdaptiveFeatures::QUALITY,
     ];
     assert_eq!(AdaptiveFeatures::default(), AdaptiveFeatures::ALL);
     assert_eq!(
         bits.into_iter().fold(0, |value, bit| value | bit.bits()),
-        u8::MAX
+        511_u16
     );
     for bit in bits {
         assert!(!(AdaptiveFeatures::ALL - bit).contains(bit));

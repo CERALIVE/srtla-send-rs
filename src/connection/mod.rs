@@ -189,6 +189,7 @@ pub struct SrtlaConnection {
     /// deselected stalled link back into selection once per `stall_reprobe_ms` so
     /// a recovered link re-enters. `0` = eligible for an immediate probe. Inert
     /// while `stall_deselect` is off (default).
+    #[cfg(test)]
     pub(crate) last_stall_reprobe_ms: u64,
     /// `now_ms()` of the last emitted NAK-truncation warning for this link.
     /// A receiver under heavy loss can NAK-truncate on every frame, so the warn
@@ -284,6 +285,7 @@ impl SrtlaConnection {
             keepalive_liveness: keepalive::KeepaliveLiveness::default(),
             last_probe_growth_ms: 0,
             last_ack_or_rtt_sample_ms: 0,
+            #[cfg(test)]
             last_stall_reprobe_ms: 0,
             last_trunc_warn_ms: 0,
             rtt: RttTracker::default(),
@@ -338,6 +340,7 @@ impl SrtlaConnection {
     /// penalty input ONLY — it is NOT a liveness check and never affects
     /// `is_timed_out()` / re-registration / CONN_TIMEOUT.
     #[inline]
+    #[cfg(test)]
     pub(crate) fn is_stall_penalized(
         &self,
         now_ms: u64,

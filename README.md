@@ -36,7 +36,39 @@ default-on receiver re-home plus automatic `4.0.1` bump were not imported. See
 
 ### Scheduling Modes
 
-The sender supports four established scheduling modes and an experimental adaptive pipeline:
+All five modes now share health/deadline admission, quality × rejoin ramp ×
+Healthy-only priority × soft rate-cap weighting, and paced duplicate probes.
+Modes choose the ranking formula, not which health signals exist. This is the
+deliberate pre-campaign Todo-32 behavior change; it is not a hardware-performance
+acceptance. Historical experiment reports below describe their then-current code.
+
+The shared `SchedulerFeatures` defaults are all ON; `--no-quality` gates QUALITY
+in every mode. Internal bits are never serialized on the public control/telemetry
+surfaces. Test-build `SRTLA_ADAPTIVE_FEATURES` and `SRTLA_ADAPTIVE_TUNING` keep their
+names, with `quality` added to the feature token list.
+
+**Todo-32 verification boundary:** clean pre-lift `3772598` reproduces the two
+privileged adaptive failures: marginal demotion42/61 snapshots versus51/61 and40/61
+after the lift, and twins losing sustained Healthy after full-rate restoration in
+both versions. The owner accepted the refactor with these pre-existing issues
+documented; neither assertion was relaxed. Build/Clippy/formatting and library
+gates pass; the full feature suites remain red at those tests. The independent
+privileged EDPF test passes. See AGENTS.md, “Todo32 gate disposition”; this is not
+a throughput acceptance or evidence that the existing adaptive issues are fixed.
+
+With all normal candidates held, the unchanged sole-carrier election runs before
+the connected-only base-score fallback. Down-but-connected links remain usable in
+that final escape; no connected pool is stranded. Held links publish zero weight,
+and a zero-total snapshot never invents equal shares. Probe pacing and target state
+are owned by the send loop's `SchedulerShared`, independent of mode.
+
+**Unified ACK policy:** Classic, Enhanced, RTT-threshold and EDPF now use the same
+arrival-link/generation-fenced delivery accounting as Adaptive. They no longer
+scan other links for an SRTLA ACK or grow every link's window on a broadcast ACK.
+Only the last unambiguous original in an ACK frame supplies RTT; cumulative SRT ACKs
+still prune but never measure RTT. Probe ACKs supply health evidence without original
+rate/window credit, and probe-only NAKs are excluded. The normal `handle_nak` penalty
+is unchanged. Classic now receives the existing time-based window recovery too.
 
 #### Enhanced Mode (Default)
 
@@ -50,8 +82,8 @@ The sender supports four established scheduling modes and an experimental adapti
 
 #### Classic Mode
 
-- Exact match to original `srtla_send.c` implementation
-- Pure capacity-based selection without quality awareness
+- Capacity argmax after shared admission and weighting; no cooldown or exploration
+- No longer an exact C-sender behavior mode; quality/health/preferences apply
 - Enable via `--mode classic`
 
 #### RTT-Threshold Mode
@@ -75,7 +107,7 @@ Earliest Delivery Path First. Instead of scoring links by capacity or RTT group,
 The scheduler state (BLEST + IoDS) is owned per send-loop (no thread-local), so selection is deterministic and allocation-free on the hot path.
 
 - **Enable via**: `--mode edpf`
-- **Tradeoffs**: minimizes end-to-end reordering and latency on heterogeneous links by modeling delivery time directly, at the cost of more per-packet computation than capacity-only Classic mode. Quality scoring and exploration do not apply.
+- **Tradeoffs**: models delivery time at greater computation cost than Classic. The shared multiplier replaces the old quality-cache input inside effective capacity, preserving its clamp, bootstrap and velocity/BDP terms. Exploration does not apply.
 - **Use Case**: Bonding links with differing bandwidth *and* latency where keeping the SRT stream in order with minimal added delay matters more than raw capacity packing.
 
 #### Adaptive Mode [PARTIAL]
@@ -154,7 +186,7 @@ or hardware improvement is claimed. See the [round-8 findings](docs/notes/adapti
 admitted links by the existing queued-load score and cached quality, multiplied by
 rejoin ramp, Healthy-only preference, and the delivered-rate controller's soft cap.
 Its 15ms switch cooldown and 10% hysteresis cannot retain a link outside admission.
-`--stall-deselect` is deliberately a **no-op** here: adaptive owns stall handling.
+`--stall-deselect` is a **no-op in every mode**: shared admission owns stall handling.
 
 The deadline budget is the last observed negotiated receiver latency, or 500ms when
 unknown. A link is held when `sRTT/2 + queue_delay > 0.5 × budget`; release needs
@@ -192,7 +224,7 @@ Wire-marked retransmissions and repeated outstanding sequences still prove DATA
 delivery, but are excluded from adaptive RTT sampling because the ACK cannot identify
 which copy it acknowledges (Karn ambiguity). Eligible samples use kernel-acceptance
 timestamps even when cumulative pruning already removed congestion-log entries.
-Legacy RTT behaviour is unchanged. Pending probe trains no longer erase preceding
+Todo 32 applies this RTT policy to every mode. Pending probe trains no longer erase preceding
 successful rounds, and qualified soft recovery starts a fresh normal-loss epoch
 instead of blending the previous outage into the first recovered cohort.
 Stalled links can also qualify recovery from original DATA: two ten-packet groups
@@ -874,13 +906,13 @@ The four established scheduling modes and legacy invocation output remain unchan
 Run `cargo test --lib bind_map`, `cargo test --lib preference`,
 `cargo test --lib link_identity`, and `cargo test --test bind_map_contract`.
 
-### Pure link-health policy (not yet integrated)
+### Link-health policy (integrated into shared admission)
 
 `src/connection/health.rs` provides `HealthState`, `HealthSignals`, `HealthConstants`,
 `HealthMachine::step`, and `Transition { from, to, at_ms }`. It is an isolated,
 allocation-free policy module: all evidence and timestamps are passed in; it does not
-read clocks or perform I/O. Adaptive selection now reads a connection-owned machine,
-but housekeeping transitions and lifecycle reset integration remain separate work.
+read clocks or perform I/O. Shared selection reads the connection-owned machine;
+housekeeping transitions and lifecycle resets are integrated.
 
 Hard failures enter Down; restored connections enter Rejoining rather than skipping
 the ramp. The DATA-stall condition requires both 32 attempts without DATA proof and
@@ -939,7 +971,7 @@ Run `cargo test --lib health`. The table/property tests cover all edges, thresho
 gaps, stale-loss probe recovery, feasible cadence, and repeated relapse. These are
 pure policy tests, not evidence of a live obstruction fix or hardware performance.
 
-### DATA delivery evidence (health integration pending)
+### DATA delivery evidence (integrated)
 
 Each connection owns an independent `DeliveryLedger` (`src/connection/delivery.rs`).
 Only kernel-accepted DATA enters it: `SrtlaConnection::flush_batch`, implemented in
@@ -973,7 +1005,7 @@ preserved legacy predicate control is **not stalled**. Adaptive tests additional
 drive exclusion, actual duplicate probes, and Rejoining selection on that fixture.
 Housekeeping wiring remains separate; no real bonded-hardware improvement is claimed.
 
-### Loss and queue evidence (health integration pending)
+### Loss and queue evidence (integrated)
 
 Each connection now tracks normal-DATA loss in 1000ms cohorts. Only kernel-accepted
 sends count as load; only unique NAK hits in that link's normal packet log count as
@@ -1044,7 +1076,7 @@ not authenticated and has no stream/socket-generation freshness guarantee.
 
 `SharedStats::negotiated_latency_ms() -> Option<u32>` reads a shared atomic directly,
 without snapshot locks, configuration reads or awaiting housekeeping. This is
-the observation consumed by the adaptive deadline gate; other modes ignore it.
+the observation consumed by the shared deadline gate in every mode.
 The frozen stats-file telemetry shape and TypeScript bindings are unchanged.
 
 Run `cargo test --lib srt_handshake`, `cargo test --lib packet_io`, and
@@ -1077,7 +1109,7 @@ only in the **arrival link's** probe log and original ledger. An ACK arriving on
 cannot consume B's probe or vice versa, even with the same sequence and either
 arrival order. Replayed/expired probe ACKs cannot fall back to another link's
 original. Probe proof refreshes health only: no window growth or original delivered
-bitrate credit. All four existing modes retain their legacy attribution and growth.
+bitrate credit. Todo 32 applies this attribution and growth policy to every mode.
 
 Accepted probe bytes count in `bytes_sent_total` and `bitrate_bps` because duplicate
 DATA costs wire capacity too; their unsent suffixes do not count. `probes_sent` is
@@ -1087,12 +1119,12 @@ then the separate unchanged `cargo test --lib ack_rtt` and `cargo test --lib bat
 suites. Coverage uses real loopback UDP and deterministic clocks, not bonded-hardware
 performance measurements.
 
-### Delivered-rate controller (housekeeping integration pending)
+### Delivered-rate controller (integrated)
 
 `src/connection/rate_cap.rs` is a pure per-link controller designed against the
 [audited congestion-controller defects](docs/notes/strata-port-evaluation.md).
-Adaptive ranking now reads its soft-cap multiplier from the connection-owned controller;
-the one-second housekeeping `tick` and lifecycle resets remain pending.
+Every mode reads its soft-cap multiplier from the connection-owned controller;
+the one-second housekeeping `tick` and lifecycle resets are integrated.
 Existing enhanced-mode time-based window recovery is unchanged and independent.
 
 Each future one-second housekeeping tick reads the link's `DeliveryLedger` directly:
@@ -1171,18 +1203,18 @@ srtla_send [OPTIONS] SRT_LISTEN_PORT SRTLA_HOST SRTLA_PORT BIND_IPS_FILE
 
 - `--verbose`: Enable verbose (debug-level) logging
 - `--dry-run`: Validate the IP list and resolve the receiver, print them, then exit without binding any socket (non-zero exit if the IP list is unusable)
-- `--mode <MODE>`: Scheduling mode: `classic`, `enhanced` (default), `rtt-threshold`, `edpf`, `adaptive` (experimental; lifecycle integration pending)
-- `--no-quality`: Disable quality scoring (enhanced/rtt-threshold/adaptive)
+- `--mode <MODE>`: Ranking mode: `classic`, `enhanced` (default), `rtt-threshold`, `edpf`, `adaptive`; shared admission applies to all five
+- `--no-quality`: Disable the shared quality multiplier in every mode
 - `--exploration`: Enable connection exploration (enhanced only)
 - `--rtt-delta-ms <N>`: RTT delta threshold in ms (default: 30, rtt-threshold only)
 - `--control-socket <PATH>`: Unix domain socket path for remote control (e.g., `/tmp/srtla.sock`)
 - `--stats-file <PATH>`: Write per-uplink telemetry JSON to `<PATH>` (opt-in; see [Telemetry](#telemetry))
 - `--stats-file-interval <MS>`: Telemetry write cadence in milliseconds (default: 1000)
-- `--earned-ack-window`: `[EXPERIMENTAL]` gate broadcast-ACK window growth to the earning link, with rate-limited probe growth for the rest. Default OFF (see [Experimental scheduler-hardening flags](#experimental-scheduler-hardening-flags))
-- `--stall-deselect`: `[EXPERIMENTAL]` deselect a stalled link (high in-flight with no earned ACK/RTT sample) so healthy links carry traffic, re-probing so a recovered link re-enters. Default OFF (see [Experimental scheduler-hardening flags](#experimental-scheduler-hardening-flags))
-- `--stall-min-in-flight <N>`: `[EXPERIMENTAL]` in-flight threshold that marks a link stall-eligible for `--stall-deselect` (default: 32)
-- `--stall-ack-stale-ms <MS>`: `[EXPERIMENTAL]` earned-ACK/RTT staleness window in ms for `--stall-deselect` (default: 3000)
-- `--stall-reprobe-ms <MS>`: `[EXPERIMENTAL]` re-probe interval in ms for `--stall-deselect` (default: 1000)
+- `--earned-ack-window`: Retired compatibility flag; accepted and ignored under shared arrival-scoped ACK handling
+- `--stall-deselect`: Retired compatibility flag; accepted and ignored with one WARN per process
+- `--stall-min-in-flight <N>`: Ignored compatibility setting (parsed default: 32)
+- `--stall-ack-stale-ms <MS>`: Ignored compatibility setting (parsed default: 3000)
+- `--stall-reprobe-ms <MS>`: Ignored compatibility setting (parsed default: 1000)
 - `--bind-map <PATH>`: Optional versioned bind-map sidecar describing `BIND_IPS_FILE` positionally (see [Bind-map sidecar](#bind-map-sidecar-optional)). Absent means byte-identical legacy behavior
 - `--capabilities-json`: Print a machine-readable capability document and exit `0` (see [Capability probe](#capability-probe))
 - `-v, --version`: Print version and exit (see [Version output](#version-output))
@@ -1313,17 +1345,21 @@ echo 'status' | socat - UNIX-CONNECT:/tmp/srtla.sock
 
 ### Connection Selection Algorithm Details
 
-**Classic Mode**: Matches the original srtla_send logic without any enhancements.
+**Classic Mode**: Capacity argmax over shared admission weights, without cooldown.
 
 **Enhanced Mode** (default): Quality-based scoring that punishes connections with recent NAKs. More recent NAKs = more punishment. Additional 30% penalty (0.7x multiplier) for NAK bursts (≥5 NAKs in short time). Optional connection exploration for testing alternative connections.
 
 **RTT-Threshold Mode**: Groups links into "fast" and "slow" based on RTT measurements. Links within `min_rtt + delta` (default 30ms) are "fast" and strongly preferred. When quality scoring is also enabled, NAK penalties are applied within the fast link group. Falls back to slow links only when all fast links are saturated. Useful for reducing packet reordering in networks with heterogeneous latencies.
 
-**EDPF Mode**: Earliest Delivery Path First. Runs a BLEST → IoDS → EDPF pipeline: a static-OWD head-of-line-blocking guard (50ms) excludes links that would stall the in-order stream (re-admitting one while it would deliver earlier than every admitted link, so a saturated fast link cannot starve a high-latency uplink), an in-order-delivery constraint bounds the candidate set (resetting when empty so no link starves), and the link with the lowest predicted arrival time `(in_flight_bytes + packet) / effective_capacity + owd` is selected. Links with no measured send rate yet fall back to a flat 1 Mbps bootstrap capacity so the scheduler can start. Scheduler state is owned per send-loop (no thread-local). Quality scoring and exploration do not apply.
+**EDPF Mode**: Earliest Delivery Path First over the shared admitted set. Its BLEST → IoDS → EDPF pipeline retains the static 50ms OWD guard, congestion escape, ordering reset, flat 1 Mbps bootstrap and velocity/BDP penalties. The shared multiplier supplies the existing loss-clamped effective-capacity input exactly once. State is owned per send-loop; exploration does not apply.
 
 ## Experimental Scheduler-Hardening Flags
 
-Two flags, gated behind their own CLI switches, harden the default `enhanced` mode against a specific satellite/LAN failure signature (a link that keeps a high scheduling weight while it silently degrades). Both are **default OFF** and apply across the four established modes. Adaptive bypasses `stall-deselect` and selects its own arrival-scoped ACK policy regardless of `earned-ack-window`. Neither flag has been validated against real bond hardware yet; treat every behavior claim below as a hypothesis pending that validation.
+**Retired compatibility inputs as of Todo 32:** both flags and the three stall
+tunables remain accepted but are ignored. Enabling `--stall-deselect` emits one WARN
+per process. Shared health admission and arrival-scoped ACK policy always apply.
+The following descriptions record the superseded experimental mechanisms, not
+current behavior or a way to disable shared admission.
 
 ### `--earned-ack-window`
 
@@ -1384,7 +1420,7 @@ write. It is a single newline-free object:
   see [Link identity](#link-identity-conn_id-is-transient-link_id-is-not) below.
 - `rtt_ms` — Kalman-smoothed RTT.
 - `weight_percent` — the link's normalized share of selection weight (0–100).
-- `health` — optional, adaptive-only: `healthy`, `degraded`, `stalled`, `rejoining`,
+- `health` — optional in the schema, emitted by every mode: `healthy`, `degraded`, `stalled`, `rejoining`,
   or `down`. A held-out link has zero weight unless elected as the sole/fallback
   carrier; a Healthy link can still be deadline-held. The health enum alone does
   not determine admission.
@@ -1495,7 +1531,7 @@ really do cost the data plan twice); SRTLA control frames — keepalives and reg
 The duplicate-probe mechanism also counts accepted DATA copies at full wire length
 in both fields. It adds these bytes at accepted-prefix processing rather than
 queueing, so an unsent probe suffix is excluded; normal DATA queue-time accounting
-is unchanged. Only adaptive mode invokes the production probe scheduler.
+is unchanged. Every mode invokes the production probe scheduler.
 
 **It resets only when the sender process does**, which is once per streaming session:
 
@@ -1716,7 +1752,7 @@ With properly configured connections, you should observe:
 **If only some connections are used**:
 
 1. Check for NAKs in logs - degraded connections naturally get less traffic in enhanced mode
-2. Try classic mode: `mode classic` - disables quality awareness for pure capacity-based distribution
+2. Try classic mode: `mode classic` - changes ranking, not shared health or quality admission
 3. Temporarily disable quality scoring: `quality off`
 4. Verify all uplinks can reach the receiver (check for timeout messages)
 5. Check RTT differences - high-RTT connections get slightly less traffic in enhanced mode (3% max difference)

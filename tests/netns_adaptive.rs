@@ -24,7 +24,8 @@ use observe::measure;
 use stack::{Stack, available};
 
 #[test]
-#[ignore = "wire-rate/stall-detector coupling: 4/5 historical pass rate; N-run statistical evaluation deferred to Todo 32"]
+#[ignore = "wire-rate/stall-detector coupling: 4/5 historical pass rate; N-run statistical \
+            evaluation deferred to Todo 32"]
 fn obstruction_stall_is_deselected_and_rejoins() {
     if !available() {
         return;
@@ -135,10 +136,12 @@ fn receiver_restart_recovers_within_18s() {
     let before_healthy = settling_window
         .iter()
         .all(|s| s.sink_bps >= 0.9 * 12_800_000.0);
-    let registered = run
-        .samples
-        .iter()
-        .find(|s| s.t >= restart && settling_window.first().is_some_and(|b| s.established > b.established));
+    let registered = run.samples.iter().find(|s| {
+        s.t >= restart
+            && settling_window
+                .first()
+                .is_some_and(|b| s.established > b.established)
+    });
     let target = 0.9 * f64::from(u32::try_from(profile.offered_bps).unwrap());
     let impact = run
         .samples

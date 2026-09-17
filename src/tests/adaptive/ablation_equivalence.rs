@@ -13,7 +13,10 @@ async fn all_off_equals_enhanced_trace() {
     let mut enhanced = pool().await;
     let mut ablated = pool().await;
     let (mut old_state, mut state) = (EdpfSchedulerState::default(), AdaptiveState::default());
-    state.features = AdaptiveFeatures::NONE;
+    let cfg = crate::config::ConfigSnapshot {
+        features: AdaptiveFeatures::NONE,
+        ..config()
+    };
     let (mut old_last, mut new_last) = (None, None);
     let (mut old_switch, mut new_switch) = (0, 0);
     let (mut old_bytes, mut new_bytes) = (Vec::new(), Vec::new());
@@ -33,19 +36,12 @@ async fn all_off_equals_enhanced_trace() {
             old_last,
             old_switch,
             now,
-            &config(),
+            &cfg,
             &mut old_state,
         )
         .expect("connected pool");
-        let new = adaptive::select(
-            &mut ablated,
-            new_last,
-            new_switch,
-            now,
-            &config(),
-            &mut state,
-        )
-        .expect("connected pool");
+        let new = adaptive::select(&mut ablated, new_last, new_switch, now, &cfg, &mut state)
+            .expect("connected pool");
         old_bytes.push(u8::try_from(old).expect("two links"));
         new_bytes.push(u8::try_from(new).expect("two links"));
         if old_last != Some(old) {

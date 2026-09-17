@@ -33,12 +33,11 @@ pub fn select_connection(
     last_switch_time_ms: u64,
     current_time_ms: u64,
     rtt_delta_ms: u32,
-    enable_quality: bool,
 ) -> Option<usize> {
     // Phase 1: Find minimum RTT among eligible links
     let mut min_rtt = f64::MAX;
     for c in conns.iter() {
-        if c.is_timed_out() || !c.connected {
+        if c.adaptive.weight.is_none() {
             continue;
         }
         let base_score = c.get_score();
@@ -64,7 +63,7 @@ pub fn select_connection(
     let mut best_score: f64 = -1.0;
 
     for (i, c) in conns.iter_mut().enumerate() {
-        if c.is_timed_out() || !c.connected {
+        if c.adaptive.weight.is_none() {
             continue;
         }
         let base_score = c.get_score();
@@ -81,12 +80,7 @@ pub fn select_connection(
         let is_fast = !c.has_rtt_sample() || (rtt > 0.0 && rtt <= rtt_threshold);
 
         if is_fast {
-            let score = if enable_quality {
-                let quality = c.get_cached_quality_multiplier(current_time_ms);
-                (base_score as f64) * quality
-            } else {
-                base_score as f64
-            };
+            let score = c.adaptive.weight.map_or(0.0, |weight| weight.score());
 
             if score > best_score {
                 best_score = score;
@@ -102,19 +96,14 @@ pub fn select_connection(
             rtt_threshold
         );
         for (i, c) in conns.iter_mut().enumerate() {
-            if c.is_timed_out() || !c.connected {
+            if c.adaptive.weight.is_none() {
                 continue;
             }
             let base_score = c.get_score();
             if base_score <= 0 {
                 continue;
             }
-            let score = if enable_quality {
-                let quality = c.get_cached_quality_multiplier(current_time_ms);
-                (base_score as f64) * quality
-            } else {
-                base_score as f64
-            };
+            let score = c.adaptive.weight.map_or(0.0, |weight| weight.score());
 
             if score > best_score {
                 best_score = score;
@@ -132,12 +121,12 @@ pub fn select_connection(
         && in_cooldown
     {
         // Check if last connection is still valid
-        let last_valid = last < conns.len() && !conns[last].is_timed_out() && conns[last].connected;
+        let last_valid = last < conns.len() && conns[last].adaptive.weight.is_some();
         if last_valid && conns[last].get_score() > 0 {
             crate::ab_metrics::record_cooldown_hold();
             return Some(last);
         }
     }
 
-    best_idx
+    best_idx.or_else(|| super::classic::select_connection(conns))
 }

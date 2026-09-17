@@ -1,7 +1,6 @@
 use crate::config::ConfigSnapshot;
 use crate::connection::SrtlaConnection;
 use crate::connection::delivery::DeliveryAck;
-use crate::mode::SchedulingMode;
 
 #[cfg(test)]
 #[path = "adaptive_ack_rtt_tests.rs"]
@@ -21,6 +20,7 @@ mod sole_recovery_tests;
 
 #[derive(Clone, Copy, Debug)]
 pub enum AckPolicy {
+    #[cfg(test)]
     Legacy {
         classic: bool,
         earned_ack_window: bool,
@@ -29,22 +29,8 @@ pub enum AckPolicy {
 }
 
 impl AckPolicy {
-    /// Exhaustive integration seam: adding Adaptive to SchedulingMode requires
-    /// explicitly selecting arrival-scoped attribution here, never a wildcard.
-    pub const fn from_config(config: &ConfigSnapshot) -> Self {
-        match config.mode {
-            SchedulingMode::Adaptive => Self::Adaptive,
-            SchedulingMode::Classic => Self::Legacy {
-                classic: true,
-                earned_ack_window: config.earned_ack_window,
-            },
-            SchedulingMode::Enhanced | SchedulingMode::RttThreshold | SchedulingMode::Edpf => {
-                Self::Legacy {
-                    classic: false,
-                    earned_ack_window: config.earned_ack_window,
-                }
-            }
-        }
+    pub const fn from_config(_config: &ConfigSnapshot) -> Self {
+        Self::Adaptive
     }
 }
 
@@ -70,6 +56,7 @@ pub(crate) fn legacy_test_ack(
 }
 
 impl AckContext {
+    #[cfg(test)]
     pub const fn legacy(arrival: (usize, u32), classic: bool, earned_ack_window: bool) -> Self {
         Self {
             arrival_idx: arrival.0,
@@ -145,6 +132,7 @@ fn apply_srtla_ack_entry(
                 return rtt_sent_ms.map(|sent_ms| (sent_ms, now));
             }
         }
+        #[cfg(test)]
         AckPolicy::Legacy {
             classic,
             earned_ack_window,

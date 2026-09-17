@@ -22,14 +22,14 @@ use crate::connection::SrtlaConnection;
 #[inline(always)]
 pub fn select_connection(conns: &[SrtlaConnection]) -> Option<usize> {
     let mut best_idx: Option<usize> = None;
-    let mut best_score: i32 = -1;
+    let mut best_score: f64 = -1.0;
 
     for (i, c) in conns.iter().enumerate() {
-        if c.is_timed_out() {
+        let Some(weight) = c.adaptive.weight else {
             continue;
-        }
-        let score = c.get_score();
-        if score > best_score {
+        };
+        let score = weight.score();
+        if best_idx.is_none() || score > best_score {
             best_score = score;
             best_idx = Some(i);
         }

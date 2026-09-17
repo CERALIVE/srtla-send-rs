@@ -76,6 +76,7 @@ fn create_connection_from_socket(
         keepalive_liveness: Default::default(),
         last_probe_growth_ms: 0,
         last_ack_or_rtt_sample_ms: 0,
+        #[cfg(test)]
         last_stall_reprobe_ms: 0,
         last_trunc_warn_ms: 0,
         rtt: RttTracker::default(),
@@ -131,6 +132,22 @@ pub async fn create_test_connections(count: usize) -> SmallVec<SrtlaConnection, 
     }
 
     connections
+}
+
+/// Ranking fixtures represent healthy links after shared admission, not startup Down links.
+#[cfg(test)]
+pub async fn create_selection_test_connections(count: usize) -> SmallVec<SrtlaConnection, 4> {
+    let mut conns = create_test_connections(count).await;
+    for conn in &mut conns {
+        conn.health = crate::connection::health::HealthMachine::new(
+            crate::connection::health::HealthState::Healthy,
+            now_ms(),
+        );
+    }
+    let config = crate::config::DynamicConfig::new();
+    config.set_quality_enabled(false);
+    crate::sender::SchedulerShared::default().update_stats(&mut conns, &config.snapshot());
+    conns
 }
 
 /// Advance the paused Tokio virtual clock by `by`.

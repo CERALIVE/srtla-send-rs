@@ -40,6 +40,33 @@ async fn trace(mode: SchedulingMode) -> String {
             &mut adaptive,
         )
         .expect("live alternatives");
+        assert_eq!(
+            adaptive.targets.len(),
+            conns.len(),
+            "admit snapshots every link"
+        );
+        for conn in conns.iter().filter(|conn| conn.connected) {
+            let weight = conn
+                .adaptive
+                .weight
+                .expect("healthy trace link must be admitted");
+            assert_eq!(weight.quality_multiplier.to_bits(), 1.1_f64.to_bits());
+            assert_eq!(weight.effective_multiplier.to_bits(), 1.1_f64.to_bits());
+            assert_eq!(weight.effective_multiplier / weight.quality_multiplier, 1.0);
+            assert_eq!(
+                weight.effective_multiplier
+                    / conns[selected]
+                        .adaptive
+                        .weight
+                        .unwrap()
+                        .effective_multiplier,
+                1.0
+            );
+            assert_eq!(
+                conn.quality_cache.last_calculated_ms,
+                40_000 + ((now - 40_000) / 51) * 51
+            );
+        }
         if last != Some(selected) {
             switched = now;
         }
@@ -59,6 +86,10 @@ async fn trace(mode: SchedulingMode) -> String {
 async fn unaffected_modes_match_pre_fix_bytes() {
     // Given frozen baseline decisions, with backlog changes, holds and a link loss.
     let cases = [
+        (
+            SchedulingMode::Enhanced,
+            "00000000000000222220000022222000002222202222222222222222222222222222222222222111",
+        ),
         (
             SchedulingMode::Classic,
             "00000000000000222020220202202022020220202222222222222222222222222222222222222111",
@@ -83,4 +114,81 @@ async fn unaffected_modes_match_pre_fix_bytes() {
     }
     // Then its complete decision stream remains byte-identical, not just its totals.
     assert_eq!(actual, cases.map(|(_, expected)| expected));
+}
+
+#[tokio::test]
+async fn shared_admission_excludes_degraded_links_in_every_mode() {
+    // Given an otherwise superior degraded link and one healthy alternative.
+    use crate::connection::health::{HealthMachine, HealthState};
+    let _clock = TestClock::new(10_000);
+    for mode in [
+        SchedulingMode::Classic,
+        SchedulingMode::Enhanced,
+        SchedulingMode::RttThreshold,
+        SchedulingMode::Edpf,
+        SchedulingMode::Adaptive,
+    ] {
+        let mut conns = pool_of(2).await;
+        conns[0].health = HealthMachine::new(HealthState::Degraded, 0);
+        conns[1].window = 1;
+        let mut cfg = config();
+        cfg.mode = mode;
+        // When the real dispatcher selects during the incumbent's cooldown.
+        let selected = select_connection_idx_with_state(
+            &mut conns,
+            Some(0),
+            10_000,
+            10_001,
+            &cfg,
+            &mut EdpfSchedulerState::default(),
+            &mut AdaptiveState::default(),
+        );
+        // Then admission wins over every mode's ranking and hold behavior.
+        assert_eq!(selected, Some(1), "{mode}");
+    }
+}
+
+#[tokio::test]
+async fn admission_weight_oracle_from_pre_lift_adaptive() {
+    // Given fixed cache values and each weighting factor in the original path.
+    use crate::bind_map::Priority;
+    use crate::connection::health::{HealthMachine, HealthState};
+    let _clock = TestClock::new(10_000);
+    let mut actual = Vec::new();
+    for (health, load, priority) in [
+        (HealthState::Healthy, 0, 0.0),
+        (HealthState::Healthy, 64, 0.2),
+        (HealthState::Rejoining, 64, 0.2),
+    ] {
+        let mut conns = pool_of(2).await;
+        conns[0].health = HealthMachine::new(health, 10_000);
+        conns[0].in_flight_packets = load;
+        conns[0].priority_baseline = Some(Priority::try_from(priority).unwrap());
+        conns[0].quality_cache.last_calculated_ms = 10_000;
+        conns[0].quality_cache.multiplier = 0.7;
+        // When the original adaptive private composition runs.
+        crate::sender::selection::adaptive::select(
+            &mut conns,
+            None,
+            0,
+            10_000,
+            &config(),
+            &mut AdaptiveState::default(),
+        );
+        let weight = conns[0].adaptive.weight.unwrap();
+        actual.push((
+            weight.base_score,
+            weight.quality_multiplier.to_bits(),
+            weight.effective_multiplier.to_bits(),
+        ));
+    }
+    // Then record exact IEEE-754 results, not a reimplementation of the formula.
+    assert_eq!(
+        actual,
+        [
+            (20_000, 4_604_480_259_023_595_110, 4_604_480_259_023_595_110),
+            (307, 4_604_480_259_023_595_110, 4_601_237_667_291_888_353),
+            (307, 4_604_480_259_023_595_110, 4_580_701_252_991_078_891),
+        ]
+    );
 }

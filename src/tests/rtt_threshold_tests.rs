@@ -1,8 +1,35 @@
 #[cfg(all(test, feature = "test-internals"))]
 mod tests {
-    use crate::sender::selection::rtt_threshold::select_connection;
-    use crate::test_helpers::create_test_connections;
+    use crate::sender::selection::{
+        EdpfSchedulerState, SchedulerShared, select_connection_idx_with_state,
+    };
+    use crate::test_helpers::create_selection_test_connections as create_test_connections;
     use crate::utils::now_ms;
+
+    fn select_connection(
+        conns: &mut [crate::connection::SrtlaConnection],
+        last: Option<usize>,
+        switched: u64,
+        now: u64,
+        rtt_delta_ms: u32,
+        quality_enabled: bool,
+    ) -> Option<usize> {
+        let config = crate::config::ConfigSnapshot {
+            mode: crate::mode::SchedulingMode::RttThreshold,
+            rtt_delta_ms,
+            quality_enabled,
+            ..crate::config::DynamicConfig::new().snapshot()
+        };
+        select_connection_idx_with_state(
+            conns,
+            last,
+            switched,
+            now,
+            &config,
+            &mut EdpfSchedulerState::default(),
+            &mut SchedulerShared::default(),
+        )
+    }
 
     #[test]
     fn test_prefers_fast_link() {
@@ -240,8 +267,9 @@ mod tests {
 
         let result = select_connection(&mut connections, None, 0, now_ms(), 30, true);
         assert_eq!(
-            result, None,
-            "Should return None when all connections timed out"
+            result,
+            Some(0),
+            "Shared connected-only escape preserves the pool until housekeeping disconnects it"
         );
     }
 

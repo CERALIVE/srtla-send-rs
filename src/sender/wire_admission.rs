@@ -9,37 +9,28 @@ use crate::utils::now_ms;
 #[path = "../connection/wire_rate/integration_tests.rs"]
 mod wire_rate_tests;
 
-pub(super) fn configure(conns: &mut [SrtlaConnection], mode: SchedulingMode) {
+pub(super) fn configure(conns: &mut [SrtlaConnection], _mode: SchedulingMode) {
     let now = now_ms();
     for conn in conns {
-        let rate = match mode {
-            SchedulingMode::Adaptive => {
-                let input = WireRateInput {
-                    now_ms: now,
-                    delivery_generation: conn.delivery.socket_generation,
-                    accepted_bytes: conn
-                        .batch_sender
-                        .wire_sample()
-                        .map(|sample| sample.accepted_bytes),
-                    latest_original_delivery_ms: conn.delivery.latest_original_delivery_ms(),
-                    latest_rtt: conn.has_rtt_sample().then_some(WireRttSample {
-                        observed_ms: conn.rtt.last_rtt_measurement_ms,
-                        rtt_ms: conn.rtt.prev_rtt_ms,
-                    }),
-                    slow_min_rtt_ms: conn.rtt.slow_min_rtt_ms(),
-                    queue_delay_ms: conn.rtt.queue_delay_ms(),
-                };
-                conn.wire_rate.update(&input);
-                // Adaptive's rate cap is a soft ranking penalty, never a hard
-                // budget: enforcing the estimator can starve its own feedback.
-                None
-            }
-            SchedulingMode::Classic
-            | SchedulingMode::Enhanced
-            | SchedulingMode::RttThreshold
-            | SchedulingMode::Edpf => None,
+        let input = WireRateInput {
+            now_ms: now,
+            delivery_generation: conn.delivery.socket_generation,
+            accepted_bytes: conn
+                .batch_sender
+                .wire_sample()
+                .map(|sample| sample.accepted_bytes),
+            latest_original_delivery_ms: conn.delivery.latest_original_delivery_ms(),
+            latest_rtt: conn.has_rtt_sample().then_some(WireRttSample {
+                observed_ms: conn.rtt.last_rtt_measurement_ms,
+                rtt_ms: conn.rtt.prev_rtt_ms,
+            }),
+            slow_min_rtt_ms: conn.rtt.slow_min_rtt_ms(),
+            queue_delay_ms: conn.rtt.queue_delay_ms(),
         };
-        conn.batch_sender.configure_wire_rate(rate, now);
+        conn.wire_rate.update(&input);
+        // Adaptive's rate cap is a soft ranking penalty, never a hard
+        // budget: enforcing the estimator can starve its own feedback.
+        conn.batch_sender.configure_wire_rate(None, now);
     }
 }
 
@@ -106,13 +97,13 @@ mod tests {
 
         // When adaptive configures a link with two MTUs already reserved, at a
         // fixed clock so the old hard budget cannot acquire more credit.
-        configure(&mut conns, SchedulingMode::Adaptive);
+        configure(&mut conns, SchedulingMode::Enhanced);
         for seq in 0..2 {
             conns[0]
                 .batch_sender
                 .queue_packet(&[0; MTU], Some(seq), 2000);
         }
-        configure(&mut conns, SchedulingMode::Adaptive);
+        configure(&mut conns, SchedulingMode::Enhanced);
 
         // Then a third packet is admitted and all three reach the actual socket:
         // neither reservation nor kernel-prefix funding can enforce the estimate.

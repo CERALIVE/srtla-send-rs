@@ -188,8 +188,7 @@ pub fn build_telemetry_json_from_stats(last_updated_ms: u64, stats: &StatsSnapsh
 ///
 /// `conn_id` is the link's 0-based position in IP-list order. `weight_percent`
 /// is the link's share of total selection weight (`base_score x effective_multiplier`),
-/// normalized to 100; inactive links report 0. Only legacy modes use the equal-share
-/// zero-capacity fallback: adaptive must never resurrect a held-out link's weight.
+/// normalized to 100; inactive or zero-total links report 0 in every mode.
 #[must_use]
 pub fn conns_from_stats(stats: &StatsSnapshot) -> Vec<TelemetryConn> {
     let weights: Vec<f64> = stats
@@ -204,11 +203,6 @@ pub fn conns_from_stats(stats: &StatsSnapshot) -> Vec<TelemetryConn> {
         })
         .collect();
     let total: f64 = weights.iter().sum();
-    let active = stats
-        .links
-        .iter()
-        .filter(|l| l.connected && !l.timed_out)
-        .count();
 
     stats
         .links
@@ -216,12 +210,10 @@ pub fn conns_from_stats(stats: &StatsSnapshot) -> Vec<TelemetryConn> {
         .enumerate()
         .map(|(idx, l)| {
             let is_active = l.connected && !l.timed_out;
-            let weight_percent = if !is_active || (stats.mode == "adaptive" && total <= 0.0) {
+            let weight_percent = if !is_active || total <= 0.0 {
                 0
-            } else if total > 0.0 {
-                weight_share_percent(weights[idx], total)
             } else {
-                equal_share_percent(active)
+                weight_share_percent(weights[idx], total)
             };
             TelemetryConn {
                 conn_id: idx as u32,
@@ -248,13 +240,6 @@ pub fn conns_from_stats(stats: &StatsSnapshot) -> Vec<TelemetryConn> {
 fn weight_share_percent(weight: f64, total: f64) -> u8 {
     let pct = (weight / total * 100.0).round();
     pct.clamp(0.0, 100.0) as u8
-}
-
-/// Equal share among `active` links (the no-capacity-signal fallback).
-fn equal_share_percent(active: usize) -> u8 {
-    100usize
-        .checked_div(active)
-        .map_or(0, |share| share.min(100) as u8)
 }
 
 #[cfg(test)]
@@ -632,11 +617,25 @@ mod tests {
     }
 
     #[test]
-    fn equal_share_fallback_distributes_evenly() {
-        assert_eq!(equal_share_percent(0), 0);
-        assert_eq!(equal_share_percent(1), 100);
-        assert_eq!(equal_share_percent(2), 50);
-        assert_eq!(equal_share_percent(4), 25);
+    fn admission_zero_capacity_never_resurrects_a_held_link_in_any_mode() {
+        // Given a zero-capacity admitted link and a held link with positive capacity.
+        for mode in ["classic", "enhanced", "rtt-threshold", "edpf", "adaptive"] {
+            let mut held = link(100, true, 0);
+            held.effective_multiplier = 0.0;
+            let snap = StatsSnapshot {
+                mode: mode.into(),
+                links: vec![link(0, true, 0), held],
+                ..Default::default()
+            };
+            // When the shared snapshot is normalized.
+            let conns = conns_from_stats(&snap);
+            // Then neither link receives an invented equal share.
+            assert_eq!(
+                conns.iter().map(|c| c.weight_percent).collect::<Vec<_>>(),
+                [0, 0],
+                "{mode}"
+            );
+        }
     }
 
     #[test]
@@ -662,15 +661,15 @@ mod tests {
     }
 
     #[test]
-    fn conns_from_stats_equal_share_when_no_capacity_signal() {
-        // Active links whose base_score is 0 still get a non-zero equal share.
+    fn conns_from_stats_zero_share_when_no_capacity_signal() {
+        // Given active links with no capacity signal.
         let snap = StatsSnapshot {
             links: vec![link(0, true, 0), link(0, true, 0)],
             ..Default::default()
         };
         let conns = conns_from_stats(&snap);
-        assert_eq!(conns[0].weight_percent, 50);
-        assert_eq!(conns[1].weight_percent, 50);
+        assert_eq!(conns[0].weight_percent, 0);
+        assert_eq!(conns[1].weight_percent, 0);
     }
 
     #[test]

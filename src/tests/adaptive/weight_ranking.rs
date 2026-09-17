@@ -90,15 +90,18 @@ async fn connected_fallback_publishes_only_its_base_ranked_carrier() {
     conns[0].window = 1;
     let stats = SharedStats::new();
     let mut state = AdaptiveState::new(stats.clone());
-    state.features = AdaptiveFeatures::ALL - AdaptiveFeatures::SOLE;
+    let features = AdaptiveFeatures::ALL - AdaptiveFeatures::SOLE;
     // When the existing connected-pool escape is used.
-    state.update_stats(&mut conns, &cfg());
+    state.update_stats(&mut conns, &ConfigSnapshot { features, ..cfg() });
     // Then fallback ordering stays base-only, without reviving every held neighbour.
     let snapshot = stats.get();
     assert_eq!(snapshot.links[0].effective_multiplier, 0.0);
     assert_eq!(snapshot.links[1].effective_multiplier, 1.0);
     assert_eq!(conns_from_stats(&snapshot)[1].weight_percent, 100);
-    assert_eq!(pick(&mut conns, &mut state, 10_000), 1);
+    assert_eq!(
+        pick_with_features(&mut conns, &mut state, 10_000, features),
+        1
+    );
 }
 
 #[tokio::test]

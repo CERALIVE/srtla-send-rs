@@ -1,5 +1,95 @@
 # srtla-send-rs
 
+## SHARED SCHEDULER ADMISSION (bonded-path convergence, Todo 32)
+
+**Current contract; supersedes older adaptive-only/legacy-unchanged implementation
+notes below.** Every mode enters `selection::admission::admit` once before dispatch.
+`signals.rs` lifts the former adaptive snapshot unchanged; weights are lazy and
+candidate-scoped: quality × rejoin ramp × Healthy-only preference × soft rate cap,
+in that exact order. Held links do not advance the 50ms quality cache. Down is
+excluded normally; Degraded/Stalled and deadline-held links are probe targets.
+No normal candidate triggers the unchanged sole election, then the connected-only,
+base-ranked escape (including Down-but-connected links). Only zero connected links
+can produce no selection. `sole.rs` and its call remain unchanged; `AdaptiveState`
+is a compatibility type alias for loop-owned `SchedulerShared`, not a second store.
+Shared probe pacing, target refresh, wire-estimator observation and stats publication
+apply to all modes. No hard wire budget is introduced.
+
+`SchedulerFeatures` lives on `ConfigSnapshot`: the original eight bits plus QUALITY,
+all ON by default, u16 storage. Existing `--no-quality`/quality control gates QUALITY
+for every mode; no new CLI/control keys. Test-build env names remain
+`SRTLA_ADAPTIVE_FEATURES` and `SRTLA_ADAPTIVE_TUNING`; `quality` is the ninth token.
+Feature bits never appear in get-status, hello, capabilities-json or telemetry.
+Historical ablation tests retain a test-only `AdaptiveFeatures` name alias.
+
+Before/after by mode:
+- Classic: formerly unweighted C-like capacity rank; now admitted capacity × shared
+  multiplier, without cooldown. Classic also receives the adaptive time-based window
+  recovery used by the other modes; it is no longer an exact C-sender behavior mode.
+- Enhanced: retains 15ms cooldown, 10% hysteresis and exploration; its former private
+  quality multiplication is replaced by the shared product, never applied twice.
+- RTT-threshold: retains fast/slow grouping and cooldown over admitted links; group
+  ranks consume the product rather than private quality. No-capacity escape remains usable.
+- EDPF: substitutes effective_multiplier for the raw quality-cache read inside the
+  unchanged loss-clamped capacity formula. BLEST → IoDS → argmin, E1 flat bootstrap,
+  E2 congestion escape and velocity/BDP penalties remain; no fallback revives held links.
+- Adaptive: same rank, hysteresis, sole inputs and ordered product as before the lift.
+
+All four legacy modes now use adaptive's ACK policy: arrival-link/socket-generation
+attribution; no cross-link first-match or broadcast window growth; only acknowledged
+originals clear congestion accounting; probe ACKs prove health, not original rate or
+window growth. Only the final unambiguous original in an SRTLA ACK frame supplies RTT;
+cumulative SRT ACKs still prune all logs but never sample RTT. Probe-only NAKs are
+excluded. `handle_nak` itself is unchanged; Todo 8's in-flight-aware penalty is separate.
+Historical legacy ACK adapters are compiled only for unit tests, not shipped.
+
+`--stall-deselect` is accepted/ignored with one WARN per process; its tunables and
+`--earned-ack-window` are inert compatibility inputs. Shared admission replaces the
+old mask. Stats/status use one weight path, with health in every mode; zero-total
+telemetry never invents equal shares. Existing schema/version/units are unchanged.
+
+Original four 80-byte traces are frozen in
+`tests/fixtures/selection-traces-pre-shared-layer.txt` and must never be regenerated.
+The trace matrix adds Enhanced. Original neutral traces remain unchanged: every live
+link has the SAME startup quality 1.1 and other factors 1.0 (relative weight 1.0);
+EDPF clamps that bonus to capacity factor 1.0. Tests assert actual multiplier bits,
+relative neutrality and cache-refresh timestamps through the real dispatcher.
+Do not falsely describe the raw effective multiplier as 1.0. Differentiating health,
+feature, cache and fallback replays separately prove the new wiring.
+
+This is the deliberate pre-campaign behavior change, not a throughput acceptance or
+hardware-performance claim. Existing historical G/twin limitations are not waived.
+No benchmark campaign is part of this change.
+
+### Todo 32 gate disposition — baseline-reproduced privileged failures
+
+On 2026-09-17 both blocking signatures were reproduced from a clean detached
+`37725986b13068f0c4bafba0bdf22d9c72d2051a` checkout, built with the pinned nightly,
+using the SAME real netns harness and `/usr/local/bin/srtla_rec`. Individual
+`cargo test --features test-internals --test netns_adaptive <test> -- --nocapture
+--test-threads=1` invocations were bounded at180s; neither timed out or self-skipped.
+
+| Assertion | Clean pre-lift3772598 | Shared-layer runs |
+|---|---|---|
+| `marginal_link_is_not_starved`, demotion≤10% | **42/61** demoted, FAIL | **51/61**, **40/61**, FAIL |
+| `twins_on_one_ip_bond_under_adaptive`, final sustained Healthy | **FAIL**, initially Healthy at+5.88s | **FAIL**, initially Healthy at+5.75/+5.54s |
+| Twin final preferred share (diagnostic, not failed assertion) |48.13% |46.32% /47.08% |
+
+The owner authorized committing the lift with these **pre-existing failures recorded**.
+This is a scoped acceptance of the refactor, NOT a green privileged suite or a fix
+for G/twins. Assertions, ignores, scenario loads, and thresholds remain unchanged.
+One baseline sample establishes reproduction, not statistical equality of rates.
+Release build, lib+bin Clippy, formatting,907 default library tests and932 feature
+library tests passed. Both full feature commands still exited101 at netns_adaptive;
+later fail-fast targets were not reached. The separate bounded netns_edpf test passed
+with4183/4241 packets on30/150ms links. No campaign or real-hardware claim follows.
+
+The startup/grace/cache timing concern was checked without speculative tuning:
+the quality function,30s grace and50ms cache implementation are unchanged; the old
+private-product IEEE-754 oracle and held-cache/readmission/boundary replays pass.
+The live failures reproduce WITHOUT the lift, so they cannot require its new
+admission path. Their underlying pre-existing cause remains an independent issue.
+
 Parent: [`../AGENTS.md`](../AGENTS.md)
 
 ## ROLE IN THE GROUP
@@ -1844,8 +1934,7 @@ sites capture the generation at spawn, and sync/restart pass it explicitly.
 rejects a stale token, then consumes ONLY the arrival link's probe log or original
 delivery ledger. Probe proof refreshes DATA health but never original delivered
 bitrate, window, packet_log or in-flight. No cross-link scan exists in this arm.
-`AckPolicy::from_config` maps the four established modes to the unchanged legacy
-first-match/global-growth arm and Adaptive to the arrival-scoped arm.
+`AckPolicy::from_config` now selects the arrival-scoped arm for every mode (Todo 32).
 Test-only adapters preserve the frozen ACK-RTT, batch-I/O and earned-ACK suites
 byte-for-byte while calling the same production implementations.
 

@@ -15,6 +15,7 @@ use tracing::debug;
 use tracing::{info, warn};
 
 use crate::mode::SchedulingMode;
+use crate::sender::SchedulerFeatures;
 use crate::stats::SharedStats;
 use crate::subscription::SubscriptionManager;
 
@@ -52,6 +53,7 @@ pub const STALL_REPROBE_INTERVAL_MS: u64 = 1000;
 /// multiple atomic loads per packet in the hot path.
 #[derive(Clone, Copy, Debug)]
 pub struct ConfigSnapshot {
+    pub features: SchedulerFeatures,
     pub mode: SchedulingMode,
     pub quality_enabled: bool,
     pub exploration_enabled: bool,
@@ -73,11 +75,19 @@ pub struct ConfigSnapshot {
 }
 
 impl ConfigSnapshot {
-    /// Check if quality scoring is effective for the current mode.
-    /// Quality scoring only applies to enhanced and rtt-threshold modes.
+    /// Compatibility query backed by the shared QUALITY bit, independent of mode.
     #[inline]
     pub fn effective_quality_enabled(&self) -> bool {
-        self.quality_enabled && !self.mode.is_classic()
+        self.scheduler_features()
+            .contains(SchedulerFeatures::QUALITY)
+    }
+
+    pub fn scheduler_features(&self) -> SchedulerFeatures {
+        if self.quality_enabled {
+            self.features
+        } else {
+            self.features - SchedulerFeatures::QUALITY
+        }
     }
 
     /// Check if exploration is effective for the current mode.
@@ -137,6 +147,9 @@ impl DynamicConfig {
         stall_ack_stale_ms: u64,
         stall_reprobe_ms: u64,
     ) -> Self {
+        if stall_deselect {
+            warn_stall_deselect_ignored();
+        }
         Self {
             mode: Arc::new(AtomicU8::new(mode.as_u8())),
             quality_enabled: Arc::new(AtomicBool::new(!no_quality)),
@@ -156,6 +169,7 @@ impl DynamicConfig {
     #[inline]
     pub fn snapshot(&self) -> ConfigSnapshot {
         ConfigSnapshot {
+            features: crate::adaptive_env::features(),
             mode: SchedulingMode::from_u8(self.mode.load(Ordering::Acquire)),
             quality_enabled: self.quality_enabled.load(Ordering::Acquire),
             exploration_enabled: self.exploration_enabled.load(Ordering::Acquire),
@@ -201,6 +215,9 @@ impl DynamicConfig {
 
     /// Toggle the EXPERIMENTAL stalled-link deselect (default OFF).
     pub fn set_stall_deselect(&self, enabled: bool) {
+        if enabled {
+            warn_stall_deselect_ignored();
+        }
         self.stall_deselect.store(enabled, Ordering::Release);
     }
 
@@ -218,6 +235,13 @@ impl DynamicConfig {
     pub fn set_stall_reprobe_ms(&self, ms: u64) {
         self.stall_reprobe_ms.store(ms, Ordering::Release);
     }
+}
+
+fn warn_stall_deselect_ignored() {
+    static WARN_ONCE: std::sync::Once = std::sync::Once::new();
+    WARN_ONCE.call_once(|| {
+        warn!("--stall-deselect is ignored; shared health admission is always active")
+    });
 }
 
 pub fn spawn_config_listener(
@@ -871,6 +895,7 @@ mod tests {
     fn test_effective_quality() {
         // Classic mode - quality never effective
         let snap = ConfigSnapshot {
+            features: SchedulerFeatures::default(),
             mode: SchedulingMode::Classic,
             quality_enabled: true,
             exploration_enabled: true,
@@ -881,11 +906,12 @@ mod tests {
             stall_ack_stale_ms: 3000,
             stall_reprobe_ms: 1000,
         };
-        assert!(!snap.effective_quality_enabled());
+        assert!(snap.effective_quality_enabled());
         assert!(!snap.effective_exploration_enabled());
 
         // Enhanced mode - both can be effective
         let snap = ConfigSnapshot {
+            features: SchedulerFeatures::default(),
             mode: SchedulingMode::Enhanced,
             quality_enabled: true,
             exploration_enabled: true,
@@ -901,6 +927,7 @@ mod tests {
 
         // RTT-threshold mode - quality effective, exploration not
         let snap = ConfigSnapshot {
+            features: SchedulerFeatures::default(),
             mode: SchedulingMode::RttThreshold,
             quality_enabled: true,
             exploration_enabled: true,

@@ -34,6 +34,30 @@ fn capabilities_json_exits_zero_with_a_parseable_document() {
     assert_eq!(doc["capabilities"]["bind_map"], cfg!(target_os = "linux"));
     assert_eq!(doc["capabilities"]["bind_map_schema_version"], 1);
     assert_eq!(doc["capabilities"]["capabilities_json"], true);
+    let mut pending = vec![&doc];
+    while let Some(value) = pending.pop() {
+        match value {
+            serde_json::Value::Object(fields) => {
+                for (key, child) in fields {
+                    assert!(
+                        ![
+                            "SchedulerFeatures",
+                            "features",
+                            "scheduler_features",
+                            "adaptive_features"
+                        ]
+                        .contains(&key.as_str())
+                    );
+                    pending.push(child);
+                }
+            }
+            serde_json::Value::Array(values) => pending.extend(values),
+            serde_json::Value::Null
+            | serde_json::Value::Bool(_)
+            | serde_json::Value::Number(_)
+            | serde_json::Value::String(_) => {}
+        }
+    }
 }
 
 #[test]

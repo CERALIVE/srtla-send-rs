@@ -16,7 +16,9 @@ mod tests {
     };
     use crate::registration::SrtlaRegistrationManager;
     use crate::sender::*;
-    use crate::test_helpers::{advance_test_clock, create_test_connections};
+    use crate::test_helpers::{
+        advance_test_clock, create_selection_test_connections as create_test_connections,
+    };
     use crate::utils::now_ms;
 
     #[test]
@@ -30,6 +32,7 @@ mod tests {
         connections[2].in_flight_packets = 10; // Lowest score
 
         let config = ConfigSnapshot {
+            features: Default::default(),
             mode: SchedulingMode::Classic,
             quality_enabled: false,
             exploration_enabled: false,
@@ -70,6 +73,7 @@ mod tests {
         connections[2].congestion.last_nak_time_ms = current_time - 8000; // 8 seconds ago
 
         let config = ConfigSnapshot {
+            features: Default::default(),
             mode: SchedulingMode::Enhanced,
             quality_enabled: true,
             exploration_enabled: false,
@@ -111,6 +115,7 @@ mod tests {
         connections[1].congestion.last_nak_time_ms = current_time - 2000; // 2 seconds ago
 
         let config = ConfigSnapshot {
+            features: Default::default(),
             mode: SchedulingMode::Enhanced,
             quality_enabled: true,
             exploration_enabled: false,
@@ -149,6 +154,7 @@ mod tests {
         let current_time_ms = last_switch_time_ms + 20; // 20ms after last switch (past 15ms cooldown)
 
         let config = ConfigSnapshot {
+            features: Default::default(),
             mode: SchedulingMode::Enhanced,
             quality_enabled: true,
             exploration_enabled: false,
@@ -195,6 +201,7 @@ mod tests {
         let current_time_ms = last_switch_time_ms + 5; // Within 15ms cooldown
 
         let config = ConfigSnapshot {
+            features: Default::default(),
             mode: SchedulingMode::Enhanced,
             quality_enabled: true,
             exploration_enabled: false,
@@ -238,6 +245,7 @@ mod tests {
         let current_time_ms = last_switch_time_ms + 200; // 200ms after last switch (within cooldown)
 
         let config = ConfigSnapshot {
+            features: Default::default(),
             mode: SchedulingMode::Classic,
             quality_enabled: false,
             exploration_enabled: false,
@@ -590,6 +598,7 @@ mod tests {
         }
 
         let config = ConfigSnapshot {
+            features: Default::default(),
             mode: SchedulingMode::Enhanced,
             quality_enabled: false,
             exploration_enabled: false,
@@ -620,6 +629,7 @@ mod tests {
         let mut connections = rt.block_on(create_test_connections(3));
 
         let config = ConfigSnapshot {
+            features: Default::default(),
             mode: SchedulingMode::Enhanced,
             quality_enabled: false,
             exploration_enabled: true,
@@ -1282,6 +1292,7 @@ mod tests {
         connections[2].in_flight_packets = 0;
 
         let config = ConfigSnapshot {
+            features: Default::default(),
             mode: SchedulingMode::Enhanced,
             quality_enabled: false,
             exploration_enabled: false,
@@ -1328,6 +1339,7 @@ mod tests {
         connections[2].in_flight_packets = 0;
 
         let config = ConfigSnapshot {
+            features: Default::default(),
             mode: SchedulingMode::Enhanced,
             quality_enabled: false,
             exploration_enabled: false,
@@ -1504,6 +1516,7 @@ mod tests {
         connections[2].in_flight_packets = 0;
 
         let config = ConfigSnapshot {
+            features: Default::default(),
             mode: SchedulingMode::Classic,
             quality_enabled: false,
             exploration_enabled: false,
@@ -1554,6 +1567,7 @@ mod tests {
         connections[0].congestion.last_nak_time_ms = now_ms();
 
         let config = ConfigSnapshot {
+            features: Default::default(),
             mode: SchedulingMode::Enhanced,
             quality_enabled: false,
             exploration_enabled: true,

@@ -3,14 +3,14 @@
 //! Two environment variables, read ONCE at startup and ONLY in a
 //! `test-internals` build:
 //!
-//! - `SRTLA_ADAPTIVE_FEATURES` — which `AdaptiveFeatures` bits the selector runs.
+//! - `SRTLA_ADAPTIVE_FEATURES` — which `SchedulerFeatures` bits every selector runs.
 //! - `SRTLA_ADAPTIVE_TUNING` — overrides for the four sweepable constants.
 //!
 //! The gate is COMPILE-time, not runtime: without the feature this module never
 //! names either variable, so the shipped binary contains neither string and every
 //! accessor const-folds to the shipped value.
 //!
-//! **ABSENT means `AdaptiveFeatures::default()` and `AdaptiveTuning::SHIPPED`,
+//! **ABSENT means `SchedulerFeatures::default()` and `AdaptiveTuning::SHIPPED`,
 //! never the all-bits set by construction.** A `test-internals` binary with no
 //! env set must run exactly what the release binary runs; otherwise a campaign
 //! measures a configuration that never ships. When a later change narrows the
@@ -65,7 +65,7 @@ mod imp {
     use anyhow::{Result, bail};
 
     use super::AdaptiveTuning;
-    use crate::sender::AdaptiveFeatures;
+    use crate::sender::SchedulerFeatures;
 
     pub const FEATURES_ENV: &str = "SRTLA_ADAPTIVE_FEATURES";
     pub const TUNING_ENV: &str = "SRTLA_ADAPTIVE_TUNING";
@@ -73,15 +73,16 @@ mod imp {
     /// Token spelling and emission order for every feature bit. One table backs
     /// the parser AND the `effective_config` projection, so a campaign manifest
     /// can round-trip what it asked for.
-    pub const FEATURE_TOKENS: [(&str, AdaptiveFeatures); 8] = [
-        ("stall", AdaptiveFeatures::STALL),
-        ("loss", AdaptiveFeatures::LOSS),
-        ("queue", AdaptiveFeatures::QUEUE),
-        ("deadline", AdaptiveFeatures::DEADLINE),
-        ("rejoin", AdaptiveFeatures::REJOIN),
-        ("sole", AdaptiveFeatures::SOLE),
-        ("pref", AdaptiveFeatures::PREF),
-        ("ratecap", AdaptiveFeatures::RATECAP),
+    pub const FEATURE_TOKENS: [(&str, SchedulerFeatures); 9] = [
+        ("stall", SchedulerFeatures::STALL),
+        ("loss", SchedulerFeatures::LOSS),
+        ("queue", SchedulerFeatures::QUEUE),
+        ("deadline", SchedulerFeatures::DEADLINE),
+        ("rejoin", SchedulerFeatures::REJOIN),
+        ("sole", SchedulerFeatures::SOLE),
+        ("pref", SchedulerFeatures::PREF),
+        ("ratecap", SchedulerFeatures::RATECAP),
+        ("quality", SchedulerFeatures::QUALITY),
     ];
 
     pub const TUNING_KEYS: [&str; 4] = [
@@ -93,7 +94,7 @@ mod imp {
 
     #[derive(Clone, Copy)]
     struct Resolved {
-        features: AdaptiveFeatures,
+        features: SchedulerFeatures,
         tuning: AdaptiveTuning,
     }
 
@@ -114,10 +115,10 @@ mod imp {
         Ok(())
     }
 
-    pub fn features() -> AdaptiveFeatures {
+    pub fn features() -> SchedulerFeatures {
         RESOLVED
             .get()
-            .map_or_else(AdaptiveFeatures::default, |resolved| resolved.features)
+            .map_or_else(SchedulerFeatures::default, |resolved| resolved.features)
     }
 
     pub fn tuning() -> AdaptiveTuning {
@@ -129,22 +130,22 @@ mod imp {
     /// `None` (absent) is the shipped default. `all`, `none` and `default` are
     /// whole-value words: inside a comma list they are unknown tokens, because
     /// `stall,all` has no single honest meaning.
-    pub fn parse_features(raw: Option<&str>) -> Result<AdaptiveFeatures> {
+    pub fn parse_features(raw: Option<&str>) -> Result<SchedulerFeatures> {
         let Some(raw) = raw else {
-            return Ok(AdaptiveFeatures::default());
+            return Ok(SchedulerFeatures::default());
         };
         let raw = raw.trim();
         match raw {
-            "all" => return Ok(AdaptiveFeatures::ALL),
-            "none" => return Ok(AdaptiveFeatures::NONE),
-            "default" => return Ok(AdaptiveFeatures::default()),
+            "all" => return Ok(SchedulerFeatures::ALL),
+            "none" => return Ok(SchedulerFeatures::NONE),
+            "default" => return Ok(SchedulerFeatures::default()),
             "" => bail!(
                 "{FEATURES_ENV} is empty: use `default`, `all`, `none`, or a comma list of {}",
                 feature_tokens()
             ),
             _ => {}
         }
-        let mut features = AdaptiveFeatures::NONE;
+        let mut features = SchedulerFeatures::NONE;
         for token in raw.split(',') {
             let token = token.trim();
             let Some(&(_, bit)) = FEATURE_TOKENS.iter().find(|(name, _)| *name == token) else {
@@ -257,7 +258,7 @@ mod imp {
     }
 
     /// Active bits in table order. `none` is an empty array, never a missing key.
-    pub fn feature_names(features: AdaptiveFeatures) -> Vec<&'static str> {
+    pub fn feature_names(features: SchedulerFeatures) -> Vec<&'static str> {
         FEATURE_TOKENS
             .iter()
             .filter(|(_, bit)| features.contains(*bit))
@@ -321,7 +322,7 @@ mod imp {
     use anyhow::Result;
 
     use super::AdaptiveTuning;
-    use crate::sender::AdaptiveFeatures;
+    use crate::sender::SchedulerFeatures;
 
     /// Without `test-internals` no environment is read at all — this module does
     /// not name either variable, which is what the release `strings` check pins.
@@ -331,8 +332,8 @@ mod imp {
     }
 
     #[inline(always)]
-    pub fn features() -> AdaptiveFeatures {
-        AdaptiveFeatures::default()
+    pub fn features() -> SchedulerFeatures {
+        SchedulerFeatures::default()
     }
 
     #[inline(always)]

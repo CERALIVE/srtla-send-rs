@@ -187,6 +187,7 @@ mod tests {
 
         // classic mode - quality never effective
         let snap = ConfigSnapshot {
+            features: Default::default(),
             mode: SchedulingMode::Classic,
             quality_enabled: true,
             exploration_enabled: true,
@@ -197,11 +198,12 @@ mod tests {
             stall_ack_stale_ms: 3000,
             stall_reprobe_ms: 1000,
         };
-        assert!(!snap.effective_quality_enabled());
+        assert!(snap.effective_quality_enabled());
         assert!(!snap.effective_exploration_enabled());
 
         // enhanced mode - both can be effective
         let snap = ConfigSnapshot {
+            features: Default::default(),
             mode: SchedulingMode::Enhanced,
             quality_enabled: true,
             exploration_enabled: true,
@@ -217,6 +219,7 @@ mod tests {
 
         // rtt-threshold mode - quality effective, exploration not
         let snap = ConfigSnapshot {
+            features: Default::default(),
             mode: SchedulingMode::RttThreshold,
             quality_enabled: true,
             exploration_enabled: true,

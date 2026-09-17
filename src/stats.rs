@@ -27,7 +27,6 @@ use serde::Serialize;
 use crate::bind_map::BindMapReport;
 use crate::config::ConfigSnapshot;
 use crate::connection::SrtlaConnection;
-use crate::mode::SchedulingMode;
 use crate::sender::calculate_quality_multiplier;
 use crate::sender::pool_control::{PoolControlHandle, PoolControlReceiver};
 use crate::utils::now_ms;
@@ -263,7 +262,7 @@ impl SharedStats {
     /// Update stats from current connection state.
     pub fn update(&self, connections: &[SrtlaConnection], config: &ConfigSnapshot) {
         let current_time_ms = now_ms();
-        let quality_enabled = config.quality_enabled && !config.mode.is_classic();
+        let quality_enabled = config.effective_quality_enabled();
 
         let session_bytes_sent = self
             .session_bytes
@@ -291,24 +290,16 @@ impl SharedStats {
             } else {
                 1.0
             };
-            let (base_score, quality_multiplier, effective_multiplier) = match config.mode {
-                SchedulingMode::Adaptive => conn.adaptive.weight.map_or(
-                    (conn.get_score(), quality_multiplier, 0.0),
-                    |weight| {
-                        (
-                            weight.base_score,
-                            weight.quality_multiplier,
-                            weight.effective_multiplier,
-                        )
-                    },
-                ),
-                SchedulingMode::Classic
-                | SchedulingMode::Enhanced
-                | SchedulingMode::RttThreshold
-                | SchedulingMode::Edpf => {
-                    (conn.get_score(), quality_multiplier, quality_multiplier)
-                }
-            };
+            let (base_score, quality_multiplier, effective_multiplier) = conn
+                .adaptive
+                .weight
+                .map_or((conn.get_score(), quality_multiplier, 0.0), |weight| {
+                    (
+                        weight.base_score,
+                        weight.quality_multiplier,
+                        weight.effective_multiplier,
+                    )
+                });
 
             let link = LinkStats {
                 ip: conn.local_ip,
@@ -327,8 +318,7 @@ impl SharedStats {
                 rtt_velocity: conn.get_rtt_velocity(),
                 base_score,
                 quality_multiplier,
-                health: matches!(config.mode, SchedulingMode::Adaptive)
-                    .then(|| conn.health.state().as_str()),
+                health: Some(conn.health.state().as_str()),
                 priority: conn
                     .effective_priority()
                     .map(crate::bind_map::Priority::get),

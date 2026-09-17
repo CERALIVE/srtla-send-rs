@@ -49,11 +49,12 @@ pub use links::{LinkSource, SenderPaths};
 use packet_handler::{
     drain_packet_queue, flush_all_batches, handle_srt_packet, handle_uplink_packet,
 };
-pub use selection::adaptive::{AdaptiveFeatures, AdaptiveState, preference_multiplier};
+pub use selection::adaptive::{AdaptiveState, preference_multiplier};
 #[cfg(test)]
 pub use selection::select_connection_idx;
 #[allow(unused_imports)]
 pub use selection::{EdpfSchedulerState, calculate_quality_multiplier};
+pub use selection::{SchedulerFeatures, SchedulerShared};
 #[allow(unused_imports)]
 pub use sequence::{SEQ_TRACKING_SIZE, SEQUENCE_TRACKING_MAX_AGE_MS, SequenceTracker};
 use smallvec::SmallVec;
@@ -220,7 +221,7 @@ pub async fn run_sender_with_config(
     let mut last_selected_idx: Option<usize> = None;
     let mut last_switch_time_ms: u64 = 0; // Track time of last connection switch
     let mut edpf_state = EdpfSchedulerState::default();
-    let mut adaptive_state = AdaptiveState::new(shared_stats.clone());
+    let mut adaptive_state = SchedulerShared::new(shared_stats.clone());
     let mut health_ticks = HealthTicker::default();
     let mut all_failed_at: Option<Instant> = None;
     let mut pending_changes: Option<PendingConnectionChanges> = None;
@@ -245,11 +246,10 @@ pub async fn run_sender_with_config(
     // Main loop - run housekeeping frequently like C version
     // Run housekeeping once before entering the main event loop so we start in a clean state.
     {
-        let classic = config.mode().is_classic();
         if let Err(err) = handle_housekeeping(
             &mut connections,
             &mut reg,
-            classic,
+            false,
             &mut all_failed_at,
             &mut reader_handles,
             &packet_tx,
@@ -358,11 +358,10 @@ pub async fn run_sender_with_config(
                         }
                     }
                     _ = housekeeping_timer.tick() => {
-                        let classic = config.mode().is_classic();
                         if let Err(err) = handle_housekeeping(
                             &mut connections,
                             &mut reg,
-                            classic,
+                            false,
                             &mut all_failed_at,
                             &mut reader_handles,
                             &packet_tx,

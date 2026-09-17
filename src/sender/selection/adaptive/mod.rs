@@ -1,20 +1,22 @@
-mod admission;
-mod features;
+pub(crate) mod admission;
 mod preference;
-mod ranking;
+pub(crate) mod ranking;
 mod sole;
 mod state;
 
-pub use features::AdaptiveFeatures;
 pub use preference::preference_multiplier;
 pub use state::AdaptiveState;
 
 use super::MIN_SWITCH_INTERVAL_MS;
+#[cfg(test)]
+pub use super::SchedulerFeatures as AdaptiveFeatures;
+#[cfg(any(test, feature = "test-internals"))]
 use crate::config::ConfigSnapshot;
 use crate::connection::SrtlaConnection;
 
 /// The six-argument selector contract mirrors the legacy history/clock/config seam.
 /// Health/rate ticks are separate: this path only updates admission and election state.
+#[cfg(any(test, feature = "test-internals"))]
 pub fn select(
     conns: &mut [SrtlaConnection],
     last_idx: Option<usize>,
@@ -23,7 +25,19 @@ pub fn select(
     cfg: &ConfigSnapshot,
     state: &mut AdaptiveState,
 ) -> Option<usize> {
-    let (best_idx, best_score) = match ranking::refresh(conns, state, now_ms, cfg) {
+    let mut admission = super::admission::admit(conns, now_ms, cfg, state);
+    let selection = ranking::refresh(conns, state, now_ms, &mut admission);
+    select_ranked(conns, last_idx, last_switch_ms, now_ms, selection)
+}
+
+pub(crate) fn select_ranked(
+    conns: &[SrtlaConnection],
+    last_idx: Option<usize>,
+    last_switch_ms: u64,
+    now_ms: u64,
+    selection: ranking::Selection,
+) -> Option<usize> {
+    let (best_idx, best_score) = match selection {
         ranking::Selection::Ranked { index, score } => (index, score),
         ranking::Selection::Carrier(index) => return index,
     };

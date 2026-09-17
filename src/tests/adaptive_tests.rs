@@ -54,6 +54,26 @@ fn pick(conns: &mut [SrtlaConnection], state: &mut AdaptiveState, now: u64) -> u
     adaptive::select(conns, None, 0, now, &config(), state).unwrap()
 }
 
+fn pick_with_features(
+    conns: &mut [SrtlaConnection],
+    state: &mut AdaptiveState,
+    now: u64,
+    features: AdaptiveFeatures,
+) -> usize {
+    adaptive::select(
+        conns,
+        None,
+        0,
+        now,
+        &ConfigSnapshot {
+            features,
+            ..config()
+        },
+        state,
+    )
+    .unwrap()
+}
+
 #[tokio::test]
 async fn all_healthy_trace_is_byte_identical_to_enhanced() {
     // Given identical neutral pools and independent history, with quality enabled.

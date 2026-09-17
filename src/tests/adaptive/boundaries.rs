@@ -14,11 +14,17 @@ async fn queue_ablation_removes_queue_delay_from_deadline_prediction() {
     conns[1].window = 100;
     let mut state = AdaptiveState::default();
     assert_eq!(pick(&mut conns, &mut state, 11_001), 1);
-    state.features = AdaptiveFeatures::ALL - AdaptiveFeatures::QUEUE;
+    let features = AdaptiveFeatures::ALL - AdaptiveFeatures::QUEUE;
     // When queue is ablated and the clear dwell elapses, then the link is readmitted.
-    assert_eq!(pick(&mut conns, &mut state, 11_001), 1);
+    assert_eq!(
+        pick_with_features(&mut conns, &mut state, 11_001, features),
+        1
+    );
     clock.set(12_001);
-    assert_eq!(pick(&mut conns, &mut state, 12_001), 0);
+    assert_eq!(
+        pick_with_features(&mut conns, &mut state, 12_001, features),
+        0
+    );
 }
 
 #[test]
@@ -143,9 +149,9 @@ async fn adaptive_feature_ablations_change_their_own_decisions() {
         let mut state = AdaptiveState::default();
         assert_eq!(pick(&mut conns, &mut state, 10_000), enabled);
         // When only this bit is removed, then its distinct control decision changes.
-        state.features = AdaptiveFeatures::ALL - feature;
+        let features = AdaptiveFeatures::ALL - feature;
         assert_eq!(
-            pick(&mut conns, &mut state, 10_000),
+            pick_with_features(&mut conns, &mut state, 10_000, features),
             disabled,
             "feature={feature:?}"
         );

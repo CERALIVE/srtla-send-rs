@@ -10,7 +10,7 @@
 
 use crate::config::DynamicConfig;
 use crate::sender::selection::{EdpfSchedulerState, select_connection_idx};
-use crate::test_helpers::create_test_connections;
+use crate::test_helpers::create_selection_test_connections as create_test_connections;
 use crate::utils::now_ms;
 
 #[tokio::test]

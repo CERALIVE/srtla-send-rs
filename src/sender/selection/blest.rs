@@ -38,7 +38,7 @@ impl BlestFilter {
         // Find minimum OWD across all connected links with valid RTT
         let min_owd = conns
             .iter()
-            .filter(|c| c.connected && c.rtt.rtt_min_ms < 200.0)
+            .filter(|c| c.adaptive.weight.is_some() && c.rtt.rtt_min_ms < 200.0)
             .map(|c| c.rtt.rtt_min_ms / 2.0)
             .fold(f64::MAX, f64::min);
 
@@ -47,7 +47,7 @@ impl BlestFilter {
             return conns
                 .iter()
                 .enumerate()
-                .filter(|(_, c)| c.connected)
+                .filter(|(_, c)| c.adaptive.weight.is_some())
                 .map(|(i, _)| i)
                 .collect();
         }
@@ -58,7 +58,7 @@ impl BlestFilter {
             .iter()
             .enumerate()
             .filter(|(_, c)| {
-                if !c.connected {
+                if c.adaptive.weight.is_none() {
                     return false;
                 }
                 let owd = c.rtt.rtt_min_ms / 2.0;
@@ -79,7 +79,7 @@ impl Default for BlestFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::create_test_connections;
+    use crate::test_helpers::create_selection_test_connections as create_test_connections;
 
     #[test]
     fn test_filter_passes_all_close_rtt() {
