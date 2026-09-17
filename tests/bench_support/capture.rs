@@ -40,6 +40,33 @@ pub fn start(request: &Request, topo: &BondTopology) -> Result<Vec<(NamespacePro
         );
     }
     let mut pcaps = Vec::new();
+    if request.manifest.cells[request.work.cell].variant == "interop-conformance" {
+        for i in 0..topo.link_count() {
+            let path = request.artifacts.join(format!("interop-{i}.pcap"));
+            let process = NamespaceProcess::spawn_process_only(
+                &topo.sender_ns,
+                "tcpdump",
+                &[
+                    "-U",
+                    "-n",
+                    "-s",
+                    "512",
+                    "-i",
+                    topo.sender_iface(i),
+                    "-w",
+                    utf8(&path)?,
+                    "udp port 5000 and (udp[8:2] = 0x9000 or (udp[8:2] >= 0x9200 and udp[8:2] <= \
+                     0x9202))",
+                ],
+            )?;
+            super::clock::wait_log(
+                &process,
+                "tcpdump: listening on",
+                std::time::Duration::from_secs(5),
+            )?;
+            pcaps.push((process, path));
+        }
+    }
     if request.manifest.cells[request.work.cell].variant == "rexmit-capture" {
         let path = request.artifacts.join("caller-srt.pcap");
         let process = NamespaceProcess::spawn_process_only(

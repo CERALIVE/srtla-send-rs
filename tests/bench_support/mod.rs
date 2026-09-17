@@ -13,4 +13,4 @@ pub mod record;
 pub mod runner;
 mod sls_config;
 mod source;
-mod stack;
+pub(crate) mod stack;

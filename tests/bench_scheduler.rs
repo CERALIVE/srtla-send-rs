@@ -12,6 +12,8 @@ mod lineage_tests;
 mod m1_tests;
 #[path = "bench_support/m2_tests.rs"]
 mod m2_tests;
+#[path = "bench_support/m3_tests.rs"]
+mod m3_tests;
 #[path = "bench_support/manifest.rs"]
 mod manifest;
 #[path = "support/measurement_lock.rs"]

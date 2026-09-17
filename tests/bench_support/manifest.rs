@@ -84,7 +84,7 @@ impl Manifest {
         let mut labels = BTreeSet::new();
         for c in &self.candidates {
             ensure!(
-                identifier(&c.label) && labels.insert(&c.label),
+                identifier(&c.label.replace('.', "_")) && labels.insert(&c.label),
                 ManifestError::Invalid("duplicate/unsafe candidate label".into())
             );
             ensure!(

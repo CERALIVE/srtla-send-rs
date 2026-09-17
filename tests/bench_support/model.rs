@@ -25,6 +25,15 @@ pub struct Manifest {
     pub runs: Option<u32>,
 }
 
+impl Manifest {
+    pub fn retains_measured_timeouts(&self) -> bool {
+        matches!(
+            self.campaign.as_str(),
+            "m1-ttl" | "m2-sender" | "m3-interop"
+        )
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Candidate {

@@ -1,0 +1,308 @@
+{
+  "spike": "M3",
+  "ttl_star": 200,
+  "quadrants": [
+    {
+      "sender_population": "existing",
+      "receiver": "ours-old",
+      "senders": [
+        "belabox-c",
+        "irlserver-rust-classic",
+        "irlserver-rust-enhanced",
+        "ours-3.3.0"
+      ],
+      "measured_runs": 48,
+      "settled_runs": 25,
+      "passing_runs": 6
+    },
+    {
+      "sender_population": "existing",
+      "receiver": "ours-new-200",
+      "senders": [
+        "belabox-c",
+        "irlserver-rust-classic",
+        "irlserver-rust-enhanced",
+        "ours-3.3.0"
+      ],
+      "measured_runs": 48,
+      "settled_runs": 48,
+      "passing_runs": 39
+    },
+    {
+      "sender_population": "new",
+      "receiver": "ours-old",
+      "senders": [
+        "ours-new"
+      ],
+      "measured_runs": 12,
+      "settled_runs": 3,
+      "passing_runs": 0
+    },
+    {
+      "sender_population": "new",
+      "receiver": "ours-new-200",
+      "senders": [
+        "ours-new"
+      ],
+      "measured_runs": 12,
+      "settled_runs": 12,
+      "passing_runs": 6
+    }
+  ],
+  "senders": {
+    "belabox-c": {
+      "pass": false,
+      "failing_scenarios": [
+        "C"
+      ]
+    },
+    "irlserver-rust-classic": {
+      "pass": true,
+      "failing_scenarios": []
+    },
+    "irlserver-rust-enhanced": {
+      "pass": false,
+      "failing_scenarios": [
+        "C"
+      ]
+    },
+    "ours-3.3.0": {
+      "pass": false,
+      "failing_scenarios": [
+        "C"
+      ]
+    },
+    "ours-new": {
+      "pass": false,
+      "failing_scenarios": [
+        "C",
+        "M1"
+      ]
+    }
+  },
+  "comparisons": [
+    {
+      "sender": "belabox-c",
+      "scenario": "B1",
+      "settled_runs": 3,
+      "passing_runs": 3,
+      "new_median_bps": 9615105.422222223,
+      "old_median_bps": 7829556.622222222,
+      "goodput_ratio": 1.228052351640471,
+      "passed": true,
+      "disposition": "pass"
+    },
+    {
+      "sender": "belabox-c",
+      "scenario": "G",
+      "settled_runs": 3,
+      "passing_runs": 3,
+      "new_median_bps": 12800644.266666668,
+      "old_median_bps": 12800410.311111111,
+      "goodput_ratio": 1.0000182771918924,
+      "passed": true,
+      "disposition": "pass"
+    },
+    {
+      "sender": "belabox-c",
+      "scenario": "C",
+      "settled_runs": 3,
+      "passing_runs": 0,
+      "new_median_bps": 16379462.4,
+      "old_median_bps": 14146122.666666666,
+      "goodput_ratio": 1.157876457454726,
+      "passed": false,
+      "disposition": "known_limitation"
+    },
+    {
+      "sender": "belabox-c",
+      "scenario": "M1",
+      "settled_runs": 3,
+      "passing_runs": 3,
+      "new_median_bps": 9597090.844444444,
+      "old_median_bps": 9006119.111111112,
+      "goodput_ratio": 1.065618911546954,
+      "passed": true,
+      "disposition": "pass"
+    },
+    {
+      "sender": "irlserver-rust-classic",
+      "scenario": "B1",
+      "settled_runs": 3,
+      "passing_runs": 3,
+      "new_median_bps": 9596622.933333334,
+      "old_median_bps": 7970163.911111111,
+      "goodput_ratio": 1.204068453341944,
+      "passed": true,
+      "disposition": "pass"
+    },
+    {
+      "sender": "irlserver-rust-classic",
+      "scenario": "G",
+      "settled_runs": 3,
+      "passing_runs": 3,
+      "new_median_bps": 12800176.355555557,
+      "old_median_bps": 12776546.844444444,
+      "goodput_ratio": 1.0018494442511583,
+      "passed": true,
+      "disposition": "pass"
+    },
+    {
+      "sender": "irlserver-rust-classic",
+      "scenario": "C",
+      "settled_runs": 3,
+      "passing_runs": 3,
+      "new_median_bps": 22399899.2,
+      "old_median_bps": 12708875.2,
+      "goodput_ratio": 1.762539866628008,
+      "passed": true,
+      "disposition": "pass"
+    },
+    {
+      "sender": "irlserver-rust-classic",
+      "scenario": "M1",
+      "settled_runs": 3,
+      "passing_runs": 3,
+      "new_median_bps": 9579427.2,
+      "old_median_bps": 9202056.888888888,
+      "goodput_ratio": 1.0410093434182928,
+      "passed": true,
+      "disposition": "pass"
+    },
+    {
+      "sender": "irlserver-rust-enhanced",
+      "scenario": "B1",
+      "settled_runs": 3,
+      "passing_runs": 2,
+      "new_median_bps": 9594283.377777778,
+      "old_median_bps": 6009148.444444444,
+      "goodput_ratio": 1.5966128090325094,
+      "passed": true,
+      "disposition": "pass"
+    },
+    {
+      "sender": "irlserver-rust-enhanced",
+      "scenario": "G",
+      "settled_runs": 3,
+      "passing_runs": 3,
+      "new_median_bps": 12800410.311111111,
+      "old_median_bps": 9838065.066666666,
+      "goodput_ratio": 1.3011105562293406,
+      "passed": true,
+      "disposition": "pass"
+    },
+    {
+      "sender": "irlserver-rust-enhanced",
+      "scenario": "C",
+      "settled_runs": 3,
+      "passing_runs": 1,
+      "new_median_bps": 21535374.933333337,
+      "old_median_bps": 14761133.333333334,
+      "goodput_ratio": 1.4589242199108472,
+      "passed": false,
+      "disposition": "known_limitation"
+    },
+    {
+      "sender": "irlserver-rust-enhanced",
+      "scenario": "M1",
+      "settled_runs": 3,
+      "passing_runs": 3,
+      "new_median_bps": 9573578.311111111,
+      "old_median_bps": 9381617.777777778,
+      "goodput_ratio": 1.0204613466334165,
+      "passed": true,
+      "disposition": "pass"
+    },
+    {
+      "sender": "ours-3.3.0",
+      "scenario": "B1",
+      "settled_runs": 3,
+      "passing_runs": 3,
+      "new_median_bps": 9596856.888888888,
+      "old_median_bps": 7344566.755555555,
+      "goodput_ratio": 1.306660720542796,
+      "passed": true,
+      "disposition": "pass"
+    },
+    {
+      "sender": "ours-3.3.0",
+      "scenario": "G",
+      "settled_runs": 3,
+      "passing_runs": 3,
+      "new_median_bps": 12803217.777777778,
+      "old_median_bps": 10310421.333333334,
+      "goodput_ratio": 1.2417744497390515,
+      "passed": true,
+      "disposition": "pass"
+    },
+    {
+      "sender": "ours-3.3.0",
+      "scenario": "C",
+      "settled_runs": 3,
+      "passing_runs": 0,
+      "new_median_bps": 21854724.266666666,
+      "old_median_bps": 12478662.933333334,
+      "goodput_ratio": 1.7513674648818143,
+      "passed": false,
+      "disposition": "receiver_pr_blocker"
+    },
+    {
+      "sender": "ours-3.3.0",
+      "scenario": "M1",
+      "settled_runs": 3,
+      "passing_runs": 3,
+      "new_median_bps": 9597792.711111112,
+      "old_median_bps": 9234576.711111112,
+      "goodput_ratio": 1.0393321763804264,
+      "passed": true,
+      "disposition": "pass"
+    },
+    {
+      "sender": "ours-new",
+      "scenario": "B1",
+      "settled_runs": 3,
+      "passing_runs": 3,
+      "new_median_bps": 9595921.066666666,
+      "old_median_bps": 4478377.244444445,
+      "goodput_ratio": 2.1427228084839616,
+      "passed": true,
+      "disposition": "pass"
+    },
+    {
+      "sender": "ours-new",
+      "scenario": "G",
+      "settled_runs": 3,
+      "passing_runs": 3,
+      "new_median_bps": 12803451.733333332,
+      "old_median_bps": 4825099.377777778,
+      "goodput_ratio": 2.653510473235066,
+      "passed": true,
+      "disposition": "pass"
+    },
+    {
+      "sender": "ours-new",
+      "scenario": "C",
+      "settled_runs": 3,
+      "passing_runs": 0,
+      "new_median_bps": 12159489.066666666,
+      "old_median_bps": 11963317.333333334,
+      "goodput_ratio": 1.016397770607216,
+      "passed": false,
+      "disposition": "new_sender_failure"
+    },
+    {
+      "sender": "ours-new",
+      "scenario": "M1",
+      "settled_runs": 3,
+      "passing_runs": 0,
+      "new_median_bps": 8865394.844444444,
+      "old_median_bps": 7699126.4,
+      "goodput_ratio": 1.1514806205083792,
+      "passed": false,
+      "disposition": "new_sender_failure"
+    }
+  ],
+  "receiver_pr_blocker": true,
+  "selected_alternative": "BLOCKER: Todo 24 must rerun M1's frozen rule with failing ours-3.3.0 scenarios added before TTL* is applied: C",
+  "foreign_mitigation": "the receiver cannot detect sender lineage; the only lever is TTL*/gate, which M1 chose"
+}

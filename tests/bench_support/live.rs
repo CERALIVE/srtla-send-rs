@@ -29,7 +29,10 @@ pub fn execute(request: &mut Request) -> Result<()> {
     stack.finish_pcaps(
         result.is_err()
             || request.result.record.scenario.id == "S-FREEZE-NORDR"
-            || request.manifest.cells[request.work.cell].variant == "rexmit-capture",
+            || matches!(
+                request.manifest.cells[request.work.cell].variant.as_str(),
+                "rexmit-capture" | "interop-conformance"
+            ),
     )?;
     result
 }
@@ -92,7 +95,7 @@ fn measure(request: &mut Request, profile: &Profile, stack: &mut Stack) -> Resul
     let settle_failed = match settled {
         Ok(()) => false,
         Err(error)
-            if matches!(request.manifest.campaign.as_str(), "m1-ttl" | "m2-sender")
+            if request.manifest.retains_measured_timeouts()
                 && matches!(
                     error.downcast_ref::<RunFailure>(),
                     Some(RunFailure::SettleTimeout)

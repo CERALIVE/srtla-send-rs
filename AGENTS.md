@@ -1,5 +1,31 @@
 # srtla-send-rs
 
+## M3 FOUR-QUADRANT INTEROP (Todo 18)
+
+`scripts/bench/manifests/m3-interop.json` measures five sender configurations:
+BELABOX C, irlserver Rust classic/enhanced, the actual released 3.3.0 amd64
+Debian binary, and current enhanced. Each runs B1/G/C/M1 against genuine old
+TTL40/freeze-off and new TTL200/gate-on/freeze-on receivers, N=3. Three separate
+foreign scenario-I cells retain bidirectional full-control captures for REG1/2/3,
+literal keepalive echo and receiver-restart conformance. No catalog/source tuning.
+M1/M2/M3 alone retain full-window settle-timeout measurements with one attempt;
+ordinary campaigns still require success. Candidate labels may carry dotted
+release versions; lock serialization preserves historical provenance metadata.
+`report.py --m3-outcomes` requires the exact matrix and receiver policies, rejects
+infrastructure failures, and writes separate M3 evidence, never D-1 groups.
+Any released-sender failure blocks the receiver PR pending Todo24's M1-rule rerun;
+foreign failures become known limitations without reverting policy. Method and
+results live under `docs/evidence/bpc/m3-interop/`.
+
+Measured M3 result: released3.3.0 fails C (settled3/3, retransmit13.568/14.301/
+51.453%, joint0/3), so Todo24 is BLOCKED on its required M1-rule rerun. Foreign
+BELABOX/C and irlserver-enhanced/C are known limitations; irlserver-classic
+passes all four scenarios. Current enhanced fails C/M1. All same-sender median
+goodput ratios clear0.95. Registration/restart conformance passes for all foreign
+arms. BELABOX's two-byte keepalive receives a32-byte zero-padded reply: literal
+echo parity FAIL, not demonstrated operational failure (the pinned C receive
+path tolerates trailing bytes). Preserve the NAT-padding floor and the distinction.
+
 ## M1 RECEIVER TTL CAMPAIGN (Todo 16)
 
 `scripts/bench/manifests/m1-ttl.json` declares 65 cells / 195 one-attempt runs:
@@ -18,7 +44,7 @@ flag and uses BELABOX registration logs. No foreign sender binary is emulated.
 The old SRT lineage genuinely lacks the freeze URI row and remains default-off;
 its manifest says freeze0 rather than falsely claiming freeze-on.
 
-M1 alone measures the full window after a settling timeout, retaining failed status
+M1, M2 and M3 measure the full window after a settling timeout, retaining failed status
 and reason. It requires `BENCH_MAX_RETRIES=1`. The M1 reporter requires every
 declared outcome, preserves measured failures, and refuses infrastructure failures;
 ordinary reporting still requires successful records. M1 summaries have empty D-1

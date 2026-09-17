@@ -830,13 +830,15 @@ def validate_sls(record: RunRecord) -> None:
 
 def load_records(
     manifest: Manifest, roots: Sequence[Path], *, smoke_coverage: bool = False,
-    m1_outcomes: bool = False, m2_outcomes: bool = False,
+    m1_outcomes: bool = False, m2_outcomes: bool = False, m3_outcomes: bool = False,
 ) -> LoadedRecords:
     if m1_outcomes and (manifest.campaign != "m1-ttl" or smoke_coverage):
         raise EvidenceError("M1 outcome coverage is restricted to m1-ttl")
     if m2_outcomes and (manifest.campaign != "m2-sender" or smoke_coverage or m1_outcomes):
         raise EvidenceError("M2 outcome coverage is restricted to m2-sender")
-    measured_outcomes = m1_outcomes or m2_outcomes
+    if m3_outcomes and (manifest.campaign != "m3-interop" or smoke_coverage or m1_outcomes or m2_outcomes):
+        raise EvidenceError("M3 outcome coverage is restricted to m3-interop")
+    measured_outcomes = m1_outcomes or m2_outcomes or m3_outcomes
     if smoke_coverage:
         required = {
             (name, "A", "ceralive", "production", 2) for name in ("classic", "enhanced")
@@ -1938,6 +1940,7 @@ class Arguments(argparse.Namespace):
     self_test: bool = False
     smoke_coverage: bool = False
     m2_outcomes: bool = False
+    m3_outcomes: bool = False
     results: list[Path] | None = None
     manifest: Path | None = None
     out: Path | None = None
@@ -1969,6 +1972,7 @@ def main() -> int:
         help="Retain measured settle-timeout outcomes for the frozen M2 campaign",
     )
     _ = parser.add_argument("--results", nargs="+", type=Path)
+    _ = parser.add_argument("--m3-outcomes", action="store_true")
     _ = parser.add_argument("--manifest", type=Path)
     _ = parser.add_argument("--out", type=Path)
     _ = parser.add_argument("--json", type=Path)
@@ -1992,6 +1996,20 @@ def main() -> int:
         manifest = Manifest.model_validate_json(
             args.manifest.read_text(encoding="utf-8")
         )
+        if args.m3_outcomes and (manifest.campaign != "m3-interop" or args.m2_outcomes or args.smoke_coverage):
+            raise EvidenceError("M3 outcome coverage is restricted to m3-interop")
+        if manifest.campaign == "m3-interop":
+            if not args.m3_outcomes:
+                raise EvidenceError("M3 reduction requires --m3-outcomes")
+            sys.modules.setdefault("report", sys.modules[__name__])
+            from m3_report import conformance_markdown, markdown as m3_markdown, reduce
+
+            summary = reduce(args.manifest, args.results)
+            publish(args.out, m3_markdown(summary))
+            publish(args.out.parent / "spike.json", summary.decision.model_dump_json(indent=2, by_alias=True) + "\n")
+            publish(args.out.parent / "conformance.md", conformance_markdown(summary))
+            publish(args.json, summary.model_dump_json(indent=2, by_alias=True) + "\n")
+            return 0
         if manifest.campaign == "m1-ttl":
             sys.modules.setdefault("report", sys.modules[__name__])
             from m1_report import render

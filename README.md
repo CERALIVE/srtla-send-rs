@@ -825,6 +825,35 @@ no new live run or scheduler change was used to obtain the scoped pass.
 
 ### Statistical reports and retention decisions
 
+#### M3 rollout interoperability
+
+The M3 manifest covers existing/new sender × old/new receiver quadrants, including
+the actual released `srtla-send-rs_3.3.0_amd64.deb`, BELABOX C, irlserver Rust in
+classic/enhanced modes, and current enhanced. B1/G/C/M1 run three times against
+each receiver; foreign scenario-I sub-runs additionally capture registration,
+exact keepalive echoes and receiver-restart recovery. The new receiver uses M1's
+TTL*=200; the genuine old build is TTL40/freeze-off, not a patched baseline.
+
+Run the manifest as one detached transient user service with the locked lane/CPU
+allocation and `BENCH_MAX_RETRIES=1`. Reduce with `report.py --m3-outcomes` and
+the ordinary `--manifest`, `--results`, `--out`, `--json` arguments. It retains
+complete measured settle failures, requires all123 outcomes, and additionally
+publishes `spike.json` and `conformance.md` beside the report. Ordinary campaign
+success requirements remain unchanged. See the
+[predeclared method](docs/evidence/bpc/m3-interop/method.md).
+
+A failing released3.3.0 arm blocks receiver rollout: Todo24 must rerun M1's rule
+with the failing scenario added. A foreign-only failure is a documented known
+limitation, not a receiver-policy revert. No receiver lineage detection is implied.
+
+**Measured result:** released3.3.0 fails C's retransmission criterion despite
+3/3 settling and1.751× median goodput. Receiver rollout is therefore blocked
+pending Todo24. BELABOX/C and irlserver-enhanced/C are foreign limitations;
+irlserver-classic passes all four scenarios. The literal BELABOX echo check
+finds2-byte requests but32-byte padded replies; this is not a demonstrated
+operational liveness failure. Full numbers, conformance and gate caveats:
+[M3 evidence](docs/evidence/bpc/m3-interop/README.md).
+
 #### M1 receiver TTL spike
 
 `scripts/bench/manifests/m1-ttl.json` declares 65 cells and 195 one-attempt outcomes:
