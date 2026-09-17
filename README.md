@@ -40,7 +40,9 @@ The sender supports four established scheduling modes and an experimental adapti
 
 #### Enhanced Mode (Default)
 
-- **Exponential NAK Decay**: Smooth recovery from packet loss over ~8 seconds
+**Cooldown candidate (2026-09-16):** See [evaluation](docs/notes/enhanced-cooldown-evaluation-2026-09.md) — unaccepted, reverted.
+
+ - **Exponential NAK Decay**: Smooth recovery from packet loss over ~8 seconds
 - **NAK Burst Detection**: Extra penalties for connections experiencing severe packet loss (≥5 NAKs)
 - **RTT-Aware Selection**: Small bonus (3% max) for lower-latency connections
 - **Quality Scoring**: Automatic preference for higher-quality connections

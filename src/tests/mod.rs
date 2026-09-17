@@ -29,6 +29,12 @@ pub mod config_tests;
 pub mod sender_tests;
 
 #[cfg(test)]
+mod enhanced_cooldown_tests;
+
+#[cfg(test)]
+mod selection_mode_traces;
+
+#[cfg(test)]
 pub mod ack_rtt_tests;
 
 #[cfg(test)]

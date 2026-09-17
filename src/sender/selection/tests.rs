@@ -44,63 +44,6 @@ fn test_select_connection_idx_classic() {
 }
 
 #[test]
-fn test_select_connection_idx_enhanced() {
-    // Test that enhanced mode enforces cooldown dampening
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let mut connections = rt.block_on(create_test_connections(3));
-
-    connections[0].in_flight_packets = 5; // Currently selected, lower score
-    connections[1].in_flight_packets = 0; // Highest score
-    connections[2].in_flight_packets = 10; // Lowest score
-
-    let last_switch_time_ms = now_ms();
-    let current_time_ms = last_switch_time_ms + 5; // Within 15ms cooldown
-
-    let config = ConfigSnapshot {
-        mode: SchedulingMode::Enhanced,
-        quality_enabled: true,
-        exploration_enabled: false,
-        rtt_delta_ms: 30,
-        earned_ack_window: false,
-        stall_deselect: false,
-        stall_min_in_flight: 32,
-        stall_ack_stale_ms: 3000,
-        stall_reprobe_ms: 1000,
-    };
-
-    // Enhanced mode should stay with connection 0 due to cooldown
-    let result = select_connection_idx(
-        &mut connections,
-        Some(0),
-        last_switch_time_ms,
-        current_time_ms,
-        &config,
-        &mut EdpfSchedulerState::default(),
-    );
-    assert_eq!(
-        result,
-        Some(0),
-        "Enhanced mode should enforce cooldown and stay with current connection"
-    );
-
-    // After cooldown expires, should allow switching
-    let current_time_after_cooldown = last_switch_time_ms + 20; // Past 15ms cooldown
-    let result_after = select_connection_idx(
-        &mut connections,
-        Some(0),
-        last_switch_time_ms,
-        current_time_after_cooldown,
-        &config,
-        &mut EdpfSchedulerState::default(),
-    );
-    assert_eq!(
-        result_after,
-        Some(1),
-        "Enhanced mode should allow switching after cooldown expires"
-    );
-}
-
-#[test]
 fn test_select_connection_idx_empty() {
     let mut conns: Vec<SrtlaConnection> = vec![];
     let config = ConfigSnapshot {

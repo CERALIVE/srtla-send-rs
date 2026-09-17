@@ -136,48 +136,6 @@ mod tests {
     }
 
     #[test]
-    fn test_time_based_switch_dampening_blocks_within_cooldown() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let mut connections = rt.block_on(create_test_connections(3));
-
-        // Setup: Connection 0 is currently selected, Connection 1 has better score
-        connections[0].in_flight_packets = 5; // Lower score
-        connections[1].in_flight_packets = 0; // Best score
-        connections[2].in_flight_packets = 10; // Worst score
-
-        let last_switch_time_ms = now_ms();
-        let current_time_ms = last_switch_time_ms + 5; // 5ms after last switch (within 15ms cooldown)
-
-        let config = ConfigSnapshot {
-            mode: SchedulingMode::Enhanced,
-            quality_enabled: true,
-            exploration_enabled: false,
-            rtt_delta_ms: 30,
-            earned_ack_window: false,
-            stall_deselect: false,
-            stall_min_in_flight: 32,
-            stall_ack_stale_ms: 3000,
-            stall_reprobe_ms: 1000,
-        };
-
-        // Per-packet selection: Should keep sending ALL packets via connection 0 during cooldown
-        // This prevents rapid thrashing between connections under bursty score changes
-        let selected = select_connection_idx(
-            &mut connections,
-            Some(0),
-            last_switch_time_ms,
-            current_time_ms,
-            &config,
-            &mut EdpfSchedulerState::default(),
-        );
-        assert_eq!(
-            selected,
-            Some(0),
-            "Should continue routing all packets via current connection during cooldown period"
-        );
-    }
-
-    #[test]
     fn test_time_based_switch_dampening_allows_after_cooldown() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let mut connections = rt.block_on(create_test_connections(3));
@@ -263,50 +221,6 @@ mod tests {
             Some(1),
             "Should immediately route packets via valid connection if current is timed out, \
              bypassing cooldown"
-        );
-    }
-
-    #[test]
-    fn test_exploration_blocked_during_cooldown() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let mut connections = rt.block_on(create_test_connections(3));
-
-        // Setup connections with distinct scores
-        connections[0].in_flight_packets = 2; // Currently selected
-        connections[1].in_flight_packets = 0; // Best
-        connections[2].in_flight_packets = 1; // Second-best
-
-        let last_switch_time_ms = now_ms();
-        let current_time_ms = last_switch_time_ms + 5; // Within 15ms cooldown
-
-        let config = ConfigSnapshot {
-            mode: SchedulingMode::Enhanced,
-            quality_enabled: true,
-            exploration_enabled: true, // exploration enabled
-            rtt_delta_ms: 30,
-            earned_ack_window: false,
-            stall_deselect: false,
-            stall_min_in_flight: 32,
-            stall_ack_stale_ms: 3000,
-            stall_reprobe_ms: 1000,
-        };
-
-        // Enable exploration, but should be blocked by cooldown
-        // This prevents exploration from causing rapid per-packet routing changes
-        let selected = select_connection_idx(
-            &mut connections,
-            Some(0),
-            last_switch_time_ms,
-            current_time_ms,
-            &config,
-            &mut EdpfSchedulerState::default(),
-        );
-
-        // Should continue routing packets via connection 0, not explore during cooldown
-        assert_eq!(
-            selected,
-            Some(0),
-            "Exploration-triggered per-packet routing changes should be blocked during cooldown"
         );
     }
 
@@ -1667,56 +1581,6 @@ mod tests {
             selected,
             Some(1),
             "exploration must route to the recovered second-best link when the best is degrading"
-        );
-    }
-
-    /// Exploration is gated by the switch cooldown: with the identical degrading
-    /// best / recovered second-best setup, but still inside the 15ms switch
-    /// cooldown, exploration is suppressed and the sender stays on the current
-    /// link (no immediate exploratory retry).
-    #[test]
-    fn exploration_cooldown_prevents_immediate_retry() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let mut connections = rt.block_on(create_test_connections(3));
-
-        connections[0].window = 100;
-        connections[0].in_flight_packets = 0;
-        connections[1].window = 80;
-        connections[1].in_flight_packets = 0;
-        connections[2].window = 10;
-        connections[2].in_flight_packets = 0;
-
-        connections[0].congestion.nak_count = 1;
-        connections[0].congestion.last_nak_time_ms = now_ms();
-
-        let config = ConfigSnapshot {
-            mode: SchedulingMode::Enhanced,
-            quality_enabled: false,
-            exploration_enabled: true,
-            rtt_delta_ms: 30,
-            earned_ack_window: false,
-            stall_deselect: false,
-            stall_min_in_flight: 32,
-            stall_ack_stale_ms: 3000,
-            stall_reprobe_ms: 1000,
-        };
-
-        let last_switch = now_ms();
-        let current = last_switch + 5; // within the 15ms switch cooldown
-
-        let selected = select_connection_idx(
-            &mut connections,
-            Some(2),
-            last_switch,
-            current,
-            &config,
-            &mut EdpfSchedulerState::default(),
-        );
-
-        assert_eq!(
-            selected,
-            Some(2),
-            "the switch cooldown must suppress exploration; stay on the current link"
         );
     }
 }

@@ -2192,6 +2192,8 @@ The `bindings/typescript/` package uses Biome **2.5.9** via `@ceralive/biome-con
 
 ## EXPERIMENTAL SCHEDULER-HARDENING FLAGS (consolidated-flows-and-satellite, Todos 14-15)
 
+**Enhanced cooldown candidate (2026-09-16):** See [`docs/notes/enhanced-cooldown-evaluation-2026-09.md`](docs/notes/enhanced-cooldown-evaluation-2026-09.md) — unaccepted, behaviour reverted, tests retained.
+
 Two CLI flags harden the default `enhanced` mode against a satellite/LAN failure signature
 (a link that keeps a high scheduling weight while it silently degrades). Both are
 **`[EXPERIMENTAL]` in their `--help` text and default OFF everywhere** (CLI parse default,
