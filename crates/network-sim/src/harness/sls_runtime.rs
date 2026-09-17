@@ -1,5 +1,30 @@
 use super::*;
 
+fn profile_environment(value: Option<&str>) -> Result<Vec<(String, String)>> {
+    match value {
+        None => Ok(Vec::new()),
+        Some(value @ ("converged" | "legacy-l1" | "legacy-l2")) => {
+            Ok(vec![("SLS_BONDED_PROFILE_OVERRIDE".into(), value.into())])
+        }
+        Some(_) => bail!("unsupported SLS_BONDED_PROFILE_OVERRIDE"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn rollback_environment_is_forwarded_without_replacing_default() {
+        // Given the default and the real rollback setting, when building child env,
+        // then the default stays unset and rollback is not silently converged.
+        assert!(super::profile_environment(None).unwrap().is_empty());
+        assert_eq!(
+            super::profile_environment(Some("legacy-l2")).unwrap(),
+            vec![("SLS_BONDED_PROFILE_OVERRIDE".into(), "legacy-l2".into())]
+        );
+        assert!(super::profile_environment(Some("typo")).is_err());
+    }
+}
+
 impl SrtSink {
     pub fn start_sls_listener(&self, ns: &Namespace) -> Result<(NamespaceProcess, SlsCapture)> {
         let (binary, template) = match self {
@@ -21,7 +46,9 @@ impl SrtSink {
                     "-c".into(),
                     path.to_str().context("SLS config UTF-8")?.into(),
                 ],
-                env: vec![("SLS_BONDED_PROFILE_OVERRIDE".into(), "converged".into())],
+                env: profile_environment(
+                    std::env::var("SLS_BONDED_PROFILE_OVERRIDE").ok().as_deref(),
+                )?,
             },
             process_control::Teardown::Process,
         )?;
@@ -53,11 +80,14 @@ impl SlsCapture {
             "sh",
             &[
                 "-c",
-                "exec \"$1\" \"$2\" file://con > \"$3\"",
+                "exec \"$1\" -statsout \"$4\" -statspf:csv -stats 100 \"$2\" file://con > \"$3\"",
                 "sls-player",
                 tool.to_str().context("SRT tool UTF-8")?,
-                "srt://127.0.0.1:4000?mode=caller&streamid=play/live/conformance&latency=100",
+                "srt://127.0.0.1:4000?mode=caller&streamid=play/live/conformance&latency=200",
                 self.output.to_str().context("player output UTF-8")?,
+                self.player_stats_path()
+                    .to_str()
+                    .context("player CSV UTF-8")?,
             ],
         )?);
         loop {
@@ -84,6 +114,33 @@ impl SlsCapture {
             started: Instant::now(),
             output: self.output.clone(),
         })
+    }
+
+    pub fn player_stats_path(&self) -> PathBuf {
+        self.directory.path().join("player.csv")
+    }
+
+    pub fn player_bytes(&self) -> Result<u64> {
+        Ok(std::fs::metadata(&self.output)?.len())
+    }
+
+    pub fn raw_stats(ns: &Namespace) -> Result<String> {
+        let output = ns.exec_checked(
+            "curl",
+            &[
+                "--noproxy",
+                "*",
+                "--max-time",
+                "2",
+                "-fsS",
+                "-H",
+                "Authorization: bpc-conformance-local",
+                "http://127.0.0.1:8181/stats",
+            ],
+        )?;
+        let text = String::from_utf8(output.stdout)?;
+        parse_sls_stats(&text)?;
+        Ok(text)
     }
 
     pub fn finish_measurement(
@@ -139,7 +196,7 @@ impl SlsCapture {
     }
 
     pub fn save_artifacts(&self, directory: &Path) -> Result<()> {
-        for name in ["sls.conf", "player.ts", "conformance.json"] {
+        for name in ["sls.conf", "player.ts", "player.csv", "conformance.json"] {
             let path = self.directory.path().join(name);
             if path.exists() {
                 std::fs::copy(path, directory.join(name))?;

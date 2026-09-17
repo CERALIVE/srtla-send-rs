@@ -169,7 +169,15 @@ impl Manifest {
     pub fn order(&self) -> Vec<Work> {
         let mut groups = BTreeMap::new();
         for (i, cell) in self.cells.iter().enumerate() {
-            groups.entry(&cell.cell_id).or_insert_with(Vec::new).push(i);
+            let key = if matches!(
+                self.campaign.as_str(),
+                "twinport-default" | "twinport-legacy-l2"
+            ) {
+                format!("{}@{}", cell.scenario, cell.variant)
+            } else {
+                cell.cell_id.clone()
+            };
+            groups.entry(key).or_insert_with(Vec::new).push(i);
         }
         let mut rng = rand::rngs::StdRng::seed_from_u64(self.seed);
         let mut work = Vec::new();

@@ -34,6 +34,12 @@ pub fn measure(request: &mut Request, profile: &Profile, stack: &mut Stack) -> R
         .source
         .rate(profile.warmup_offered_bps, Duration::ZERO)?;
     capture.attach_player(&stack.topo.receiver_ns, &request.srt_binary)?;
+    let twinport_start = if super::twinport::enabled(&request.manifest.campaign) {
+        Some(super::twinport::begin(request, profile, stack)?)
+    } else {
+        None
+    };
+    let capture = stack.sls_capture.as_ref().context("SLS capture")?;
     let offered_start = stack.source.offered_bytes()?;
     let measurement = capture.begin_measurement()?;
     let mut scheduler = Scheduler::new(&profile.timeline)?;
@@ -106,6 +112,9 @@ pub fn measure(request: &mut Request, profile: &Profile, stack: &mut Stack) -> R
         state(observed.assertions.carry),
         state(observed.assertions.latency)
     );
+    if let Some(start) = twinport_start {
+        super::twinport::finish(request, profile, stack, start)?;
+    }
     observed.assertions.require_pass()
 }
 

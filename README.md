@@ -877,6 +877,32 @@ the campaign does not itself change deployed receiver or scheduler defaults.
 
 #### SLS conformance cells (not covering-set metrics)
 
+**Twin-port fidelity check:** the two `twinport-{default,legacy-l2}` manifests
+run the unchanged enhanced/M1 scenario three times on each bonded port and
+separately check the four port/profile conformance configurations. SLS remains
+the sink; its attached loopback player now requests200ms and captures receive
+CSV. Explicit `SLS_BONDED_PROFILE_OVERRIDE=legacy-l2` reaches the SLS process;
+unset uses the server default. The TWINPORT-only path settles before measuring
+and requires zero player receive loss/drop plus at least98% of offered receive
+rate. A failing player leg is discarded and rerun once, never counted as a valid
+delivery sample. Delivered fraction uses player bytes / sender session-byte
+delta, not publisher bitrate. See the
+[predeclared method](docs/evidence/bpc/twinport/method.md).
+
+The dedicated `twinport_report.py RAW_ROOT OUTPUT_DIRECTORY` reducer validates
+both profile logs and the raw player stats, compares only complete N=3 paired
+observations, and keeps SLS outside D-1. No publisher received-packet denominator
+means conservative DISTINCT, never a NAK-count substitute. Unidentifiable deltas
+are null rather than invented zero; DISTINCT requires Todo20's reserved4003
+block. Synthetic conformance does not replace a failed M1 performance index.
+
+**Measured disposition: DISTINCT.** The live publisher API has no received-packet
+denominator, and strict valid M1coverage remains2/3 vs1/3 for default4002/4003
+and0/3 on both rollback ports. Four synthetic conformance configurations pass;
+legacy M1carry fails11/12attempts. No N=3equivalence estimate is claimed. Full
+results and the non-green branch gate caveat:
+[TWINPORT receipt](docs/evidence/bpc/twinport/README.md).
+
 An explicit manifest cell may select `sink: "sls"`, `port: 4002` (bonded) or
 `4003` (deprecated bonded alias), `metrics: "none"`, and `covering: false`.
 Use an explicit SRT latency preset, FEC off, and no listener URI overrides.

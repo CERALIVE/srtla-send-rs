@@ -41,6 +41,7 @@ pub enum RunFailure {
     SettleTimeout,
     RestartBudget,
     MissingMetric,
+    PlayerLegInvalid,
 }
 
 impl std::fmt::Display for RunFailure {
@@ -50,6 +51,7 @@ impl std::fmt::Display for RunFailure {
             Self::SettleTimeout => "settle_timeout",
             Self::RestartBudget => "receiver_restart_budget",
             Self::MissingMetric => "missing_assertion_metric",
+            Self::PlayerLegInvalid => "player_leg_invalid",
         })
     }
 }

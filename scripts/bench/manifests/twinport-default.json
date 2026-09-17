@@ -1,0 +1,20 @@
+{
+  "campaign": "twinport-default",
+  "seed": 20260913,
+  "candidates": [{
+    "label": "enhanced", "bin": "target/m3-srtla_send",
+    "args": ["--mode", "enhanced", "--stats-file-interval", "100"],
+    "stats_file": true,
+    "effective_config": {
+      "adaptive_features": ["stall", "loss", "queue", "deadline", "rejoin", "sole", "pref", "ratecap", "quality"],
+      "adaptive_tuning": {"stall_attempts": 32, "loss_enter": 0.1, "deadline_hold_fraction": 0.5, "ratecap_loss_backoff": 0.85}
+    }
+  }],
+  "receivers": [{"label": "ours-new", "lineage": "ours-new", "kind": "ceralive", "bin": "lock:ours-new", "srt_live_transmit_bin": "lock:ours-new"}],
+  "cells": [
+    {"candidate":"enhanced","scenario":"M1","receiver":"ours-new","srt_profile":"production","runs":3,"sink":"sls","metrics":"none","covering":false,"port":4002,"variant":"default"},
+    {"candidate":"enhanced","scenario":"M1","receiver":"ours-new","srt_profile":"production","runs":3,"sink":"sls","metrics":"none","covering":false,"port":4003,"variant":"default"},
+    {"candidate":"enhanced","scenario":"SLS","receiver":"ours-new","srt_profile":"strict","runs":1,"sink":"sls","metrics":"none","covering":false,"port":4002,"variant":"default-conformance"},
+    {"candidate":"enhanced","scenario":"SLS","receiver":"ours-new","srt_profile":"strict","runs":1,"sink":"sls","metrics":"none","covering":false,"port":4003,"variant":"default-conformance"}
+  ]
+}

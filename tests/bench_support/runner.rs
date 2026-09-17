@@ -42,6 +42,10 @@ pub fn campaign(smoke: bool) -> Result<()> {
         .parse::<u32>()?;
     ensure!(max_attempts > 0, "BENCH_MAX_RETRIES must be positive");
     ensure!(
+        !super::twinport::enabled(&manifest.campaign) || max_attempts == 2,
+        "TWINPORT requires two attempts, the second only for player_leg_invalid"
+    );
+    ensure!(
         !manifest.retains_measured_timeouts() || max_attempts == 1,
         "measurement spikes require exactly one attempt per planned index (BENCH_MAX_RETRIES=1)"
     );
@@ -72,11 +76,13 @@ pub fn campaign(smoke: bool) -> Result<()> {
             let mut attempted = false;
             for work in pair {
                 let (record, receiver_spec) = prepare(&manifest, *work, order_index)?;
-                let store = Store::new(
-                    &output.join(manifest.cells[work.cell].id()),
-                    record.fingerprint.clone(),
-                    max_attempts,
-                );
+                let directory = output.join(manifest.cells[work.cell].id());
+                let budget = if super::twinport::enabled(&manifest.campaign) {
+                    super::twinport::budget(&directory, work.run)?
+                } else {
+                    max_attempts
+                };
+                let store = Store::new(&directory, record.fingerprint.clone(), budget);
                 match store.next(work.run)? {
                     Next::Complete | Next::Exhausted => continue,
                     Next::Attempt(attempt) => {

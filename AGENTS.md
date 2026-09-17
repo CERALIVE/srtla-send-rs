@@ -1,5 +1,35 @@
 # srtla-send-rs
 
+## SLS TWIN-PORT CAMPAIGN (Todo 19)
+
+`scripts/bench/manifests/twinport-{default,legacy-l2}.json` each runs enhanced/M1
+three times per bonded port plus one separate synthetic SLS conformance cell per
+port. The four conformance configurations are two ports times two profiles, not
+six. Default leaves `SLS_BONDED_PROFILE_OVERRIDE` unset; explicit rollback is
+forwarded into the SLS namespace rather than silently replaced by converged.
+The attached loopback player uses200ms latency and retains its own receive CSV.
+
+Only these campaigns add real settling, sender-total edge snapshots and the
+strict zero-player-loss/drop plus98%-of-offered receive-rate gate. Invalid legs
+are `player_leg_invalid` and rerun once; other failures get no retry. Invalid or
+unsettled observations remain diagnostic, never valid paired samples. Existing
+ordinary/SLS smoke semantics are otherwise unchanged. Same-index ports are
+interleaved; M1 remains90s at9.6Mbit, with no catalog or sender-policy changes.
+
+`uv run scripts/bench/twinport_report.py RAW_ROOT docs/evidence/bpc/twinport`
+validates actual player CSV, publisher latency, both listener policy logs and
+locked identities before reduction. Only valid N=3 pairs supply delivered-fraction
+inference. Missing publisher drop/received pairs force DISTINCT; neither NAK
+counts nor player received packets can fill that publisher denominator. Unknown
+deltas stay null. Method/results: `docs/evidence/bpc/twinport/`.
+
+Measured: **DISTINCT**. Live publisher stats lack a received-packet denominator;
+strict valid M1coverage is2/3 vs1/3 on default4002/4003,0/3 on both rollback
+ports after the permitted reruns. No valid N=3delta; both spike deltas are null.
+All four synthetic conformance configurations pass, but legacy M1carry fails
+11/12attempts. Todo20 must run its reserved4003 block; do not promote discarded
+player-leg diagnostics into equivalence evidence.
+
 ## M3 FOUR-QUADRANT INTEROP (Todo 18)
 
 `scripts/bench/manifests/m3-interop.json` measures five sender configurations:
