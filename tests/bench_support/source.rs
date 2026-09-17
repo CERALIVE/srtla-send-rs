@@ -1,6 +1,6 @@
 use std::fs::{File, OpenOptions};
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result, ensure};
@@ -9,10 +9,21 @@ use network_sim::{Namespace, NamespaceProcess};
 pub struct Source {
     pub process: NamespaceProcess,
     control: File,
+    offered: Option<PathBuf>,
 }
 
 impl Source {
     pub fn start(ns: &Namespace, pipe: &Path, warmup_bps: u64) -> Result<Self> {
+        Self::start_capture(ns, pipe, (warmup_bps, None))
+    }
+
+    pub fn start_sls(ns: &Namespace, pipe: &Path, offered: PathBuf) -> Result<Self> {
+        std::fs::File::create(&offered)?;
+        Self::start_capture(ns, pipe, (0, Some(offered)))
+    }
+
+    fn start_capture(ns: &Namespace, pipe: &Path, source: (u64, Option<PathBuf>)) -> Result<Self> {
+        let (warmup_bps, offered) = source;
         ensure!(
             std::process::Command::new("mkfifo")
                 .arg(pipe)
@@ -31,9 +42,27 @@ impl Source {
                 pipe.to_str().context("control pipe UTF-8")?,
                 &warmup_bps.to_string(),
                 "6000",
+                offered
+                    .as_deref()
+                    .map(|p| p.to_str().context("offered path UTF-8"))
+                    .transpose()?
+                    .unwrap_or(""),
             ],
         )?;
-        Ok(Self { process, control })
+        Ok(Self {
+            process,
+            control,
+            offered,
+        })
+    }
+
+    pub fn offered_bytes(&self) -> Result<u64> {
+        Ok(std::fs::metadata(
+            self.offered
+                .as_ref()
+                .context("source has no byte capture")?,
+        )?
+        .len())
     }
 
     pub fn rate(&mut self, bps: u64, ramp: Duration) -> Result<()> {
@@ -49,13 +78,17 @@ import select
 import socket
 import sys
 import time
+from contextlib import ExitStack
 
 def run() -> None:
     rate = float(sys.argv[2])
     port = int(sys.argv[3])
-    with open(sys.argv[1], 'rb', buffering=0) as control, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+    with ExitStack() as resources:
+        control = resources.enter_context(open(sys.argv[1], 'rb', buffering=0))
+        sock = resources.enter_context(socket.socket(socket.AF_INET, socket.SOCK_DGRAM))
+        capture = resources.enter_context(open(sys.argv[4], 'wb', buffering=0)) if len(sys.argv) > 4 and sys.argv[4] else None
         os.set_blocking(control.fileno(), False)
-        payload = bytes(1316)
+        payload = (b'\x47\x1f\xff\x10' + b'\xff' * 184) * 7 if capture else bytes(1316)
         pending = b''
         deadline = time.monotonic()
         ramp_start = deadline
@@ -88,6 +121,8 @@ def run() -> None:
             now = time.monotonic()
             if rate > 0 and now >= deadline:
                 sock.sendto(payload, ('127.0.0.1', port))
+                if capture:
+                    capture.write(payload)
                 deadline = max(deadline + len(payload) * 8 / rate, now - 0.001)
 
 run()

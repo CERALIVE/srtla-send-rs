@@ -20,7 +20,11 @@ pub fn execute(request: &mut Request) -> Result<()> {
         .manifest
         .scenario(&request.manifest.cells[request.work.cell].scenario)?;
     let mut stack = Stack::start(request, &profile)?;
-    let result = measure(request, &profile, &mut stack);
+    let result = match request.result.record.sink.as_str() {
+        "sls" => super::conformance::measure(request, &profile, &mut stack),
+        "slt" => measure(request, &profile, &mut stack),
+        _ => anyhow::bail!("unsupported sink"),
+    };
     stack.logs(&request.artifacts)?;
     stack.finish_pcaps(result.is_err())?;
     result

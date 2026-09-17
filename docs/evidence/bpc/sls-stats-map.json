@@ -25,5 +25,6 @@
   "counter_semantics": "Interval SRT counters since last clear; /stats without reset does not establish measurement-window deltas. Store the snapshot as diagnostics, not covering-set metrics.",
   "goodput_source": "Attached srt-live-transmit player output-file byte delta over the measurement window; reuse network_sim::metrics::sink::SinkSeries::useful_goodput_bps",
   "metrics_v2_gates": {"belated": "not_applicable", "occupancy": "not_applicable"},
-  "scope_boundary": "Campaign manifest, launcher and metrics::RunRecord currently require out-of-fence edits for SLS integration. Conformance harness records remain distinct and must not enter metric campaign reduction."
+  "startup_sentinels": "SLSMapData returns -1 before the publisher ring exists for ingestDiscontinuities, maxReaderBacklogBytes, ringOverruns, sendBackpressure and viewerPktSndDrop. Preserve these signed diagnostics; never infer zero. The integrated smoke first exposed this early-snapshot case.",
+  "scope_boundary": "Integrated RunRecords use sink:sls, metrics:none and covering:false. report.py preserves them only in summary.conformance and a separate table. decide.py excludes both sink:sls groups and --sls: canonical identities from D-1/lineage-d1 and ablation, independently of covering."
 }

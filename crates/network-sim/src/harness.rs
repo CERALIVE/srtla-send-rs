@@ -24,6 +24,7 @@ use crate::test_util::unique_ns_name;
 use crate::topology::Namespace;
 
 mod process_control;
+mod sls_runtime;
 pub use process_control::ProcessControlError;
 
 // ---------------------------------------------------------------------------
@@ -980,8 +981,8 @@ fn render_sls_conf(template: &str, directory: &Path) -> Result<String> {
     );
     let mut conf = template.to_owned();
     for (name, value) in [
-        ("{{publisher_port}}", "4001"),
-        ("{{classic_port}}", "4002"),
+        ("{{publisher_port}}", "4002"),
+        ("{{classic_port}}", "4003"),
         ("{{player_port}}", "4000"),
         ("{{stats_port}}", "8181"),
         ("{{pidfile}}", pidfile),
@@ -993,33 +994,7 @@ fn render_sls_conf(template: &str, directory: &Path) -> Result<String> {
     Ok(conf)
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct SlsPlayerStats {
-    #[serde(rename = "clientId")]
-    pub client_id: String,
-}
-
-/// Native publisher counters are diagnostic snapshots, never measurement-window metrics.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct SlsPublisherStats {
-    pub latency: Option<u32>,
-    pub rtt: Option<f64>,
-    #[serde(rename = "pktRcvDrop")]
-    pub pkt_rcv_drop: Option<u64>,
-    #[serde(rename = "pktRcvLoss")]
-    pub pkt_rcv_loss: Option<u64>,
-    #[serde(rename = "pktRcvRetrans")]
-    pub pkt_rcv_retrans: Option<u64>,
-    #[serde(rename = "pktSentNAKTotal")]
-    pub pkt_sent_nak_total: Option<u64>,
-    #[serde(rename = "mbpsRecvRate")]
-    pub mbps_recv_rate: Option<f64>,
-    #[serde(rename = "msRcvBuf")]
-    pub ms_rcv_buf: Option<u64>,
-    #[serde(rename = "msSrtlaReorderHold")]
-    pub reorder_hold_ms: Option<f64>,
-    pub players: Vec<SlsPlayerStats>,
-}
+pub use crate::metrics::sls::{SlsPlayerStats, SlsPublisherStats};
 
 #[derive(Debug, serde::Deserialize)]
 struct SlsStats {
@@ -1033,7 +1008,7 @@ fn parse_sls_stats(json: &str) -> Result<SlsStats> {
     Ok(stats)
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SlsAssertions {
     pub registered: bool,
     pub carry: bool,
@@ -1108,7 +1083,7 @@ pub struct SlsMeasurement {
     output: PathBuf,
 }
 
-struct SlsCapture {
+pub struct SlsCapture {
     player: Option<NamespaceProcess>,
     directory: tempfile::TempDir,
     output: PathBuf,
@@ -1215,7 +1190,11 @@ impl SrtlaTestStack {
         let receiver_kind = receiver.kind()?;
         let listener_args =
             receiver.listener_argv(srt_profile, SRT_SERVER_PORT, stats_csv.as_deref())?;
-        let receiver_args = receiver_kind.argv(SRTLA_REC_PORT, "127.0.0.1", SRT_SERVER_PORT);
+        let server_port = match &sink {
+            SrtSink::Slt => SRT_SERVER_PORT,
+            SrtSink::Sls { .. } => 4002,
+        };
+        let receiver_args = receiver_kind.argv(SRTLA_REC_PORT, "127.0.0.1", server_port);
         let topo = SrtlaTestTopology::new(test_name, num_links)?;
         let ip_list_path = topo.write_ip_list()?;
 
@@ -1232,31 +1211,10 @@ impl SrtlaTestStack {
                 .context("start srt-live-transmit")?,
                 None,
             ),
-            SrtSink::Sls {
-                binary,
-                conf_template,
-            } => {
+            SrtSink::Sls { .. } => {
                 crate::bond::configure_bond_routing(&topo)?;
-                let directory = tempfile::tempdir().context("SLS run directory")?;
-                let conf =
-                    render_sls_conf(&std::fs::read_to_string(conf_template)?, directory.path())?;
-                let path = directory.path().join("sls.conf");
-                std::fs::write(&path, conf)?;
-                let process = NamespaceProcess::spawn_with_env(
-                    &topo.receiver_ns,
-                    binary.to_str().context("SLS binary UTF-8")?,
-                    &["-c", path.to_str().context("SLS config UTF-8")?],
-                    &[("SLS_BONDED_PROFILE_OVERRIDE", "converged")],
-                )?;
-                let output = directory.path().join("player.ts");
-                (
-                    process,
-                    Some(SlsCapture {
-                        player: None,
-                        directory,
-                        output,
-                    }),
-                )
+                let (process, capture) = sink.start_sls_listener(&topo.receiver_ns)?;
+                (process, Some(capture))
             }
         };
 
@@ -1265,7 +1223,7 @@ impl SrtlaTestStack {
         if let Some((code, stderr)) = srt_server.check_exit() {
             bail!("SRT sink exited immediately (code: {code:?})\nstderr:\n{stderr}");
         }
-        wait_for_udp_listener(&topo.receiver_ns, SRT_SERVER_PORT, Duration::from_secs(5))
+        wait_for_udp_listener(&topo.receiver_ns, server_port, Duration::from_secs(5))
             .context("wait for SRT sink")?;
 
         // 2. Start srtla_rec in receiver NS
@@ -1327,39 +1285,7 @@ impl SrtlaTestStack {
             .sls_capture
             .as_mut()
             .context("not an SLS conformance stack")?;
-        anyhow::ensure!(capture.player.is_none(), "SLS player already attached");
-        let stats = SlsCapture::scrape(&self.topo.receiver_ns)?;
-        anyhow::ensure!(
-            stats.publishers.contains_key(SLS_STREAM),
-            "publisher not registered"
-        );
-        let tool = find_srt_live_transmit_binary()?;
-        // SLT supports file://con, not arbitrary file paths; redirect stdout to the capture.
-        capture.player = Some(NamespaceProcess::spawn_process_only(
-            &self.topo.receiver_ns,
-            "sh",
-            &[
-                "-c",
-                "exec \"$1\" \"$2\" file://con > \"$3\"",
-                "sls-player",
-                tool.to_str().context("SRT tool UTF-8")?,
-                "srt://127.0.0.1:4000?mode=caller&streamid=play/live/conformance&latency=100",
-                capture.output.to_str().context("player output UTF-8")?,
-            ],
-        )?);
-        let deadline = Instant::now() + Duration::from_secs(10);
-        loop {
-            if std::fs::metadata(&capture.output).is_ok_and(|m| m.len() > 0) {
-                return Ok(());
-            }
-            let player = capture.player.as_mut().context("SLS player handle")?;
-            anyhow::ensure!(
-                player.is_alive() && Instant::now() < deadline,
-                "SLS player failed to carry: {:?}",
-                player.log_snapshot()
-            );
-            std::thread::sleep(Duration::from_millis(50));
-        }
+        capture.attach_player(&self.topo.receiver_ns, &find_srt_live_transmit_binary()?)
     }
 
     pub fn begin_sls_measurement(&self) -> Result<SlsMeasurement> {
@@ -1367,15 +1293,7 @@ impl SrtlaTestStack {
             .sls_capture
             .as_ref()
             .context("not an SLS conformance stack")?;
-        anyhow::ensure!(
-            capture.player.is_some(),
-            "attach the SLS player before measuring"
-        );
-        Ok(SlsMeasurement {
-            start_bytes: std::fs::metadata(&capture.output)?.len(),
-            started: Instant::now(),
-            output: capture.output.clone(),
-        })
+        capture.begin_measurement()
     }
 
     /// Scrape before stopping the publisher. Any of the three failures returns Err.
@@ -1389,50 +1307,14 @@ impl SrtlaTestStack {
             .sls_capture
             .as_ref()
             .context("not an SLS conformance stack")?;
-        anyhow::ensure!(
-            measurement.output == capture.output,
-            "measurement belongs to another stack"
-        );
-        let end_bytes = std::fs::metadata(&capture.output)?.len();
-        let duration_ms = u32::try_from(measurement.started.elapsed().as_millis())?;
-        let (player_bytes, useful_goodput_bps) =
-            sls_player_goodput(measurement.start_bytes, end_bytes, duration_ms)?;
-        let stats = SlsCapture::scrape(&self.topo.receiver_ns)?;
-        let sls_stats = stats.publishers.get(SLS_STREAM).cloned();
-        let mut assertions = SlsAssertions::evaluate(
-            sls_stats.as_ref(),
-            player_bytes,
-            offered_bytes,
-            device_preset_ms,
-        );
         let server = self
             .srt_server
             .as_ref()
             .context("SLS server stopped before scrape")?;
-        if server
-            .log_snapshot()
-            .iter()
-            .any(|line| line.contains("failed to read latency"))
-        {
-            assertions.latency = false;
-        }
-        let record = SlsConformanceRecord {
-            sink: "sls",
-            metrics: "none",
-            assertions,
-            sls_stats,
-            offered_bytes,
-            player_bytes,
-            duration_ms,
-            useful_goodput_bps,
-            pkt_rcv_belated: None,
-            occupancy_pct: None,
-            belated_gate: "not_applicable",
-            occupancy_gate: "not_applicable",
-        };
-        std::fs::write(
-            capture.directory.path().join("conformance.json"),
-            serde_json::to_vec_pretty(&record)?,
+        let record = capture.finish_measurement(
+            (&self.topo.receiver_ns, server),
+            measurement,
+            (offered_bytes, device_preset_ms),
         )?;
         record
             .assertions
@@ -1731,8 +1613,8 @@ with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock, open(sys.argv[1],
         let conf = render_sls_conf(SLS_TEMPLATE, dir.path()).unwrap();
         // Then both bonded aliases, player and HTTP listeners are explicit.
         for directive in [
-            "listen_publisher_srtla 4001;",
-            "listen_publisher_srtla_classic 4002;",
+            "listen_publisher_srtla 4002;",
+            "listen_publisher_srtla_classic 4003;",
             "listen_player 4000;",
             "http_port 8181;",
             "latency_min 100;",

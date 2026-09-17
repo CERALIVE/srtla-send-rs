@@ -96,3 +96,53 @@ fn example_summaries_recompute_from_embedded_raw_measurements() {
         super::link_counters::shares(&record.raw.link_counters, record.window).unwrap()
     );
 }
+#[test]
+fn sls_record_preserves_captured_publisher_keys() {
+    // Given the captured real SLS publisher and a legacy metric record.
+    let evidence: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../docs/evidence/bpc/sls-stats-map.json"
+    ))
+    .unwrap();
+    let captured = &evidence["exact_response"]["publishers"]["publish/live/baseline"];
+    let mut json: serde_json::Value =
+        serde_json::from_str(include_str!("../../fixtures/run-record-example.json")).unwrap();
+    json["sink"] = "sls".into();
+    json["metrics"] = "none".into();
+    json["sls_stats"] = captured.clone();
+    // When a RunRecord round-trips, then every captured field is retained.
+    let record: super::RunRecord = serde_json::from_value(json).unwrap();
+    let output = serde_json::to_value(record).unwrap();
+    for (key, value) in captured.as_object().unwrap() {
+        assert_eq!(&output["sls_stats"][key], value, "{key}");
+    }
+    assert_eq!(output["sink"], "sls");
+    assert_eq!(output["metrics"], "none");
+}
+#[test]
+fn sls_record_keeps_pre_ring_unknown_sentinels() {
+    let raw = r#"{"players":[],"ingestDiscontinuities":-1,"maxReaderBacklogBytes":-1,"ringOverruns":-1,"sendBackpressure":-1,"viewerPktSndDrop":-1}"#;
+    let stats: super::sls::SlsPublisherStats = serde_json::from_str(raw).unwrap();
+    assert_eq!(stats.ingest_discontinuities, Some(-1));
+    assert_eq!(stats.max_reader_backlog_bytes, Some(-1));
+    assert_eq!(stats.ring_overruns, Some(-1));
+    assert_eq!(stats.send_backpressure, Some(-1));
+    assert_eq!(stats.viewer_pkt_snd_drop, Some(-1));
+}
+#[test]
+fn sls_identity_changes_checkpoint_fingerprint_without_changing_legacy_identity() {
+    let mut record: super::RunRecord =
+        serde_json::from_str(include_str!("../../fixtures/run-record-example.json")).unwrap();
+    let original = record.compute_fingerprint().unwrap();
+    record.sls_identity = Some(super::sls::SlsIdentity {
+        binary_sha256: super::identity::Hash256::digest(b"server"),
+        template_sha256: super::identity::Hash256::digest(b"template"),
+        libsrt_sha256: super::identity::Hash256::digest(b"libsrt"),
+    });
+    let sls = record.compute_fingerprint().unwrap();
+    assert_ne!(original, sls);
+    record.sls_identity.as_mut().unwrap().libsrt_sha256 =
+        super::identity::Hash256::digest(b"other libsrt");
+    assert_ne!(record.compute_fingerprint().unwrap(), sls);
+    record.sls_identity = None;
+    assert_eq!(record.compute_fingerprint().unwrap(), original);
+}

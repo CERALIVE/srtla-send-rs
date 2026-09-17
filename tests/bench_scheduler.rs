@@ -14,6 +14,11 @@ mod manifest;
 mod measurement;
 
 #[test]
+fn conformance_smoke() -> anyhow::Result<()> {
+    bench_support::conformance::smoke()
+}
+
+#[test]
 #[ignore = "full campaign requires netns privileges and BENCH_MANIFEST"]
 fn campaign() -> anyhow::Result<()> {
     bench_support::runner::campaign(false)

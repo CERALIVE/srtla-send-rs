@@ -18,6 +18,16 @@ use crate::profile::EventRecord;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunRecord {
+    #[serde(default = "super::sls::default_sink")]
+    pub sink: String,
+    #[serde(default = "super::sls::default_metrics")]
+    pub metrics: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sls_stats: Option<super::sls::SlsPublisherStats>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sls_conformance: Option<super::sls::SlsConformance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sls_identity: Option<super::sls::SlsIdentity>,
     pub schema_version: SchemaVersion,
     pub campaign: String,
     pub cell_id: String,
@@ -85,7 +95,16 @@ impl RunRecord {
                 &self.srt_live_transmit_sha256,
             ))?
         };
-        Ok(Hash256::digest(&bytes))
+        let hash = Hash256::digest(&bytes);
+        match &self.sls_identity {
+            Some(sls) => Ok(Hash256::digest(&serde_json::to_vec(&(
+                hash,
+                &self.sink,
+                &self.metrics,
+                sls,
+            ))?)),
+            None => Ok(hash),
+        }
     }
 }
 

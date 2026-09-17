@@ -72,6 +72,7 @@ class Evidence(Document):
 
 
 class Group(Document):
+    sink: Literal["slt", "sls"] = "slt"
     cell_id: str = ""
     lineage: str = ""
     covering: bool = True
@@ -91,6 +92,12 @@ class Group(Document):
 class Summary(Document):
     schema_version: Literal[1]
     groups: tuple[Group, ...]
+
+
+def metric_groups(summary: Summary) -> tuple[Group, ...]:
+    return tuple(
+        g for g in summary.groups if g.sink == "slt" and "--sls:" not in g.cell_id
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,7 +232,8 @@ def evaluate_group(group: Group, request: RuleRequest) -> ScenarioVerdict:
 
 def decide(summary: Summary, request: RuleRequest) -> Verdict:
     scenarios = tuple(s for s in request.scenarios if s not in ("J", "L"))
-    groups = tuple(g for g in summary.groups if g.scenario in scenarios)
+    eligible_groups = metric_groups(summary)
+    groups = tuple(g for g in eligible_groups if g.scenario in scenarios)
     errors = [error for g in groups for error in evidence_errors(g, request)]
     if (
         request.n <= 0
@@ -236,7 +244,7 @@ def decide(summary: Summary, request: RuleRequest) -> Verdict:
         or any(c not in TUNABLES for c in request.candidates)
     ):
         errors.append("invalid candidates/scenarios/n for d1")
-    if len({g.key for g in summary.groups}) != len(summary.groups):
+    if len({g.key for g in eligible_groups}) != len(eligible_groups):
         errors.append("duplicate campaign/scenario/receiver/profile group")
     missing = set(scenarios) - {g.scenario for g in groups}
     errors.extend(f"missing scenario {s}" for s in sorted(missing))
@@ -247,7 +255,7 @@ def decide(summary: Summary, request: RuleRequest) -> Verdict:
         g.key: {
             c: dict(e.checks) for c, e in g.cells.items() if c in request.candidates
         }
-        for g in summary.groups
+        for g in eligible_groups
         if g.scenario in ("J", "L")
     }
     if errors or uncovered:
@@ -301,7 +309,7 @@ def ablation(summary: Summary, request: RuleRequest, baseline: str) -> Verdict:
     for name in request.candidates:
         selected = tuple(
             g
-            for g in summary.groups
+            for g in metric_groups(summary)
             if name in g.cells and g.scenario in (*targets, "A")
         )
         contexts = {(g.campaign, g.receiver, g.profile) for g in selected}
@@ -390,6 +398,24 @@ SYNTHETIC_SUMMARIES: Final = (
 
 
 class DecisionTests(unittest.TestCase):
+    def test_sls_cannot_supply_a_missing_covering_scenario(self) -> None:
+        # Given complete metric A and an SLS-only G, even incorrectly marked covering.
+        original = Summary.model_validate_json(SYNTHETIC_SUMMARIES[1])
+        for covering in (True, False):
+            sls = original.groups[1].model_copy(
+                update={
+                    "sink": "sls",
+                    "covering": covering,
+                    "cell_id": "ours-new@--G@--production--sls:4002--fec:off",
+                }
+            )
+            summary = original.model_copy(update={"groups": (original.groups[0], sls)})
+            # When D-1 runs, then SLS cannot satisfy the missing G obligation.
+            verdict = decide(summary, RuleRequest(scenarios=("A", "G")))
+            self.assertIsNone(verdict.verdict)
+            self.assertIn("G", verdict.uncovered_scenarios)
+            self.assertNotIn(sls.key, verdict.scenarios)
+
     def test_loader_preserves_lineage_cell_identity_and_covering(self) -> None:
         raw = """{"schema_version":1,"groups":[{"campaign":"unit","scenario":"A",
           "receiver":"arbitrary-label","profile":"production","lineage":"ours-old",
@@ -691,7 +717,7 @@ class DecisionTests(unittest.TestCase):
 class Arguments(argparse.Namespace):
     self_test: bool = False
     summary: Path | None = None
-    rule: Literal["d1", "ablation"] = "d1"
+    rule: Literal["d1", "lineage-d1", "ablation"] = "d1"
     candidates: str = ",".join(CANDIDATES)
     scenarios: str = ",".join(SCENARIOS)
     n: int = 10
@@ -703,7 +729,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Fail-closed scheduler retention rule")
     _ = parser.add_argument("--self-test", action="store_true")
     _ = parser.add_argument("--summary", type=Path)
-    _ = parser.add_argument("--rule", choices=("d1", "ablation"), default="d1")
+    _ = parser.add_argument(
+        "--rule", choices=("d1", "lineage-d1", "ablation"), default="d1"
+    )
     _ = parser.add_argument("--candidates", default=",".join(CANDIDATES))
     _ = parser.add_argument("--scenarios", default=",".join(SCENARIOS))
     _ = parser.add_argument("--n", type=int, default=10)
@@ -723,7 +751,7 @@ def main() -> int:
             tuple(args.candidates.split(",")), tuple(args.scenarios.split(",")), args.n
         )
         match args.rule:
-            case "d1":
+            case "d1" | "lineage-d1":
                 verdict = decide(summary, request)
             case "ablation":
                 verdict = ablation(summary, request, args.baseline)

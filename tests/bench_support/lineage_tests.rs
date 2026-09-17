@@ -1,6 +1,32 @@
 use crate::{manifest, manifest_json};
 
 #[test]
+fn manifest_sls_accepts_only_explicit_noncovering_conformance_ports() {
+    // Given each bonded alias as an explicit conformance-only cell.
+    for port in [4002, 4003] {
+        let mut json = manifest_json();
+        json["cells"] = serde_json::json!([{
+            "candidate":"base", "scenario":"A", "receiver":"ceralive",
+            "srt_profile":"strict", "runs":1, "sink":"sls", "port":port,
+            "metrics":"none", "covering":false
+        }]);
+        // When parsing, then the sink/port remain part of the canonical identity.
+        let parsed = manifest::parse(&json.to_string()).unwrap();
+        assert!(parsed.cells[0].cell_id.contains(&format!("sls:{port}")));
+        for (key, value) in [
+            ("port", serde_json::json!(4001)),
+            ("covering", serde_json::json!(true)),
+            ("metrics", serde_json::json!("full")),
+            ("fec", serde_json::json!(true)),
+        ] {
+            let mut invalid = json.clone();
+            invalid["cells"][0][key] = value;
+            assert!(manifest::parse(&invalid.to_string()).is_err(), "{invalid}");
+        }
+    }
+}
+
+#[test]
 fn manifest_legacy_string_receiver_parses() {
     // Given a legacy string receiver.
     let mut json = manifest_json();

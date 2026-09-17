@@ -60,6 +60,7 @@ class Cell(Document):
     covering: bool = True
     variant: str = ""
     sink: str = "slt"
+    metrics: Literal["full", "none"] = "full"
     port: Annotated[int, Field(gt=0, le=65535)] = 4001
     fec: bool = False
     candidate: str
@@ -222,7 +223,41 @@ class LoadInterval(Document):
         return self.recovered and self.reached_ms is not None
 
 
+class SlsAssertions(Document):
+    registered: bool
+    carry: bool
+    latency: bool
+
+
+class SlsConformance(Document):
+    assertions: SlsAssertions
+    offered_bytes: Count
+    player_bytes: Count
+    duration_ms: Annotated[int, Field(gt=0)]
+    device_preset_ms: Count
+    belated: None
+    occupancy_pct: None
+    belated_gate: Literal["not_applicable"]
+    occupancy_gate: Literal["not_applicable"]
+
+
+class SlsIdentity(Document):
+    binary_sha256: Hash
+    template_sha256: Hash
+    libsrt_sha256: Hash
+
+
+class SlsPublisher(Document):
+    latency: Count
+    players: Annotated[list[JsonValue], Field(min_length=1)]
+
+
 class RunRecord(Envelope):
+    sink: Literal["slt", "sls"] = "slt"
+    metrics: Literal["full", "none"] = "full"
+    sls_stats: dict[str, JsonValue] | None = None
+    sls_conformance: SlsConformance | None = None
+    sls_identity: SlsIdentity | None = None
     receiver_label: str = ""
     receiver_lineage: str = ""
     srtla_rec_sha256: Hash | None = None
@@ -308,6 +343,7 @@ class Evidence(Document):
 
 
 class Group(Document):
+    sink: Literal["slt", "sls"] = "slt"
     cell_id: str = ""
     lineage: str = ""
     covering: bool = True
@@ -324,6 +360,7 @@ class Summary(Document):
     bootstrap_seed: int = SEED
     bootstrap_statistic: str = "median; paired ratio of medians"
     groups: tuple[Group, ...]
+    conformance: tuple[RunRecord, ...] = ()
     warnings: tuple[str, ...]
 
 
@@ -753,6 +790,35 @@ def live_documents(paths: Sequence[Path]) -> tuple[tuple[Path, Envelope, str], .
     return tuple(row for row in parsed if row[1].run_id not in targets)
 
 
+def validate_sls(record: RunRecord) -> None:
+    proof = record.sls_conformance
+    if proof is None or record.sls_stats is None or record.sls_identity is None:
+        raise EvidenceError("SLS record lacks conformance evidence or provenance")
+    publisher = SlsPublisher.model_validate(record.sls_stats)
+    if (
+        record.metrics != "none"
+        or record.covering
+        or not all(
+            (
+                proof.assertions.registered,
+                proof.assertions.carry,
+                proof.assertions.latency,
+            )
+        )
+        or proof.offered_bytes == 0
+        or proof.player_bytes * 10 < proof.offered_bytes * 9
+        or proof.device_preset_ms != record.srt_profile.latency_ms
+        or publisher.latency != max(proof.device_preset_ms, 100)
+        or proof.duration_ms != record.window.end_ms - record.window.start_ms
+        or not math.isclose(
+            record.useful_goodput_bps, proof.player_bytes * 8000 / proof.duration_ms
+        )
+    ):
+        raise EvidenceError(
+            "SLS record fails conformance assertions/window/metric isolation"
+        )
+
+
 def load_records(
     manifest: Manifest, roots: Sequence[Path], *, smoke_coverage: bool = False
 ) -> LoadedRecords:
@@ -785,6 +851,22 @@ def load_records(
     aliases: dict[tuple[str, str], str] = {}
     covering: dict[str, bool] = {}
     for cell in manifest.cells:
+        match cell.sink:
+            case "sls":
+                if (
+                    cell.covering
+                    or cell.metrics != "none"
+                    or cell.port not in (4002, 4003)
+                    or cell.fec
+                ):
+                    raise EvidenceError(
+                        "SLS cells require noncovering conformance ports and metrics:none"
+                    )
+            case "slt":
+                if cell.metrics != "full":
+                    raise EvidenceError("SLT cells require full metrics")
+            case _:
+                raise EvidenceError("unknown manifest sink")
         canonical = stable_identity(cell, receivers[cell.receiver])
         if covering.setdefault(canonical, cell.covering) != cell.covering:
             raise EvidenceError("paired candidates must agree on covering")
@@ -843,6 +925,8 @@ def load_records(
         )
         if (
             record.candidate.label != cell.candidate
+            or record.sink != cell.sink
+            or record.metrics != cell.metrics
             or record.scenario.id != cell.scenario
             or record.srt_profile.name != cell.srt_profile
             or record.seed != manifest.seed
@@ -872,6 +956,20 @@ def load_records(
             raise EvidenceError(
                 f"duplicate ok run_index={record.run_index} in {cell.id}"
             )
+        match record.sink:
+            case "sls":
+                validate_sls(record)
+            case "slt":
+                if (
+                    record.sls_stats is not None
+                    or record.sls_conformance is not None
+                    or record.sls_identity is not None
+                ):
+                    raise EvidenceError(
+                        "SLS evidence cannot be tagged as a metric record"
+                    )
+            case unreachable:
+                assert_never(unreachable)
         if len({e.event_index for e in record.episodes}) != len(record.episodes):
             raise EvidenceError(f"duplicate event_index in {cell.id}")
         records[cell.id][record.run_index] = record
@@ -901,6 +999,7 @@ def build_summary(
     ):
         raise EvidenceError("duplicate/unresolved manifest candidate")
     groups: list[Group] = []
+    conformance: list[RunRecord] = []
     warnings = list(loaded.warnings)
     receivers = receiver_specs(manifest)
     contexts = {stable_identity(c, receivers[c.receiver]): c for c in manifest.cells}
@@ -915,6 +1014,19 @@ def build_summary(
             for c in manifest.cells
             if stable_identity(c, receivers[c.receiver]) == context
         }
+        if representative.sink == "sls":
+            for name, runs in sorted(arms.items()):
+                expected = candidates[name]
+                env = {"RUST_LOG": "info", "PATH": "/usr/bin:/bin", **expected.env}
+                if len({r.fingerprint for r in runs}) != 1 or any(
+                    r.candidate.args != expected.args
+                    or r.candidate.env != env
+                    or r.sender.effective_config != expected.effective_config
+                    for r in runs
+                ):
+                    raise EvidenceError("SLS conformance configuration mismatch")
+                conformance.extend(runs)
+            continue
         cells: dict[str, Evidence] = {}
         for name, runs in sorted(arms.items()):
             cell = summarize_cell(runs, candidates[name])
@@ -958,7 +1070,11 @@ def build_summary(
                 cells=cells,
             )
         )
-    return Summary(groups=tuple(groups), warnings=tuple(sorted(set(warnings))))
+    return Summary(
+        groups=tuple(groups),
+        conformance=tuple(conformance),
+        warnings=tuple(sorted(set(warnings))),
+    )
 
 
 def markdown(summary: Summary) -> str:
@@ -1029,6 +1145,25 @@ def markdown(summary: Summary) -> str:
                     f"| {name} | {other} | {pair.n} | [{pair.ci_lower}, {pair.ci_upper}] | "
                     + f"{pair.viewer_loss_delta_pp} | {pair.recovery_ratio} | {pair.dropped_indices} |"
                 )
+    if summary.conformance:
+        lines.extend(
+            (
+                "",
+                "## SLS conformance (excluded from covering-set metrics)",
+                "",
+                "| Cell | Candidate | Run | Player goodput (bps) | Registered | Carry | Latency |",
+                "|---|---|---:|---:|---|---|---|",
+            )
+        )
+        for record in summary.conformance:
+            proof = record.sls_conformance
+            if proof is None:
+                raise EvidenceError("missing conformance proof in summary")
+            checks = proof.assertions
+            lines.append(
+                f"| {record.cell_id} | {record.candidate.label} | {record.run_index} | "
+                f"{record.useful_goodput_bps} | {checks.registered} | {checks.carry} | {checks.latency} |"
+            )
     lines.extend(("", "## Warnings", "", *(f"- {w}" for w in summary.warnings)))
     if not summary.warnings:
         lines.append("None.")
@@ -1036,6 +1171,68 @@ def markdown(summary: Summary) -> str:
 
 
 class ReportTests(unittest.TestCase):
+    def test_sls_records_are_not_metric_groups(self) -> None:
+        # Given one ordinary cell and a separate explicit SLS cell.
+        ordinary = self.manifest()
+        receiver = receiver_specs(ordinary)["ceralive"]
+        cell = ordinary.cells[0].model_copy(
+            update={
+                "sink": "sls",
+                "metrics": "none",
+                "covering": False,
+                "port": 4002,
+            }
+        )
+        cell = cell.model_copy(update={"cell_id": stable_identity(cell, receiver)})
+        manifest = ordinary.model_copy(update={"cells": (*ordinary.cells, cell)})
+        sls = RunRecord.model_validate(
+            self.record().model_dump()
+            | {
+                "cell_id": cell.cell_id,
+                "sink": "sls",
+                "metrics": "none",
+                "covering": False,
+                "sls_stats": {"latency": 2000, "players": [{"clientId": "synthetic"}]},
+                "sls_identity": {
+                    "binary_sha256": "a" * 64,
+                    "template_sha256": "b" * 64,
+                    "libsrt_sha256": "c" * 64,
+                },
+                "sls_conformance": {
+                    "assertions": {"registered": True, "carry": True, "latency": True},
+                    "offered_bytes": 7500,
+                    "player_bytes": 7500,
+                    "duration_ms": 60000,
+                    "device_preset_ms": 2000,
+                    "belated": None,
+                    "occupancy_pct": None,
+                    "belated_gate": "not_applicable",
+                    "occupancy_gate": "not_applicable",
+                },
+            }
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _ = (root / "metric.json").write_text(self.record().model_dump_json())
+            _ = (root / "sls.json").write_text(sls.model_dump_json())
+            # When reducing, then SLS appears only in the conformance collection.
+            summary = build_summary(manifest, (root,))
+            self.assertEqual(len(summary.groups), 1)
+            self.assertEqual(len(summary.conformance), 1)
+            self.assertEqual(summary.groups[0].cells["adaptive"].n, 1)
+            self.assertEqual(summary.conformance[0].useful_goodput_bps, 1000)
+            for field, value in (
+                ("metrics", "full"),
+                ("covering", True),
+                ("sink", "slt"),
+                ("sls_stats", None),
+                ("useful_goodput_bps", 9999.0),
+            ):
+                invalid = sls.model_copy(update={field: value})
+                _ = (root / "sls.json").write_text(invalid.model_dump_json())
+                with self.assertRaises(EvidenceError):
+                    _ = build_summary(manifest, (root,))
+
     def test_lineage_manifest_accepts_string_and_new_object(self) -> None:
         text = """{"campaign":"synthetic","seed":42,"candidates":[{"label":"adaptive"}],
             "cells":[{"candidate":"adaptive","scenario":"A","receiver":"ttl200","srt_profile":"production","runs":1}],

@@ -17,7 +17,8 @@ pub struct Stack {
     pub receiver: NamespaceProcess,
     pub listener: NamespaceProcess,
     pub caller: NamespaceProcess,
-    pub sink: NamespaceProcess,
+    pub sink: Option<NamespaceProcess>,
+    pub sls_capture: Option<network_sim::harness::SlsCapture>,
     pub pcaps: Vec<(NamespaceProcess, PathBuf)>,
     pub control: PathBuf,
     pub stats: PathBuf,
@@ -85,28 +86,43 @@ impl Stack {
                 pcaps.push((process, path));
             }
         }
-        let sink = network_sim::metrics::sink::spawn(
-            &topo.receiver_ns,
-            9999,
-            &request.result.record.raw.sink_series_path,
-        )?;
-        let ready = wait_log(&sink, "ready,9999,", Duration::from_secs(5))?;
-        let sink_origin_ms = ready
-            .rsplit(',')
-            .next()
-            .context("sink origin")?
-            .parse::<i64>()?
-            / 1_000_000;
-        let listener_args = receiver.listener_argv(
-            manifest::preset(&cell.srt_profile)?,
-            cell.port,
-            Some(&request.result.record.raw.stats_csv_path),
-        )?;
-        let listener = NamespaceProcess::spawn_process_only(
-            &topo.receiver_ns,
-            utf8(&request.srt_binary)?,
-            &listener_args.iter().map(String::as_str).collect::<Vec<_>>(),
-        )?;
+        let (sink, sink_origin_ms, listener, sls_capture) = match cell.sink.as_str() {
+            "slt" => {
+                let sink = network_sim::metrics::sink::spawn(
+                    &topo.receiver_ns,
+                    9999,
+                    &request.result.record.raw.sink_series_path,
+                )?;
+                let ready = wait_log(&sink, "ready,9999,", Duration::from_secs(5))?;
+                let sink_origin_ms = ready
+                    .rsplit(',')
+                    .next()
+                    .context("sink origin")?
+                    .parse::<i64>()?
+                    / 1_000_000;
+                let listener_args = receiver.listener_argv(
+                    manifest::preset(&cell.srt_profile)?,
+                    cell.port,
+                    Some(&request.result.record.raw.stats_csv_path),
+                )?;
+                let listener = NamespaceProcess::spawn_process_only(
+                    &topo.receiver_ns,
+                    utf8(&request.srt_binary)?,
+                    &listener_args.iter().map(String::as_str).collect::<Vec<_>>(),
+                )?;
+                (Some(sink), sink_origin_ms, listener, None)
+            }
+            "sls" => {
+                let (sink, identity) = super::sls_config::resolve()?;
+                ensure!(
+                    Some(identity) == request.result.record.sls_identity,
+                    "SLS identity changed after fingerprinting"
+                );
+                let (listener, capture) = sink.start_sls_listener(&topo.receiver_ns)?;
+                (None, 0, listener, Some(capture))
+            }
+            _ => anyhow::bail!("unsupported sink"),
+        };
         wait_for_udp_listener(&topo.receiver_ns, cell.port, Duration::from_secs(5))?;
         let args = receiver.kind()?.argv(5000, "127.0.0.1", cell.port);
         let receiver = NamespaceProcess::spawn_process_only(
@@ -165,7 +181,7 @@ impl Stack {
             );
         }
         let preset = manifest::preset(&cell.srt_profile)?;
-        let caller_uri = if preset == network_sim::harness::SrtProfile::LEGACY_DEFAULT {
+        let mut caller_uri = if preset == network_sim::harness::SrtProfile::LEGACY_DEFAULT {
             "srt://127.0.0.1:5555?mode=caller".into()
         } else {
             format!(
@@ -173,13 +189,22 @@ impl Stack {
                 preset.latency_ms, preset.lossmaxttl
             )
         };
+        if cell.sink == "sls" {
+            caller_uri.push_str("&streamid=publish/live/conformance");
+        }
         let caller = NamespaceProcess::spawn_process_only(
             &topo.sender_ns,
             utf8(&request.srt_binary)?,
             &["udp://:6000", &caller_uri],
         )?;
         wait_for_udp_listener(&topo.sender_ns, 6000, Duration::from_secs(5))?;
-        let source = Source::start(&topo.sender_ns, &request.artifacts.join("source.pipe"), 0)?;
+        let pipe = request.artifacts.join("source.pipe");
+        let source = match cell.sink.as_str() {
+            "sls" => {
+                Source::start_sls(&topo.sender_ns, &pipe, request.artifacts.join("offered.ts"))?
+            }
+            _ => Source::start(&topo.sender_ns, &pipe, 0)?,
+        };
         wait_log(&source.process, "ready", Duration::from_secs(5))?;
         Ok(Self {
             source,
@@ -188,6 +213,7 @@ impl Stack {
             listener,
             caller,
             sink,
+            sls_capture,
             pcaps,
             control,
             stats,
@@ -204,12 +230,17 @@ impl Stack {
             ("receiver", &self.receiver),
             ("listener", &self.listener),
             ("caller", &self.caller),
-            ("sink", &self.sink),
         ] {
             std::fs::write(
                 directory.join(format!("{name}.log")),
                 process.log_snapshot().join("\n"),
             )?;
+        }
+        if let Some(sink) = &self.sink {
+            std::fs::write(directory.join("sink.log"), sink.log_snapshot().join("\n"))?;
+        }
+        if let Some(capture) = &self.sls_capture {
+            capture.save_artifacts(directory)?;
         }
         Ok(())
     }

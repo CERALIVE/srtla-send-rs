@@ -107,6 +107,8 @@ pub struct Cell {
     pub variant: String,
     #[serde(default = "sink_default")]
     pub sink: String,
+    #[serde(default = "network_sim::metrics::sls::default_metrics")]
+    pub metrics: String,
     #[serde(default = "port_default")]
     pub port: u16,
     #[serde(default)]

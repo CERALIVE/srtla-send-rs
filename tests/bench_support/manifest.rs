@@ -127,10 +127,23 @@ impl Manifest {
                 cell.cell_id == receivers::cell_identity(cell, receiver),
                 "incoherent cell_id"
             );
-            ensure!(
-                cell.sink == "slt" && !cell.fec && cell.port > 0,
-                "only slt with FEC off is implemented"
-            );
+            match cell.sink.as_str() {
+                "slt" => ensure!(
+                    cell.metrics == "full" && !cell.fec && cell.port > 0,
+                    "slt requires full metrics, a port and FEC off"
+                ),
+                "sls" => ensure!(
+                    cell.metrics == "none"
+                        && !cell.covering
+                        && !cell.fec
+                        && [4002, 4003].contains(&cell.port)
+                        && receiver.listener_uri_extra.is_empty()
+                        && cell.srt_profile != "legacy-default",
+                    "sls requires metrics:none, covering:false, port 4002/4003, explicit latency \
+                     and no URI/FEC overrides"
+                ),
+                _ => return Err(ManifestError::Invalid("unknown sink".into()).into()),
+            }
             ensure!(
                 cell.variant.is_empty() || !cell.covering,
                 "variants must explicitly set covering:false"
@@ -152,6 +165,38 @@ impl Manifest {
     }
 
     pub fn scenario(&self, id: &str) -> Result<Profile> {
+        if id == "SLS" {
+            ensure!(
+                self.cells
+                    .iter()
+                    .filter(|c| c.scenario == "SLS")
+                    .all(|c| c.sink == "sls"),
+                "SLS smoke profile is conformance-only"
+            );
+            ensure!(
+                self.window_secs_override.is_none(),
+                "SLS smoke window is fixed at 20s"
+            );
+            let mut profile = scenarios::scenario_a();
+            profile.timeline.links.truncate(2);
+            for link in &mut profile.timeline.links {
+                link.base = network_sim::ImpairmentConfig {
+                    delay_ms: Some(5),
+                    rate_kbit: Some(10_000),
+                    ..Default::default()
+                };
+            }
+            profile.offered_bps = 1_000_000;
+            profile.warmup_offered_bps = 1_000_000;
+            profile.timeline.duration = Duration::from_secs(20);
+            profile.timeline.events = vec![network_sim::profile::TimedEvent::new(
+                Duration::ZERO,
+                None,
+                Action::OfferedRate { bps: 1_000_000 },
+            )];
+            profile.timeline.validate()?;
+            return Ok(profile);
+        }
         let mut profile = scenarios::all()
             .into_iter()
             .find(|(name, _)| *name == id)

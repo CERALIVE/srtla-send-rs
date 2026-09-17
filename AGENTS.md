@@ -1196,6 +1196,26 @@ aarch64 cross-build env (mirrors the PINNED TOOLCHAIN note): linker
 
 ## BENCH RECEIVER-PROFILE DEPENDENCY (CeraLive SRT fork)
 
+**SLS conformance exception (Todo15):** metric cells still select SLT. Explicit
+`sink:sls` cells require `metrics:none`, `covering:false`, port4002 or4003,
+an explicit latency preset, FEC off and no listener URI overrides. The campaign
+launcher uses `SrtSink::Sls` plus an attached SLT player; player-file growth feeds
+the existing SinkSeries goodput formula. Three checks are blocking: registered
+publisher, ≥90% offered bytes carried, negotiated `max(device preset,100ms)`.
+The normal RunRecord adds optional `sls_stats`, `sls_conformance`, `sls_identity`;
+legacy fingerprints remain unchanged, SLS hashes bind server/template/libsrt.
+All23 captured publisher keys are typed; five pre-ring counters preserve native
+`-1` unknown sentinels. Belated/occupancy stay null with not_applicable gates.
+`harness/sls_runtime.rs` shares listener/player lifecycle with the older stack.
+`SLS_BIN=<locked server> cargo test --test bench_scheduler conformance_smoke -- --nocapture`
+runs two20s cells (ports4002/4003) on the synthetic SLS profile (two10Mbit links,
+5ms delay,1Mbit offered); it self-skips only without SLS_BIN or privileges and
+otherwise fails on missing/mismatched locked artifacts. Report-ready results and
+raw artifacts are retained separately in its printed directory. report.py puts
+SLS only in summary.conformance, never groups/comparisons; decide.py additionally
+excludes SLS tags/canonical IDs from D-1 (`lineage-d1` alias) and ablation regardless
+of covering. Later alias/non-inferiority decisions remain separate tasks.
+
 The bench harness (`crates/network-sim`, `tests/bench_scheduler.rs`, every
 `netns_*` target that spawns an SRT listener) needs an `srt-live-transmit` built from
 **CeraLive's own SRT fork** (`github.com/CERALIVE/srt`, sibling checkout `../srt`) on

@@ -817,6 +817,36 @@ no new live run or scheduler change was used to obtain the scoped pass.
 
 ### Statistical reports and retention decisions
 
+#### SLS conformance cells (not covering-set metrics)
+
+An explicit manifest cell may select `sink: "sls"`, `port: 4002` (bonded) or
+`4003` (deprecated bonded alias), `metrics: "none"`, and `covering: false`.
+Use an explicit SRT latency preset, FEC off, and no listener URI overrides.
+The normal launcher runs real SLS instead of its SLT listener and attaches an
+`srt-live-transmit` player. Only player output-file growth supplies goodput;
+publisher `/stats` counters remain diagnostics. Registration, ≥90% of offered
+bytes reaching the player, and latency `max(device preset, 100ms)` are blocking.
+Unsupported belated/occupancy metrics remain null with `not_applicable` gates.
+
+Build the locked server with
+`SLS_WORKTREE=/absolute/server/checkout bash scripts/bench/build_receivers.sh --sls`,
+then run `SLS_BIN=/absolute/server/build/bin/srt_server cargo test --test bench_scheduler conformance_smoke -- --nocapture`.
+The test skips if `SLS_BIN` is unset or privileges are unavailable; when enabled it
+uses the locked receiver/SLT tools and the exact Cargo-built sender, failing on
+missing or mismatched artifacts. It runs one 20-second cell on each port using
+the synthetic `SLS` fixture (two 10 Mbit/s links, 5ms delay, 1 Mbit/s offered),
+not shortened performance scenarios. Raw artifacts and report-ready results are
+retained in the printed temporary directory, under `artifacts/` and `results/`.
+
+`RunRecord.sls_stats` preserves the captured publisher fields; `sls_conformance`
+holds the assertions and byte/window evidence. SLS binary, linked libsrt and
+template hashes enter the fingerprint. Early ring counters can be `-1` (unknown),
+never interpreted as zero. `report.py` emits SLS records only in the separate
+`conformance` collection/table, not metric groups or paired comparisons.
+`decide.py` independently excludes SLS tags and canonical SLS identities from
+D-1 and ablation; `--rule lineage-d1` names the existing lineage-grouped D-1 rule.
+No twin-port equivalence or reserved-block non-inferiority verdict is implied.
+
 The standalone Python tools use uv inline dependencies (`numpy==2.*`, `pydantic==2.*`):
 
 ```bash

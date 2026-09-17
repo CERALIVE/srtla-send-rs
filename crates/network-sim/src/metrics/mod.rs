@@ -7,6 +7,7 @@ mod error;
 pub mod link_counters;
 pub mod load_intervals;
 pub mod sink;
+pub mod sls;
 pub mod srt_stats;
 mod srt_window;
 pub mod stats_file;

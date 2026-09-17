@@ -132,6 +132,14 @@ pub fn prepare(
         .output()?;
     ensure!(timestamp.status.success(), "UTC timestamp");
     let mut record = RunRecord {
+        sink: cell.sink.clone(),
+        metrics: cell.metrics.clone(),
+        sls_stats: None,
+        sls_conformance: None,
+        sls_identity: match cell.sink.as_str() {
+            "sls" => Some(super::sls_config::resolve()?.1),
+            _ => None,
+        },
         schema_version: SchemaVersion,
         campaign: manifest.campaign.clone(),
         cell_id: cell.cell_id.clone(),
