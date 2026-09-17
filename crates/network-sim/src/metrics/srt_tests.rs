@@ -134,3 +134,51 @@ fn cumulative_capture_still_rejects_socket_changes() {
         Err(MetricError::CounterReset(name)) if name == "SocketID"
     ));
 }
+
+#[test]
+fn metrics_v2_excludes_warmup_and_preserves_interval_belated_delta() {
+    // Given synthetic rows with a depleted warmup buffer and known post-settle gauges.
+    let csv = CSV
+        .lines()
+        .zip([
+            "msRcvBuf,msRcvTsbPdDelay,byteAvailRcvBuf",
+            "0,2000,99",
+            "500,2000,80",
+            "400,2000,70",
+        ])
+        .map(|(row, gauges)| format!("{row},{gauges}\n"))
+        .collect::<String>();
+    // When measuring strictly after the settle boundary.
+    let window = SrtStats::parse(&csv, 0)
+        .unwrap()
+        .window(Window::new(1000, 6000).unwrap(), 1)
+        .unwrap();
+    // Then only post-settle samples determine the floor and interval-count sum.
+    assert_eq!(window.ms_rcv_buf_min, Some(400.0));
+    assert_eq!(window.ms_rcv_tsbpd_delay, Some(2000.0));
+    assert_eq!(window.pkt_belated_delta, 10);
+}
+
+#[test]
+fn metrics_v2_missing_gauges_remain_unknown() {
+    // Given an older capture without buffer columns.
+    let stats = SrtStats::parse(CSV, 0).unwrap();
+    // When deriving the window, then missing is not converted to a zero or passing floor.
+    let window = stats.window(Window::new(1000, 6000).unwrap(), 1).unwrap();
+    assert_eq!(window.ms_rcv_buf_min, None);
+    assert_eq!(window.ms_rcv_tsbpd_delay, None);
+}
+
+#[test]
+fn metrics_v2_rejects_nonfinite_buffer_gauges() {
+    // Given a malformed new gauge on otherwise valid rows.
+    let csv = CSV
+        .lines()
+        .enumerate()
+        .map(|(i, row)| format!("{row},{}\n", if i == 0 { "msRcvBuf" } else { "NaN" }))
+        .collect::<String>();
+    // When parsing, then corrupt input is rejected at the boundary.
+    assert!(
+        matches!(SrtStats::parse(&csv, 0), Err(MetricError::InvalidField(name)) if name == "msRcvBuf")
+    );
+}

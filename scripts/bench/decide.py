@@ -72,6 +72,9 @@ class Evidence(Document):
 
 
 class Group(Document):
+    cell_id: str = ""
+    lineage: str = ""
+    covering: bool = True
     campaign: str
     scenario: str
     receiver: str
@@ -80,6 +83,8 @@ class Group(Document):
 
     @property
     def key(self) -> str:
+        if self.cell_id:
+            return "/".join((self.campaign, self.cell_id))
         return "/".join((self.campaign, self.scenario, self.receiver, self.profile))
 
 
@@ -385,6 +390,17 @@ SYNTHETIC_SUMMARIES: Final = (
 
 
 class DecisionTests(unittest.TestCase):
+    def test_loader_preserves_lineage_cell_identity_and_covering(self) -> None:
+        raw = """{"schema_version":1,"groups":[{"campaign":"unit","scenario":"A",
+          "receiver":"arbitrary-label","profile":"production","lineage":"ours-old",
+          "cell_id":"ours-old@--A@--production--slt:4002--fec:off","covering":false,"cells":{}}]}"""
+        summary = Summary.model_validate_json(raw)
+        self.assertEqual(summary.groups[0].lineage, "ours-old")
+        self.assertFalse(summary.groups[0].covering)
+        self.assertEqual(
+            summary.groups[0].key, "unit/ours-old@--A@--production--slt:4002--fec:off"
+        )
+
     def test_all_eleven_scenarios_when_adaptive_covers_full_matrix(self) -> None:
         # Given the literal input repeated across the complete D-1 scenario matrix.
         source = Summary.model_validate_json(SYNTHETIC_SUMMARIES[0]).groups[0]

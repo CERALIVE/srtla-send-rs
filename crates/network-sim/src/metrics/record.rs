@@ -21,6 +21,20 @@ pub struct RunRecord {
     pub schema_version: SchemaVersion,
     pub campaign: String,
     pub cell_id: String,
+    #[serde(default)]
+    pub covering: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supersedes: Option<RunId>,
+    #[serde(default)]
+    pub receiver_label: String,
+    #[serde(default)]
+    pub receiver_lineage: String,
+    #[serde(default)]
+    pub srtla_rec_sha256: Option<Hash256>,
+    #[serde(default)]
+    pub srt_live_transmit_sha256: Option<Hash256>,
+    #[serde(default)]
+    pub listener_uri_extra: String,
     pub run_id: RunId,
     pub scenario: ScenarioIdentity,
     pub candidate: Candidate,
@@ -51,13 +65,26 @@ pub struct RunRecord {
 impl RunRecord {
     /// SHA256 of a JSON tuple prevents ambiguous concatenation; env and opaque JSON maps are sorted.
     pub fn compute_fingerprint(&self) -> Result<Hash256, serde_json::Error> {
-        let bytes = serde_json::to_vec(&(
+        let identity = (
             &self.candidate,
             &self.receiver,
             &self.scenario.hash,
             &self.srt_profile,
             &self.sender.effective_config,
-        ))?;
+        );
+        let bytes = if self.receiver_label.is_empty() {
+            serde_json::to_vec(&identity)?
+        } else {
+            serde_json::to_vec(&(
+                identity,
+                &self.cell_id,
+                &self.receiver_label,
+                &self.receiver_lineage,
+                &self.listener_uri_extra,
+                &self.srtla_rec_sha256,
+                &self.srt_live_transmit_sha256,
+            ))?
+        };
         Ok(Hash256::digest(&bytes))
     }
 }
@@ -127,6 +154,14 @@ pub enum RunStatus {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Diagnostics {
+    #[serde(default)]
+    pub pkt_drop_delta: Option<u64>,
+    #[serde(default)]
+    pub pkt_belated_delta: Option<u64>,
+    #[serde(default)]
+    pub ms_rcv_buf_min: Option<f64>,
+    #[serde(default)]
+    pub ms_rcv_tsbpd_delay: Option<f64>,
     pub pkt_belated_sum: u64,
     pub loss_ratio: f64,
     pub retrans_ratio: f64,
@@ -137,6 +172,10 @@ pub struct Diagnostics {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Sender {
+    #[serde(default)]
+    pub cpu_percent: Option<f64>,
+    #[serde(default)]
+    pub switches_per_second: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub switch_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]

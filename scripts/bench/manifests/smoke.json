@@ -39,13 +39,17 @@
       }
     }
   ],
-  "receivers": [{"name": "ceralive", "kind": "ceralive", "bin": "target/smoke-baseline-bins/srtla_rec-38b7b76c6e8f8e88"}],
+  "receivers": [
+    {"name": "ceralive", "kind": "ceralive", "bin": "target/smoke-baseline-bins/srtla_rec-38b7b76c6e8f8e88"},
+    {"label": "ours-new", "lineage": "ours-new", "srtla_rec_kind": "ceralive", "srtla_rec_bin": "target/smoke-baseline-bins/srtla_rec-38b7b76c6e8f8e88", "listener_uri_extra": "&periodicnakgate=1&lossmaxttl=200"}
+  ],
   "cells": [
-    {"candidate": "classic", "scenario": "A", "receiver": "ceralive", "srt_profile": "production", "runs": 2},
-    {"candidate": "classic", "scenario": "D", "receiver": "ceralive", "srt_profile": "production", "runs": 2},
-    {"candidate": "enhanced", "scenario": "A", "receiver": "ceralive", "srt_profile": "production", "runs": 2},
-    {"candidate": "enhanced", "scenario": "D", "receiver": "ceralive", "srt_profile": "production", "runs": 2},
-    {"candidate": "adaptive", "scenario": "A", "receiver": "ceralive", "srt_profile": "production", "runs": 2},
-    {"candidate": "adaptive", "scenario": "D", "receiver": "ceralive", "srt_profile": "production", "runs": 2}
+    {"cell_id": "ceralive@--A@--production--slt:4001--fec:off", "covering": true, "candidate": "classic", "scenario": "A", "receiver": "ceralive", "srt_profile": "production", "runs": 2},
+    {"cell_id": "ceralive@--D@--production--slt:4001--fec:off", "covering": true, "candidate": "classic", "scenario": "D", "receiver": "ceralive", "srt_profile": "production", "runs": 2},
+    {"cell_id": "ceralive@--A@--production--slt:4001--fec:off", "covering": true, "candidate": "enhanced", "scenario": "A", "receiver": "ceralive", "srt_profile": "production", "runs": 2},
+    {"cell_id": "ceralive@--D@--production--slt:4001--fec:off", "covering": true, "candidate": "enhanced", "scenario": "D", "receiver": "ceralive", "srt_profile": "production", "runs": 2},
+    {"cell_id": "ceralive@--A@--production--slt:4001--fec:off", "covering": true, "candidate": "adaptive", "scenario": "A", "receiver": "ceralive", "srt_profile": "production", "runs": 2},
+    {"cell_id": "ceralive@--D@--production--slt:4001--fec:off", "covering": true, "candidate": "adaptive", "scenario": "D", "receiver": "ceralive", "srt_profile": "production", "runs": 2},
+    {"cell_id": "ours-new@%26periodicnakgate%3D1%26lossmaxttl%3D200--A@--production--slt:4001--fec:off", "covering": false, "candidate": "classic", "scenario": "A", "receiver": "ours-new", "srt_profile": "production", "runs": 1}
   ]
 }

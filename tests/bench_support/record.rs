@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, ensure};
 use network_sim::bond::CarrierMode;
-use network_sim::harness::{ReceiverKind, find_srt_live_transmit_binary};
+use network_sim::harness::ReceiverSpec;
 use network_sim::metrics::Window;
 use network_sim::metrics::control::EffectiveConfig;
 use network_sim::metrics::identity::{Hash256, RunId, SchemaVersion};
@@ -32,6 +32,7 @@ pub struct Request {
     pub result: Attempt,
     pub artifacts: PathBuf,
     pub srt_binary: PathBuf,
+    pub receiver_spec: ReceiverSpec,
 }
 
 #[derive(Debug)]
@@ -62,27 +63,17 @@ pub fn check_config(
     Ok(())
 }
 
-pub fn receiver_kind(receiver: &manifest::Receiver) -> Result<ReceiverKind> {
-    match &receiver.kind {
-        Some(record::ReceiverKind::Ceralive) => Ok(ReceiverKind::CeraLive),
-        Some(record::ReceiverKind::Irlserver) => Ok(ReceiverKind::Irlserver),
-        Some(record::ReceiverKind::Belabox) => Ok(ReceiverKind::Belabox),
-        None => match receiver.name.as_str() {
-            "ceralive" => Ok(ReceiverKind::CeraLive),
-            "irlserver" => Ok(ReceiverKind::Irlserver),
-            "belabox" => Ok(ReceiverKind::Belabox),
-            _ => ReceiverKind::from_env(),
-        },
-    }
-}
-
 pub fn binary_hash(path: &Path) -> Result<Hash256> {
     Ok(Hash256::digest(&std::fs::read(path).with_context(
         || format!("read binary {}", path.display()),
     )?))
 }
 
-pub fn prepare(manifest: &Manifest, work: Work, order_index: u32) -> Result<(RunRecord, PathBuf)> {
+pub fn prepare(
+    manifest: &Manifest,
+    work: Work,
+    order_index: u32,
+) -> Result<(RunRecord, ReceiverSpec)> {
     let cell = &manifest.cells[work.cell];
     let candidate = manifest
         .candidates
@@ -95,7 +86,13 @@ pub fn prepare(manifest: &Manifest, work: Work, order_index: u32) -> Result<(Run
         .find(|r| r.name == cell.receiver)
         .context("receiver")?;
     let profile = manifest.scenario(&cell.scenario)?;
-    let srt = find_srt_live_transmit_binary()?;
+    let receiver = receiver.resolve(
+        manifest
+            .receiver_defaults
+            .as_ref()
+            .context("campaign receiver defaults were not resolved")?,
+    )?;
+    let srt = &receiver.srt_live_transmit_bin;
     let bases: Vec<_> = profile
         .timeline
         .links
@@ -123,7 +120,7 @@ pub fn prepare(manifest: &Manifest, work: Work, order_index: u32) -> Result<(Run
         profile.receiver_restart_budget,
         manifest.seed,
         candidate.stats_file,
-        binary_hash(&srt)?,
+        binary_hash(srt)?,
     ))?;
     let mut env = candidate.env.clone();
     env.entry("RUST_LOG".into())
@@ -137,7 +134,14 @@ pub fn prepare(manifest: &Manifest, work: Work, order_index: u32) -> Result<(Run
     let mut record = RunRecord {
         schema_version: SchemaVersion,
         campaign: manifest.campaign.clone(),
-        cell_id: cell.id(),
+        cell_id: cell.cell_id.clone(),
+        covering: cell.covering,
+        supersedes: None,
+        receiver_label: receiver.label.clone(),
+        receiver_lineage: receiver.lineage.clone(),
+        srtla_rec_sha256: Some(binary_hash(&receiver.srtla_rec_bin)?),
+        srt_live_transmit_sha256: Some(binary_hash(srt)?),
+        listener_uri_extra: receiver.listener_uri_extra.clone(),
         run_id: RunId::try_from(
             std::fs::read_to_string("/proc/sys/kernel/random/uuid")?
                 .trim()
@@ -155,8 +159,8 @@ pub fn prepare(manifest: &Manifest, work: Work, order_index: u32) -> Result<(Run
             env,
         },
         receiver: record::Receiver {
-            kind: receiver_kind(receiver)?.into(),
-            sha256: binary_hash(&receiver.bin)?,
+            kind: receiver.kind()?.into(),
+            sha256: binary_hash(&receiver.srtla_rec_bin)?,
         },
         srt_profile: manifest::preset(&cell.srt_profile)?.into(),
         fingerprint: Hash256::digest(b"pending"),
@@ -171,6 +175,10 @@ pub fn prepare(manifest: &Manifest, work: Work, order_index: u32) -> Result<(Run
         viewer_loss_ratio: 0.0,
         no_traffic: true,
         diagnostics: Diagnostics {
+            pkt_drop_delta: None,
+            pkt_belated_delta: None,
+            ms_rcv_buf_min: None,
+            ms_rcv_tsbpd_delay: None,
             pkt_belated_sum: 0,
             loss_ratio: 0.0,
             retrans_ratio: 0.0,
@@ -180,6 +188,8 @@ pub fn prepare(manifest: &Manifest, work: Work, order_index: u32) -> Result<(Run
         },
         per_link: Vec::new(),
         sender: Sender {
+            cpu_percent: None,
+            switches_per_second: None,
             switch_count: None,
             nak_count: None,
             cpu_ms: 0.0,
@@ -207,7 +217,7 @@ pub fn prepare(manifest: &Manifest, work: Work, order_index: u32) -> Result<(Run
     if record.loadavg_1m > 2.0 {
         record.warnings.push("loadavg>2".into());
     }
-    Ok((record, srt))
+    Ok((record, receiver))
 }
 
 pub fn loadavg() -> Result<f64> {

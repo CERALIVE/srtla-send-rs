@@ -12,6 +12,8 @@ use rand::seq::SliceRandom;
 #[path = "model.rs"]
 mod model;
 pub use model::*;
+#[path = "receivers.rs"]
+mod receivers;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ManifestError {
@@ -39,7 +41,15 @@ fn identifier(value: &str) -> bool {
 }
 
 pub fn parse(json: &str) -> Result<Manifest> {
-    let manifest: Manifest = serde_json::from_str(json)?;
+    parse_with_lock(
+        json,
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/bench/receivers.lock.json"),
+    )
+}
+
+pub fn parse_with_lock(json: &str, lock: &std::path::Path) -> Result<Manifest> {
+    let mut manifest: Manifest = serde_json::from_str(json)?;
+    receivers::normalize(&mut manifest, lock)?;
     manifest.validate()?;
     Ok(manifest)
 }
@@ -85,13 +95,38 @@ impl Manifest {
         }
         let mut receivers = BTreeSet::new();
         for r in &self.receivers {
+            r.validate()?;
             ensure!(
                 identifier(&r.name) && receivers.insert(&r.name),
                 ManifestError::Invalid("duplicate/unsafe receiver name".into())
             );
         }
         let mut ids = BTreeSet::new();
+        let mut covering = BTreeMap::new();
         for cell in &self.cells {
+            ensure!(
+                covering
+                    .insert(&cell.cell_id, cell.covering)
+                    .is_none_or(|previous| previous == cell.covering),
+                "paired candidates must agree on covering"
+            );
+            let receiver = self
+                .receivers
+                .iter()
+                .find(|r| r.name == cell.receiver)
+                .context("receiver")?;
+            ensure!(
+                cell.cell_id == receivers::cell_identity(cell, receiver),
+                "incoherent cell_id"
+            );
+            ensure!(
+                cell.sink == "slt" && !cell.fec && cell.port > 0,
+                "only slt with FEC off is implemented"
+            );
+            ensure!(
+                cell.variant.is_empty() || !cell.covering,
+                "variants must explicitly set covering:false"
+            );
             ensure!(
                 cell.runs > 0
                     && labels.contains(&cell.candidate)
@@ -123,10 +158,7 @@ impl Manifest {
     pub fn order(&self) -> Vec<Work> {
         let mut groups = BTreeMap::new();
         for (i, cell) in self.cells.iter().enumerate() {
-            groups
-                .entry((&cell.scenario, &cell.receiver, &cell.srt_profile))
-                .or_insert_with(Vec::new)
-                .push(i);
+            groups.entry(&cell.cell_id).or_insert_with(Vec::new).push(i);
         }
         let mut rng = rand::rngs::StdRng::seed_from_u64(self.seed);
         let mut work = Vec::new();
@@ -146,27 +178,43 @@ impl Manifest {
     }
 
     pub fn smoke(&mut self) {
-        let combinations: BTreeSet<_> = self
+        let combinations: BTreeMap<_, _> = self
             .cells
             .iter()
-            .map(|c| (c.receiver.clone(), c.srt_profile.clone()))
+            .map(|c| {
+                (
+                    (
+                        c.receiver.clone(),
+                        c.srt_profile.clone(),
+                        c.variant.clone(),
+                        c.sink.clone(),
+                        c.port,
+                        c.fec,
+                        c.covering,
+                    ),
+                    c.clone(),
+                )
+            })
             .collect();
         self.cells = combinations
-            .into_iter()
-            .flat_map(|(receiver, srt_profile)| {
+            .into_values()
+            .flat_map(|template| {
                 self.candidates.iter().flat_map(move |candidate| {
-                    let receiver = receiver.clone();
-                    let srt_profile = srt_profile.clone();
                     ["A", "D"].map(|scenario| Cell {
+                        cell_id: String::new(),
                         candidate: candidate.label.clone(),
                         scenario: scenario.into(),
-                        receiver: receiver.clone(),
-                        srt_profile: srt_profile.clone(),
                         runs: 2,
+                        ..template.clone()
                     })
                 })
             })
             .collect();
+        for cell in &mut self.cells {
+            if let Some(receiver) = self.receivers.iter().find(|r| r.name == cell.receiver) {
+                cell.cell_id = receivers::cell_identity(cell, receiver);
+            }
+        }
         self.scenarios = vec!["A".into(), "D".into()];
         self.runs = Some(2);
         self.window_secs_override = None;

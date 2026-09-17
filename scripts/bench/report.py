@@ -28,7 +28,14 @@ from typing import Annotated, ClassVar, Final, Literal, assert_never, override
 
 import numpy as np
 from numpy.typing import NDArray
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    ValidationError,
+)
 
 # allow: SIZE_OK — the task requires a single-file uv script including its schema
 # boundary, bootstrap implementation and embedded tests; no local runtime imports.
@@ -49,6 +56,12 @@ class Document(BaseModel):
 
 
 class Cell(Document):
+    cell_id: str = ""
+    covering: bool = True
+    variant: str = ""
+    sink: str = "slt"
+    port: Annotated[int, Field(gt=0, le=65535)] = 4001
+    fec: bool = False
     candidate: str
     scenario: str
     receiver: str
@@ -57,6 +70,8 @@ class Cell(Document):
 
     @property
     def id(self) -> str:
+        if self.cell_id:
+            return f"{self.cell_id}--{self.candidate}"
         return f"{self.candidate}--{self.scenario}--{self.receiver}--{self.srt_profile}"
 
 
@@ -68,8 +83,12 @@ class Candidate(Document):
 
 
 class ManifestReceiver(Document):
-    name: str
-    kind: Literal["ceralive", "irlserver", "belabox"] | None = None
+    name: str = Field(validation_alias=AliasChoices("name", "label"))
+    kind: str | None = Field(
+        default=None, validation_alias=AliasChoices("kind", "srtla_rec_kind")
+    )
+    lineage: str | None = None
+    listener_uri_extra: str = ""
 
 
 class Manifest(Document):
@@ -77,10 +96,48 @@ class Manifest(Document):
     seed: Count
     cells: Annotated[tuple[Cell, ...], Field(min_length=1)]
     candidates: Annotated[tuple[Candidate, ...], Field(min_length=1)]
-    receivers: Annotated[tuple[ManifestReceiver, ...], Field(min_length=1)]
+    receivers: Annotated[tuple[ManifestReceiver | str, ...], Field(min_length=1)]
+
+
+def receiver_specs(manifest: Manifest) -> dict[str, ManifestReceiver]:
+    result: dict[str, ManifestReceiver] = {}
+    for item in manifest.receivers:
+        match item:
+            case str():
+                receiver = ManifestReceiver(name=item)
+            case ManifestReceiver():
+                receiver = item
+            case unreachable:
+                assert_never(unreachable)
+        if receiver.name in result:
+            raise EvidenceError(f"duplicate receiver label {receiver.name}")
+        result[receiver.name] = receiver
+    return result
+
+
+def stable_identity(cell: Cell, receiver: ManifestReceiver) -> str:
+    def escape(text: str) -> str:
+        return "".join(
+            chr(b)
+            if chr(b).isascii() and (chr(b).isalnum() or chr(b) in "_-")
+            else f"%{b:02X}"
+            for b in text.encode("utf-8")
+        )
+
+    return (
+        f"{receiver.name}@{escape(receiver.listener_uri_extra)}--{cell.scenario}@{escape(cell.variant)}"
+        f"--{cell.srt_profile}--{cell.sink}:{cell.port}--fec:{'on' if cell.fec else 'off'}"
+    )
+
+
+class RecordArm(Document):
+    label: str
 
 
 class Envelope(Document):
+    run_id: str | None = None
+    supersedes: str | None = None
+    candidate: RecordArm | None = None
     schema_version: Literal[1]
     campaign: str
     cell_id: str
@@ -118,6 +175,8 @@ class Window(Document):
 
 
 class Sender(Document):
+    cpu_percent: Positive | None = None
+    switches_per_second: Positive | None = None
     cpu_ms: Positive
     switch_count: Count | None = None
     effective_config: JsonValue = None
@@ -164,6 +223,12 @@ class LoadInterval(Document):
 
 
 class RunRecord(Envelope):
+    receiver_label: str = ""
+    receiver_lineage: str = ""
+    srtla_rec_sha256: Hash | None = None
+    srt_live_transmit_sha256: Hash | None = None
+    listener_uri_extra: str = ""
+    covering: bool = True
     scenario: Scenario
     candidate: RecordedCandidate
     receiver: Receiver
@@ -243,6 +308,9 @@ class Evidence(Document):
 
 
 class Group(Document):
+    cell_id: str = ""
+    lineage: str = ""
+    covering: bool = True
     campaign: str
     scenario: str
     receiver: str
@@ -412,6 +480,10 @@ def run_metrics(records: Sequence[RunRecord]) -> dict[str, Stats]:
             ]
         ),
         "switch_count": statistics([r.sender.switch_count for r in records]),
+        "switches_per_second": statistics(
+            [r.sender.switches_per_second for r in records]
+        ),
+        "sender_cpu_percent": statistics([r.sender.cpu_percent for r in records]),
     }
     names = sorted({name for r in records for name in r.diagnostics})
     metrics.update(
@@ -538,6 +610,28 @@ def checks(records: Sequence[RunRecord]) -> dict[str, float | None]:
     return {name: sum(values) / len(records) for name, values in results.items()}
 
 
+def metrics_v2_checks(records: Sequence[RunRecord]) -> dict[str, float | None]:
+    zero: list[bool] = []
+    floor: list[bool] = []
+    for record in records:
+        drop = record.diagnostics.get("pkt_drop_delta")
+        belated = record.diagnostics.get("pkt_belated_delta")
+        buffer = record.diagnostics.get("ms_rcv_buf_min")
+        delay = record.diagnostics.get("ms_rcv_tsbpd_delay")
+        if drop is not None and belated is not None:
+            zero.append(drop == 0 and belated == 0)
+        if buffer is not None and delay is not None:
+            floor.append(delay > 0 and buffer >= 0.20 * delay)
+    return {
+        "post_settle_zero_drop_belated_rate": sum(zero) / len(records)
+        if records and len(zero) == len(records)
+        else None,
+        "post_settle_starvation_floor_rate": sum(floor) / len(records)
+        if records and len(floor) == len(records)
+        else None,
+    }
+
+
 def summarize_cell(records: Sequence[RunRecord], expected: Candidate) -> Evidence:
     errors: list[str] = []
     if len({r.fingerprint for r in records}) != 1:
@@ -600,12 +694,63 @@ def summarize_cell(records: Sequence[RunRecord], expected: Candidate) -> Evidenc
         else None,
         comparisons={},
         integrity_errors=tuple(errors),
-        checks=checks(records),
+        checks={**checks(records), **metrics_v2_checks(records)}
+        if any("pkt_drop_delta" in r.diagnostics for r in records)
+        else checks(records),
         metrics=metrics,
         episodes=episode_statistics(records),
         load_intervals=load_statistics(records),
         fingerprints=tuple(sorted({r.fingerprint for r in records})),
     )
+
+
+def live_documents(paths: Sequence[Path]) -> tuple[tuple[Path, Envelope, str], ...]:
+    documents = tuple((path, path.read_text(encoding="utf-8")) for path in paths)
+    parsed = tuple(
+        (path, Envelope.model_validate_json(text), text) for path, text in documents
+    )
+    ids: dict[str, Envelope] = {}
+    targets: set[str] = set()
+    for _, envelope, _ in parsed:
+        if envelope.run_id is not None:
+            previous = ids.get(envelope.run_id)
+            if previous is not None and (
+                previous != envelope or envelope.status == "ok"
+            ):
+                raise EvidenceError(f"duplicate run_id {envelope.run_id}")
+            ids[envelope.run_id] = envelope
+    for envelope in ids.values():
+        if envelope.supersedes is None:
+            continue
+        target = ids.get(envelope.supersedes)
+        if target is None or envelope.supersedes in targets:
+            raise EvidenceError(
+                f"missing or multiply superseded run {envelope.supersedes}"
+            )
+        if (target.campaign, target.cell_id, target.candidate, target.run_index) != (
+            envelope.campaign,
+            envelope.cell_id,
+            envelope.candidate,
+            envelope.run_index,
+        ):
+            raise EvidenceError(
+                "supersedes must preserve cell, candidate and run-index"
+            )
+        targets.add(envelope.supersedes)
+        seen: set[str] = set()
+        current = envelope
+        while current.supersedes is not None:
+            if current.supersedes in seen:
+                raise EvidenceError("cyclic supersedes chain")
+            seen.add(current.supersedes)
+            next_record = ids.get(current.supersedes)
+            if next_record is None:
+                raise EvidenceError(f"missing superseded run {current.supersedes}")
+            current = next_record
+    for _, envelope, _ in parsed:
+        if envelope.supersedes is not None and envelope.run_id is None:
+            raise EvidenceError("replacement requires run_id")
+    return tuple(row for row in parsed if row[1].run_id not in targets)
 
 
 def load_records(
@@ -631,12 +776,25 @@ def load_records(
     expected = {cell.id: cell for cell in manifest.cells}
     if len(expected) != len(manifest.cells):
         raise EvidenceError("duplicate manifest cells")
-    receivers = {r.name: r for r in manifest.receivers}
+    receivers = receiver_specs(manifest)
     if len(receivers) != len(manifest.receivers) or any(
         c.receiver not in receivers for c in manifest.cells
     ):
         raise EvidenceError("duplicate/unresolved manifest receiver")
     presets = {"production": (2000, 40), "strict": (500, 10), "legacy-default": (0, 0)}
+    aliases: dict[tuple[str, str], str] = {}
+    covering: dict[str, bool] = {}
+    for cell in manifest.cells:
+        canonical = stable_identity(cell, receivers[cell.receiver])
+        if covering.setdefault(canonical, cell.covering) != cell.covering:
+            raise EvidenceError("paired candidates must agree on covering")
+        if cell.cell_id and cell.cell_id != canonical:
+            raise EvidenceError(
+                f"cell_id does not encode the complete cell: {canonical}"
+            )
+        if cell.variant and cell.covering:
+            raise EvidenceError("variants must set covering:false")
+        aliases[(canonical, cell.candidate)] = cell.id
     for root in roots:
         if not root.is_dir():
             raise EvidenceError(f"results directory not found: {root}")
@@ -653,10 +811,13 @@ def load_records(
         if not {"stale", "artifacts", "raw"}.intersection(path.relative_to(root).parts)
         and path.name != "manifest.json"
     }
-    for path in sorted(paths):
-        text = path.read_text(encoding="utf-8")
-        envelope = Envelope.model_validate_json(text)
-        if envelope.campaign != manifest.campaign or envelope.cell_id not in expected:
+    for path, envelope, text in live_documents(sorted(paths)):
+        key = (
+            aliases.get((envelope.cell_id, envelope.candidate.label), envelope.cell_id)
+            if envelope.candidate is not None
+            else envelope.cell_id
+        )
+        if envelope.campaign != manifest.campaign or key not in expected:
             raise EvidenceError(
                 f"unexpected cell {envelope.campaign}/{envelope.cell_id}: {path}"
             )
@@ -671,7 +832,7 @@ def load_records(
                 record = RunRecord.model_validate_json(text)
             case _:
                 assert_never(envelope.status)
-        cell = expected[record.cell_id]
+        cell = expected[key]
         if smoke_coverage and record.run_index >= cell.runs:
             raise EvidenceError(f"unexpected run index {record.run_index} in {cell.id}")
         receiver = receivers[cell.receiver]
@@ -690,6 +851,19 @@ def load_records(
             or kind is not None
             and record.receiver.kind != kind
             or record.window.end_ms <= record.window.start_ms
+            or record.receiver_label
+            and record.receiver_label != receiver.name
+            or receiver.lineage is not None
+            and record.receiver_lineage != receiver.lineage
+            or record.receiver_label
+            and record.listener_uri_extra != receiver.listener_uri_extra
+            or record.receiver_label
+            and record.covering != cell.covering
+            or record.receiver_label
+            and (
+                record.srtla_rec_sha256 != record.receiver.sha256
+                or record.srt_live_transmit_sha256 is None
+            )
         ):
             raise EvidenceError(
                 f"identity/window mismatch {cell.id}, run_index={record.run_index}"
@@ -728,12 +902,18 @@ def build_summary(
         raise EvidenceError("duplicate/unresolved manifest candidate")
     groups: list[Group] = []
     warnings = list(loaded.warnings)
-    contexts = sorted({(c.scenario, c.receiver, c.srt_profile) for c in manifest.cells})
-    for scenario, receiver, profile in contexts:
+    receivers = receiver_specs(manifest)
+    contexts = {stable_identity(c, receivers[c.receiver]): c for c in manifest.cells}
+    for context, representative in sorted(contexts.items()):
+        scenario, receiver, profile = (
+            representative.scenario,
+            representative.receiver,
+            representative.srt_profile,
+        )
         arms = {
             c.candidate: records[c.id]
             for c in manifest.cells
-            if (c.scenario, c.receiver, c.srt_profile) == (scenario, receiver, profile)
+            if stable_identity(c, receivers[c.receiver]) == context
         }
         cells: dict[str, Evidence] = {}
         for name, runs in sorted(arms.items()):
@@ -752,6 +932,13 @@ def build_summary(
                 if pair.episode_mismatch:
                     warnings.append(f"{label} vs {other}: config/episode mismatch")
             for record in runs:
+                if (
+                    record.sender.switches_per_second is not None
+                    and record.sender.switches_per_second >= 0.9 * (1000 / 15)
+                ):
+                    warnings.append(
+                        f"{label} run {record.run_index}: switch churn DEFECT signal (informational, MIN_SWITCH_INTERVAL_MS=15)"
+                    )
                 warnings.extend(
                     f"{label} run {record.run_index}: {w}" for w in record.warnings
                 )
@@ -761,6 +948,9 @@ def build_summary(
                     )
         groups.append(
             Group(
+                cell_id=representative.cell_id,
+                lineage=receivers[receiver].lineage or receiver,
+                covering=representative.covering,
                 campaign=manifest.campaign,
                 scenario=scenario,
                 receiver=receiver,
@@ -782,7 +972,7 @@ def markdown(summary: Summary) -> str:
         lines.extend(
             (
                 "",
-                f"## {group.scenario} — {group.campaign} / {group.receiver} / {group.profile}",
+                f"## {group.cell_id or group.scenario} — {group.campaign} / {group.receiver} / {group.lineage} / {group.profile}",
                 "",
                 "| Candidate | Metric | n | Missing | Mean | Median | SD | 95% CI | Nonfinite rate |",
                 "|---|---|---:|---:|---:|---:|---:|---|---:|",
@@ -846,6 +1036,205 @@ def markdown(summary: Summary) -> str:
 
 
 class ReportTests(unittest.TestCase):
+    def test_lineage_manifest_accepts_string_and_new_object(self) -> None:
+        text = """{"campaign":"synthetic","seed":42,"candidates":[{"label":"adaptive"}],
+            "cells":[{"candidate":"adaptive","scenario":"A","receiver":"ttl200","srt_profile":"production","runs":1}],
+            "receivers":["ceralive",{"label":"ttl200","lineage":"ours-new","srtla_rec_kind":"ceralive"}]}"""
+        parsed = Manifest.model_validate_json(text)
+        receivers = receiver_specs(parsed)
+        self.assertEqual(receivers["ttl200"].lineage, "ours-new")
+        self.assertEqual(receivers["ceralive"].name, "ceralive")
+
+    def test_cell_id_separates_options_and_candidates_pair_within_cell(self) -> None:
+        receiver = ManifestReceiver(
+            name="ttl200",
+            lineage="ours-new",
+            kind="ceralive",
+            listener_uri_extra="&lossmaxttl=200",
+        )
+        base = Cell(
+            candidate="adaptive",
+            scenario="A",
+            receiver="ttl200",
+            srt_profile="production",
+            runs=1,
+            covering=False,
+        )
+        cell = base.model_copy(update={"cell_id": stable_identity(base, receiver)})
+        other = cell.model_copy(update={"port": 4002, "cell_id": ""})
+        other = other.model_copy(update={"cell_id": stable_identity(other, receiver)})
+        classic = cell.model_copy(update={"candidate": "classic"})
+        manifest = Manifest(
+            campaign="synthetic",
+            seed=42,
+            receivers=(receiver,),
+            candidates=(Candidate(label="adaptive"), Candidate(label="classic")),
+            cells=(cell, classic, other),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for index, item in enumerate(manifest.cells):
+                record = self.record().model_copy(
+                    update={
+                        "cell_id": item.cell_id,
+                        "receiver_label": "ttl200",
+                        "receiver_lineage": "ours-new",
+                        "covering": False,
+                        "listener_uri_extra": "&lossmaxttl=200",
+                        "srtla_rec_sha256": "c" * 64,
+                        "srt_live_transmit_sha256": "e" * 64,
+                        "candidate": self.record().candidate.model_copy(
+                            update={"label": item.candidate}
+                        ),
+                    }
+                )
+                _ = (root / f"{index}.json").write_text(record.model_dump_json())
+            summary = build_summary(manifest, (root,))
+            manifest_path = root / "manifest.json"
+            _ = manifest_path.write_text(manifest.model_dump_json())
+            output_root = root / "report-output"
+            output_root.mkdir()
+            command = subprocess.run(
+                [
+                    sys.executable,
+                    __file__,
+                    "--manifest",
+                    str(manifest_path),
+                    "--results",
+                    str(root),
+                    "--out",
+                    str(output_root / "report.md"),
+                    "--json",
+                    str(output_root / "summary.json"),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(command.returncode, 0, command.stderr)
+            self.assertEqual(
+                Summary.model_validate_json((output_root / "summary.json").read_text()),
+                summary,
+            )
+        self.assertEqual(len(summary.groups), 2)
+        paired_group = next(g for g in summary.groups if g.cell_id == cell.cell_id)
+        self.assertEqual(set(paired_group.cells), {"adaptive", "classic"})
+        self.assertEqual(paired_group.lineage, "ours-new")
+        self.assertFalse(paired_group.covering)
+
+    def test_supersedes_rejects_missing_target_cycles_and_wrong_cell(self) -> None:
+        original = self.record().model_copy(update={"run_id": "original"})
+        mutations = (
+            (
+                original,
+                original.model_copy(update={"run_id": "new", "supersedes": "missing"}),
+            ),
+            (
+                original.model_copy(update={"supersedes": "new"}),
+                original.model_copy(update={"run_id": "new", "supersedes": "original"}),
+            ),
+            (
+                original,
+                original.model_copy(
+                    update={"run_id": "new", "supersedes": "original", "run_index": 1}
+                ),
+            ),
+        )
+        for records in mutations:
+            with (
+                self.subTest(records=records),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                for index, record in enumerate(records):
+                    _ = (root / f"{index}.json").write_text(record.model_dump_json())
+                with self.assertRaises(EvidenceError):
+                    build_summary(self.manifest(), (root,))
+
+    def test_superseding_record_replaces_original_in_summary(self) -> None:
+        original = self.record().model_copy(update={"run_id": "original"})
+        replacement = original.model_copy(
+            update={
+                "run_id": "replacement",
+                "supersedes": "original",
+                "useful_goodput_bps": 2000.0,
+            }
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _ = (root / "old.json").write_text(original.model_dump_json())
+            _ = (root / "new.json").write_text(replacement.model_dump_json())
+            summary = build_summary(self.manifest(), (root,))
+        self.assertEqual(summary.groups[0].cells["adaptive"].n, 1)
+        self.assertEqual(summary.groups[0].cells["adaptive"].goodput_median, 2000)
+
+    def test_metrics_v2_gates_use_each_run_not_median(self) -> None:
+        record = self.record().model_copy(
+            update={
+                "diagnostics": {
+                    "pkt_drop_delta": 0.0,
+                    "pkt_belated_delta": 0.0,
+                    "ms_rcv_buf_min": 400.0,
+                    "ms_rcv_tsbpd_delay": 2000.0,
+                }
+            }
+        )
+        bad = record.model_copy(
+            update={
+                "diagnostics": {
+                    **record.diagnostics,
+                    "pkt_belated_delta": 1.0,
+                    "ms_rcv_buf_min": 399.0,
+                }
+            }
+        )
+        self.assertEqual(
+            metrics_v2_checks((record, record, bad)),
+            {
+                "post_settle_zero_drop_belated_rate": 2 / 3,
+                "post_settle_starvation_floor_rate": 2 / 3,
+            },
+        )
+        self.assertEqual(
+            metrics_v2_checks((self.record(),)),
+            {
+                "post_settle_zero_drop_belated_rate": None,
+                "post_settle_starvation_floor_rate": None,
+            },
+        )
+
+    def test_metrics_v2_drop_belated_and_starvation_are_independent_cpu_is_informational(
+        self,
+    ) -> None:
+        diagnostics = {
+            "pkt_drop_delta": 0.0,
+            "pkt_belated_delta": 0.0,
+            "ms_rcv_buf_min": 400.0,
+            "ms_rcv_tsbpd_delay": 2000.0,
+        }
+        for field in ("pkt_drop_delta", "pkt_belated_delta"):
+            record = self.record().model_copy(
+                update={"diagnostics": {**diagnostics, field: 1.0}}
+            )
+            self.assertEqual(
+                metrics_v2_checks((record,))["post_settle_zero_drop_belated_rate"], 0
+            )
+        record = self.record().model_copy(
+            update={
+                "diagnostics": diagnostics,
+                "sender": self.record().sender.model_copy(
+                    update={"cpu_percent": 900.0}
+                ),
+            }
+        )
+        self.assertEqual(
+            metrics_v2_checks((record,)),
+            {
+                "post_settle_zero_drop_belated_rate": 1.0,
+                "post_settle_starvation_floor_rate": 1.0,
+            },
+        )
+
     RECORD: Final = r"""{
       "schema_version":1,"campaign":"synthetic","cell_id":"adaptive--A--ceralive--production","run_index":0,"status":"ok",
       "scenario":{"id":"A","hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},

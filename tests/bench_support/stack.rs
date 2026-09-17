@@ -7,7 +7,7 @@ use network_sim::scenarios::Profile;
 use network_sim::{NamespaceProcess, wait_for_registered_uplinks, wait_for_udp_listener};
 
 use super::clock::wait_log;
-use super::record::{Request, binary_hash, receiver_kind};
+use super::record::{Request, binary_hash};
 use super::source::Source;
 use crate::manifest;
 
@@ -35,19 +35,19 @@ impl Stack {
             .iter()
             .find(|c| c.label == cell.candidate)
             .context("candidate")?;
-        let receiver = request
-            .manifest
-            .receivers
-            .iter()
-            .find(|r| r.name == cell.receiver)
-            .context("receiver")?;
+        let receiver = &request.receiver_spec;
         ensure!(
             binary_hash(&candidate.bin)? == request.result.record.candidate.bin_sha256,
             "candidate binary changed after fingerprinting"
         );
         ensure!(
-            binary_hash(&receiver.bin)? == request.result.record.receiver.sha256,
+            binary_hash(&receiver.srtla_rec_bin)? == request.result.record.receiver.sha256,
             "receiver binary changed after fingerprinting"
+        );
+        ensure!(
+            Some(binary_hash(&request.srt_binary)?)
+                == request.result.record.srt_live_transmit_sha256,
+            "SRT binary changed after fingerprinting"
         );
         let links: Vec<_> = profile
             .timeline
@@ -94,18 +94,21 @@ impl Stack {
             .context("sink origin")?
             .parse::<i64>()?
             / 1_000_000;
-        let listener_args = manifest::preset(&cell.srt_profile)?
-            .listener_argv(4001, Some(&request.result.record.raw.stats_csv_path))?;
+        let listener_args = receiver.listener_argv(
+            manifest::preset(&cell.srt_profile)?,
+            cell.port,
+            Some(&request.result.record.raw.stats_csv_path),
+        )?;
         let listener = NamespaceProcess::spawn_process_only(
             &topo.receiver_ns,
             utf8(&request.srt_binary)?,
             &listener_args.iter().map(String::as_str).collect::<Vec<_>>(),
         )?;
-        wait_for_udp_listener(&topo.receiver_ns, 4001, Duration::from_secs(5))?;
-        let args = receiver_kind(receiver)?.argv(5000, "127.0.0.1", 4001);
+        wait_for_udp_listener(&topo.receiver_ns, cell.port, Duration::from_secs(5))?;
+        let args = receiver.kind()?.argv(5000, "127.0.0.1", cell.port);
         let receiver = NamespaceProcess::spawn_process_only(
             &topo.receiver_ns,
-            utf8(&receiver.bin)?,
+            utf8(&receiver.srtla_rec_bin)?,
             &args.iter().map(String::as_str).collect::<Vec<_>>(),
         )?;
         wait_for_udp_listener(&topo.receiver_ns, 5000, Duration::from_secs(5))?;

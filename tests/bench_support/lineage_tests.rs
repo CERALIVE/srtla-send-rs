@@ -1,0 +1,183 @@
+use crate::{manifest, manifest_json};
+
+#[test]
+fn manifest_legacy_string_receiver_parses() {
+    // Given a legacy string receiver.
+    let mut json = manifest_json();
+    json["receivers"] = serde_json::json!(["ceralive"]);
+    // When parsing, then its label remains usable by legacy cells.
+    let parsed = manifest::parse(&json.to_string()).unwrap();
+    assert_eq!(parsed.receivers[0].name, "ceralive");
+}
+
+#[test]
+fn manifest_lineage_object_receiver_parses() {
+    // Given an explicit receiver lineage with independent binaries and options.
+    let mut json = manifest_json();
+    json["receivers"] = serde_json::json!([{
+        "label":"ceralive", "lineage":"ours-new", "srtla_rec_kind":"ceralive",
+        "srtla_rec_bin":"/bin/true", "srt_live_transmit_bin":"/bin/false",
+        "listener_uri_extra":"&periodicnakgate=1&lossmaxttl=200"
+    }]);
+    // When parsing, then all per-cell overrides survive.
+    let parsed = manifest::parse(&json.to_string()).unwrap();
+    let receiver = &parsed.receivers[0];
+    assert_eq!(receiver.lineage.as_deref(), Some("ours-new"));
+    assert_eq!(
+        receiver.srt_live_transmit_bin.as_deref(),
+        Some(std::path::Path::new("/bin/false"))
+    );
+    assert_eq!(
+        receiver.listener_uri_extra,
+        "&periodicnakgate=1&lossmaxttl=200"
+    );
+}
+
+#[test]
+fn manifest_lock_reference_resolves_both_binaries() {
+    // Given a real temporary lock document, without relying on installed binaries.
+    let dir = tempfile::tempdir().unwrap();
+    let lock = dir.path().join("receivers.lock.json");
+    std::fs::write(&lock, r#"{"receivers":{"ours-new":{"srtla_rec_bin":"/bin/true","srt_live_transmit_bin":"/bin/false"}}}"#).unwrap();
+    let mut json = manifest_json();
+    json["receivers"] = serde_json::json!([{
+        "label":"ceralive", "lineage":"ours-new", "srtla_rec_kind":"ceralive",
+        "srtla_rec_bin":"lock:ours-new", "srt_live_transmit_bin":"lock:ours-new"
+    }]);
+    // When resolving the manifest, then each reference selects its corresponding binary.
+    let parsed = manifest::parse_with_lock(&json.to_string(), &lock).unwrap();
+    assert_eq!(
+        parsed.receivers[0].bin.as_deref(),
+        Some(std::path::Path::new("/bin/true"))
+    );
+    assert_eq!(
+        parsed.receivers[0].srt_live_transmit_bin.as_deref(),
+        Some(std::path::Path::new("/bin/false"))
+    );
+}
+
+#[test]
+fn manifest_missing_lock_entry_names_the_reference() {
+    // Given a missing lock file and a named reference.
+    let dir = tempfile::tempdir().unwrap();
+    let mut json = manifest_json();
+    json["receivers"][0]["bin"] = "lock:does-not-exist".into();
+    // When parsing, then the error identifies the missing receiver entry.
+    let error =
+        manifest::parse_with_lock(&json.to_string(), &dir.path().join("missing.json")).unwrap_err();
+    assert!(format!("{error:#}").contains("does-not-exist"));
+}
+
+#[test]
+fn manifest_cell_identity_excludes_candidate_but_includes_receiver_options() {
+    // Given paired candidates and an independently varied receiver option.
+    let json = manifest_json();
+    let original = manifest::parse(&json.to_string()).unwrap();
+    let mut changed = json;
+    changed["receivers"][0]["listener_uri_extra"] = "&lossmaxttl=200".into();
+    // When normalizing cell identities, then candidates pair but options do not collide.
+    let changed = manifest::parse(&changed.to_string()).unwrap();
+    assert_eq!(original.cells[0].cell_id, original.cells[1].cell_id);
+    assert_ne!(original.cells[0].cell_id, changed.cells[0].cell_id);
+    assert!(original.cells[0].cell_id.contains("slt:4001--fec:off"));
+}
+
+#[test]
+fn manifest_receiver_override_replaces_defaults_without_environment_mutation() {
+    let json = manifest_json();
+    let parsed = manifest::parse(&json.to_string()).unwrap();
+    let defaults = network_sim::harness::ReceiverSpec {
+        label: "belabox".into(),
+        lineage: "belabox".into(),
+        srtla_rec_kind: "belabox".into(),
+        srtla_rec_bin: "/missing/default".into(),
+        srt_live_transmit_bin: "/bin/false".into(),
+        listener_uri_extra: String::new(),
+    };
+    let resolved = parsed.receivers[0].resolve(&defaults).unwrap();
+    assert_eq!(
+        resolved.srtla_rec_bin,
+        std::fs::canonicalize("/bin/true").unwrap()
+    );
+    assert_eq!(
+        resolved.srt_live_transmit_bin,
+        std::fs::canonicalize("/bin/false").unwrap()
+    );
+    assert_eq!(resolved.srtla_rec_kind, "ceralive");
+}
+
+#[test]
+fn manifest_listener_override_replaces_query_key_without_changing_presets() {
+    let spec = network_sim::harness::ReceiverSpec {
+        label: "ours-new".into(),
+        lineage: "ours-new".into(),
+        srtla_rec_kind: "ceralive".into(),
+        srtla_rec_bin: "/bin/true".into(),
+        srt_live_transmit_bin: "/bin/false".into(),
+        listener_uri_extra: "&lossmaxttl=200&periodicnakgate=1".into(),
+    };
+    let args = spec
+        .listener_argv(network_sim::harness::SrtProfile::PRODUCTION, 4002, None)
+        .unwrap();
+    assert_eq!(
+        args[0],
+        "srt://:4002?mode=listener&latency=2000&reorderfreeze=1&lossmaxttl=200&periodicnakgate=1"
+    );
+    assert_eq!(network_sim::harness::SrtProfile::PRODUCTION.lossmaxttl, 40);
+}
+
+#[test]
+fn manifest_candidate_lock_records_campaign_hashes_and_preserves_receiver_metadata() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("receivers.lock.json");
+    std::fs::write(
+        &path,
+        r#"{"receivers":{"ours-new":{"revision":"pinned"}},"parallel_lanes":2}"#,
+    )
+    .unwrap();
+    let manifest = manifest::parse(&manifest_json().to_string()).unwrap();
+    crate::bench_support::candidate_lock::record(&path, &manifest).unwrap();
+    let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(saved["receivers"]["ours-new"]["revision"], "pinned");
+    assert_eq!(saved["parallel_lanes"], 2);
+    assert_eq!(
+        saved["candidates"]["unit"]["base"]["srtla_send_sha256"],
+        serde_json::to_value(
+            crate::bench_support::record::binary_hash(std::path::Path::new("/bin/true")).unwrap()
+        )
+        .unwrap()
+    );
+}
+
+#[test]
+fn manifest_smoke_preserves_cell_options_and_covering() {
+    let mut json = manifest_json();
+    for cell in json["cells"].as_array_mut().unwrap() {
+        cell["port"] = 4002.into();
+        cell["covering"] = false.into();
+        cell["variant"] = "parser-fixture".into();
+    }
+    let mut manifest = manifest::parse(&json.to_string()).unwrap();
+    manifest.smoke();
+    assert!(
+        manifest
+            .cells
+            .iter()
+            .all(|c| c.port == 4002 && !c.covering && c.variant == "parser-fixture")
+    );
+}
+
+#[test]
+fn manifest_receiver_binary_path_is_not_a_shell_expression_or_directory() {
+    let mut spec = network_sim::harness::ReceiverSpec {
+        label: "test".into(),
+        lineage: "ours-new".into(),
+        srtla_rec_kind: "ceralive".into(),
+        srtla_rec_bin: ".".into(),
+        srt_live_transmit_bin: "/bin/true".into(),
+        listener_uri_extra: String::new(),
+    };
+    assert!(spec.clone().resolved().is_err());
+    spec.srtla_rec_bin = "$(true)".into();
+    assert!(spec.resolved().is_err());
+}

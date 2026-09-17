@@ -1,4 +1,5 @@
 mod bounded;
+pub mod candidate_lock;
 mod clock;
 mod collect;
 mod csv_capture;

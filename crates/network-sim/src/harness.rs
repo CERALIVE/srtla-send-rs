@@ -827,6 +827,120 @@ impl ReceiverKind {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ReceiverSpec {
+    pub label: String,
+    pub lineage: String,
+    pub srtla_rec_kind: String,
+    pub srtla_rec_bin: PathBuf,
+    pub srt_live_transmit_bin: PathBuf,
+    pub listener_uri_extra: String,
+}
+
+impl ReceiverSpec {
+    pub fn from_env() -> Result<Self> {
+        let kind = std::env::var("SRTLA_REC_KIND").unwrap_or_else(|_| "ceralive".into());
+        ReceiverKind::parse(Some(std::ffi::OsStr::new(&kind)))?;
+        Ok(Self {
+            label: kind.clone(),
+            lineage: kind.clone(),
+            srtla_rec_kind: kind,
+            srtla_rec_bin: std::env::var_os("SRTLA_REC_BIN")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| "srtla_rec".into()),
+            srt_live_transmit_bin: std::env::var_os("SRT_LIVE_TRANSMIT_BIN")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| "srt-live-transmit".into()),
+            listener_uri_extra: String::new(),
+        })
+    }
+
+    pub fn resolved(mut self) -> Result<Self> {
+        fn resolve(path: &Path) -> Result<PathBuf> {
+            let found = if path.components().count() == 1 {
+                if path.is_file() {
+                    path.to_owned()
+                } else {
+                    std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+                        .map(|directory| directory.join(path))
+                        .find(|candidate| candidate.is_file())
+                        .with_context(|| {
+                            format!("receiver binary {} not on PATH", path.display())
+                        })?
+                }
+            } else {
+                path.to_owned()
+            };
+            anyhow::ensure!(
+                found.is_file(),
+                "receiver binary {} is not a file",
+                found.display()
+            );
+            found
+                .canonicalize()
+                .with_context(|| format!("receiver binary {}", path.display()))
+        }
+        self.kind()?;
+        Self::validate_options(&self.listener_uri_extra)?;
+        self.srtla_rec_bin = resolve(&self.srtla_rec_bin)?;
+        self.srt_live_transmit_bin = resolve(&self.srt_live_transmit_bin)?;
+        Ok(self)
+    }
+
+    pub fn kind(&self) -> Result<ReceiverKind> {
+        ReceiverKind::parse(Some(std::ffi::OsStr::new(&self.srtla_rec_kind)))
+    }
+
+    pub fn validate_options(extra: &str) -> Result<()> {
+        if extra.is_empty() {
+            return Ok(());
+        }
+        anyhow::ensure!(
+            extra.starts_with('&'),
+            "listener_uri_extra must begin with &"
+        );
+        let mut names = std::collections::BTreeSet::new();
+        for option in extra[1..].split('&') {
+            let (key, value) = option
+                .split_once('=')
+                .context("listener option requires key=value")?;
+            anyhow::ensure!(
+                !key.is_empty()
+                    && !value.is_empty()
+                    && names.insert(key)
+                    && key.bytes().all(|b| b.is_ascii_alphanumeric())
+                    && value
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"_.:-".contains(&b))
+                    && !["mode", "adapter", "port", "packetfilter"].contains(&key),
+                "invalid or duplicate listener option {key}"
+            );
+        }
+        Ok(())
+    }
+
+    pub fn listener_argv(
+        &self,
+        profile: SrtProfile,
+        port: u16,
+        stats_csv: Option<&Path>,
+    ) -> Result<Vec<String>> {
+        Self::validate_options(&self.listener_uri_extra)?;
+        let mut args = profile.listener_argv(port, stats_csv)?;
+        let index = args.len() - 2;
+        let base = args[index].clone();
+        let (endpoint, query) = base.split_once('?').context("listener URI query")?;
+        let mut options: Vec<&str> = query.split('&').collect();
+        for option in self.listener_uri_extra.split('&').filter(|s| !s.is_empty()) {
+            let (key, _) = option.split_once('=').context("listener option")?;
+            options.retain(|existing| existing.split_once('=').is_none_or(|(name, _)| name != key));
+            options.push(option);
+        }
+        args[index] = format!("{endpoint}?{}", options.join("&"));
+        Ok(args)
+    }
+}
+
 /// Full 3-process SRTLA test stack: srt-live-transmit + srtla_rec + srtla_send.
 pub struct SrtlaTestStack {
     pub topo: SrtlaTestTopology,
@@ -864,10 +978,12 @@ impl SrtlaTestStack {
         srt_profile: SrtProfile,
         stats_csv: Option<PathBuf>,
     ) -> Result<Self> {
-        let srt_binary = find_srt_live_transmit_binary()?;
-        let rec_binary = find_srtla_rec_binary()?;
-        let receiver_kind = ReceiverKind::from_env()?;
-        let listener_args = srt_profile.listener_argv(SRT_SERVER_PORT, stats_csv.as_deref())?;
+        let receiver = ReceiverSpec::from_env()?.resolved()?;
+        let srt_binary = &receiver.srt_live_transmit_bin;
+        let rec_binary = &receiver.srtla_rec_bin;
+        let receiver_kind = receiver.kind()?;
+        let listener_args =
+            receiver.listener_argv(srt_profile, SRT_SERVER_PORT, stats_csv.as_deref())?;
         let receiver_args = receiver_kind.argv(SRTLA_REC_PORT, "127.0.0.1", SRT_SERVER_PORT);
         let topo = SrtlaTestTopology::new(test_name, num_links)?;
         let ip_list_path = topo.write_ip_list()?;

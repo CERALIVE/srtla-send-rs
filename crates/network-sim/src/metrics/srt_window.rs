@@ -13,6 +13,9 @@ pub struct SrtWindow {
     pub pkt_retrans_total: u64,
     pub byte_recv: u64,
     pub pkt_belated_sum: u64,
+    pub pkt_belated_delta: u64,
+    pub ms_rcv_buf_min: Option<f64>,
+    pub ms_rcv_tsbpd_delay: Option<f64>,
     pub viewer_loss_ratio: f64,
     pub no_traffic: bool,
     pub loss_ratio: f64,
@@ -92,6 +95,17 @@ impl SrtStats {
             pkt_retrans_total: retrans,
             byte_recv: delta(end.byte_recv, start.byte_recv, "byteRecv")?,
             pkt_belated_sum: belated,
+            pkt_belated_delta: belated,
+            ms_rcv_buf_min: rows
+                .iter()
+                .map(|row| row.ms_rcv_buf)
+                .collect::<Option<Vec<_>>>()
+                .and_then(|values| values.into_iter().reduce(f64::min)),
+            ms_rcv_tsbpd_delay: rows
+                .iter()
+                .map(|row| row.ms_rcv_tsbpd_delay)
+                .collect::<Option<Vec<_>>>()
+                .and_then(|values| values.into_iter().reduce(f64::max)),
             viewer_loss_ratio: ratio(dropped, denominator),
             no_traffic: denominator == 0.0 && sink_bytes == 0,
             loss_ratio: ratio(loss, rate_number(received) + rate_number(loss)),

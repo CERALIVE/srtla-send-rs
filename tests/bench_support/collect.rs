@@ -92,6 +92,10 @@ pub fn finish(record: &mut RunRecord, measurement: Measurement<'_>) -> Result<()
     record.viewer_loss_ratio = window.viewer_loss_ratio;
     record.no_traffic = window.no_traffic;
     record.diagnostics = Diagnostics {
+        pkt_drop_delta: Some(window.pkt_drop_total),
+        pkt_belated_delta: Some(window.pkt_belated_delta),
+        ms_rcv_buf_min: window.ms_rcv_buf_min,
+        ms_rcv_tsbpd_delay: window.ms_rcv_tsbpd_delay,
         pkt_belated_sum: window.pkt_belated_sum,
         loss_ratio: window.loss_ratio,
         retrans_ratio: window.retrans_ratio,
@@ -129,6 +133,8 @@ pub fn finish(record: &mut RunRecord, measurement: Measurement<'_>) -> Result<()
     cpu.start.t_ms -= m.origin_ms;
     cpu.end.t_ms -= m.origin_ms;
     record.sender.cpu_ms = cpu.cpu_ms;
+    let sampled_ms = f64::from(u32::try_from(cpu.end.t_ms - cpu.start.t_ms)?);
+    record.sender.cpu_percent = Some(100.0 * cpu.cpu_ms / sampled_ms);
     record.sender.peak_rss_kb = cpu.peak_rss_kb;
     for (t_ms, metrics) in [
         (cpu.start.t_ms, m.edges.start_control.as_ref()),
@@ -145,6 +151,8 @@ pub fn finish(record: &mut RunRecord, measurement: Measurement<'_>) -> Result<()
         check_config(start.effective_config(), end.effective_config())?;
         let delta = end.delta(start)?;
         record.sender.switch_count = Some(delta.switch_count);
+        record.sender.switches_per_second =
+            Some(f64::from(u32::try_from(delta.switch_count)?) * 1000.0 / sampled_ms);
         record.sender.nak_count = Some(delta.nak_count);
     }
     record.raw.cpu = Some(cpu);

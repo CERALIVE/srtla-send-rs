@@ -20,7 +20,7 @@ pub fn campaign(smoke: bool) -> Result<()> {
     } else {
         std::fs::read_to_string(input)?
     };
-    let mut manifest: Manifest = serde_json::from_str(&text)?;
+    let mut manifest: Manifest = crate::manifest::parse(&text)?;
     let smoke = smoke || std::env::var("BENCH_SMOKE").as_deref() == Ok("1");
     if smoke {
         manifest.smoke();
@@ -29,9 +29,14 @@ pub fn campaign(smoke: bool) -> Result<()> {
     for candidate in &mut manifest.candidates {
         candidate.bin = candidate.bin.canonicalize()?;
     }
+    let defaults = network_sim::harness::ReceiverSpec::from_env()?;
     for receiver in &mut manifest.receivers {
-        receiver.bin = receiver.bin.canonicalize()?;
+        let spec = receiver.resolve(&defaults)?;
+        receiver.kind = Some(spec.kind()?.into());
+        receiver.bin = Some(spec.srtla_rec_bin);
+        receiver.srt_live_transmit_bin = Some(spec.srt_live_transmit_bin);
     }
+    manifest.receiver_defaults = Some(defaults);
     let max_attempts = std::env::var("BENCH_MAX_RETRIES")
         .unwrap_or_else(|_| "2".into())
         .parse::<u32>()?;
@@ -47,23 +52,24 @@ pub fn campaign(smoke: bool) -> Result<()> {
     std::fs::create_dir_all(&artifacts)?;
     let artifacts = artifacts.canonicalize()?;
     let _guard = crate::measurement::measurement_lock();
+    super::candidate_lock::record(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scripts/bench/receivers.lock.json"),
+        &manifest,
+    )?;
     atomic(&output.join("manifest.json"), &manifest)?;
     let work = manifest.order();
     let mut order_index = 0_u32;
     let same_pair = |a: &Work, b: &Work| {
         let (a_cell, b_cell) = (&manifest.cells[a.cell], &manifest.cells[b.cell]);
-        a.run == b.run
-            && a_cell.scenario == b_cell.scenario
-            && a_cell.receiver == b_cell.receiver
-            && a_cell.srt_profile == b_cell.srt_profile
+        a.run == b.run && a_cell.cell_id == b_cell.cell_id
     };
     for pair in work.chunk_by(same_pair) {
         loop {
             let mut attempted = false;
             for work in pair {
-                let (record, srt_binary) = prepare(&manifest, *work, order_index)?;
+                let (record, receiver_spec) = prepare(&manifest, *work, order_index)?;
                 let store = Store::new(
-                    &output.join(&record.cell_id),
+                    &output.join(manifest.cells[work.cell].id()),
                     record.fingerprint.clone(),
                     max_attempts,
                 );
@@ -85,7 +91,8 @@ pub fn campaign(smoke: bool) -> Result<()> {
                                 detail: None,
                             },
                             artifacts: directory,
-                            srt_binary,
+                            srt_binary: receiver_spec.srt_live_transmit_bin.clone(),
+                            receiver_spec,
                         };
                         request.result.record.raw.stats_csv_path =
                             request.artifacts.join("receiver.csv");

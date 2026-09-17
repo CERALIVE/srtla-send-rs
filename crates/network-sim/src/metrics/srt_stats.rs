@@ -25,6 +25,12 @@ pub struct SrtRow {
     pub reorder_distance: Option<u64>,
     pub ms_rtt: f64,
     pub mbps_recv_rate: f64,
+    #[serde(default)]
+    pub ms_rcv_buf: Option<f64>,
+    #[serde(default)]
+    pub ms_rcv_tsbpd_delay: Option<f64>,
+    #[serde(default)]
+    pub byte_avail_rcv_buf: Option<u64>,
     pub raw: String,
 }
 
@@ -114,6 +120,20 @@ impl SrtStats {
                 }
             };
             let socket_id = count(0)?;
+            let optional_gauge = |name: &str| -> Result<Option<f64>, MetricError> {
+                header
+                    .iter()
+                    .position(|h| h == name)
+                    .map(|i| {
+                        let value = number::<f64>(fields[i], name)?;
+                        if value.is_finite() && value >= 0.0 {
+                            Ok(value)
+                        } else {
+                            Err(MetricError::InvalidField(name.into()))
+                        }
+                    })
+                    .transpose()
+            };
             let t_ms = align(socket_id, number::<i64>(fields[time], "Time")?)?;
             if rows.last().is_some_and(|row| row.t_ms > t_ms) {
                 return Err(MetricError::InvalidField("Time ordering".into()));
@@ -133,6 +153,13 @@ impl SrtStats {
                     .transpose()?,
                 ms_rtt: gauge(8)?,
                 mbps_recv_rate: gauge(9)?,
+                ms_rcv_buf: optional_gauge("msRcvBuf")?,
+                ms_rcv_tsbpd_delay: optional_gauge("msRcvTsbPdDelay")?,
+                byte_avail_rcv_buf: header
+                    .iter()
+                    .position(|h| h == "byteAvailRcvBuf")
+                    .map(|i| number(fields[i], "byteAvailRcvBuf"))
+                    .transpose()?,
                 raw: raw.into(),
             });
         }
