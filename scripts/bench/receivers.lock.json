@@ -1,11 +1,145 @@
 {
   "schema_version": 1,
-  "receivers": {},
+  "receivers": {
+    "ours-old": {
+      "srt_live_transmit_bin": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/ours-old/srt-live-transmit",
+      "srt_live_transmit_sha256": "c9f0605260bf81d06145156138d0b2d5a90fed9ca996f60c7f402629bdb924dd",
+      "srtla_rec_bin": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/ceralive-srtla_rec",
+      "srtla_rec_sha256": "fa3524c844d1cd7f805fecc0b06fc68f1594c3a4b9e53cf27b7ea37a0c1e6ab7",
+      "kind": "ceralive",
+      "emulated": false,
+      "socket_options": {
+        "42": "SRTO_LOSSMAXTTL",
+        "120": "SRTO_REORDERFREEZE"
+      },
+      "listener_uri_template": "srt://:<port>?mode=listener&latency=<preset>&lossmaxttl=40&reorderfreeze=1",
+      "reorderfreeze_uri_supported": false,
+      "blocker": "Pinned production source lacks the reorderfreeze URI row; this unmodified binary does not apply it. Do not grade as freeze-on."
+    },
+    "ours-new": {
+      "srt_live_transmit_bin": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/ours-new/srt-live-transmit",
+      "srt_live_transmit_sha256": "1610a06b83070bcf5297cac730e954fdae496975a3d06258482949d21fafcb69",
+      "srtla_rec_bin": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/ceralive-srtla_rec",
+      "srtla_rec_sha256": "fa3524c844d1cd7f805fecc0b06fc68f1594c3a4b9e53cf27b7ea37a0c1e6ab7",
+      "kind": "ceralive",
+      "emulated": false,
+      "socket_options": {
+        "42": "SRTO_LOSSMAXTTL",
+        "120": "SRTO_REORDERFREEZE",
+        "121": "SRTO_PERIODICNAKGATE"
+      },
+      "listener_uri_template": "srt://:<port>?mode=listener&latency=<preset>&reorderfreeze=1&periodicnakgate=1&lossmaxttl=<TTL>"
+    },
+    "irlserver-prod": {
+      "srt_live_transmit_bin": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/irlserver-prod/srt-sink-min",
+      "srt_live_transmit_sha256": "0bc3c3d9104e64a56a07a2d16e3c539131eccae03447c3af3bd5bac4940ba452",
+      "srtla_rec_bin": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/irlserver-srtla_rec",
+      "srtla_rec_sha256": "c770ed03dc360459a598009fb6a156bbf03b82b1c1651bba38c748f9b3a4c52a",
+      "kind": "irlserver",
+      "emulated": false,
+      "sink_cli": "srt-sink-min",
+      "capture_semantics": "interval",
+      "stats_every_messages": 1000,
+      "socket_options": {
+        "42": "SRTO_LOSSMAXTTL",
+        "120": "SRTO_SRTLAPATCHES"
+      },
+      "sink_args": [
+        "--port",
+        "<port>",
+        "--latency",
+        "<preset>",
+        "--sockopt",
+        "120=1",
+        "--sockopt",
+        "42=200",
+        "--statsout",
+        "<CSV>",
+        "--out",
+        "<FILE>"
+      ],
+      "harness_adapter_required": true
+    },
+    "irlserver-next": {
+      "srt_live_transmit_bin": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/irlserver-next/srt-sink-min",
+      "srt_live_transmit_sha256": "0bc3c3d9104e64a56a07a2d16e3c539131eccae03447c3af3bd5bac4940ba452",
+      "srtla_rec_bin": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/irlserver-srtla_rec",
+      "srtla_rec_sha256": "c770ed03dc360459a598009fb6a156bbf03b82b1c1651bba38c748f9b3a4c52a",
+      "kind": "irlserver",
+      "emulated": false,
+      "sink_cli": "srt-sink-min",
+      "capture_semantics": "interval",
+      "stats_every_messages": 1000,
+      "socket_options": {
+        "42": "SRTO_LOSSMAXTTL",
+        "120": "SRTO_SRTLAPATCHES"
+      },
+      "sink_args": [
+        "--port",
+        "<port>",
+        "--latency",
+        "<preset>",
+        "--sockopt",
+        "120=1",
+        "--sockopt",
+        "42=200",
+        "--statsout",
+        "<CSV>",
+        "--out",
+        "<FILE>"
+      ],
+      "harness_adapter_required": true
+    },
+    "belabox": {
+      "srt_live_transmit_bin": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/irlserver-next/srt-sink-min",
+      "srt_live_transmit_sha256": "0bc3c3d9104e64a56a07a2d16e3c539131eccae03447c3af3bd5bac4940ba452",
+      "srtla_rec_bin": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/belabox-srtla_rec",
+      "srtla_rec_sha256": "5b899aa50063da1c52343b55cdf9933379785ed0e67e520736c5146a421c817e",
+      "kind": "belabox",
+      "emulated": false,
+      "sink_cli": "srt-sink-min",
+      "capture_semantics": "interval",
+      "stats_every_messages": 1000,
+      "socket_options": {
+        "42": "SRTO_LOSSMAXTTL",
+        "120": "SRTO_SRTLAPATCHES"
+      },
+      "sink_args": [
+        "--port",
+        "<port>",
+        "--latency",
+        "<preset>",
+        "--sockopt",
+        "120=1",
+        "--sockopt",
+        "42=200",
+        "--statsout",
+        "<CSV>",
+        "--out",
+        "<FILE>"
+      ],
+      "harness_adapter_required": true,
+      "alias_of": "irlserver-next"
+    }
+  },
   "candidates": {
     "task36-p1-diagnostic": {
       "enhanced": {
-        "srtla_send_bin": "/mnt/development/ceralive/.worktrees/srtla-send-rs-adaptive-scheduler/target/release/srtla_send",
+        "srtla_send_bin": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/task36-srtla_send-bd8bb7a25037b613026fc222612ffda2710fa2985355bbd82b201530e1c0fe57",
+        "original_build_path": "/mnt/development/ceralive/.worktrees/srtla-send-rs-adaptive-scheduler/target/release/srtla_send",
         "srtla_send_sha256": "bd8bb7a25037b613026fc222612ffda2710fa2985355bbd82b201530e1c0fe57"
+      }
+    },
+    "reverse-interop": {
+      "belabox": {
+        "srtla_send_bin": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/belabox-srtla_send",
+        "srtla_send_sha256": "520e44ea017677e5c7003d40fb5e6f31edddf27f3beb4cdbec1a5b09d73e5590",
+        "emulated": false
+      },
+      "irlserver": {
+        "srtla_send_bin": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/irlserver-srtla_send",
+        "srtla_send_sha256": "11954307fc222932f0ac03c6b5c062d7716bf01fdd5231321b0f8bd9ba0d3d51",
+        "emulated": false
       }
     }
   },
@@ -15,16 +149,147 @@
     "hardware_threads": 28,
     "physical_cores": 20,
     "numa_nodes": 1,
-    "online_cpus": [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27],
-    "reserved_cpus": [0,1,2,3],
-    "smt_siblings": [[0,1],[2,3],[4,5],[6,7],[8,9],[10,11],[12,13],[14,15],[16],[17],[18],[19],[20],[21],[22],[23],[24],[25],[26],[27]],
+    "online_cpus": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27
+    ],
+    "reserved_cpus": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "smt_siblings": [
+      [
+        0,
+        1
+      ],
+      [
+        2,
+        3
+      ],
+      [
+        4,
+        5
+      ],
+      [
+        6,
+        7
+      ],
+      [
+        8,
+        9
+      ],
+      [
+        10,
+        11
+      ],
+      [
+        12,
+        13
+      ],
+      [
+        14,
+        15
+      ],
+      [
+        16
+      ],
+      [
+        17
+      ],
+      [
+        18
+      ],
+      [
+        19
+      ],
+      [
+        20
+      ],
+      [
+        21
+      ],
+      [
+        22
+      ],
+      [
+        23
+      ],
+      [
+        24
+      ],
+      [
+        25
+      ],
+      [
+        26
+      ],
+      [
+        27
+      ]
+    ],
     "parallel_lanes": 1,
     "port_base": 20000,
     "core_map": [
       {
         "lane": 0,
-        "cpus": [4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27],
-        "port_range": [20000,20099],
+        "cpus": [
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27
+        ],
+        "port_range": [
+          20000,
+          20099
+        ],
         "netns_prefix": "bpc0-",
         "artifact_directory": "lane-0"
       }
@@ -37,11 +302,195 @@
       "privileged_netns": true,
       "quiet_host": false,
       "p1_successful_runs": 3,
-      "tested_parallelism": [1],
-      "unrun_parallelism": [2,4,6,8],
+      "tested_parallelism": [
+        1
+      ],
+      "unrun_parallelism": [
+        2,
+        4,
+        6,
+        8
+      ],
       "reason": "Host is busy with unrelated workloads; runner serializes whole campaigns and has no lane dispatcher or host-map consumer. No P=2 statistical comparison was performed.",
       "evidence": "docs/evidence/bpc/parallel/spike.json",
       "report": "docs/evidence/bpc/parallel/report.md"
+    }
+  },
+  "artifacts": {
+    "ours-old": {
+      "path": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/ours-old/srt-live-transmit",
+      "sha256": "c9f0605260bf81d06145156138d0b2d5a90fed9ca996f60c7f402629bdb924dd",
+      "source_sha": "b06fdb6b85937f3f5cf5452b150a6bb7e35b0226",
+      "source": "https://github.com/CERALIVE/srt.git",
+      "emulated": false,
+      "fingerprint": "f879d3d1dbda9b036568fb6615b0ed3845ac08e1b14d9adc6474fe4a0b12c8f2:7e58d6497e77ecc64a15606490fb3e01b64339d55eb2d2b17133bdbaa0f1d6bc:b06fdb6b85937f3f5cf5452b150a6bb7e35b0226",
+      "build_method": "cmake Release shared OpenSSL; unmodified source; RUNPATH=$ORIGIN/lib",
+      "build_seconds": 1,
+      "dependencies": [
+        {
+          "path": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/ours-old/lib/libsrt.so",
+          "sha256": "1baf6ef7df5033ba1dc21c527bd7a9d95cb2d111fe21d3375c1026127c874e28",
+          "source_sha": "b06fdb6b85937f3f5cf5452b150a6bb7e35b0226",
+          "emulated": false
+        },
+        {
+          "path": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/ours-old/lib/libsrt.so.1.5",
+          "sha256": "1baf6ef7df5033ba1dc21c527bd7a9d95cb2d111fe21d3375c1026127c874e28",
+          "source_sha": "b06fdb6b85937f3f5cf5452b150a6bb7e35b0226",
+          "emulated": false
+        },
+        {
+          "path": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/ours-old/lib/libsrt.so.1.5.6",
+          "sha256": "1baf6ef7df5033ba1dc21c527bd7a9d95cb2d111fe21d3375c1026127c874e28",
+          "source_sha": "b06fdb6b85937f3f5cf5452b150a6bb7e35b0226",
+          "emulated": false
+        }
+      ]
+    },
+    "ours-new": {
+      "path": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/ours-new/srt-live-transmit",
+      "sha256": "1610a06b83070bcf5297cac730e954fdae496975a3d06258482949d21fafcb69",
+      "source_sha": "ca14c8bd06c89d2fd7b69bb3d8eea48dd47c2e3e",
+      "source": "https://github.com/CERALIVE/srt.git",
+      "emulated": false,
+      "fingerprint": "f879d3d1dbda9b036568fb6615b0ed3845ac08e1b14d9adc6474fe4a0b12c8f2:7e58d6497e77ecc64a15606490fb3e01b64339d55eb2d2b17133bdbaa0f1d6bc:ca14c8bd06c89d2fd7b69bb3d8eea48dd47c2e3e",
+      "build_method": "cmake Release shared OpenSSL; unmodified source; RUNPATH=$ORIGIN/lib",
+      "build_seconds": 1,
+      "dependencies": [
+        {
+          "path": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/ours-new/lib/libsrt.so",
+          "sha256": "3c8e65aa9db3361f1f9964383903a83c5ee66a4d569295aed3c0545986f2219c",
+          "source_sha": "ca14c8bd06c89d2fd7b69bb3d8eea48dd47c2e3e",
+          "emulated": false
+        },
+        {
+          "path": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/ours-new/lib/libsrt.so.1.5",
+          "sha256": "3c8e65aa9db3361f1f9964383903a83c5ee66a4d569295aed3c0545986f2219c",
+          "source_sha": "ca14c8bd06c89d2fd7b69bb3d8eea48dd47c2e3e",
+          "emulated": false
+        },
+        {
+          "path": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/ours-new/lib/libsrt.so.1.5.7",
+          "sha256": "3c8e65aa9db3361f1f9964383903a83c5ee66a4d569295aed3c0545986f2219c",
+          "source_sha": "ca14c8bd06c89d2fd7b69bb3d8eea48dd47c2e3e",
+          "emulated": false
+        }
+      ]
+    },
+    "irlserver-prod": {
+      "path": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/irlserver-prod/srt-sink-min",
+      "sha256": "0bc3c3d9104e64a56a07a2d16e3c539131eccae03447c3af3bd5bac4940ba452",
+      "source_sha": "f2297192ce9ab572464e84228efbc46f8c1eabf4",
+      "source": "https://github.com/onsmith/srt.git",
+      "emulated": false,
+      "fingerprint": "f879d3d1dbda9b036568fb6615b0ed3845ac08e1b14d9adc6474fe4a0b12c8f2:7e58d6497e77ecc64a15606490fb3e01b64339d55eb2d2b17133bdbaa0f1d6bc:f2297192ce9ab572464e84228efbc46f8c1eabf4",
+      "build_method": "cmake Release shared OpenSSL; unmodified source; RUNPATH=$ORIGIN/lib",
+      "build_seconds": 3,
+      "dependencies": [
+        {
+          "path": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/irlserver-prod/lib/libsrt.so",
+          "sha256": "72cc71c10f736a01ff3c557e04217690e33de1a504002b14f3b08c30570410a4",
+          "source_sha": "f2297192ce9ab572464e84228efbc46f8c1eabf4",
+          "emulated": false
+        },
+        {
+          "path": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/irlserver-prod/lib/libsrt.so.1.5",
+          "sha256": "72cc71c10f736a01ff3c557e04217690e33de1a504002b14f3b08c30570410a4",
+          "source_sha": "f2297192ce9ab572464e84228efbc46f8c1eabf4",
+          "emulated": false
+        },
+        {
+          "path": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/irlserver-prod/lib/libsrt.so.1.5.5",
+          "sha256": "72cc71c10f736a01ff3c557e04217690e33de1a504002b14f3b08c30570410a4",
+          "source_sha": "f2297192ce9ab572464e84228efbc46f8c1eabf4",
+          "emulated": false
+        }
+      ]
+    },
+    "irlserver-next": {
+      "path": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/irlserver-next/srt-sink-min",
+      "sha256": "0bc3c3d9104e64a56a07a2d16e3c539131eccae03447c3af3bd5bac4940ba452",
+      "source_sha": "164d51bb24e258285d1a99c881b55af7e9a94894",
+      "source": "https://github.com/onsmith/srt.git",
+      "emulated": false,
+      "fingerprint": "f879d3d1dbda9b036568fb6615b0ed3845ac08e1b14d9adc6474fe4a0b12c8f2:7e58d6497e77ecc64a15606490fb3e01b64339d55eb2d2b17133bdbaa0f1d6bc:164d51bb24e258285d1a99c881b55af7e9a94894",
+      "build_method": "cmake Release shared OpenSSL; unmodified source; RUNPATH=$ORIGIN/lib",
+      "build_seconds": 2,
+      "dependencies": [
+        {
+          "path": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/irlserver-next/lib/libsrt.so",
+          "sha256": "8003795a172c99e56d04d280b4260a0a0e4dd06dfe82f79ecaaf29d79d188781",
+          "source_sha": "164d51bb24e258285d1a99c881b55af7e9a94894",
+          "emulated": false
+        },
+        {
+          "path": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/irlserver-next/lib/libsrt.so.1.5",
+          "sha256": "8003795a172c99e56d04d280b4260a0a0e4dd06dfe82f79ecaaf29d79d188781",
+          "source_sha": "164d51bb24e258285d1a99c881b55af7e9a94894",
+          "emulated": false
+        },
+        {
+          "path": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/irlserver-next/lib/libsrt.so.1.5.6",
+          "sha256": "8003795a172c99e56d04d280b4260a0a0e4dd06dfe82f79ecaaf29d79d188781",
+          "source_sha": "164d51bb24e258285d1a99c881b55af7e9a94894",
+          "emulated": false
+        }
+      ]
+    },
+    "belabox-srtla_rec": {
+      "path": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/belabox-srtla_rec",
+      "sha256": "5b899aa50063da1c52343b55cdf9933379785ed0e67e520736c5146a421c817e",
+      "source_sha": "37862da3d0c13b46956efd3f88877053293d97d6",
+      "source": "https://github.com/BELABOX/srtla.git",
+      "emulated": false,
+      "fingerprint": "f879d3d1dbda9b036568fb6615b0ed3845ac08e1b14d9adc6474fe4a0b12c8f2:37862da3d0c13b46956efd3f88877053293d97d6",
+      "build_method": "make at pinned BELABOX revision",
+      "build_seconds": 0,
+      "dependencies": []
+    },
+    "belabox-srtla_send": {
+      "path": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/belabox-srtla_send",
+      "sha256": "520e44ea017677e5c7003d40fb5e6f31edddf27f3beb4cdbec1a5b09d73e5590",
+      "source_sha": "37862da3d0c13b46956efd3f88877053293d97d6",
+      "source": "https://github.com/BELABOX/srtla.git",
+      "emulated": false,
+      "fingerprint": "f879d3d1dbda9b036568fb6615b0ed3845ac08e1b14d9adc6474fe4a0b12c8f2:37862da3d0c13b46956efd3f88877053293d97d6",
+      "build_method": "make at pinned BELABOX revision",
+      "build_seconds": 0,
+      "dependencies": []
+    },
+    "irlserver-srtla_send": {
+      "path": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/irlserver-srtla_send",
+      "sha256": "11954307fc222932f0ac03c6b5c062d7716bf01fdd5231321b0f8bd9ba0d3d51",
+      "source_sha": "df0b3938791ff24eced4aed8b29e3d49d0efb639",
+      "source": "https://github.com/irlserver/srtla_send.git",
+      "emulated": false,
+      "fingerprint": "f879d3d1dbda9b036568fb6615b0ed3845ac08e1b14d9adc6474fe4a0b12c8f2:df0b3938791ff24eced4aed8b29e3d49d0efb639",
+      "build_method": "reused hash-verified build_externals.sh artifact",
+      "build_seconds": 0,
+      "dependencies": []
+    },
+    "ceralive-srtla_rec": {
+      "path": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/ceralive-srtla_rec",
+      "sha256": "fa3524c844d1cd7f805fecc0b06fc68f1594c3a4b9e53cf27b7ea37a0c1e6ab7",
+      "source_sha": "819a2a9572e082b7d3dde8aa80b674fa5914995a",
+      "source": "/mnt/development/ceralive/srtla",
+      "emulated": false,
+      "fingerprint": "f879d3d1dbda9b036568fb6615b0ed3845ac08e1b14d9adc6474fe4a0b12c8f2:819a2a9572e082b7d3dde8aa80b674fa5914995a",
+      "build_method": "reused hash-verified build_externals.sh artifact",
+      "build_seconds": 0,
+      "dependencies": []
+    },
+    "irlserver-srtla_rec": {
+      "path": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/irlserver-srtla_rec",
+      "sha256": "c770ed03dc360459a598009fb6a156bbf03b82b1c1651bba38c748f9b3a4c52a",
+      "source_sha": "b8359bc80ce99ac4fc8f603cfa455cdd0a0a4241",
+      "source": "https://github.com/irlserver/srtla.git",
+      "emulated": false,
+      "fingerprint": "f879d3d1dbda9b036568fb6615b0ed3845ac08e1b14d9adc6474fe4a0b12c8f2:b8359bc80ce99ac4fc8f603cfa455cdd0a0a4241",
+      "build_method": "reused hash-verified build_externals.sh artifact",
+      "build_seconds": 0,
+      "dependencies": []
     }
   }
 }

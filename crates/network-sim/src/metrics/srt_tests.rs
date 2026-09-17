@@ -1,6 +1,57 @@
 use super::srt_stats::SrtStats;
 use super::{MetricError, Window};
 
+#[test]
+fn native_sink_captures_parse_without_schema_changes() {
+    // Given: unedited loopback captures from f2297192/164d51bb, 2500 x 1316B sent.
+    let captures = [
+        (
+            include_str!("fixtures/srt-sink-min-prod.csv"),
+            2046,
+            2_782_560,
+        ),
+        (
+            include_str!("fixtures/srt-sink-min-next.csv"),
+            2047,
+            2_783_920,
+        ),
+    ];
+    for (csv, packets, bytes) in captures {
+        // When: use the existing explicit interval-mode parser, including its clock offset.
+        let stats = SrtStats::parse_with_semantics(
+            csv,
+            -1000,
+            super::srt_stats::CaptureSemantics::Interval,
+        )
+        .unwrap();
+        // Then: native counters include buffered wire packets, not just application reads.
+        assert_eq!(stats.rows.len(), 2);
+        let row = &stats.rows[1];
+        assert_eq!(
+            (row.pkt_recv_total, row.pkt_recv_unique),
+            (packets, packets)
+        );
+        assert_eq!(row.byte_recv, bytes);
+        assert_eq!(
+            (
+                row.pkt_loss_total,
+                row.pkt_drop_total,
+                row.pkt_retrans_total,
+                row.pkt_belated
+            ),
+            (0, 0, 0, 0)
+        );
+        assert_eq!(row.ms_rcv_buf, Some(44.0));
+        assert_eq!(row.ms_rcv_tsbpd_delay, Some(50.0));
+        assert_eq!(row.raw, csv.lines().nth(2).unwrap());
+        assert_eq!(row.reorder_distance, None);
+        assert_eq!(
+            stats.header.iter().filter(|name| *name == "Time").count(),
+            2
+        );
+    }
+}
+
 const CSV: &str = r#"Timepoint,Time,SocketID,Time,pktRecv,pktRecvUnique,pktRcvLoss,pktRcvDrop,pktRcvRetrans,pktRcvBelated,byteRecv,msRTT,mbpsRecvRate
 stamp,90000,999,1000,100,90,4,2,5,10,10000,10,1
 stamp,90001,999,2000,140,120,7,5,8,3,14000,20,2

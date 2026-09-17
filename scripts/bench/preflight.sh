@@ -44,6 +44,8 @@ check_required_tools() {
     "cmake"
     "g++"
     "make"
+    "jq"
+    "sha256sum"
     "srt-live-transmit"
   )
   
@@ -107,7 +109,7 @@ check_kernel_modules() {
 
 # Item (d): BENCH_ARTIFACT_DIR exists or is creatable, check filesystem and free space
 check_artifact_dir() {
-  local bench_dir="${BENCH_ARTIFACT_DIR:-${TMPDIR:-/tmp}/srtla-bench}"
+  local bench_dir="${BENCH_ARTIFACT_DIR:-/home/andres/.cache/opencode/tmp/srtla-bench}"
   
   # Ensure directory exists or can be created
   if [[ ! -d "${bench_dir}" ]]; then
@@ -172,6 +174,37 @@ check_srtla_repo() {
   return 0
 }
 
+check_receiver_lock() {
+  local lock="${BENCH_RECEIVERS_LOCK:-$REPO_ROOT/scripts/bench/receivers.lock.json}"
+  local checks
+  if ! jq -e '
+    .schema_version == 1 and (.artifacts | type == "object" and length >= 7) and
+    (["ours-old","ours-new","irlserver-prod","irlserver-next","belabox-srtla_rec",
+      "belabox-srtla_send","irlserver-srtla_send"] - (.artifacts | keys) | length == 0) and
+    all(.artifacts[] | ., .dependencies[]?;
+      .emulated == false and (.source_sha | test("^[0-9a-f]{40}$")) and
+      (.path | type == "string") and (.sha256 | test("^[0-9a-f]{64}$")))
+    ' "$lock" >/dev/null; then
+    printf 'BLOCKING (g): missing or invalid receiver lock: %s\n' "$lock" >&2
+    return 1
+  fi
+  # Include historical candidate/receiver hashes, not just the new artifact table.
+  checks="$(jq -er '[.. | objects | . as $o |
+    (if has("path") and has("sha256") then {path,sha256} else empty end),
+    (keys[] | select(endswith("_sha256")) | . as $k |
+      {path:$o[($k | rtrimstr("_sha256")) + "_bin"],sha256:$o[$k]})] |
+    unique | .[] | if (.path | type != "string") or
+      (.path | test("[\\n\\r\\\\]")) or (.sha256 | test("^[0-9a-f]{64}$") | not)
+      then error("invalid hash/path pair") else "\(.sha256)  \(.path)" end' "$lock")" || return 1
+  if ! sha256sum --check <<< "$checks"; then
+    printf 'BLOCKING (g): locked artifact drift; rebuild or recover the named artifact\n' >&2
+    return 1
+  fi
+  jq -r '.receivers | to_entries[] | select(.value.blocker or .value.harness_adapter_required) |
+    "WARN (g): \(.key): \(.value.blocker // "srt-sink-min requires a harness CLI/output adapter")"' "$lock"
+  printf 'OK (g): every locked artifact SHA-256 verified (not campaign readiness)\n'
+}
+
 # Main execution
 main() {
   # Run all checks, stopping on first blocking failure
@@ -180,6 +213,10 @@ main() {
   fi
   
   if ! check_required_tools; then
+    return 1
+  fi
+
+  if ! check_receiver_lock; then
     return 1
   fi
   
