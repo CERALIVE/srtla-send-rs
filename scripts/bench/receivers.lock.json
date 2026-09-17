@@ -492,5 +492,24 @@
       "build_seconds": 0,
       "dependencies": []
     }
+  },
+  "conformance_sinks": {
+    "sls": {
+      "sink": "sls",
+      "metrics": "none",
+      "sls_bin": "/mnt/development/ceralive/.worktrees/irl-srt-server-bonded-path-convergence/build/bin/srt_server",
+      "sha256": "ba4ff6d42b262b58e4d0a3691fa191033b728ce70c1661b0abf05fe69fb788ab",
+      "source": "https://github.com/CERALIVE/irl-srt-server.git",
+      "source_sha": "dfc065f2dc8fc86459986073f53a8d9c3a9ffbdd",
+      "cmake_cache_sha256": "189ce40ff7bd4a8149c5d204453ab704f927f3cdce092b7dbf316deaf60e0732",
+      "dependencies": [
+        {
+          "path": "/mnt/development/ceralive/.worktrees/irl-srt-server-bonded-path-convergence/build/srt-prefix/lib/libsrt.so.1.5.7",
+          "sha256": "3c8e65aa9db3361f1f9964383903a83c5ee66a4d569295aed3c0545986f2219c"
+        }
+      ],
+      "emulated": false,
+      "conf_template": "tests/bench_support/sls-conformance.conf.tmpl"
+    }
   }
 }

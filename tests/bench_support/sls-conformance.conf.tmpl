@@ -1,0 +1,28 @@
+# Derived from irl-srt-server tests/e2e/sls-loopback.conf; isolated conformance only.
+srt {
+    worker_threads 1;
+    worker_connections 100;
+    http_bind_addr 127.0.0.1;
+    http_port {{stats_port}};
+    api_keys bpc-conformance-local;
+    log_level info;
+    pidfile {{pidfile}};
+    server {
+        listen_player {{player_port}};
+        listen_publisher_srtla {{publisher_port}};
+        listen_publisher_srtla_classic {{classic_port}};
+        latency_min 100;
+        latency_max 5000;
+        domain_player play;
+        domain_publisher publish;
+        default_sid publish/live/conformance;
+        backlog 100;
+        idle_streams_timeout 30;
+        app {
+            app_player live;
+            app_publisher live;
+            allow publish all;
+            allow play all;
+        }
+    }
+}

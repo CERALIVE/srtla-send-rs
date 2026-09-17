@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+[[ $# == 0 || ( $# == 1 && $1 == --sls ) ]] || {
+  printf 'usage: %s [--sls]\n' "$0" >&2; exit 2;
+}
+
 # Host-local artifacts only; no installs into /usr, source patches, or repo remotes.
 ROOT="$(GIT_MASTER=1 git rev-parse --show-toplevel)"
 ART="${BENCH_ARTIFACT_DIR:-/home/andres/.cache/opencode/tmp/srtla-bench}"
@@ -70,6 +74,51 @@ record() {
   publish
   printf '%s: built sha256=%s (%ss)\n' "$name" "$(digest "$binary")" "$((SECONDS - started))"
 }
+
+# SLS is deliberately NOT a metric receiver entry: the campaign only accepts slt.
+# SLS_WORKTREE names the caller's server checkout; no sibling is required in CI.
+if [[ ${1:-} == --sls ]]; then
+  : "${SLS_WORKTREE:?set SLS_WORKTREE to the irl-srt-server checkout}"
+  checkout="$(realpath "$SLS_WORKTREE")"
+  GIT_MASTER=1 git -C "$checkout" diff --quiet HEAD --
+  sha="$(GIT_MASTER=1 git -C "$checkout" rev-parse HEAD)"
+  build="$checkout/build"
+  if [[ ! -f "$build/CMakeCache.txt" ]]; then
+    : "${SLS_SRT_PREFIX:?fresh configure requires a gate-capable installed SLS_SRT_PREFIX}"
+    prefix="$(realpath "$SLS_SRT_PREFIX")"
+    [[ -f "$prefix/include/srt/srt.h" && -f "$prefix/lib/libsrt.so" ]]
+    cmake -S "$checkout" -B "$build" -DCMAKE_BUILD_TYPE=Release \
+      "-DCMAKE_CXX_FLAGS=-I$prefix/include" \
+      "-DCMAKE_EXE_LINKER_FLAGS=-L$prefix/lib -Wl,-rpath,$prefix/lib"
+  fi
+  cmake --build "$build" --target srt_server --parallel "$JOBS"
+  grep -qx 'SLS_HAVE_SRTO_PERIODICNAKGATE:INTERNAL=1' "$build/CMakeCache.txt" || {
+    printf 'SLS build lacks the required periodic NAK gate\n' >&2; exit 1;
+  }
+  binary="$build/bin/srt_server"
+  [[ -x "$binary" ]]
+  dependencies='[]'
+  while read -r library arrow path rest; do
+    if [[ "$library" == libsrt.so* && "$arrow" == '=>' ]]; then
+      [[ -f "$path" ]]
+      dependencies="$(jq --arg p "$(realpath "$path")" --arg h "$(digest "$path")" \
+        '. + [{path:$p,sha256:$h}]' <<< "$dependencies")"
+    fi
+  done < <(ldd "$binary")
+  [[ "$(jq length <<< "$dependencies")" == 1 ]] || {
+    printf 'SLS must resolve exactly one auditable shared libsrt\n' >&2; exit 1;
+  }
+  jq --arg p "$binary" --arg h "$(digest "$binary")" --arg s "$sha" \
+    --arg conf "$(digest "$build/CMakeCache.txt")" --argjson deps "$dependencies" '
+    .conformance_sinks.sls = {sink:"sls",metrics:"none",sls_bin:$p,sha256:$h,
+      source:"https://github.com/CERALIVE/irl-srt-server.git",source_sha:$s,
+      cmake_cache_sha256:$conf,dependencies:$deps,emulated:false,
+      conf_template:"tests/bench_support/sls-conformance.conf.tmpl"}
+  ' "$LOCK" > "$TMP"
+  publish
+  printf 'SLS_BIN=%s\nSLS sha256=%s (conformance only)\n' "$binary" "$(digest "$binary")"
+  exit 0
+fi
 
 for name in ours-old ours-new irlserver-prod irlserver-next; do
   started=$SECONDS

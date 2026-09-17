@@ -1,0 +1,29 @@
+{
+  "spike": "SPIKE-SLS-STATS",
+  "captured_at": "2026-09-17",
+  "server_source_sha": "dfc065f2dc8fc86459986073f53a8d9c3a9ffbdd",
+  "command": "ctest --test-dir build -R srt_loopback --output-on-failure",
+  "result": "1/1 passed, 66.46 seconds",
+  "curl": "curl --max-time 1 -fsS -H 'Authorization: e2e-loopback-key' http://127.0.0.1:8181/stats",
+  "capture_context": "L3 baseline phase, publisher and attached player alive; not a bonded conformance result",
+  "exact_response": {"publishers":{"publish/live/baseline":{"audioGapFill":{"audioTrackCount":0,"enabled":false,"gapCount":0,"pmtParsed":false,"silentBytesInserted":0,"silentFramesInserted":0,"silentPacketsInserted":0,"tracks":[]},"bitrate":400,"bytesRcvDrop":0,"bytesRcvLoss":0,"ingestDiscontinuities":0,"latency":200,"maxReaderBacklogBytes":1316,"maxReaderBacklogMs":26,"mbpsBandwidth":9.072,"mbpsRecvRate":0.4467476623690337,"msRcvBuf":121,"pktRcvDrop":0,"pktRcvLoss":0,"pktRcvRetrans":0,"pktRecvNAKTotal":0,"pktRetransTotal":0,"pktSentNAKTotal":0,"players":[{"clientId":"a72b6da02b7084c8","latency":200,"mbpsSendRate":0.0,"pktRetransTotal":0,"pktSndDropTotal":0,"rtt":100.0,"uptime":0}],"ringOverruns":0,"rtt":0.021,"sendBackpressure":0,"uptime":2,"viewerPktSndDrop":0}},"status":"ok"},
+  "fixture_comparison": "All 23 publisher keys and all 7 player keys match tests/fixtures/stats-shape.json. audioGapFill.tracks is empty in this capture.",
+  "publisher_keys": ["audioGapFill", "bitrate", "bytesRcvDrop", "bytesRcvLoss", "ingestDiscontinuities", "latency", "maxReaderBacklogBytes", "maxReaderBacklogMs", "mbpsBandwidth", "mbpsRecvRate", "msRcvBuf", "pktRcvDrop", "pktRcvLoss", "pktRcvRetrans", "pktRecvNAKTotal", "pktRetransTotal", "pktSentNAKTotal", "players", "ringOverruns", "rtt", "sendBackpressure", "uptime", "viewerPktSndDrop"],
+  "field_map": {
+    "pktRcvDrop": {"json_key": "pktRcvDrop", "unit": "packets", "source": "SRT_TRACEBSTATS.pktRcvDrop"},
+    "pktRcvLoss": {"json_key": "pktRcvLoss", "unit": "packets", "source": "SRT_TRACEBSTATS.pktRcvLoss"},
+    "pktRcvRetrans": {"json_key": "pktRcvRetrans", "unit": "packets", "source": "SRT_TRACEBSTATS.pktRcvRetrans"},
+    "msRTT": {"json_key": "rtt", "unit": "milliseconds", "source": "SRT_TRACEBSTATS.msRTT"},
+    "mbpsRecvRate": {"json_key": "mbpsRecvRate", "unit": "megabits_per_second", "use": "diagnostic only; NEVER useful goodput"},
+    "negotiated_latency_ms": {"json_key": "latency", "unit": "milliseconds", "source": "SLSListenerHandler.cpp:194-229 reads accepted SRTO_RCVLATENCY; SLSManager.cpp:512 emits role latency", "caveat": "Reject conformance if server logs failed to read latency; that path publishes a configured fallback."},
+    "receive_buffer_ms": {"json_key": "msRcvBuf", "unit": "milliseconds", "use": "diagnostic gauge; not byte-buffer occupancy"},
+    "reorder_hold": null,
+    "pktRcvBelated": null,
+    "byteAvailRcvBuf": null,
+    "occupancy_pct": null
+  },
+  "counter_semantics": "Interval SRT counters since last clear; /stats without reset does not establish measurement-window deltas. Store the snapshot as diagnostics, not covering-set metrics.",
+  "goodput_source": "Attached srt-live-transmit player output-file byte delta over the measurement window; reuse network_sim::metrics::sink::SinkSeries::useful_goodput_bps",
+  "metrics_v2_gates": {"belated": "not_applicable", "occupancy": "not_applicable"},
+  "scope_boundary": "Campaign manifest, launcher and metrics::RunRecord currently require out-of-fence edits for SLS integration. Conformance harness records remain distinct and must not enter metric campaign reduction."
+}
