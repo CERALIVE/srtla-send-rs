@@ -249,6 +249,7 @@ fn link_identities(stats: &crate::stats::StatsSnapshot) -> Value {
             if let Some(priority) = link.priority {
                 obj.insert("priority".to_string(), json!(priority));
             }
+            obj.insert("rexmit_forwarded".to_string(), json!(link.rexmit_forwarded));
             record
         })
         .collect();

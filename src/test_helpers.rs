@@ -62,6 +62,7 @@ fn create_connection_from_socket(
         delivery: crate::connection::delivery::DeliveryLedger::default(),
         premature_streak: 0,
         premature_nak_count: 0,
+        rexmit_forwarded: 0,
         loss: crate::connection::loss::LossTracker::new(now_ms()),
         probes: crate::connection::probe::ProbeLog::default(),
         health: crate::connection::health::HealthMachine::new(

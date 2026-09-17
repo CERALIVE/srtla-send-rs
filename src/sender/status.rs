@@ -51,12 +51,16 @@ pub(crate) fn log_connection_status(
         0.0
     };
 
+    // Bond-level retransmit counter
+    let total_rexmit_forwarded: u64 = connections.iter().map(|c| c.rexmit_forwarded).sum();
+
     // Get current config snapshot
     let snap = config.snapshot();
 
     info!("Connection Status Report:");
     info!("  Total connections: {}", total_connections);
     info!("  Total bitrate: {:.2} Mbps", total_bitrate_mbps);
+    info!("  Retransmits forwarded: {}", total_rexmit_forwarded);
     info!(
         "  Active connections: {} ({:.1}%)",
         active_connections,
@@ -162,6 +166,7 @@ pub(crate) fn log_connection_status(
         {
             info!(
                 premature_naks = conn.premature_nak_count,
+                rexmit_fwd = conn.rexmit_forwarded,
                 "        health={} pref={:.2} cap={:.0}",
                 conn.health.state().as_str(),
                 conn.effective_priority()

@@ -310,6 +310,7 @@ mod tests {
             nak_count: 0,
             bitrate_bps: bytes_per_sec,
             bytes_sent_total: u64::from(bytes_per_sec) * 10,
+            rexmit_forwarded: 0,
             rtt_min_ms: 0.0,
             rtt_velocity: 0.0,
             base_score: score,

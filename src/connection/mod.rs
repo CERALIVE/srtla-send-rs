@@ -149,6 +149,9 @@ pub struct SrtlaConnection {
     pub(crate) premature_streak: u8,
     /// Lifetime diagnostic, status logs only; never part of telemetry JSON.
     pub(crate) premature_nak_count: u64,
+    /// Count of SRT retransmitted packets forwarded via this link (R bit set).
+    /// Diagnostic only; never affects scheduling or window calculations.
+    pub(crate) rexmit_forwarded: u64,
     pub(crate) loss: loss::LossTracker,
     pub(crate) probes: probe::ProbeLog,
     pub(crate) health: health::HealthMachine,
@@ -277,6 +280,7 @@ impl SrtlaConnection {
             delivery: delivery::DeliveryLedger::default(),
             premature_streak: 0,
             premature_nak_count: 0,
+            rexmit_forwarded: 0,
             loss: loss::LossTracker::new(now_ms()),
             probes: probe::ProbeLog::default(),
             health: health::HealthMachine::new(health::HealthState::Down, now_ms()),

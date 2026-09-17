@@ -83,6 +83,7 @@ fn link(connected: bool, bitrate_bytes_per_sec: u32, rtt_ms: u32, base_score: i3
         nak_count: 0,
         bitrate_bps: bitrate_bytes_per_sec,
         bytes_sent_total: 0,
+        rexmit_forwarded: 0,
         rtt_min_ms: 0.0,
         rtt_velocity: 0.0,
         base_score,

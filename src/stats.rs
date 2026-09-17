@@ -78,6 +78,9 @@ pub struct LinkStats {
     /// Wire bytes this link has sent for the whole process lifetime (ADR-002).
     /// Survives a socket replacement; restarts only when the process does.
     pub bytes_sent_total: u64,
+    /// Count of SRT retransmitted packets forwarded via this link (R bit set).
+    /// Diagnostic only; never affects scheduling. Status log and control only.
+    pub rexmit_forwarded: u64,
 
     // --- RTT baseline tracking ---
     /// Dual-window minimum RTT baseline in milliseconds.
@@ -131,6 +134,9 @@ pub struct StatsSnapshot {
     /// a reload would take its bytes out of that sum and the operator's "total
     /// transferred" would go backwards.
     pub session_bytes_sent: u64,
+    /// Sum of retransmitted packets forwarded across all links (R bit set).
+    /// Diagnostic only; never affects scheduling. Status log and control only.
+    pub rexmit_forwarded_total: u64,
 
     /// The sender's bind-map operating mode (ADR-003 §6.4), flattened to the
     /// top-level `bind_map_status` + `disposition` pair so a consumer reads the
@@ -154,6 +160,7 @@ impl Default for StatsSnapshot {
             total_window: 0,
             total_in_flight: 0,
             session_bytes_sent: 0,
+            rexmit_forwarded_total: 0,
             bind_map: BindMapReport::default(),
             links: Vec::new(),
             receiver: ReceiverHandshake::default(),
@@ -338,6 +345,7 @@ impl SharedStats {
                 nak_count: conn.total_nak_count(),
                 bitrate_bps: (conn.current_bitrate_mbps() * 1_000_000.0 / 8.0) as u32,
                 bytes_sent_total: conn.session_bytes_sent(),
+                rexmit_forwarded: conn.rexmit_forwarded,
                 rtt_min_ms: conn.get_rtt_min_ms(),
                 rtt_velocity: conn.get_rtt_velocity(),
                 base_score,
@@ -355,6 +363,7 @@ impl SharedStats {
                 snapshot.total_in_flight += conn.in_flight_packets;
             }
 
+            snapshot.rexmit_forwarded_total += conn.rexmit_forwarded;
             snapshot.links.push(link);
         }
 

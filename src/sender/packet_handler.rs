@@ -468,6 +468,11 @@ pub async fn forward_via_connection(
     // Get conn_id before mutable borrow for seq_tracker
     let conn_id = connections[sel_idx].conn_id;
 
+    // Check for SRT retransmit flag (R bit) and count forwarded retransmissions
+    if let Some(true) = protocol::get_srt_rexmit_flag(pkt) {
+        connections[sel_idx].rexmit_forwarded += 1;
+    }
+
     // Queue the packet for batched sending
     let needs_flush = connections[sel_idx].queue_data_packet(pkt, seq, packet_time_ms);
 
