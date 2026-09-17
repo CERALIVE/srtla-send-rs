@@ -8,15 +8,16 @@ use crate::metrics::sink::{SinkBucket, SinkSeries};
 use crate::profile::{Action, EventLog, EventRecord};
 
 #[test]
-fn all_returns_thirteen() {
-    // Given / When: enumerate the concrete library, not just the twelve families.
+fn all_returns_catalog_entries() {
+    // Given / When: enumerate the concrete library, including dynamic M1-M8 additions.
     let profiles = all();
-    // Then: stable, unique IDs include both B variants.
-    assert_eq!(profiles.len(), 13);
+    // Then: stable, unique IDs include both B variants and all M scenarios.
+    assert_eq!(profiles.len(), 21);
     assert_eq!(
         profiles.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
         [
-            "A", "B1", "B2", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"
+            "A", "B1", "B2", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M1", "M2", "M3",
+            "M4", "M5", "M6", "M7", "M8"
         ]
     );
 }
