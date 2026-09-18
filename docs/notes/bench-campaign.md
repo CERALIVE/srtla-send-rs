@@ -1,3 +1,4 @@
+2026-09-18 — classic/rtt-threshold/edpf/adaptive modes removed in 4.0.0 — read as history.
 # Paired scheduler campaigns
 
 `tests/bench_scheduler.rs` is an explicitly ignored Linux measurement harness,

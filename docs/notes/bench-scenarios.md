@@ -1,3 +1,4 @@
+2026-09-18 — classic/rtt-threshold/edpf/adaptive modes removed in 4.0.0 — read as history.
 # Scheduler benchmark scenarios
 
 `network_sim::scenarios` provides thirteen concrete profiles in twelve families (B1/B2).
