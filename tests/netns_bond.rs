@@ -127,7 +127,10 @@ fn removing_nat_default_stops_its_data_while_other_links_continue() {
     stack.topo.delete_default_route(3).unwrap();
     thread::sleep(Duration::from_secs(3));
     let before = stack.counters().unwrap();
-    thread::sleep(Duration::from_secs(2));
+    // Enhanced rotates more slowly: 2026-09-18 release/all-feature samples had
+    // healthy-link minima of 4,154/10,944 B at 2s, versus 1,728,974/1,741,266 B
+    // at 10s. Keep the per-link minimum; measure bonding, not two-second fairness.
+    thread::sleep(Duration::from_secs(10));
     let after = stack.counters().unwrap();
     // Then: DATA carriage stops on link 3, while all other paths keep carrying.
     // tx_bytes includes a few ARP probes for the now-on-link receiver, not DATA.
