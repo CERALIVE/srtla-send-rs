@@ -1,0 +1,35 @@
+/mnt/development/ceralive/.worktrees/irl-srt-server-bonded-path-convergence/build/bin/srt_server: OK
+scripts/bench/decide.py: OK
+scripts/bench/lineage_rule.py: OK
+scripts/bench/report.py: OK
+scripts/bench/m4b_manifest.py: OK
+scripts/bench/m4b_gate.py: OK
+scripts/bench/m4b_inputs.py: OK
+scripts/bench/m4b_models.py: OK
+scripts/bench/run_m4b.sh: OK
+scripts/bench/manifests/m4a-ours-new.json: OK
+scripts/bench/manifests/m4b-lineages.json: OK
+scripts/bench/manifests/c1-baselines.json: OK
+target/m4-srtla_send: OK
+target/m4b-bench_scheduler: OK
+src/sender/selection/adaptive/sole.rs: OK
+src/sender/selection/adaptive/ranking.rs: OK
+docs/evidence/bpc/m4/lineage-method.md: OK
+m4a=110 m4b=18 total=128 cap=150 runs=66
+scripts/bench/decide.py: OK
+scripts/bench/lineage_rule.py: OK
+scripts/bench/report.py: OK
+scripts/bench/m4b_manifest.py: OK
+scripts/bench/m4b_gate.py: OK
+scripts/bench/m4b_inputs.py: OK
+scripts/bench/m4b_models.py: OK
+scripts/bench/run_m4b.sh: OK
+scripts/bench/manifests/m4a-ours-new.json: OK
+scripts/bench/manifests/m4b-lineages.json: OK
+scripts/bench/manifests/c1-baselines.json: OK
+target/m4-srtla_send: OK
+target/m4b-bench_scheduler: OK
+src/sender/selection/adaptive/sole.rs: OK
+src/sender/selection/adaptive/ranking.rs: OK
+docs/evidence/bpc/m4/lineage-method.md: OK
+ours-new@--M1@--production--sls:4003--fec:off--enhanced: ('config mismatch: mixed scenario/receiver/profile/window',)

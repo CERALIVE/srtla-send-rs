@@ -1,4 +1,90 @@
-# M4 completed — provisional empty-set fallback, not shipping acceptance
+# M4 final — enhanced fallback, zero lineage passes, not shipping acceptance
+
+## Todo 34 authoritative verdict and lineage gate — COMPLETE
+
+The authoritative primary decider consumed ONLY `a/summary.json` and the empty
+defect rerun summary. Two executions were byte-identical to the provisional
+SHA `b47ee5d6…f4a0`: enhanced only, base enhanced, zero genuine coverage.
+[foldin.json](foldin.json) records the requested single-member skip; no donor
+term, ablation, scheduler source, default, or frozen primary rule was changed.
+
+The real lineage campaign measured **18/18 cells, 66/66 original indices**,
+including all nine required DISTINCT SLS4003 indices. **65 settled; one
+irlserver-prod/A index timed out and retained its full-window measurement.**
+All15 SLT cells fail the strict zero-drop/belated gate. All9 SLS runs settle
+and pass registration/carry/latency conformance, but the publisher's missing
+received-packet denominator cannot prove retransmission≤10%; it is unknown,
+never inferred from player/NAK counters. SLS belated/occupancy remain not applicable.
+
+```json
+{"ship_set":["enhanced"],"base_mode":"enhanced","covered_by_base_pct":0.0,"passes_per_member":{"enhanced":0},"lineage_gate_swap":null}
+```
+
+**All18 lineage cells are sacrificed**, each with `reason:"lineage gate"` and
+its actual lineage. The final verdict has37 sacrifices (19primary +18lineage).
+One member means no alternative base exists; zero passing cells is not an
+argument to add another mode. The final set is fixed for this round, not a
+claim that enhanced passed the performance gates.
+
+| Lineage / sink | Cells | Runs | Settled | Passing cells |
+|---|---|---:|---:|---:|
+| irlserver-prod / SLT | A,B1,G,M1,M4,M6 |30|29|0/6|
+| ours-old / SLT | M1,M4,M6 |9|9|0/3|
+| irlserver-next / SLT | M1,M4,M6 |9|9|0/3|
+| belabox alias / SLT | M1,M4,M6 |9|9|0/3|
+| ours-new / SLS4003 | M1,M4,M6 |9|9|0/3|
+
+Full per-cell quotas/failures: [b/report.md](b/report.md). Every run's received
+retransmission fraction and gate observations are in [verdict.json](verdict.json)
+and [b/summary.json](b/summary.json), which is lineage-gate-only evidence and
+must never be fed into the primary decider. Two final reductions match exactly:
+SHA256 `5884fe8ac54d9271a08bb664a3418b04d436945d4674d734e5fe2ff61dc38029`.
+
+### Durable execution and retained corrections
+
+Both launches used **systemd-run --user from the start**, P1/taskset4–27, the
+host measurement lock, immutable M4 sender and copied runner, six-hour bound,
+and one attempt per index. No builds or competing campaign were launched during
+measurement. First start07:31:07−05 to final end09:04:06−05 on2026-09-18:
+**1h32m59s elapsed; 1h30m17s active service time** (3833s +1584s).
+
+- First service `bpc-m4b-lineages`, invocation0a01ab8ef88c4e2ca31af873d891ecdc,
+  PID3592329, measured48indices then stopped before SLS preparation because the
+  launcher omitted `SLS_BIN`. The controller now resolves and hash-verifies it
+  from the existing lock before starting any measurement.
+- Checkpoint continuation `bpc-m4b-lineages-resume`, invocation
+  6311c434771240d6b742869f8e7de795, PID441561, measured the remaining18 first
+  attempts. The49 pre-resume receipt files (48outcomes +one exhaustion receipt)
+  remained byte-identical. No measured index was retried or replaced.
+- The reducer initially copied G's60s privileged-test duration instead of its
+  **45s reference-catalog duration**. Corrected checker metadata to the unchanged
+  source and raw windows, with a failing-first regression; no scenario shortening.
+- SLS windows report actual elapsed milliseconds. Generic exact-window equality
+  rejected normal sub-second differences after all runs completed. The SLS-only
+  integrity path now retains those actual windows, already bounded by the catalog
+  duration check, and checks configuration/provenance independently. SLT exact
+  window checks remain; regression tests cover both. No pass threshold changed.
+- Original runner exits101 and controller exits1 remain visible in both archived
+  receipts. Final offline reduction exits0 twice. Do not confuse corrected
+  reporting with a rerun or claim that the original controllers exited cleanly.
+
+Portable hashes/receipts: [b/provenance.json](b/provenance.json),1259raw files;
+raw root `/home/andres/.cache/opencode/tmp/opencode/m4b-measurement`.
+The premeasurement [lineage method](lineage-method.md) remains byte-unchanged;
+original and continuation frozen hash lists plus final reducer hashes retain
+the correction history rather than rewriting it.
+
+### Todo 34 full gate
+
+Release build, fmt, Clippy,941library tests,56bench tests, report25/decide15
+self-tests and changed-code LSP diagnostics pass. Before measurement, selected
+Python52tests+3subtests passed. After the two checker fixes,43tests+3subtests
+passed (18lineage tests plus25existing reporter tests); Ruff and shell syntax pass.
+Both literal bounded feature gates exit101 at **known adaptive G/twin failures**:
+G38/61 and43/61demoted, twins fail sustainedHealthy; both feature libraries966PASS.
+No assertion, policy, threshold, or full-green acceptance waiver was changed.
+
+## Todo 20 historical measurement record
 
 The real campaign ran sequentially in the original detached user service
 `bpc-m4.service` (invocation `f651750ad19945fd882fb0b7580345ba`). No session
@@ -32,7 +118,8 @@ primary_groups=20 cli_cells=100 baseline_cells=8 fec_cells=2 metric_runs=546 soa
 All20 primary groups are candidate-complete across the five CLI modes atN5.
 Baseline/FEC cells are explicitly noncovering; all baseline candidates stay outside
 winner/base/ship-set calculations. The summary contains26 groups/110 metric cells,
-546 indices and **zero integrity errors**. Neither m4b nor4003 was run.
+546 indices and **zero integrity errors**. Neither m4b nor4003 was run in Todo20;
+both are now measured by Todo34 above.
 
 The [frozen rule/binary ledger](frozen.sha256) was written before the first live
 smoke and passed again after the full campaign. Two independent decision CLI
@@ -56,7 +143,7 @@ the retained first-pass decision.
 base only because every mode ties at zero coverage and the frozen tie-break picks
 enhanced. No complete covering set exists, so the terminal rule returns that base.
 This is not evidence that enhanced passed, and not authority to ship it or retire
-any other mode. Todo34 owns the authoritative unchanged-rule rerun.
+any other mode. Todo34's authoritative unchanged-rule rerun is recorded above.
 
 All100 primary mode/scenario cells fail the requirement that every run have zero
 receiver drops and belated packets. Goodput alone cannot override that gate.

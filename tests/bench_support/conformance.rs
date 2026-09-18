@@ -34,7 +34,7 @@ pub fn measure(request: &mut Request, profile: &Profile, stack: &mut Stack) -> R
         .source
         .rate(profile.warmup_offered_bps, Duration::ZERO)?;
     capture.attach_player(&stack.topo.receiver_ns, &request.srt_binary)?;
-    let twinport_start = if super::twinport::enabled(&request.manifest.campaign) {
+    let twinport_start = if super::twinport::measures_player(&request.manifest.campaign) {
         Some(super::twinport::begin(request, profile, stack)?)
     } else {
         None

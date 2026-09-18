@@ -1,0 +1,2900 @@
+{
+  "ship_set": [
+    "enhanced"
+  ],
+  "base_mode": "enhanced",
+  "covered_by_base_pct": 0.0,
+  "sacrificed_cells": [
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--A@--production--slt:4001--fec:off",
+      "scenario": "A",
+      "lineage": "ours-new",
+      "winner": "rtt-threshold",
+      "base_mode_ratio": 0.9123851383170123,
+      "base_mode_ci_lower": 0.5150455692902093,
+      "failing_gates": [
+        "settled_rate",
+        "post_settle_zero_drop_belated_rate",
+        "goodput_ci_lower",
+        "loss"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off",
+      "scenario": "B1",
+      "lineage": "ours-new",
+      "winner": "enhanced",
+      "base_mode_ratio": 1.0,
+      "base_mode_ci_lower": 1.0,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B2@--production--slt:4001--fec:off",
+      "scenario": "B2",
+      "lineage": "ours-new",
+      "winner": "enhanced",
+      "base_mode_ratio": 1.0,
+      "base_mode_ci_lower": 1.0,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--C@--production--slt:4001--fec:off",
+      "scenario": "C",
+      "lineage": "ours-new",
+      "winner": "classic",
+      "base_mode_ratio": 0.9760301349289019,
+      "base_mode_ci_lower": 0.7579542497575285,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate",
+        "goodput_ci_lower",
+        "loss",
+        "recovery_ratio"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--E@--production--slt:4001--fec:off",
+      "scenario": "E",
+      "lineage": "ours-new",
+      "winner": "rtt-threshold",
+      "base_mode_ratio": 0.9908816846607363,
+      "base_mode_ci_lower": 0.9820933165195462,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate",
+        "loss",
+        "recovery_ratio"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--F@--production--slt:4001--fec:off",
+      "scenario": "F",
+      "lineage": "ours-new",
+      "winner": "rtt-threshold",
+      "base_mode_ratio": 0.9999817284852913,
+      "base_mode_ci_lower": 0.9998720923858425,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--G@--production--slt:4001--fec:off",
+      "scenario": "G",
+      "lineage": "ours-new",
+      "winner": "classic",
+      "base_mode_ratio": 0.9997990280264553,
+      "base_mode_ci_lower": 0.9996346297886333,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--H@--production--slt:4001--fec:off",
+      "scenario": "H",
+      "lineage": "ours-new",
+      "winner": "classic",
+      "base_mode_ratio": 0.9839556352745644,
+      "base_mode_ci_lower": 0.9660534924627247,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate",
+        "loss",
+        "recovery_ratio"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--I@--production--slt:4001--fec:off",
+      "scenario": "I",
+      "lineage": "ours-new",
+      "winner": "adaptive",
+      "base_mode_ratio": 0.9998275928125357,
+      "base_mode_ci_lower": 0.8085312008489509,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate",
+        "goodput_ci_lower"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--J@--production--slt:4001--fec:off",
+      "scenario": "J",
+      "lineage": "ours-new",
+      "winner": "enhanced",
+      "base_mode_ratio": 1.0,
+      "base_mode_ci_lower": 1.0,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate",
+        "post_settle_starvation_floor_rate"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--K@--production--slt:4001--fec:off",
+      "scenario": "K",
+      "lineage": "ours-new",
+      "winner": "classic",
+      "base_mode_ratio": 0.9998684287468568,
+      "base_mode_ci_lower": 0.9995615124895859,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--L@--production--slt:4001--fec:off",
+      "scenario": "L",
+      "lineage": "ours-new",
+      "winner": "adaptive",
+      "base_mode_ratio": 0.8975811723687077,
+      "base_mode_ci_lower": 0.7349529906517024,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate",
+        "post_settle_starvation_floor_rate",
+        "goodput_ci_lower",
+        "loss"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--M1@--production--slt:4001--fec:off",
+      "scenario": "M1",
+      "lineage": "ours-new",
+      "winner": "classic",
+      "base_mode_ratio": 0.9851087757397138,
+      "base_mode_ci_lower": 0.9612375305733056,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate",
+        "loss"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--M2@--production--slt:4001--fec:off",
+      "scenario": "M2",
+      "lineage": "ours-new",
+      "winner": "rtt-threshold",
+      "base_mode_ratio": 0.9825306266861263,
+      "base_mode_ci_lower": 0.9804809114796087,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate",
+        "loss"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--M3@--production--slt:4001--fec:off",
+      "scenario": "M3",
+      "lineage": "ours-new",
+      "winner": "adaptive",
+      "base_mode_ratio": 0.9999122691582225,
+      "base_mode_ci_lower": 0.9993858975764885,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--M4@--production--slt:4001--fec:off",
+      "scenario": "M4",
+      "lineage": "ours-new",
+      "winner": "classic",
+      "base_mode_ratio": 0.9998245690978466,
+      "base_mode_ci_lower": 0.9996051852339278,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--M5@--production--slt:4001--fec:off",
+      "scenario": "M5",
+      "lineage": "ours-new",
+      "winner": "classic",
+      "base_mode_ratio": 0.9953415036192933,
+      "base_mode_ci_lower": 0.982396122870786,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--M6@--production--slt:4001--fec:off",
+      "scenario": "M6",
+      "lineage": "ours-new",
+      "winner": "adaptive",
+      "base_mode_ratio": 0.9999817284852913,
+      "base_mode_ci_lower": 0.9997990170104695,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--M7@--production--slt:4001--fec:off",
+      "scenario": "M7",
+      "lineage": "ours-new",
+      "winner": "rtt-threshold",
+      "base_mode_ratio": 0.9753639846743296,
+      "base_mode_ci_lower": 0.9669588030645806,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate",
+        "loss",
+        "recovery_ratio"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "belabox@%26srtlapatches%3D1%26lossmaxttl%3D200--M1@--production--slt:4001--fec:off",
+      "scenario": "M1",
+      "lineage": "belabox",
+      "sink": "slt",
+      "port": 4001,
+      "reason": "lineage gate",
+      "failing_gates": {
+        "enhanced": [
+          "joint_settle_retransmit_quota",
+          "post_settle_zero_drop_belated"
+        ]
+      }
+    },
+    {
+      "cell_id": "belabox@%26srtlapatches%3D1%26lossmaxttl%3D200--M4@--production--slt:4001--fec:off",
+      "scenario": "M4",
+      "lineage": "belabox",
+      "sink": "slt",
+      "port": 4001,
+      "reason": "lineage gate",
+      "failing_gates": {
+        "enhanced": [
+          "post_settle_zero_drop_belated"
+        ]
+      }
+    },
+    {
+      "cell_id": "belabox@%26srtlapatches%3D1%26lossmaxttl%3D200--M6@--production--slt:4001--fec:off",
+      "scenario": "M6",
+      "lineage": "belabox",
+      "sink": "slt",
+      "port": 4001,
+      "reason": "lineage gate",
+      "failing_gates": {
+        "enhanced": [
+          "post_settle_zero_drop_belated"
+        ]
+      }
+    },
+    {
+      "cell_id": "irlserver-next@%26srtlapatches%3D1%26lossmaxttl%3D200--M1@--production--slt:4001--fec:off",
+      "scenario": "M1",
+      "lineage": "irlserver-next",
+      "sink": "slt",
+      "port": 4001,
+      "reason": "lineage gate",
+      "failing_gates": {
+        "enhanced": [
+          "joint_settle_retransmit_quota",
+          "post_settle_zero_drop_belated"
+        ]
+      }
+    },
+    {
+      "cell_id": "irlserver-next@%26srtlapatches%3D1%26lossmaxttl%3D200--M4@--production--slt:4001--fec:off",
+      "scenario": "M4",
+      "lineage": "irlserver-next",
+      "sink": "slt",
+      "port": 4001,
+      "reason": "lineage gate",
+      "failing_gates": {
+        "enhanced": [
+          "post_settle_zero_drop_belated"
+        ]
+      }
+    },
+    {
+      "cell_id": "irlserver-next@%26srtlapatches%3D1%26lossmaxttl%3D200--M6@--production--slt:4001--fec:off",
+      "scenario": "M6",
+      "lineage": "irlserver-next",
+      "sink": "slt",
+      "port": 4001,
+      "reason": "lineage gate",
+      "failing_gates": {
+        "enhanced": [
+          "post_settle_zero_drop_belated"
+        ]
+      }
+    },
+    {
+      "cell_id": "irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--A@--production--slt:4001--fec:off",
+      "scenario": "A",
+      "lineage": "irlserver-prod",
+      "sink": "slt",
+      "port": 4001,
+      "reason": "lineage gate",
+      "failing_gates": {
+        "enhanced": [
+          "joint_settle_retransmit_quota",
+          "post_settle_zero_drop_belated"
+        ]
+      }
+    },
+    {
+      "cell_id": "irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--B1@--production--slt:4001--fec:off",
+      "scenario": "B1",
+      "lineage": "irlserver-prod",
+      "sink": "slt",
+      "port": 4001,
+      "reason": "lineage gate",
+      "failing_gates": {
+        "enhanced": [
+          "post_settle_zero_drop_belated"
+        ]
+      }
+    },
+    {
+      "cell_id": "irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--G@--production--slt:4001--fec:off",
+      "scenario": "G",
+      "lineage": "irlserver-prod",
+      "sink": "slt",
+      "port": 4001,
+      "reason": "lineage gate",
+      "failing_gates": {
+        "enhanced": [
+          "post_settle_zero_drop_belated"
+        ]
+      }
+    },
+    {
+      "cell_id": "irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--M1@--production--slt:4001--fec:off",
+      "scenario": "M1",
+      "lineage": "irlserver-prod",
+      "sink": "slt",
+      "port": 4001,
+      "reason": "lineage gate",
+      "failing_gates": {
+        "enhanced": [
+          "post_settle_zero_drop_belated"
+        ]
+      }
+    },
+    {
+      "cell_id": "irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--M4@--production--slt:4001--fec:off",
+      "scenario": "M4",
+      "lineage": "irlserver-prod",
+      "sink": "slt",
+      "port": 4001,
+      "reason": "lineage gate",
+      "failing_gates": {
+        "enhanced": [
+          "post_settle_zero_drop_belated"
+        ]
+      }
+    },
+    {
+      "cell_id": "irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--M6@--production--slt:4001--fec:off",
+      "scenario": "M6",
+      "lineage": "irlserver-prod",
+      "sink": "slt",
+      "port": 4001,
+      "reason": "lineage gate",
+      "failing_gates": {
+        "enhanced": [
+          "post_settle_zero_drop_belated"
+        ]
+      }
+    },
+    {
+      "cell_id": "ours-new@--M1@--production--sls:4003--fec:off",
+      "scenario": "M1",
+      "lineage": "ours-new",
+      "sink": "sls",
+      "port": 4003,
+      "reason": "lineage gate",
+      "failing_gates": {
+        "enhanced": [
+          "retransmit_unknown",
+          "joint_settle_retransmit_quota"
+        ]
+      }
+    },
+    {
+      "cell_id": "ours-new@--M4@--production--sls:4003--fec:off",
+      "scenario": "M4",
+      "lineage": "ours-new",
+      "sink": "sls",
+      "port": 4003,
+      "reason": "lineage gate",
+      "failing_gates": {
+        "enhanced": [
+          "retransmit_unknown",
+          "joint_settle_retransmit_quota"
+        ]
+      }
+    },
+    {
+      "cell_id": "ours-new@--M6@--production--sls:4003--fec:off",
+      "scenario": "M6",
+      "lineage": "ours-new",
+      "sink": "sls",
+      "port": 4003,
+      "reason": "lineage gate",
+      "failing_gates": {
+        "enhanced": [
+          "retransmit_unknown",
+          "joint_settle_retransmit_quota"
+        ]
+      }
+    },
+    {
+      "cell_id": "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--M1@--production--slt:4001--fec:off",
+      "scenario": "M1",
+      "lineage": "ours-old",
+      "sink": "slt",
+      "port": 4001,
+      "reason": "lineage gate",
+      "failing_gates": {
+        "enhanced": [
+          "joint_settle_retransmit_quota",
+          "post_settle_zero_drop_belated"
+        ]
+      }
+    },
+    {
+      "cell_id": "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--M4@--production--slt:4001--fec:off",
+      "scenario": "M4",
+      "lineage": "ours-old",
+      "sink": "slt",
+      "port": 4001,
+      "reason": "lineage gate",
+      "failing_gates": {
+        "enhanced": [
+          "joint_settle_retransmit_quota",
+          "post_settle_zero_drop_belated"
+        ]
+      }
+    },
+    {
+      "cell_id": "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--M6@--production--slt:4001--fec:off",
+      "scenario": "M6",
+      "lineage": "ours-old",
+      "sink": "slt",
+      "port": 4001,
+      "reason": "lineage gate",
+      "failing_gates": {
+        "enhanced": [
+          "post_settle_zero_drop_belated"
+        ]
+      }
+    }
+  ],
+  "cells": {
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--A@--production--slt:4001--fec:off": {
+      "scenario": "A",
+      "lineage": "ours-new",
+      "winner": "rtt-threshold",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 0.7493147542171293,
+          "ci_lower": 0.5584547785637893,
+          "failing_gates": [
+            "settled_rate",
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 0.9123851383170123,
+          "ci_lower": 0.5150455692902093,
+          "failing_gates": [
+            "settled_rate",
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.8152311723438425,
+          "ci_lower": 0.609120311312124,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 0.6657932550080298,
+          "ci_lower": 0.4607562386768746,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off": {
+      "scenario": "B1",
+      "lineage": "ours-new",
+      "winner": "enhanced",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 0.48444661140906875,
+          "ci_lower": 0.45505302937949527,
+          "failing_gates": [
+            "settled_rate",
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 0.4800097513408094,
+          "ci_lower": 0.46656590526803343,
+          "failing_gates": [
+            "settled_rate",
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.4846903949293028,
+          "ci_lower": 0.4782905482825032,
+          "failing_gates": [
+            "settled_rate",
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 0.9996830891494601,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B2@--production--slt:4001--fec:off": {
+      "scenario": "B2",
+      "lineage": "ours-new",
+      "winner": "enhanced",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 0.8504441607835986,
+          "ci_lower": 0.7311065748446578,
+          "failing_gates": [
+            "settled_rate",
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 0.8659441998593275,
+          "ci_lower": 0.7754575982594712,
+          "failing_gates": [
+            "settled_rate",
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.9334670591606534,
+          "ci_lower": 0.732317907534938,
+          "failing_gates": [
+            "settled_rate",
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 0.9405267408237163,
+          "ci_lower": 0.8538050418578252,
+          "failing_gates": [
+            "settled_rate",
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--C@--production--slt:4001--fec:off": {
+      "scenario": "C",
+      "lineage": "ours-new",
+      "winner": "classic",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "recovery_ratio"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 0.9760301349289019,
+          "ci_lower": 0.7579542497575285,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss",
+            "recovery_ratio"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 0.9528233327681016,
+          "ci_lower": 0.8062297467098737,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss",
+            "recovery_ratio"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.7485162665633098,
+          "ci_lower": 0.7020258801225668,
+          "failing_gates": [
+            "settled_rate",
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss",
+            "recovery_ratio",
+            "nonrecovery_rate"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 0.8282866209636395,
+          "ci_lower": 0.7594656137205978,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss",
+            "recovery_ratio"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--D@--production--slt:4001--fec:off": {
+      "scenario": "D",
+      "lineage": "ours-new",
+      "winner": "classic",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 0.9511664990808169,
+          "ci_lower": 0.7438324023443252,
+          "failing_gates": [
+            "settled_rate",
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss",
+            "recovery_ratio",
+            "nonrecovery_rate"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 0.9870298709081121,
+          "ci_lower": 0.8887636226982336,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss",
+            "recovery_ratio"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.7597428318961578,
+          "ci_lower": 0.7597428318961578,
+          "failing_gates": [
+            "settled_rate",
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss",
+            "recovery_ratio"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 0.9760809287303087,
+          "ci_lower": 0.8822045296133043,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss",
+            "recovery_ratio"
+          ]
+        }
+      },
+      "exempt": true,
+      "exemption_reason": "all_cli_candidates_fail"
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--E@--production--slt:4001--fec:off": {
+      "scenario": "E",
+      "lineage": "ours-new",
+      "winner": "rtt-threshold",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 0.9969853126809926,
+          "ci_lower": 0.9897098714471045,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "recovery_ratio"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 0.9908816846607363,
+          "ci_lower": 0.9820933165195462,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss",
+            "recovery_ratio"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "recovery_ratio"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.9865749884907259,
+          "ci_lower": 0.8721163118463024,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss",
+            "recovery_ratio"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 0.9957824078886792,
+          "ci_lower": 0.9843141879938672,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss",
+            "recovery_ratio"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--F@--production--slt:4001--fec:off": {
+      "scenario": "F",
+      "lineage": "ours-new",
+      "winner": "rtt-threshold",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 0.9999269139411656,
+          "ci_lower": 0.999817288191336,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 0.9999817284852913,
+          "ci_lower": 0.9998720923858425,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.9999451854558743,
+          "ci_lower": 0.9998720923858425,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 0.9999086424264572,
+          "ci_lower": 0.999817288191336,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--G@--production--slt:4001--fec:off": {
+      "scenario": "G",
+      "lineage": "ours-new",
+      "winner": "classic",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "post_settle_starvation_floor_rate"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 0.9997990280264553,
+          "ci_lower": 0.9996346297886333,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 0.8253736251689993,
+          "ci_lower": 0.7083896663865239,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.3559944458654584,
+          "ci_lower": 0.32034932583037967,
+          "failing_gates": [
+            "settled_rate",
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 0.9998355683852815,
+          "ci_lower": 0.9997077038309067,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--H@--production--slt:4001--fec:off": {
+      "scenario": "H",
+      "lineage": "ours-new",
+      "winner": "classic",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 0.9839556352745644,
+          "ci_lower": 0.9660534924627247,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss",
+            "recovery_ratio"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 0.9822771478879034,
+          "ci_lower": 0.9317631771298628,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.8102980137899257,
+          "ci_lower": 0.7725980670835702,
+          "failing_gates": [
+            "settled_rate",
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 0.984235383172341,
+          "ci_lower": 0.9715097864046129,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss",
+            "recovery_ratio"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--I@--production--slt:4001--fec:off": {
+      "scenario": "I",
+      "lineage": "ours-new",
+      "winner": "adaptive",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 0.9996934983333974,
+          "ci_lower": 0.9830020276288112,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 0.9998275928125357,
+          "ci_lower": 0.8085312008489509,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 0.9995785602084211,
+          "ci_lower": 0.9888006670330293,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.9995019347917705,
+          "ci_lower": 0.9372964481397754,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--J@--production--slt:4001--fec:off": {
+      "scenario": "J",
+      "lineage": "ours-new",
+      "winner": "enhanced",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 0.9943443770415307,
+          "ci_lower": 0.981997570224202,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "post_settle_starvation_floor_rate"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 0.9999626691553896,
+          "ci_lower": 0.9857174737781744,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.9948296780214654,
+          "ci_lower": 0.8100909325184995,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 0.9932244517032199,
+          "ci_lower": 0.9725545779184922,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--K@--production--slt:4001--fec:off": {
+      "scenario": "K",
+      "lineage": "ours-new",
+      "winner": "classic",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 0.9998684287468568,
+          "ci_lower": 0.9995615124895859,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 0.9997514765218408,
+          "ci_lower": 0.9995615124895859,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.8225834746506052,
+          "ci_lower": 0.7598128791754988,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss",
+            "recovery_ratio",
+            "nonrecovery_rate"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 0.999985380971873,
+          "ci_lower": 0.9998245254876728,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--L@--production--slt:4001--fec:off": {
+      "scenario": "L",
+      "lineage": "ours-new",
+      "winner": "adaptive",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 0.7588526912181303,
+          "ci_lower": 0.6554415878513388,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 0.8975811723687077,
+          "ci_lower": 0.7349529906517024,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "post_settle_starvation_floor_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 0.8239540204837655,
+          "ci_lower": 0.7145064606367391,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.7302789278709958,
+          "ci_lower": 0.5957108816521048,
+          "failing_gates": [
+            "settled_rate",
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--M1@--production--slt:4001--fec:off": {
+      "scenario": "M1",
+      "lineage": "ours-new",
+      "winner": "classic",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 0.9851087757397138,
+          "ci_lower": 0.9612375305733056,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 0.9772236656713331,
+          "ci_lower": 0.9664622043513338,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.9866211657036491,
+          "ci_lower": 0.9760791896633416,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 0.9906800584273728,
+          "ci_lower": 0.9761637000555835,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--M2@--production--slt:4001--fec:off": {
+      "scenario": "M2",
+      "lineage": "ours-new",
+      "winner": "rtt-threshold",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 0.9831276812171067,
+          "ci_lower": 0.9819102589619407,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 0.9825306266861263,
+          "ci_lower": 0.9804809114796087,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.9991154747689178,
+          "ci_lower": 0.9806430228704011,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 0.9998452080845606,
+          "ci_lower": 0.9799730618914085,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--M3@--production--slt:4001--fec:off": {
+      "scenario": "M3",
+      "lineage": "ours-new",
+      "winner": "adaptive",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 0.9951528709917972,
+          "ci_lower": 0.9939027064964688,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 0.9999122691582225,
+          "ci_lower": 0.9993858975764885,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 0.9788568671316401,
+          "ci_lower": 0.9701050599872788,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.9799973680747466,
+          "ci_lower": 0.9702153792165635,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--M4@--production--slt:4001--fec:off": {
+      "scenario": "M4",
+      "lineage": "ours-new",
+      "winner": "classic",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 0.9998245690978466,
+          "ci_lower": 0.9996051852339278,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 0.9622384983114775,
+          "ci_lower": 0.9221776227764251,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss",
+            "recovery_ratio"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.939849129424148,
+          "ci_lower": 0.9253354968862381,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss",
+            "recovery_ratio",
+            "nonrecovery_rate"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 0.9996929959212315,
+          "ci_lower": 0.9996710670584623,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--M5@--production--slt:4001--fec:off": {
+      "scenario": "M5",
+      "lineage": "ours-new",
+      "winner": "classic",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 0.9953415036192933,
+          "ci_lower": 0.982396122870786,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 0.9881506963854846,
+          "ci_lower": 0.9801867293849333,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.9918297140399913,
+          "ci_lower": 0.9771220868077827,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 0.9951026063690006,
+          "ci_lower": 0.9909467765759756,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--M6@--production--slt:4001--fec:off": {
+      "scenario": "M6",
+      "lineage": "ours-new",
+      "winner": "adaptive",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 0.9998355563676229,
+          "ci_lower": 0.9996528412205372,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 0.9999817284852913,
+          "ci_lower": 0.9997990170104695,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 0.9998172848529143,
+          "ci_lower": 0.9997442034678702,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.9998903709117485,
+          "ci_lower": 0.999817288191336,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--M7@--production--slt:4001--fec:off": {
+      "scenario": "M7",
+      "lineage": "ours-new",
+      "winner": "rtt-threshold",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 0.9982758620689656,
+          "ci_lower": 0.9881371076595503,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "recovery_ratio"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 0.9753639846743296,
+          "ci_lower": 0.9669588030645806,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss",
+            "recovery_ratio"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "recovery_ratio"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.9810153256704981,
+          "ci_lower": 0.9527334087553452,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss",
+            "recovery_ratio"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 0.9909770114942528,
+          "ci_lower": 0.9646653861514178,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss",
+            "recovery_ratio"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    }
+  },
+  "refold": false,
+  "gate": null,
+  "lineage_gate": {
+    "cells": [
+      {
+        "cell_id": "belabox@%26srtlapatches%3D1%26lossmaxttl%3D200--M1@--production--slt:4001--fec:off",
+        "scenario": "M1",
+        "lineage": "belabox",
+        "sink": "slt",
+        "port": 4001,
+        "members": {
+          "enhanced": {
+            "n": 3,
+            "required": 2,
+            "settled": 3,
+            "joint_passes": 0,
+            "passed": false,
+            "failing_gates": [
+              "joint_settle_retransmit_quota",
+              "post_settle_zero_drop_belated"
+            ],
+            "observations": [
+              {
+                "run_index": 0,
+                "settled": true,
+                "retransmit_ratio": 0.12948119124129445,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 9004013.51111111,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/belabox@%26srtlapatches%3D1%26lossmaxttl%3D200--M1@--production--slt:4001--fec:off--enhanced/run-0.json"
+              },
+              {
+                "run_index": 1,
+                "settled": true,
+                "retransmit_ratio": 0.1292665743507519,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 8879549.155555556,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/belabox@%26srtlapatches%3D1%26lossmaxttl%3D200--M1@--production--slt:4001--fec:off--enhanced/run-1.json"
+              },
+              {
+                "run_index": 2,
+                "settled": true,
+                "retransmit_ratio": 0.11890339174539072,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 9028578.844444444,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/belabox@%26srtlapatches%3D1%26lossmaxttl%3D200--M1@--production--slt:4001--fec:off--enhanced/run-2.json"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "cell_id": "belabox@%26srtlapatches%3D1%26lossmaxttl%3D200--M4@--production--slt:4001--fec:off",
+        "scenario": "M4",
+        "lineage": "belabox",
+        "sink": "slt",
+        "port": 4001,
+        "members": {
+          "enhanced": {
+            "n": 3,
+            "required": 2,
+            "settled": 3,
+            "joint_passes": 3,
+            "passed": false,
+            "failing_gates": [
+              "post_settle_zero_drop_belated"
+            ],
+            "observations": [
+              {
+                "run_index": 0,
+                "settled": true,
+                "retransmit_ratio": 0.015097269550964068,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 7999700.8,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/belabox@%26srtlapatches%3D1%26lossmaxttl%3D200--M4@--production--slt:4001--fec:off--enhanced/run-0.json"
+              },
+              {
+                "run_index": 1,
+                "settled": true,
+                "retransmit_ratio": 0.013136041069001963,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 7999700.8,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/belabox@%26srtlapatches%3D1%26lossmaxttl%3D200--M4@--production--slt:4001--fec:off--enhanced/run-1.json"
+              },
+              {
+                "run_index": 2,
+                "settled": true,
+                "retransmit_ratio": 0.013992960331684986,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 8000929.066666666,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/belabox@%26srtlapatches%3D1%26lossmaxttl%3D200--M4@--production--slt:4001--fec:off--enhanced/run-2.json"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "cell_id": "belabox@%26srtlapatches%3D1%26lossmaxttl%3D200--M6@--production--slt:4001--fec:off",
+        "scenario": "M6",
+        "lineage": "belabox",
+        "sink": "slt",
+        "port": 4001,
+        "members": {
+          "enhanced": {
+            "n": 3,
+            "required": 2,
+            "settled": 3,
+            "joint_passes": 3,
+            "passed": false,
+            "failing_gates": [
+              "post_settle_zero_drop_belated"
+            ],
+            "observations": [
+              {
+                "run_index": 0,
+                "settled": true,
+                "retransmit_ratio": 0.0026844395075442005,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 12803451.733333332,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/belabox@%26srtlapatches%3D1%26lossmaxttl%3D200--M6@--production--slt:4001--fec:off--enhanced/run-0.json"
+              },
+              {
+                "run_index": 1,
+                "settled": true,
+                "retransmit_ratio": 0.0026833962543489527,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 12803451.733333332,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/belabox@%26srtlapatches%3D1%26lossmaxttl%3D200--M6@--production--slt:4001--fec:off--enhanced/run-1.json"
+              },
+              {
+                "run_index": 2,
+                "settled": true,
+                "retransmit_ratio": 0.003348193640281914,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 12801814.044444444,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/belabox@%26srtlapatches%3D1%26lossmaxttl%3D200--M6@--production--slt:4001--fec:off--enhanced/run-2.json"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "cell_id": "irlserver-next@%26srtlapatches%3D1%26lossmaxttl%3D200--M1@--production--slt:4001--fec:off",
+        "scenario": "M1",
+        "lineage": "irlserver-next",
+        "sink": "slt",
+        "port": 4001,
+        "members": {
+          "enhanced": {
+            "n": 3,
+            "required": 2,
+            "settled": 3,
+            "joint_passes": 0,
+            "passed": false,
+            "failing_gates": [
+              "joint_settle_retransmit_quota",
+              "post_settle_zero_drop_belated"
+            ],
+            "observations": [
+              {
+                "run_index": 0,
+                "settled": true,
+                "retransmit_ratio": 0.10609184853216368,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 9096542.933333334,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-next@%26srtlapatches%3D1%26lossmaxttl%3D200--M1@--production--slt:4001--fec:off--enhanced/run-0.json"
+              },
+              {
+                "run_index": 1,
+                "settled": true,
+                "retransmit_ratio": 0.10843043995243758,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 9108006.755555555,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-next@%26srtlapatches%3D1%26lossmaxttl%3D200--M1@--production--slt:4001--fec:off--enhanced/run-1.json"
+              },
+              {
+                "run_index": 2,
+                "settled": true,
+                "retransmit_ratio": 0.13150959051198205,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 8906571.022222223,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-next@%26srtlapatches%3D1%26lossmaxttl%3D200--M1@--production--slt:4001--fec:off--enhanced/run-2.json"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "cell_id": "irlserver-next@%26srtlapatches%3D1%26lossmaxttl%3D200--M4@--production--slt:4001--fec:off",
+        "scenario": "M4",
+        "lineage": "irlserver-next",
+        "sink": "slt",
+        "port": 4001,
+        "members": {
+          "enhanced": {
+            "n": 3,
+            "required": 2,
+            "settled": 3,
+            "joint_passes": 2,
+            "passed": false,
+            "failing_gates": [
+              "post_settle_zero_drop_belated"
+            ],
+            "observations": [
+              {
+                "run_index": 0,
+                "settled": true,
+                "retransmit_ratio": 0.011750982848749298,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 7999700.8,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-next@%26srtlapatches%3D1%26lossmaxttl%3D200--M4@--production--slt:4001--fec:off--enhanced/run-0.json"
+              },
+              {
+                "run_index": 1,
+                "settled": true,
+                "retransmit_ratio": 0.01601639091449847,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 7999700.8,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-next@%26srtlapatches%3D1%26lossmaxttl%3D200--M4@--production--slt:4001--fec:off--enhanced/run-1.json"
+              },
+              {
+                "run_index": 2,
+                "settled": true,
+                "retransmit_ratio": 0.12377702869357889,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 7912493.866666666,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-next@%26srtlapatches%3D1%26lossmaxttl%3D200--M4@--production--slt:4001--fec:off--enhanced/run-2.json"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "cell_id": "irlserver-next@%26srtlapatches%3D1%26lossmaxttl%3D200--M6@--production--slt:4001--fec:off",
+        "scenario": "M6",
+        "lineage": "irlserver-next",
+        "sink": "slt",
+        "port": 4001,
+        "members": {
+          "enhanced": {
+            "n": 3,
+            "required": 2,
+            "settled": 3,
+            "joint_passes": 3,
+            "passed": false,
+            "failing_gates": [
+              "post_settle_zero_drop_belated"
+            ],
+            "observations": [
+              {
+                "run_index": 0,
+                "settled": true,
+                "retransmit_ratio": 0.0024808383011811755,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 12801814.044444444,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-next@%26srtlapatches%3D1%26lossmaxttl%3D200--M6@--production--slt:4001--fec:off--enhanced/run-0.json"
+              },
+              {
+                "run_index": 1,
+                "settled": true,
+                "retransmit_ratio": 0.003090932647282015,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 12801814.044444444,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-next@%26srtlapatches%3D1%26lossmaxttl%3D200--M6@--production--slt:4001--fec:off--enhanced/run-1.json"
+              },
+              {
+                "run_index": 2,
+                "settled": true,
+                "retransmit_ratio": 0.002961865975564606,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 12803451.733333332,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-next@%26srtlapatches%3D1%26lossmaxttl%3D200--M6@--production--slt:4001--fec:off--enhanced/run-2.json"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "cell_id": "irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--A@--production--slt:4001--fec:off",
+        "scenario": "A",
+        "lineage": "irlserver-prod",
+        "sink": "slt",
+        "port": 4001,
+        "members": {
+          "enhanced": {
+            "n": 5,
+            "required": 4,
+            "settled": 4,
+            "joint_passes": 1,
+            "passed": false,
+            "failing_gates": [
+              "joint_settle_retransmit_quota",
+              "post_settle_zero_drop_belated"
+            ],
+            "observations": [
+              {
+                "run_index": 0,
+                "settled": true,
+                "retransmit_ratio": 0.08771216468975453,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 20128834.133333333,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--A@--production--slt:4001--fec:off--enhanced/run-0.json"
+              },
+              {
+                "run_index": 1,
+                "settled": true,
+                "retransmit_ratio": 0.2766366794335085,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 12706828.08888889,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--A@--production--slt:4001--fec:off--enhanced/run-1.json"
+              },
+              {
+                "run_index": 2,
+                "settled": true,
+                "retransmit_ratio": 0.3314853139417874,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 11260748.8,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--A@--production--slt:4001--fec:off--enhanced/run-2.json"
+              },
+              {
+                "run_index": 3,
+                "settled": false,
+                "retransmit_ratio": 0.315039937256197,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 10189700.266666668,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--A@--production--slt:4001--fec:off--enhanced/run-3.failed-1.json"
+              },
+              {
+                "run_index": 4,
+                "settled": true,
+                "retransmit_ratio": 0.3144927806937258,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 11840490.666666666,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--A@--production--slt:4001--fec:off--enhanced/run-4.json"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "cell_id": "irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--B1@--production--slt:4001--fec:off",
+        "scenario": "B1",
+        "lineage": "irlserver-prod",
+        "sink": "slt",
+        "port": 4001,
+        "members": {
+          "enhanced": {
+            "n": 5,
+            "required": 4,
+            "settled": 5,
+            "joint_passes": 5,
+            "passed": false,
+            "failing_gates": [
+              "post_settle_zero_drop_belated"
+            ],
+            "observations": [
+              {
+                "run_index": 0,
+                "settled": true,
+                "retransmit_ratio": 0.002340207693432792,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 9601769.955555556,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--B1@--production--slt:4001--fec:off--enhanced/run-0.json"
+              },
+              {
+                "run_index": 1,
+                "settled": true,
+                "retransmit_ratio": 0.002290225124256895,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 9596856.888888888,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--B1@--production--slt:4001--fec:off--enhanced/run-1.json"
+              },
+              {
+                "run_index": 2,
+                "settled": true,
+                "retransmit_ratio": 0.0019989761341751787,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 9598494.577777777,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--B1@--production--slt:4001--fec:off--enhanced/run-2.json"
+              },
+              {
+                "run_index": 3,
+                "settled": true,
+                "retransmit_ratio": 0.0015599483267116777,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 9595219.2,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--B1@--production--slt:4001--fec:off--enhanced/run-3.json"
+              },
+              {
+                "run_index": 4,
+                "settled": true,
+                "retransmit_ratio": 0.05502074463757898,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 8545460.622222222,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--B1@--production--slt:4001--fec:off--enhanced/run-4.json"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "cell_id": "irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--G@--production--slt:4001--fec:off",
+        "scenario": "G",
+        "lineage": "irlserver-prod",
+        "sink": "slt",
+        "port": 4001,
+        "members": {
+          "enhanced": {
+            "n": 5,
+            "required": 4,
+            "settled": 5,
+            "joint_passes": 5,
+            "passed": false,
+            "failing_gates": [
+              "post_settle_zero_drop_belated"
+            ],
+            "observations": [
+              {
+                "run_index": 0,
+                "settled": true,
+                "retransmit_ratio": 0.005203423018347958,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 12803270.4,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--G@--production--slt:4001--fec:off--enhanced/run-0.json"
+              },
+              {
+                "run_index": 1,
+                "settled": true,
+                "retransmit_ratio": 0.005165570115817519,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 12803451.733333332,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--G@--production--slt:4001--fec:off--enhanced/run-1.json"
+              },
+              {
+                "run_index": 2,
+                "settled": true,
+                "retransmit_ratio": 0.006438401652953548,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 12805089.422222223,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--G@--production--slt:4001--fec:off--enhanced/run-2.json"
+              },
+              {
+                "run_index": 3,
+                "settled": true,
+                "retransmit_ratio": 0.006438164108618654,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 12801814.044444444,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--G@--production--slt:4001--fec:off--enhanced/run-3.json"
+              },
+              {
+                "run_index": 4,
+                "settled": true,
+                "retransmit_ratio": 0.0052099691466366135,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 12803451.733333332,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--G@--production--slt:4001--fec:off--enhanced/run-4.json"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "cell_id": "irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--M1@--production--slt:4001--fec:off",
+        "scenario": "M1",
+        "lineage": "irlserver-prod",
+        "sink": "slt",
+        "port": 4001,
+        "members": {
+          "enhanced": {
+            "n": 5,
+            "required": 4,
+            "settled": 5,
+            "joint_passes": 4,
+            "passed": false,
+            "failing_gates": [
+              "post_settle_zero_drop_belated"
+            ],
+            "observations": [
+              {
+                "run_index": 0,
+                "settled": true,
+                "retransmit_ratio": 0.09387237534032,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 8778012.444444444,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--M1@--production--slt:4001--fec:off--enhanced/run-0.json"
+              },
+              {
+                "run_index": 1,
+                "settled": true,
+                "retransmit_ratio": 0.1092048464632591,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 8955701.688888889,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--M1@--production--slt:4001--fec:off--enhanced/run-1.json"
+              },
+              {
+                "run_index": 2,
+                "settled": true,
+                "retransmit_ratio": 0.05044131679389313,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 9406884.977777775,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--M1@--production--slt:4001--fec:off--enhanced/run-2.json"
+              },
+              {
+                "run_index": 3,
+                "settled": true,
+                "retransmit_ratio": 0.09762715149166051,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 9059694.933333334,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--M1@--production--slt:4001--fec:off--enhanced/run-3.json"
+              },
+              {
+                "run_index": 4,
+                "settled": true,
+                "retransmit_ratio": 0.07887914923375575,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 9165325.866666667,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--M1@--production--slt:4001--fec:off--enhanced/run-4.json"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "cell_id": "irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--M4@--production--slt:4001--fec:off",
+        "scenario": "M4",
+        "lineage": "irlserver-prod",
+        "sink": "slt",
+        "port": 4001,
+        "members": {
+          "enhanced": {
+            "n": 5,
+            "required": 4,
+            "settled": 5,
+            "joint_passes": 5,
+            "passed": false,
+            "failing_gates": [
+              "post_settle_zero_drop_belated"
+            ],
+            "observations": [
+              {
+                "run_index": 0,
+                "settled": true,
+                "retransmit_ratio": 0.007773742026931254,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 7999700.8,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--M4@--production--slt:4001--fec:off--enhanced/run-0.json"
+              },
+              {
+                "run_index": 1,
+                "settled": true,
+                "retransmit_ratio": 0.009246734816063152,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 8000929.066666666,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--M4@--production--slt:4001--fec:off--enhanced/run-1.json"
+              },
+              {
+                "run_index": 2,
+                "settled": true,
+                "retransmit_ratio": 0.006886320357822949,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 7997244.266666667,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--M4@--production--slt:4001--fec:off--enhanced/run-2.json"
+              },
+              {
+                "run_index": 3,
+                "settled": true,
+                "retransmit_ratio": 0.006612036073534513,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 7996016.0,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--M4@--production--slt:4001--fec:off--enhanced/run-3.json"
+              },
+              {
+                "run_index": 4,
+                "settled": true,
+                "retransmit_ratio": 0.00829956443539125,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 7999700.8,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--M4@--production--slt:4001--fec:off--enhanced/run-4.json"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "cell_id": "irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--M6@--production--slt:4001--fec:off",
+        "scenario": "M6",
+        "lineage": "irlserver-prod",
+        "sink": "slt",
+        "port": 4001,
+        "members": {
+          "enhanced": {
+            "n": 5,
+            "required": 4,
+            "settled": 5,
+            "joint_passes": 5,
+            "passed": false,
+            "failing_gates": [
+              "post_settle_zero_drop_belated"
+            ],
+            "observations": [
+              {
+                "run_index": 0,
+                "settled": true,
+                "retransmit_ratio": 0.0019635083819579515,
+                "zero_drop_belated": true,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 12803451.733333332,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--M6@--production--slt:4001--fec:off--enhanced/run-0.json"
+              },
+              {
+                "run_index": 1,
+                "settled": true,
+                "retransmit_ratio": 0.0018148484231189463,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 12801814.044444444,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--M6@--production--slt:4001--fec:off--enhanced/run-1.json"
+              },
+              {
+                "run_index": 2,
+                "settled": true,
+                "retransmit_ratio": 0.001963908548560418,
+                "zero_drop_belated": true,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 12805089.422222223,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--M6@--production--slt:4001--fec:off--enhanced/run-2.json"
+              },
+              {
+                "run_index": 3,
+                "settled": true,
+                "retransmit_ratio": 0.002019041973845071,
+                "zero_drop_belated": true,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 12801814.044444444,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--M6@--production--slt:4001--fec:off--enhanced/run-3.json"
+              },
+              {
+                "run_index": 4,
+                "settled": true,
+                "retransmit_ratio": 0.00163062612337169,
+                "zero_drop_belated": true,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 12801814.044444444,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--M6@--production--slt:4001--fec:off--enhanced/run-4.json"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "cell_id": "ours-new@--M1@--production--sls:4003--fec:off",
+        "scenario": "M1",
+        "lineage": "ours-new",
+        "sink": "sls",
+        "port": 4003,
+        "members": {
+          "enhanced": {
+            "n": 3,
+            "required": 2,
+            "settled": 3,
+            "joint_passes": 0,
+            "passed": false,
+            "failing_gates": [
+              "retransmit_unknown",
+              "joint_settle_retransmit_quota"
+            ],
+            "observations": [
+              {
+                "run_index": 0,
+                "settled": true,
+                "retransmit_ratio": null,
+                "zero_drop_belated": null,
+                "starvation_floor": null,
+                "sink": "sls",
+                "conformance": true,
+                "goodput_bps": 9035928.47561719,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/ours-new@--M1@--production--sls:4003--fec:off--enhanced/run-0.json"
+              },
+              {
+                "run_index": 1,
+                "settled": true,
+                "retransmit_ratio": null,
+                "zero_drop_belated": null,
+                "starvation_floor": null,
+                "sink": "sls",
+                "conformance": true,
+                "goodput_bps": 9061154.100397063,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/ours-new@--M1@--production--sls:4003--fec:off--enhanced/run-1.json"
+              },
+              {
+                "run_index": 2,
+                "settled": true,
+                "retransmit_ratio": null,
+                "zero_drop_belated": null,
+                "starvation_floor": null,
+                "sink": "sls",
+                "conformance": true,
+                "goodput_bps": 9033097.04098715,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/ours-new@--M1@--production--sls:4003--fec:off--enhanced/run-2.json"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "cell_id": "ours-new@--M4@--production--sls:4003--fec:off",
+        "scenario": "M4",
+        "lineage": "ours-new",
+        "sink": "sls",
+        "port": 4003,
+        "members": {
+          "enhanced": {
+            "n": 3,
+            "required": 2,
+            "settled": 3,
+            "joint_passes": 0,
+            "passed": false,
+            "failing_gates": [
+              "retransmit_unknown",
+              "joint_settle_retransmit_quota"
+            ],
+            "observations": [
+              {
+                "run_index": 0,
+                "settled": true,
+                "retransmit_ratio": null,
+                "zero_drop_belated": null,
+                "starvation_floor": null,
+                "sink": "sls",
+                "conformance": true,
+                "goodput_bps": 7998286.389429717,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/ours-new@--M4@--production--sls:4003--fec:off--enhanced/run-0.json"
+              },
+              {
+                "run_index": 1,
+                "settled": true,
+                "retransmit_ratio": null,
+                "zero_drop_belated": null,
+                "starvation_floor": null,
+                "sink": "sls",
+                "conformance": true,
+                "goodput_bps": 7997722.246177319,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/ours-new@--M4@--production--sls:4003--fec:off--enhanced/run-1.json"
+              },
+              {
+                "run_index": 2,
+                "settled": true,
+                "retransmit_ratio": null,
+                "zero_drop_belated": null,
+                "starvation_floor": null,
+                "sink": "sls",
+                "conformance": true,
+                "goodput_bps": 8001444.15153776,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/ours-new@--M4@--production--sls:4003--fec:off--enhanced/run-2.json"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "cell_id": "ours-new@--M6@--production--sls:4003--fec:off",
+        "scenario": "M6",
+        "lineage": "ours-new",
+        "sink": "sls",
+        "port": 4003,
+        "members": {
+          "enhanced": {
+            "n": 3,
+            "required": 2,
+            "settled": 3,
+            "joint_passes": 0,
+            "passed": false,
+            "failing_gates": [
+              "retransmit_unknown",
+              "joint_settle_retransmit_quota"
+            ],
+            "observations": [
+              {
+                "run_index": 0,
+                "settled": true,
+                "retransmit_ratio": null,
+                "zero_drop_belated": null,
+                "starvation_floor": null,
+                "sink": "sls",
+                "conformance": true,
+                "goodput_bps": 12805484.904825144,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/ours-new@--M6@--production--sls:4003--fec:off--enhanced/run-0.json"
+              },
+              {
+                "run_index": 1,
+                "settled": true,
+                "retransmit_ratio": null,
+                "zero_drop_belated": null,
+                "starvation_floor": null,
+                "sink": "sls",
+                "conformance": true,
+                "goodput_bps": 12802968.181617027,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/ours-new@--M6@--production--sls:4003--fec:off--enhanced/run-1.json"
+              },
+              {
+                "run_index": 2,
+                "settled": true,
+                "retransmit_ratio": null,
+                "zero_drop_belated": null,
+                "starvation_floor": null,
+                "sink": "sls",
+                "conformance": true,
+                "goodput_bps": 12803477.13748479,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/ours-new@--M6@--production--sls:4003--fec:off--enhanced/run-2.json"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "cell_id": "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--M1@--production--slt:4001--fec:off",
+        "scenario": "M1",
+        "lineage": "ours-old",
+        "sink": "slt",
+        "port": 4001,
+        "members": {
+          "enhanced": {
+            "n": 3,
+            "required": 2,
+            "settled": 3,
+            "joint_passes": 0,
+            "passed": false,
+            "failing_gates": [
+              "joint_settle_retransmit_quota",
+              "post_settle_zero_drop_belated"
+            ],
+            "observations": [
+              {
+                "run_index": 0,
+                "settled": true,
+                "retransmit_ratio": 0.2410746790282261,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 7552553.244444445,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--M1@--production--slt:4001--fec:off--enhanced/run-0.json"
+              },
+              {
+                "run_index": 1,
+                "settled": true,
+                "retransmit_ratio": 0.2474073557932388,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 7895532.088888889,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--M1@--production--slt:4001--fec:off--enhanced/run-1.json"
+              },
+              {
+                "run_index": 2,
+                "settled": true,
+                "retransmit_ratio": 0.2338186829648271,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 7914365.511111111,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--M1@--production--slt:4001--fec:off--enhanced/run-2.json"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "cell_id": "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--M4@--production--slt:4001--fec:off",
+        "scenario": "M4",
+        "lineage": "ours-old",
+        "sink": "slt",
+        "port": 4001,
+        "members": {
+          "enhanced": {
+            "n": 3,
+            "required": 2,
+            "settled": 3,
+            "joint_passes": 0,
+            "passed": false,
+            "failing_gates": [
+              "joint_settle_retransmit_quota",
+              "post_settle_zero_drop_belated"
+            ],
+            "observations": [
+              {
+                "run_index": 0,
+                "settled": true,
+                "retransmit_ratio": 0.2696575682382134,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 7261512.533333333,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--M4@--production--slt:4001--fec:off--enhanced/run-0.json"
+              },
+              {
+                "run_index": 1,
+                "settled": true,
+                "retransmit_ratio": 0.19213785253076365,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 7643152.533333333,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--M4@--production--slt:4001--fec:off--enhanced/run-1.json"
+              },
+              {
+                "run_index": 2,
+                "settled": true,
+                "retransmit_ratio": 0.18574853745084877,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 7858450.133333334,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--M4@--production--slt:4001--fec:off--enhanced/run-2.json"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "cell_id": "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--M6@--production--slt:4001--fec:off",
+        "scenario": "M6",
+        "lineage": "ours-old",
+        "sink": "slt",
+        "port": 4001,
+        "members": {
+          "enhanced": {
+            "n": 3,
+            "required": 2,
+            "settled": 3,
+            "joint_passes": 3,
+            "passed": false,
+            "failing_gates": [
+              "post_settle_zero_drop_belated"
+            ],
+            "observations": [
+              {
+                "run_index": 0,
+                "settled": true,
+                "retransmit_ratio": 0.007386803227351435,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 12801346.133333333,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--M6@--production--slt:4001--fec:off--enhanced/run-0.json"
+              },
+              {
+                "run_index": 1,
+                "settled": true,
+                "retransmit_ratio": 0.002831812545114661,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 12804153.6,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--M6@--production--slt:4001--fec:off--enhanced/run-1.json"
+              },
+              {
+                "run_index": 2,
+                "settled": true,
+                "retransmit_ratio": 0.0030337785341670058,
+                "zero_drop_belated": false,
+                "starvation_floor": true,
+                "sink": "slt",
+                "conformance": null,
+                "goodput_bps": 12801346.133333333,
+                "source": "/home/andres/.cache/opencode/tmp/opencode/m4b-measurement/results/ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--M6@--production--slt:4001--fec:off--enhanced/run-2.json"
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "passes_per_member": {
+      "enhanced": 0
+    },
+    "swap": null,
+    "failures": [
+      {
+        "cell_id": "belabox@%26srtlapatches%3D1%26lossmaxttl%3D200--M1@--production--slt:4001--fec:off",
+        "scenario": "M1",
+        "lineage": "belabox",
+        "sink": "slt",
+        "port": 4001,
+        "reason": "lineage gate",
+        "failing_gates": {
+          "enhanced": [
+            "joint_settle_retransmit_quota",
+            "post_settle_zero_drop_belated"
+          ]
+        }
+      },
+      {
+        "cell_id": "belabox@%26srtlapatches%3D1%26lossmaxttl%3D200--M4@--production--slt:4001--fec:off",
+        "scenario": "M4",
+        "lineage": "belabox",
+        "sink": "slt",
+        "port": 4001,
+        "reason": "lineage gate",
+        "failing_gates": {
+          "enhanced": [
+            "post_settle_zero_drop_belated"
+          ]
+        }
+      },
+      {
+        "cell_id": "belabox@%26srtlapatches%3D1%26lossmaxttl%3D200--M6@--production--slt:4001--fec:off",
+        "scenario": "M6",
+        "lineage": "belabox",
+        "sink": "slt",
+        "port": 4001,
+        "reason": "lineage gate",
+        "failing_gates": {
+          "enhanced": [
+            "post_settle_zero_drop_belated"
+          ]
+        }
+      },
+      {
+        "cell_id": "irlserver-next@%26srtlapatches%3D1%26lossmaxttl%3D200--M1@--production--slt:4001--fec:off",
+        "scenario": "M1",
+        "lineage": "irlserver-next",
+        "sink": "slt",
+        "port": 4001,
+        "reason": "lineage gate",
+        "failing_gates": {
+          "enhanced": [
+            "joint_settle_retransmit_quota",
+            "post_settle_zero_drop_belated"
+          ]
+        }
+      },
+      {
+        "cell_id": "irlserver-next@%26srtlapatches%3D1%26lossmaxttl%3D200--M4@--production--slt:4001--fec:off",
+        "scenario": "M4",
+        "lineage": "irlserver-next",
+        "sink": "slt",
+        "port": 4001,
+        "reason": "lineage gate",
+        "failing_gates": {
+          "enhanced": [
+            "post_settle_zero_drop_belated"
+          ]
+        }
+      },
+      {
+        "cell_id": "irlserver-next@%26srtlapatches%3D1%26lossmaxttl%3D200--M6@--production--slt:4001--fec:off",
+        "scenario": "M6",
+        "lineage": "irlserver-next",
+        "sink": "slt",
+        "port": 4001,
+        "reason": "lineage gate",
+        "failing_gates": {
+          "enhanced": [
+            "post_settle_zero_drop_belated"
+          ]
+        }
+      },
+      {
+        "cell_id": "irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--A@--production--slt:4001--fec:off",
+        "scenario": "A",
+        "lineage": "irlserver-prod",
+        "sink": "slt",
+        "port": 4001,
+        "reason": "lineage gate",
+        "failing_gates": {
+          "enhanced": [
+            "joint_settle_retransmit_quota",
+            "post_settle_zero_drop_belated"
+          ]
+        }
+      },
+      {
+        "cell_id": "irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--B1@--production--slt:4001--fec:off",
+        "scenario": "B1",
+        "lineage": "irlserver-prod",
+        "sink": "slt",
+        "port": 4001,
+        "reason": "lineage gate",
+        "failing_gates": {
+          "enhanced": [
+            "post_settle_zero_drop_belated"
+          ]
+        }
+      },
+      {
+        "cell_id": "irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--G@--production--slt:4001--fec:off",
+        "scenario": "G",
+        "lineage": "irlserver-prod",
+        "sink": "slt",
+        "port": 4001,
+        "reason": "lineage gate",
+        "failing_gates": {
+          "enhanced": [
+            "post_settle_zero_drop_belated"
+          ]
+        }
+      },
+      {
+        "cell_id": "irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--M1@--production--slt:4001--fec:off",
+        "scenario": "M1",
+        "lineage": "irlserver-prod",
+        "sink": "slt",
+        "port": 4001,
+        "reason": "lineage gate",
+        "failing_gates": {
+          "enhanced": [
+            "post_settle_zero_drop_belated"
+          ]
+        }
+      },
+      {
+        "cell_id": "irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--M4@--production--slt:4001--fec:off",
+        "scenario": "M4",
+        "lineage": "irlserver-prod",
+        "sink": "slt",
+        "port": 4001,
+        "reason": "lineage gate",
+        "failing_gates": {
+          "enhanced": [
+            "post_settle_zero_drop_belated"
+          ]
+        }
+      },
+      {
+        "cell_id": "irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--M6@--production--slt:4001--fec:off",
+        "scenario": "M6",
+        "lineage": "irlserver-prod",
+        "sink": "slt",
+        "port": 4001,
+        "reason": "lineage gate",
+        "failing_gates": {
+          "enhanced": [
+            "post_settle_zero_drop_belated"
+          ]
+        }
+      },
+      {
+        "cell_id": "ours-new@--M1@--production--sls:4003--fec:off",
+        "scenario": "M1",
+        "lineage": "ours-new",
+        "sink": "sls",
+        "port": 4003,
+        "reason": "lineage gate",
+        "failing_gates": {
+          "enhanced": [
+            "retransmit_unknown",
+            "joint_settle_retransmit_quota"
+          ]
+        }
+      },
+      {
+        "cell_id": "ours-new@--M4@--production--sls:4003--fec:off",
+        "scenario": "M4",
+        "lineage": "ours-new",
+        "sink": "sls",
+        "port": 4003,
+        "reason": "lineage gate",
+        "failing_gates": {
+          "enhanced": [
+            "retransmit_unknown",
+            "joint_settle_retransmit_quota"
+          ]
+        }
+      },
+      {
+        "cell_id": "ours-new@--M6@--production--sls:4003--fec:off",
+        "scenario": "M6",
+        "lineage": "ours-new",
+        "sink": "sls",
+        "port": 4003,
+        "reason": "lineage gate",
+        "failing_gates": {
+          "enhanced": [
+            "retransmit_unknown",
+            "joint_settle_retransmit_quota"
+          ]
+        }
+      },
+      {
+        "cell_id": "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--M1@--production--slt:4001--fec:off",
+        "scenario": "M1",
+        "lineage": "ours-old",
+        "sink": "slt",
+        "port": 4001,
+        "reason": "lineage gate",
+        "failing_gates": {
+          "enhanced": [
+            "joint_settle_retransmit_quota",
+            "post_settle_zero_drop_belated"
+          ]
+        }
+      },
+      {
+        "cell_id": "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--M4@--production--slt:4001--fec:off",
+        "scenario": "M4",
+        "lineage": "ours-old",
+        "sink": "slt",
+        "port": 4001,
+        "reason": "lineage gate",
+        "failing_gates": {
+          "enhanced": [
+            "joint_settle_retransmit_quota",
+            "post_settle_zero_drop_belated"
+          ]
+        }
+      },
+      {
+        "cell_id": "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--M6@--production--slt:4001--fec:off",
+        "scenario": "M6",
+        "lineage": "ours-old",
+        "sink": "slt",
+        "port": 4001,
+        "reason": "lineage gate",
+        "failing_gates": {
+          "enhanced": [
+            "post_settle_zero_drop_belated"
+          ]
+        }
+      }
+    ]
+  },
+  "lineage_gate_swap": null
+}

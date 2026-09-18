@@ -44,6 +44,10 @@ pub fn enabled(campaign: &str) -> bool {
     matches!(campaign, "twinport-default" | "twinport-legacy-l2")
 }
 
+pub fn measures_player(campaign: &str) -> bool {
+    enabled(campaign) || campaign == "m4b-lineages"
+}
+
 pub fn attempt_budget(reason: Option<&str>) -> u32 {
     match reason {
         None | Some("player_leg_invalid") => 2,
@@ -82,6 +86,7 @@ pub fn begin(request: &Request, profile: &Profile, stack: &Stack) -> Result<Star
         .manifest
         .campaign
         .strip_prefix("twinport-")
+        .or_else(|| (request.manifest.campaign == "m4b-lineages").then_some("default"))
         .context("campaign")?;
     let override_value = std::env::var("SLS_BONDED_PROFILE_OVERRIDE").ok();
     ensure!(
@@ -178,7 +183,9 @@ pub fn finish(request: &Request, profile: &Profile, stack: &Stack, start: Start)
             "sls_override": std::env::var("SLS_BONDED_PROFILE_OVERRIDE").ok(),
         }),
     )?;
-    ensure!(player_leg_valid, RunFailure::PlayerLegInvalid);
+    if enabled(&request.manifest.campaign) {
+        ensure!(player_leg_valid, RunFailure::PlayerLegInvalid);
+    }
     ensure!(start.settled, RunFailure::SettleTimeout);
     Ok(())
 }
@@ -207,6 +214,14 @@ fn player_leg_requires_all_three_predicates_at_the_exact_boundary() {
         }
         .valid(9_600_000)
     );
+}
+
+#[test]
+fn lineage_measurement_has_settling_without_twinport_retries() {
+    assert!(measures_player("m4b-lineages"));
+    assert!(!enabled("m4b-lineages"));
+    assert!(measures_player("twinport-default"));
+    assert!(!measures_player("sls-conformance-smoke"));
 }
 
 #[test]

@@ -825,6 +825,25 @@ no new live run or scheduler change was used to obtain the scoped pass.
 
 ### Statistical reports and retention decisions
 
+#### Authoritative verdict and lineage gate (Todo 34)
+
+The authoritative primary verdict is unchanged after the empty defect round:
+enhanced alone, with zero genuine coverage. Fold-in is skipped, not a ranking
+code change. The bounded lineage gate measures18 cells/66 runs, including the
+distinct SLS4003 block, without re-running M4a or expanding the ship set.
+It records real passing-cell counts and sacrifices even though a single member
+makes the base swap impossible. SLS's missing received-packet denominator cannot
+prove the retransmission limit; it remains unknown/failing, never zero-filled.
+See the [frozen lineage method](docs/evidence/bpc/m4/lineage-method.md).
+This evidence decision changes neither production defaults nor shipping acceptance.
+Measured66/66indices (65settled) in1h30m17s active service time,1h32m59s elapsed.
+The checkpoint continuation preserved all48 earlier outcomes; no measured retry.
+Enhanced passes0/18lineage cells, swapnull; all18are explicitly sacrificed, in
+addition to the19primary sacrifices. All15SLTcells fail zero-drop/belated; all9SLS
+conformance runs pass but retransmission fractions remainunknown. The full feature
+gates still fail the known adaptiveG/twin assertions. Complete results and retained
+orchestration/checker-correction receipts: [M4 final evidence](docs/evidence/bpc/m4/README.md).
+
 #### M4 provisional ours-new matrix
 
 **Bounded defect round (Todo 33):** no scheduler repair met all five admission
@@ -843,8 +862,8 @@ not a test of the periodic-NAK gate. The preflight validator checks exact scope.
 `decide.py --rule lineage-d1 --summaries <summary.json> --out <verdict.json>`
 applies the new frozen base-agnostic rule, including post-settle metrics-v2 gates
 and explicit sacrificed cells. This is distinct from the historical `d1` below.
-Results are provisional; Todo34 owns the authoritative rerun, lineage gate and
-reserved4003 block. All546 metric indices and two soaks completed in12h43m28s.
+These Todo20 results were provisional; Todo34's authoritative rerun, lineage gate
+and reserved4003 block are recorded above. All546 metric indices and two soaks completed in12h43m28s.
 The frozen rule selected enhanced **only as its empty-set fallback**:0% coverage,
 19 sacrificed scenarios, and D explicitly exempt after all five failed coverage.
 No primary mode/scenario cell passed the strict zero-drop/belated all-runs gate.

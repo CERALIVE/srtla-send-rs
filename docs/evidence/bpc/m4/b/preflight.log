@@ -1,0 +1,40 @@
+OK (a): privileged commands available via sudo -n
+OK (b): all required and optional tools found
+/home/andres/.cache/opencode/tmp/opencode/m3-interop-measurement/released/usr/bin/srtla_send: OK
+/home/andres/.cache/opencode/tmp/opencode/m3-interop-measurement/srtla-send-rs_3.3.0_amd64.deb: OK
+/home/andres/.cache/opencode/tmp/srtla-bench/lineage/belabox-srtla_rec: OK
+/home/andres/.cache/opencode/tmp/srtla-bench/lineage/belabox-srtla_send: OK
+/home/andres/.cache/opencode/tmp/srtla-bench/lineage/ceralive-srtla_rec: OK
+/home/andres/.cache/opencode/tmp/srtla-bench/lineage/irlserver-next/lib/libsrt.so: OK
+/home/andres/.cache/opencode/tmp/srtla-bench/lineage/irlserver-next/lib/libsrt.so.1.5: OK
+/home/andres/.cache/opencode/tmp/srtla-bench/lineage/irlserver-next/lib/libsrt.so.1.5.6: OK
+/home/andres/.cache/opencode/tmp/srtla-bench/lineage/irlserver-next/srt-sink-min: OK
+/home/andres/.cache/opencode/tmp/srtla-bench/lineage/irlserver-prod/lib/libsrt.so: OK
+/home/andres/.cache/opencode/tmp/srtla-bench/lineage/irlserver-prod/lib/libsrt.so.1.5: OK
+/home/andres/.cache/opencode/tmp/srtla-bench/lineage/irlserver-prod/lib/libsrt.so.1.5.5: OK
+/home/andres/.cache/opencode/tmp/srtla-bench/lineage/irlserver-prod/srt-sink-min: OK
+/home/andres/.cache/opencode/tmp/srtla-bench/lineage/irlserver-srtla_rec: OK
+/home/andres/.cache/opencode/tmp/srtla-bench/lineage/irlserver-srtla_send: OK
+/home/andres/.cache/opencode/tmp/srtla-bench/lineage/ours-new/lib/libsrt.so: OK
+/home/andres/.cache/opencode/tmp/srtla-bench/lineage/ours-new/lib/libsrt.so.1.5: OK
+/home/andres/.cache/opencode/tmp/srtla-bench/lineage/ours-new/lib/libsrt.so.1.5.7: OK
+/home/andres/.cache/opencode/tmp/srtla-bench/lineage/ours-new/srt-live-transmit: OK
+/home/andres/.cache/opencode/tmp/srtla-bench/lineage/ours-old/lib/libsrt.so: OK
+/home/andres/.cache/opencode/tmp/srtla-bench/lineage/ours-old/lib/libsrt.so.1.5: OK
+/home/andres/.cache/opencode/tmp/srtla-bench/lineage/ours-old/lib/libsrt.so.1.5.6: OK
+/home/andres/.cache/opencode/tmp/srtla-bench/lineage/ours-old/srt-live-transmit: OK
+/home/andres/.cache/opencode/tmp/srtla-bench/lineage/task36-srtla_send-bd8bb7a25037b613026fc222612ffda2710fa2985355bbd82b201530e1c0fe57: OK
+/mnt/development/ceralive/.worktrees/irl-srt-server-bonded-path-convergence/build/CMakeCache.txt: OK
+/mnt/development/ceralive/.worktrees/irl-srt-server-bonded-path-convergence/build/srt-prefix/lib/libsrt.so.1.5.7: OK
+/mnt/development/ceralive/.worktrees/srtla-send-rs-adaptive-scheduler/target/m3-srtla_send: OK
+/mnt/development/ceralive/.worktrees/srtla-send-rs-adaptive-scheduler/target/m4-srtla_send: OK
+WARN (g): belabox: srt-sink-min requires a harness CLI/output adapter
+WARN (g): irlserver-next: srt-sink-min requires a harness CLI/output adapter
+WARN (g): irlserver-prod: srt-sink-min requires a harness CLI/output adapter
+WARN (g): ours-old: Pinned production source lacks the reorderfreeze URI row; this unmodified binary does not apply it. Do not grade as freeze-on.
+OK (g): every locked artifact SHA-256 verified (not campaign readiness)
+OK (c): kernel modules appear loadable
+OK (d): BENCH_ARTIFACT_DIR (/home/andres/.cache/opencode/tmp/opencode/m4b-measurement) has 20 GB free
+OK (e): repo filesystem (/mnt/development/ceralive/.worktrees/srtla-send-rs-adaptive-scheduler) has 16 GB free
+OK (f): SRTLA_REPO (/mnt/development/ceralive/srtla) contains receiver_main.cpp
+preflight: all checks passed

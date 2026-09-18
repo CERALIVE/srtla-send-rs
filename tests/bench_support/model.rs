@@ -29,7 +29,13 @@ impl Manifest {
     pub fn retains_measured_timeouts(&self) -> bool {
         matches!(
             self.campaign.as_str(),
-            "m1-ttl" | "m2-sender" | "m3-interop" | "m4a-ours-new" | "m4-soak" | "m4-resume-smoke"
+            "m1-ttl"
+                | "m2-sender"
+                | "m3-interop"
+                | "m4a-ours-new"
+                | "m4-soak"
+                | "m4-resume-smoke"
+                | "m4b-lineages"
         )
     }
 }

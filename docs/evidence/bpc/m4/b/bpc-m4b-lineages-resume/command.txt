@@ -1,0 +1,1 @@
+taskset -c 4-27 timeout --foreground --kill-after=30s 21600s target/m4b-bench_scheduler --ignored --exact --nocapture campaign

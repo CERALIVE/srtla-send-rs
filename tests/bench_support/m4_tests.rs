@@ -1,6 +1,26 @@
 use crate::manifest;
 
 #[test]
+fn m4b_retains_all_66_lineage_outcomes_without_covering_cells() {
+    let manifest = manifest::parse(include_str!(
+        "../../scripts/bench/manifests/m4b-lineages.json"
+    ))
+    .unwrap();
+    assert_eq!(manifest.cells.len(), 18);
+    assert_eq!(manifest.order().len(), 66);
+    assert!(manifest.retains_measured_timeouts());
+    assert!(manifest.cells.iter().all(|cell| !cell.covering));
+    assert_eq!(
+        manifest
+            .cells
+            .iter()
+            .filter(|c| c.sink == "sls" && c.port == 4003)
+            .count(),
+        3
+    );
+}
+
+#[test]
 fn m4_manifest_retains_546_outcomes_and_separate_soaks() {
     let manifest = manifest::parse(include_str!(
         "../../scripts/bench/manifests/m4a-ours-new.json"

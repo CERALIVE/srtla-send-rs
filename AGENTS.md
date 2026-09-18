@@ -1,5 +1,30 @@
 # srtla-send-rs
 
+## AUTHORITATIVE VERDICT / LINEAGE GATE (Todo 34)
+
+The primary authoritative verdict is byte-identical to Todo20's provisional
+empty-set fallback: enhanced only, zero coverage; Todo33 contributes no reruns.
+`m4/foldin.json` skips code fold-in. The verdict-derived `m4b-lineages.json`
+contains18 noncovering cells/66 one-attempt runs, including the DISTINCT SLS4003
+block; M4a+M4b=128≤150. `m4b_manifest.py` validates exact scope. The runner retains
+full-window negative settling outcomes and captures SLS settling without adopting
+TWINPORT's retry/equivalence policy. `m4b_gate.py` records joint settle/retransmit
+quotas, all-runs applicable metrics-v2 gates and explicit lineage sacrifices;
+it can swap the base but never enlarge the ship set. Missing SLS retransmission
+denominator remains unknown/failing, not a fabricated zero. `decide.py`,
+`lineage_rule.py`, `report.py` and production scheduler sources are unchanged.
+Launch `run_m4b.sh` only through the durable systemd user-service recipe.
+Method: `docs/evidence/bpc/m4/lineage-method.md`; measurements are separate from
+shipping acceptance and do not waive the existing full-feature G/twin failures.
+Completed66/66indices (65settled) in5417s active service time,5579s elapsed,
+across original48indices and a checkpoint continuation18indices. First launcher
+omittedSLS_BIN; continuation resolved the locked server and preserved every prior
+receipt byte. Checker-only corrections matched catalogG45s and SLS actual elapsed
+windows; no measurement, scenario or gate was changed. Final enhanced0/18passes,
+swapnull,37sacrifices (19primary+18lineage). All15SLTcells fail zero-drop/belated;
+SLS9/9conformance passes but retransmit fraction remainsunknown. Full result and
+retained failure exits: `docs/evidence/bpc/m4/README.md`, `m4/b/` receipts.
+
 ## BOUNDED DEFECT ROUND (Todo 33)
 
 No scheduler correction was admitted after the M4 investigation. Passing claim

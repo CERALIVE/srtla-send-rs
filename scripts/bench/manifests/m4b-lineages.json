@@ -1,0 +1,384 @@
+{
+  "campaign": "m4b-lineages",
+  "seed": 20260913,
+  "cells": [
+    {
+      "cell_id": "irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--A@--production--slt:4001--fec:off",
+      "covering": false,
+      "variant": "",
+      "sink": "slt",
+      "metrics": "full",
+      "port": 4001,
+      "fec": false,
+      "candidate": "enhanced",
+      "scenario": "A",
+      "receiver": "irlserver-prod",
+      "srt_profile": "production",
+      "runs": 5
+    },
+    {
+      "cell_id": "irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--B1@--production--slt:4001--fec:off",
+      "covering": false,
+      "variant": "",
+      "sink": "slt",
+      "metrics": "full",
+      "port": 4001,
+      "fec": false,
+      "candidate": "enhanced",
+      "scenario": "B1",
+      "receiver": "irlserver-prod",
+      "srt_profile": "production",
+      "runs": 5
+    },
+    {
+      "cell_id": "irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--G@--production--slt:4001--fec:off",
+      "covering": false,
+      "variant": "",
+      "sink": "slt",
+      "metrics": "full",
+      "port": 4001,
+      "fec": false,
+      "candidate": "enhanced",
+      "scenario": "G",
+      "receiver": "irlserver-prod",
+      "srt_profile": "production",
+      "runs": 5
+    },
+    {
+      "cell_id": "irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--M1@--production--slt:4001--fec:off",
+      "covering": false,
+      "variant": "",
+      "sink": "slt",
+      "metrics": "full",
+      "port": 4001,
+      "fec": false,
+      "candidate": "enhanced",
+      "scenario": "M1",
+      "receiver": "irlserver-prod",
+      "srt_profile": "production",
+      "runs": 5
+    },
+    {
+      "cell_id": "irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--M4@--production--slt:4001--fec:off",
+      "covering": false,
+      "variant": "",
+      "sink": "slt",
+      "metrics": "full",
+      "port": 4001,
+      "fec": false,
+      "candidate": "enhanced",
+      "scenario": "M4",
+      "receiver": "irlserver-prod",
+      "srt_profile": "production",
+      "runs": 5
+    },
+    {
+      "cell_id": "irlserver-prod@%26srtlapatches%3D1%26lossmaxttl%3D200--M6@--production--slt:4001--fec:off",
+      "covering": false,
+      "variant": "",
+      "sink": "slt",
+      "metrics": "full",
+      "port": 4001,
+      "fec": false,
+      "candidate": "enhanced",
+      "scenario": "M6",
+      "receiver": "irlserver-prod",
+      "srt_profile": "production",
+      "runs": 5,
+      "priority_sidecar": [
+        {
+          "link": 0,
+          "priority": 0.2
+        },
+        {
+          "link": 1,
+          "priority": -0.2
+        }
+      ]
+    },
+    {
+      "cell_id": "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--M1@--production--slt:4001--fec:off",
+      "covering": false,
+      "variant": "",
+      "sink": "slt",
+      "metrics": "full",
+      "port": 4001,
+      "fec": false,
+      "candidate": "enhanced",
+      "scenario": "M1",
+      "receiver": "ours-old",
+      "srt_profile": "production",
+      "runs": 3
+    },
+    {
+      "cell_id": "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--M4@--production--slt:4001--fec:off",
+      "covering": false,
+      "variant": "",
+      "sink": "slt",
+      "metrics": "full",
+      "port": 4001,
+      "fec": false,
+      "candidate": "enhanced",
+      "scenario": "M4",
+      "receiver": "ours-old",
+      "srt_profile": "production",
+      "runs": 3
+    },
+    {
+      "cell_id": "ours-old@%26nakreport%3D1%26lossmaxttl%3D40%26reorderfreeze%3D0--M6@--production--slt:4001--fec:off",
+      "covering": false,
+      "variant": "",
+      "sink": "slt",
+      "metrics": "full",
+      "port": 4001,
+      "fec": false,
+      "candidate": "enhanced",
+      "scenario": "M6",
+      "receiver": "ours-old",
+      "srt_profile": "production",
+      "runs": 3,
+      "priority_sidecar": [
+        {
+          "link": 0,
+          "priority": 0.2
+        },
+        {
+          "link": 1,
+          "priority": -0.2
+        }
+      ]
+    },
+    {
+      "cell_id": "irlserver-next@%26srtlapatches%3D1%26lossmaxttl%3D200--M1@--production--slt:4001--fec:off",
+      "covering": false,
+      "variant": "",
+      "sink": "slt",
+      "metrics": "full",
+      "port": 4001,
+      "fec": false,
+      "candidate": "enhanced",
+      "scenario": "M1",
+      "receiver": "irlserver-next",
+      "srt_profile": "production",
+      "runs": 3
+    },
+    {
+      "cell_id": "irlserver-next@%26srtlapatches%3D1%26lossmaxttl%3D200--M4@--production--slt:4001--fec:off",
+      "covering": false,
+      "variant": "",
+      "sink": "slt",
+      "metrics": "full",
+      "port": 4001,
+      "fec": false,
+      "candidate": "enhanced",
+      "scenario": "M4",
+      "receiver": "irlserver-next",
+      "srt_profile": "production",
+      "runs": 3
+    },
+    {
+      "cell_id": "irlserver-next@%26srtlapatches%3D1%26lossmaxttl%3D200--M6@--production--slt:4001--fec:off",
+      "covering": false,
+      "variant": "",
+      "sink": "slt",
+      "metrics": "full",
+      "port": 4001,
+      "fec": false,
+      "candidate": "enhanced",
+      "scenario": "M6",
+      "receiver": "irlserver-next",
+      "srt_profile": "production",
+      "runs": 3,
+      "priority_sidecar": [
+        {
+          "link": 0,
+          "priority": 0.2
+        },
+        {
+          "link": 1,
+          "priority": -0.2
+        }
+      ]
+    },
+    {
+      "cell_id": "belabox@%26srtlapatches%3D1%26lossmaxttl%3D200--M1@--production--slt:4001--fec:off",
+      "covering": false,
+      "variant": "",
+      "sink": "slt",
+      "metrics": "full",
+      "port": 4001,
+      "fec": false,
+      "candidate": "enhanced",
+      "scenario": "M1",
+      "receiver": "belabox",
+      "srt_profile": "production",
+      "runs": 3
+    },
+    {
+      "cell_id": "belabox@%26srtlapatches%3D1%26lossmaxttl%3D200--M4@--production--slt:4001--fec:off",
+      "covering": false,
+      "variant": "",
+      "sink": "slt",
+      "metrics": "full",
+      "port": 4001,
+      "fec": false,
+      "candidate": "enhanced",
+      "scenario": "M4",
+      "receiver": "belabox",
+      "srt_profile": "production",
+      "runs": 3
+    },
+    {
+      "cell_id": "belabox@%26srtlapatches%3D1%26lossmaxttl%3D200--M6@--production--slt:4001--fec:off",
+      "covering": false,
+      "variant": "",
+      "sink": "slt",
+      "metrics": "full",
+      "port": 4001,
+      "fec": false,
+      "candidate": "enhanced",
+      "scenario": "M6",
+      "receiver": "belabox",
+      "srt_profile": "production",
+      "runs": 3,
+      "priority_sidecar": [
+        {
+          "link": 0,
+          "priority": 0.2
+        },
+        {
+          "link": 1,
+          "priority": -0.2
+        }
+      ]
+    },
+    {
+      "cell_id": "ours-new@--M1@--production--sls:4003--fec:off",
+      "covering": false,
+      "variant": "",
+      "sink": "sls",
+      "metrics": "none",
+      "port": 4003,
+      "fec": false,
+      "candidate": "enhanced",
+      "scenario": "M1",
+      "receiver": "ours-new",
+      "srt_profile": "production",
+      "runs": 3
+    },
+    {
+      "cell_id": "ours-new@--M4@--production--sls:4003--fec:off",
+      "covering": false,
+      "variant": "",
+      "sink": "sls",
+      "metrics": "none",
+      "port": 4003,
+      "fec": false,
+      "candidate": "enhanced",
+      "scenario": "M4",
+      "receiver": "ours-new",
+      "srt_profile": "production",
+      "runs": 3
+    },
+    {
+      "cell_id": "ours-new@--M6@--production--sls:4003--fec:off",
+      "covering": false,
+      "variant": "",
+      "sink": "sls",
+      "metrics": "none",
+      "port": 4003,
+      "fec": false,
+      "candidate": "enhanced",
+      "scenario": "M6",
+      "receiver": "ours-new",
+      "srt_profile": "production",
+      "runs": 3,
+      "priority_sidecar": [
+        {
+          "link": 0,
+          "priority": 0.2
+        },
+        {
+          "link": 1,
+          "priority": -0.2
+        }
+      ]
+    }
+  ],
+  "candidates": [
+    {
+      "label": "enhanced",
+      "args": [
+        "--mode",
+        "enhanced"
+      ],
+      "env": {},
+      "effective_config": {
+        "adaptive_features": [
+          "stall",
+          "loss",
+          "queue",
+          "deadline",
+          "rejoin",
+          "sole",
+          "pref",
+          "ratecap",
+          "quality"
+        ],
+        "adaptive_tuning": {
+          "stall_attempts": 32,
+          "loss_enter": 0.1,
+          "deadline_hold_fraction": 0.5,
+          "ratecap_loss_backoff": 0.85
+        }
+      },
+      "bin": "target/m4-srtla_send",
+      "candidate_class": "cli",
+      "stats_file": true,
+      "control_socket": true
+    }
+  ],
+  "receivers": [
+    {
+      "name": "irlserver-prod",
+      "kind": "irlserver",
+      "lineage": "irlserver-prod",
+      "listener_uri_extra": "&srtlapatches=1&lossmaxttl=200",
+      "bin": "lock:irlserver-prod",
+      "srt_live_transmit_bin": "lock:irlserver-prod"
+    },
+    {
+      "name": "ours-old",
+      "kind": "ceralive",
+      "lineage": "ours-old",
+      "listener_uri_extra": "&nakreport=1&lossmaxttl=40&reorderfreeze=0",
+      "bin": "lock:ours-old",
+      "srt_live_transmit_bin": "lock:ours-old"
+    },
+    {
+      "name": "irlserver-next",
+      "kind": "irlserver",
+      "lineage": "irlserver-next",
+      "listener_uri_extra": "&srtlapatches=1&lossmaxttl=200",
+      "bin": "lock:irlserver-next",
+      "srt_live_transmit_bin": "lock:irlserver-next"
+    },
+    {
+      "name": "belabox",
+      "kind": "belabox",
+      "lineage": "belabox",
+      "listener_uri_extra": "&srtlapatches=1&lossmaxttl=200",
+      "bin": "lock:belabox",
+      "srt_live_transmit_bin": "lock:belabox"
+    },
+    {
+      "name": "ours-new",
+      "kind": "ceralive",
+      "lineage": "ours-new",
+      "listener_uri_extra": "",
+      "bin": "lock:ours-new",
+      "srt_live_transmit_bin": "lock:ours-new"
+    }
+  ],
+  "caller_bin": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/ours-new/srt-live-transmit"
+}
