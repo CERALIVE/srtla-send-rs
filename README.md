@@ -44,6 +44,34 @@ is the frozen empty-covering-set fallback, NOT a performance-coverage win; the
 hardware canary is still pending. Shared health, deadline, weighting and probe
 mechanisms remain active, with the surviving selection trace unchanged.
 
+Why there is one scheduler, what the sender now reads from the receiver, and the
+measured per-mode record behind the retirement are in
+[`docs/adr/ADR-004-bonded-path-convergence.md`](docs/adr/ADR-004-bonded-path-convergence.md).
+
+#### Removed in 4.0.0
+
+| Surface | 3.3.0 | 4.0.0 |
+|---|---|---|
+| `--mode classic` / `rtt-threshold` / `edpf` / `adaptive` | selectable | clap error (exit 2) naming the release notes |
+| `set-mode` (JSON-RPC) with a retired value | applied | `-32602`, `error.data.kind: "retired_mode"` |
+| `mode <retired>` (stdin) | applied | error |
+| `--no-quality`, `--exploration`, `--rtt-delta-ms` | effective | accepted, ignored, one startup WARN each when supplied |
+| `--stall-deselect`, `--stall-min-in-flight`, `--stall-ack-stale-ms`, `--stall-reprobe-ms` | experimental | accepted, ignored, one startup WARN each when supplied |
+| `--earned-ack-window` | experimental, default OFF | parsed, inert (arrival-scoped ACK policy always applies) |
+| `quality on\|off`, `explore on\|off`, `rtt-delta N`, `set-quality`, `set-exploration`, `set-rtt-delta` | mutate config | succeed with `{"ok":true,"deprecated":true,"effect":"none"}`, no mutation |
+| `get-status.mode` | one of five strings | always `"enhanced"` (consumers must keep it typed as an open string) |
+| `@ceralive/srtla-send` `SCHEDULING_MODES` | five | `['enhanced']` (breaking for the binding) |
+| Everything else (positionals, `--bind-map`, telemetry schema 1, `hello.capabilities`) | — | unchanged |
+
+Nothing the CeraUI integration passes is affected: its spawn carries no `--mode` and
+issues no mode control write. **Rollback is reinstalling the released `3.3.0` `.deb`**
+(`srtla-send-rs_3.3.0_<arch>.deb`); no file format, sidecar or telemetry shape changed
+between the two, so a downgrade needs no migration.
+
+The additive surfaces that arrived with 4.0.0 — telemetry `receiver_nak_report`,
+`get-status.receiver`, and per-link `rexmit_forwarded` — are described under
+[Telemetry](#telemetry---stats-file-adr-001) and [Capability probe](#capability-probe).
+
 **The following pre-4.0.0 mode comparisons and experiment narratives are historical,
 not available mode choices or current CLI instructions.**
 
@@ -1560,11 +1588,26 @@ echo 'status' | socat - UNIX-CONNECT:/tmp/srtla.sock
 
 **EDPF Mode**: Earliest Delivery Path First over the shared admitted set. Its BLEST → IoDS → EDPF pipeline retains the static 50ms OWD guard, congestion escape, ordering reset, flat 1 Mbps bootstrap and velocity/BDP penalties. The shared multiplier supplies the existing loss-clamped effective-capacity input exactly once. State is owned per send-loop; exploration does not apply.
 
-## Experimental Scheduler-Hardening Flags
+## Experimental Scheduler-Hardening Flags (retired in 4.0.0)
 
-**Retired compatibility inputs as of Todo 32:** both flags and the three stall
-tunables remain accepted but are ignored. Enabling `--stall-deselect` emits one WARN
-per process. Shared health admission and arrival-scoped ACK policy always apply.
+**Accepted and ignored.** `--earned-ack-window`, `--stall-deselect`,
+`--stall-min-in-flight`, `--stall-ack-stale-ms` and `--stall-reprobe-ms` still parse
+so a 3.x invocation keeps starting, but none of them changes behaviour. The stall
+options warn once at startup when explicitly supplied; `--earned-ack-window` is
+silently inert. What replaced them is always on: shared health admission holds out and
+probes a stalled or degraded link instead of selecting it, and the arrival-scoped ACK
+policy grows only the link that earned an ACK. There is no way to re-enable the old
+mechanisms.
+
+**Hardware validation is still pending, just for the successor.** The original gate
+on these flags ("do not enable until run on a real Starlink + cellular bond") no
+longer has anything to gate. The bonded-path canary that replaces it — Enhanced vs the
+released 3.3.0 binary, two 30-minute arms, zero unrecovered links, zero stream drops,
+goodput ≥ 95% of 3.3.0 — has **not** been run (no rig on the bench host); see
+`docs/evidence/bpc/canary/canary.json` and `scripts/bench/canary/README.md`. Until it
+passes, do not describe the shared stall handling as hardware-validated. The former
+`#[ignore]`d `stall_deselect_real_starlink_repro` test no longer exists.
+
 The following descriptions record the superseded experimental mechanisms, not
 current behavior or a way to disable shared admission.
 
@@ -1578,9 +1621,9 @@ With the flag on, only the link that actually earned the ACK (the one whose sent
 
 The 15s `CONN_TIMEOUT` liveness check only reads inbound bytes (including keepalive echoes), so a link that keeps echoing keepalives while it silently stops carrying data still reads "connected" for a long time. `--stall-deselect` adds a selection-time penalty for that case: a link with a high in-flight packet count (`--stall-min-in-flight`, default 32) and no earned ACK/RTT sample within `--stall-ack-stale-ms` (default 3000ms) is excluded from selection for one tick, letting healthy links carry the traffic instead. A link is re-probed every `--stall-reprobe-ms` (default 1000ms) so a recovered link re-enters selection. This is a selection-time penalty only — it never re-registers, resets, or touches `CONN_TIMEOUT`/housekeeping. If every connected link is stalled, selection falls back to the normal (non-deselecting) path so a link is always returned.
 
-### Hardware-validation gate
+### Hardware-validation gate (historical wording)
 
-Both flags ship with unit and golden-trace tests proving flag-off behavior is byte-identical to the pre-flag code path, but neither has been exercised against a real bonded link (e.g. Starlink + cellular) outside this repo's test harness. Do not turn either flag on in production, and do not cite either flag as a proven improvement, until that hardware validation has run. See `docs/notes/sendmmsg-deferred.md`-style deferred-item tracking conventions for how this repo records unrun hardware gates, and the [workspace diagnosis](https://github.com/CERALIVE/ceralive/blob/master/docs/notes/srtla-starlink-lan-diagnosis.md) for the mechanism analysis both flags address.
+Both flags shipped with unit and golden-trace tests proving flag-off behavior was byte-identical to the pre-flag code path, but neither was exercised against a real bonded link (e.g. Starlink + cellular) outside this repo's test harness before retirement. The pending bonded-path canary above now carries that obligation for the shared-admission successor. See `docs/notes/sendmmsg-deferred.md`-style deferred-item tracking conventions for how this repo records unrun hardware gates, and the [workspace diagnosis](https://github.com/CERALIVE/ceralive/blob/master/docs/notes/srtla-starlink-lan-diagnosis.md) for the mechanism analysis both flags address.
 
 ## IP List Reload (Unix only)
 
@@ -1644,6 +1687,16 @@ write. It is a single newline-free object:
   unmapped (legacy) link — the sender only ever *echoes* an identity and never invents one.
 - `bind_map_status` / `disposition` — **optional**, top level. The sender's actual
   operating mode; see [Operating mode](#operating-mode-bind_map_status--disposition).
+- `receiver_nak_report` — **optional**, top level, after `disposition` (the final key
+  when present). The receiver's `SRTO_NAKREPORT` setting as observed in the SRT
+  handshake response (HSRSP) that passed through the sender: `true` means the
+  receiver sends periodic NAK reports, `false` means it does not. **Omitted when no
+  HSRSP has been observed** — never `null`, never a default `false`. A consumer that
+  needs a policy answer must read absent as NAK-on (`value ?? true`) while showing
+  "unknown" rather than "on". It is bond-wide (not per link) and survives reloads and
+  reconnects; the next valid handshake replaces it. It is an unauthenticated
+  observation, not a negotiated setting — the sender cannot change it. Rationale:
+  [`docs/adr/ADR-004-bonded-path-convergence.md`](docs/adr/ADR-004-bonded-path-convergence.md).
 
 ### Link identity: `conn_id` is transient, `link_id` is not
 
@@ -1847,11 +1900,27 @@ with.
 ```json
 {"mode":"enhanced","quality_enabled":true,"exploration_enabled":false,"rtt_delta_ms":30,
  "bind_map_status":{"state":"active"},"disposition":{"state":"mapped"},
- "links":[{"conn_id":"0","iface":"wwan0","link_id":"modem-a"}]}
+ "links":[{"conn_id":"0","iface":"wwan0","link_id":"modem-a","health":"healthy","rexmit_forwarded":12}],
+ "receiver":{"nak_report":true,"srt_version":"1.5.7","rexmit_flag":true},
+ "negotiated_latency_ms":2000}
 ```
 
-It also includes `negotiated_latency_ms` when a nonzero receiver delay has been
-sniffed from HSRSP; see [Negotiated SRT latency](#negotiated-srt-latency-passive-observation).
+- `links[].rexmit_forwarded` — always present, starts at `0`: the number of SRT DATA
+  packets forwarded on that link carrying the SRT retransmission bit. It is a
+  diagnostic for "how much of this link's traffic is the encoder re-sending" and it
+  never influences scheduling or window arithmetic; it is deliberately **not** in the
+  telemetry file. `health` and `priority` are optional, as in telemetry.
+- `receiver` — the bond-wide HSRSP observation: `nak_report` (periodic NAK reports
+  on/off), `srt_version` (`"M.m.p"`), `rexmit_flag`. Each key is omitted when unknown
+  and the object is `{}` before any handshake has passed through. Same fail-safe
+  reading as telemetry's `receiver_nak_report`: absent ⇒ assume NAK-on, display unknown.
+- `negotiated_latency_ms` — present once a nonzero receiver TSBPD delay has been
+  sniffed from HSRSP; see [Negotiated SRT latency](#negotiated-srt-latency-passive-observation).
+
+The `@ceralive/srtla-send` control binding types these through `controlStatusSchema`
+(`receiver`, `links[]`, `negotiated_latency_ms` are optional, `mode` is an open
+string, unknown keys pass through), so a consumer parses one shape across binary
+versions.
 
 ## Startup Without an IP List (Unix)
 
@@ -1945,6 +2014,8 @@ With properly configured connections, you should observe:
 - RTT measurements and connection quality metrics
 - Current mode and configuration
 - Last observed negotiated SRT receiver latency in milliseconds (unknown before HSRSP)
+- `receiver: nak_report=on|off|unknown srt=<version|unknown>` — the receiver's NAK policy as seen in the handshake
+- Per link: `rexmit_fwd=<n>` (SRT retransmissions forwarded on that link), `premature_naks=<n>` (NAKs suppressed by the in-flight rule), and the link's health/route axis
 
 **Debug logs** (when `RUST_LOG=debug`) show:
 

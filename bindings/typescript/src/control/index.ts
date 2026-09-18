@@ -6,7 +6,14 @@
  */
 import { type Telemetry, telemetrySchema } from '../telemetry/index.js';
 
-export { controlStatusSchema, type GetStatusResult } from './status.js';
+export {
+	type ControlLink,
+	type ControlReceiver,
+	controlLinkSchema,
+	controlReceiverSchema,
+	controlStatusSchema,
+	type GetStatusResult,
+} from './status.js';
 
 export const STATS_SUBSCRIPTION_CAPABILITY = 'stats-subscription';
 

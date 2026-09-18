@@ -1,5 +1,63 @@
 # srtla-send-rs
 
+## BONDED-PATH CONVERGENCE (2026-09)
+
+Decision record: [`docs/adr/ADR-004-bonded-path-convergence.md`](docs/adr/ADR-004-bonded-path-convergence.md)
+(Accepted). This section is the summary; the ADR carries the numbers and the
+rejected alternatives. The per-todo sections that follow are the working history.
+
+**Root cause (receiver-side, source-verified).** Stock libsrt inserts a sequence gap
+into the loss list immediately and `LOSSMAXTTL` only defers the FIRST report; the
+periodic NAK timer (`checkNAKTimer`, every `max((SRTT+4·RTTVar)/2, 20 ms)` under
+LiveCC) re-reports the WHOLE loss list and never consults the reorder tolerance, so a
+late packet on a slow bonded link is NAKed within one tick and its link is
+window-decremented (B1/C starvation under NAK-on). Under NAK-off the encoder's
+LiveCC FASTREXMIT retransmits every packet since the last ACK on each RTO (A/G:
+44–46% retransmissions). The receiver-side fix is the fresh-loss-gated periodic NAK
+(`SRTO_PERIODICNAKGATE`, CeraLive SRT fork, TTL200 + freeze). **Per-sender-lineage
+negotiation at the receiver is structurally impossible**: `srtla_rec` is
+libsrt-free and the SRT handshake terminates at the encoder, not the bonding sender.
+
+**Sender mechanisms (all landed, all mode-independent).**
+- HSRSP flag read (`src/protocol/srt_handshake.rs`, `src/receiver_handshake.rs`):
+  NAKREPORT bit 4 / REXMITFLG bit 5 / version, cached ONCE PER BOND under its own
+  lock in `SharedStats`; `nak_report_enabled()` is **fail-safe `None ⇒ NAK-on`**;
+  unknown is omitted on every public surface, never `null`/`false`.
+- In-flight NAK rule (`src/connection/ack_nak.rs`): threshold
+  `clamp(rtt_min/2, 5, 500)` ms from KERNEL-ACCEPT time (`DeliveryLedger::sent_ms`),
+  K-cap 3 consecutive suppressions per link, **inactive without a real RTT sample**
+  (threshold 0.0). No flag, no telemetry; `premature_naks` status-log-only. M2 kept
+  K=3: B1/C settle deltas 0.000, A/G no `>5%` disjoint-CI regression.
+- Retransmit counters (`rexmit_forwarded`, R-bit) are **observability only**:
+  status log + `get-status.links[].rexmit_forwarded`, never telemetry, never
+  scheduling. R-bit loss ATTRIBUTION was rejected because a NAK-off receiver still
+  sends the first gap-triggered loss report — the sender already gets one NAK per
+  genuine loss on either policy, and a retransmit on link X does not name the link
+  that lost the original.
+- Shared signal layer (`selection/admission.rs`, `signals.rs`, `shared.rs`): every
+  mode consumed every signal; modes were reduced to ranking formulas.
+
+**Matrix and sequence.** M1 receiver TTL spike → M2 sender-mechanism spike → M3
+four-quadrant interop → CI-width spike (N=5, 0.95) → M4 `ours-new` matrix (20
+scenarios × 5 CLI modes × N=5, frozen `lineage-d1` rule with blocking metrics-v2
+zero-drop/belated gates) → bounded defect round (five-predicate admission: **0
+admitted**) → fold-in (**skipped**, single member) → ablation pins (**skipped**,
+Enhanced has no switchable ingredient; all nine feature bits ON) → M4b lineage gate
+(Enhanced **0/18**) → M5 (**skipped**, base already Enhanced) → hardware canary
+(**pending**, no rig) → 4.0.0 retirement.
+
+**Verdict.** `ship_set=["enhanced"]`, `base_mode=enhanced`,
+`covered_by_base_pct=0.0` — the rule's pre-declared EMPTY-SET TERMINAL, not genuine
+coverage. 100/100 primary cells fail the zero-drop/belated gate; **37 sacrificed
+cells** (19 primary `uncovered` + 18 `lineage gate`); D exempt (all five fail).
+**Deleted in 4.0.0: classic, rtt-threshold, edpf, adaptive.** Per-cell goodput
+medians: Enhanced is the only mode at `1.000` on both B1 and B2 and has the best
+worst-cell (`0.898`, L); classic/rtt-threshold win more cells (8/5) but drop to
+`0.484`/`0.480` on B1; edpf's worst is G `0.356`; adaptive's is A `0.666`. Full
+pros/cons table: ADR-004 §11. **`src/sender/selection/` is fork-owned from 4.0.0** —
+upstream scheduler changes are triaged in the sync note, never merged in.
+Rollback is reinstalling released `3.3.0`.
+
 ## 4.0.0 SCHEDULER RETIREMENT (bonded-path convergence, Todo 21)
 
 This section supersedes the historical five-mode descriptions below. Enhanced
@@ -368,6 +426,13 @@ RTT). On the device it is driven by CeraUI and feeds the bonded path into
 > Upstream's default-on whole-bond receiver re-home remains DEFERRED after review found
 > socket-coherence and stale-reader-generation gaps, and its `4.0.1` bump was not imported:
 > the published fork release stays `3.3.0`.
+> **Bonded-path convergence landed (2026-09, ADR-004):** source `4.0.0` retires
+> classic/rtt-threshold/edpf/adaptive (Enhanced is the sole scheduler, by the frozen
+> `lineage-d1` rule's empty-set terminal, NOT genuine coverage); the sender reads the
+> receiver's HSRSP NAK policy (fail-safe NAK-on), gates premature NAKs on kernel-accept
+> age (K=3), and exposes `receiver_nak_report` / `get-status.receiver` /
+> `rexmit_forwarded` additively. Hardware canary PENDING; `3.3.0` remains the
+> published release and rollback artifact. See BONDED-PATH CONVERGENCE (2026-09).
 > CeraUI integration lands in follow-up tasks.
 
 **Relationship to `srtla/`:** this is the **sender** engine (Rust). The existing
@@ -580,7 +645,25 @@ CeraUI and the device integration depend on these staying stable:
   stays a string array** — the TS control binding feature-detects with
   `hello.capabilities.includes(...)`, so that field is frozen.
   `get-status` additionally returns `bind_map_status`, `disposition`, and a `links` array
-  of `{conn_id, iface?, link_id?}` in telemetry order.
+  of `{conn_id, iface?, link_id?, health?, priority?, rexmit_forwarded}` in telemetry
+  order, plus `receiver` and optional `negotiated_latency_ms` (next bullet).
+- **Receiver observation (ADR-004) — additive on THREE surfaces, `schema_version`
+  STAYS 1.** (a) Telemetry file/event: optional top-level `receiver_nak_report:
+  bool`, serialized AFTER `disposition` (it is the final key when present); omitted
+  when no HSRSP has been observed — never `null`, never `false`-by-default. (b)
+  `get-status.receiver`: `{nak_report?: bool, srt_version?: "M.m.p", rexmit_flag?:
+  bool}` — `{}` before any HSRSP, each key omitted when unknown; the object is the
+  serde projection of `ReceiverHandshake` (`src/receiver_handshake.rs`), do NOT
+  introduce a parallel type. (c) `get-status.links[].rexmit_forwarded: u64` — count
+  of SRT DATA forwarded on that link with the R bit set; REQUIRED in `links[]`
+  (always present, starts at 0), status-log-only otherwise and NEVER in the telemetry
+  file. Policy consumers MUST read unknown as NAK-on (`nak_report_enabled()` in Rust,
+  `value ?? true` in TS) while keeping unknown visibly distinct from `true` on every
+  rendered surface. The bond-scoped cache survives SIGHUP/re-registration; a later
+  valid HSRSP replaces it; a malformed handshake never clears it. Pinned by the
+  `telemetry-receiver-flags` fixture on both sides and `tests/negotiated_latency.rs`.
+  The TS control binding types these in `controlStatusSchema` (passthrough, so a
+  newer binary's extra keys survive).
 - **`-v/--version` IS operator-visible, and its build metadata is OPTIONAL.** CeraUI
   shells out to `srtla_send -v` and renders the raw stdout in Settings → Versions
   (`apps/backend/src/modules/system/revisions.ts`), so this line is read by humans, not
@@ -645,7 +728,8 @@ CeraUI and the device integration depend on these staying stable:
   distinguishable only by it. Pinned by the `telemetry-reordered` / `telemetry-reconnect`
   fixtures on both sides.
 - **Cross-language fixture matrix — Rust writes, TypeScript parses THE SAME BYTES.**
-  Nine fixtures, each committed twice (`tests/fixtures/<name>.json` and
+  Ten fixtures (the tenth, `telemetry-receiver-flags`, pins explicit
+  `receiver_nak_report:false`), each committed twice (`tests/fixtures/<name>.json` and
   `bindings/typescript/tests/fixtures/<name>.json`) and asserted byte-identical by
   `tests/telemetry_fixture_parity.rs`. The producer half is `tests/telemetry_fixtures.rs`
   (regenerate deliberately with `UPDATE_GOLDEN=1 cargo test --test telemetry_fixtures`,
@@ -2291,35 +2375,71 @@ both enums; adding any new verdict fails compilation. Gate:
 `cargo test --lib rate_cap` and `cargo clippy -- -D warnings`. This is pure policy
 coverage; no live-bond performance or runtime integration claim is implied.
 
-## CODEBASE (inherited from upstream)
+## CODEBASE (single scheduler + shared signal layer, 4.0.0)
 
 ```
 src/
   main.rs            CLI entry point (clap)
   lib.rs             library exports
-  config.rs / config/    runtime config (DynamicConfig, ConfigSnapshot); stdin + Unix-socket control
-  mode.rs            SchedulingMode (Classic | Enhanced | RttThreshold | Edpf | Adaptive)
+  config.rs / config/    runtime config (DynamicConfig, ConfigSnapshot, SchedulerFeatures);
+                     stdin + Unix-socket control; retired controls accepted + ignored
+  mode.rs            SchedulingMode — ONE variant, Enhanced; retired spellings are typed
+                     errors (`retired_mode`) naming docs/release-notes-4.0.0.md
+  adaptive_env.rs    test-build feature/tuning env (SRTLA_ADAPTIVE_FEATURES/_TUNING,
+                     premature-NAK bypass); release builds inline the shipped pins
+  receiver_handshake.rs  ReceiverHandshake: bond-scoped HSRSP observation
+                     (nak_report/srt_version/rexmit_flag), nak_report_enabled() fail-safe
   bind_map/          optional versioned bind-map sidecar (ADR-003): parser, coherence,
                      bounded retry, fail-open duplicate-safe resolution
     report.rs        telemetry projection of a Resolution (bind_map_status + disposition)
   capabilities.rs    --capabilities-json pre-spawn probe document
-  telemetry_doc.rs   ADR-001 document model + units + serializer (schema lives here)
+  jsonrpc.rs         JSON-RPC control methods: get-status (receiver, links[].rexmit_forwarded,
+                     negotiated_latency_ms), get-capabilities, set-link-priority, …
+  stats.rs           SharedStats / StatsSnapshot; SessionBytes; bind-map + receiver locks
+  telemetry_doc.rs   ADR-001 document model + units + serializer (schema lives here;
+                     optional receiver_nak_report tail)
   telemetry_file.rs  opt-in --stats-file publish mechanics (temp -> fsync -> rename)
   connection/        SrtlaConnection, bind/resolve, incoming packet handling, RTT (Kalman)
+    ack_nak.rs       ACK/NAK handling incl. the in-flight premature-NAK rule (K=3)
+    delivery.rs      DeliveryLedger — kernel-accept timestamps, DATA delivery proof
+    health.rs        HealthMachine (Down/Rejoining/Healthy/Degraded/Stalled), pure policy
+    loss.rs / rtt/   normal-DATA loss cohorts; Kalman RTT + 1s/30s minima queue detector
+    probe.rs         duplicate-DATA probe trains (bond-wide 10/s bucket)
+    rate_cap.rs      delivered-rate soft-cap controller (ranking multiplier)
+    transmit.rs / batch_send.rs  sendmmsg batch flush, accepted-prefix commit
     socket.rs        SourceIpBinder (legacy) + DeviceBinder (SO_BINDTODEVICE + source bind)
     spec.rs          UplinkSpec/SocketKey — link_id identity vs (ip, iface) socket key
     egress.rs        ifindex staleness: re-resolve, re-enumeration, ENODEV -> removed
     route.rs         read-only per-iface default-route observation (blackhole check)
-  protocol.rs        SRTLA protocol constants/structures
+  protocol/          SRTLA constants/structures, SrtSeq (31-bit modular),
+    srt_handshake.rs HSRSP parser (version, flags, TSBPD delay) — forwarding untouched
   registration.rs    REG1/REG2/REG3 flow + ID propagation
-  sender/            packet forwarding + selection/ (BLEST → IoDS → EDPF), status logging
+  sender/            packet forwarding, housekeeping, status logging
+    selection/       FORK-OWNED from 4.0.0 (upstream changes triaged, never merged)
+      mod.rs         dispatch: admission -> shared ranking -> Enhanced select
+      admission.rs   shared admission (Down excluded, held links = probe targets),
+                     lazy weight product quality × rejoin × preference × ratecap
+      signals.rs / shared.rs  per-link signal snapshot; loop-owned SchedulerShared
+      adaptive/      shared ranking/sole-election/preference machinery that Enhanced
+                     consumes (the retired Adaptive selector is gone; its layer is not)
+      enhanced.rs    the one production ranking formula (cooldown + 10% hysteresis)
+      quality.rs     NAK-decay quality multiplier
+      features.rs    SchedulerFeatures (9 bits, all ON; never on a public surface)
+      edpf.rs / blest.rs / iods.rs  RETAINED regression pipeline, no CLI dispatch
     links.rs         where the uplink set comes from (legacy ips file, or the bind-map pair)
     connections.rs   pool rebuild: dedup on socket key, survive on link_id
     egress_tick.rs   the per-tick egress re-resolution + route observation
+    packet_handler.rs  forward path; rexmit_forwarded (R-bit) counter; probe emission
   tests/             unit / integration / e2e / protocol / registration suites
 crates/network-sim/  dev-only network simulation harness (workspace member)
   twin/            duplicate-IP twin topology (NAT carrier per link), bind-map
                    sidecar publisher, and the twin process stack
+  bond/ profile/ scenarios/ metrics/  N-link bond fixtures, temporal profiles,
+                   the A–L + M1–M8 scenario catalog, RunRecord metrics schema
+scripts/bench/       campaign runner, report.py/decide.py/lineage_rule.py (frozen
+                     rules), manifests, canary kit
+docs/evidence/bpc/   portable bonded-path-convergence evidence (M1–M5, defects, verdict)
+docs/adr/ADR-004-bonded-path-convergence.md  the decision record for all of the above
 rust-toolchain.toml  pinned nightly (CERALIVE)
 rustfmt.toml         unstable nightly fmt config (edition 2024)
 ci/build-deb.sh      single-source .deb packager (control + filename + glob self-test)
@@ -2563,16 +2683,36 @@ The `bindings/typescript/` package uses Biome **2.5.9** via `@ceralive/biome-con
 
 **Golden fixtures are excluded from Biome** — `biome.json` sets `files.includes` to `["**", "!dist", "!**/tests/fixtures"]`. `tests/fixtures/telemetry-golden.json` is a deliberately byte-identical copy of the Rust producer golden (`tests/fixtures/telemetry-golden.json` at the crate root): the single-line, newline-free atomic-publish telemetry shape (ADR-001). If Biome pretty-prints it (multi-line + trailing newline), the cross-language parity test (`tests/telemetry_fixture_parity.rs` — `rust_and_ts_goldens_are_byte_identical` plus the newline-free assertion) fails every Rust test job in CI. **Do not remove this exclude, and never `biome check --write` the fixtures** — re-sync the two goldens by editing both byte-for-byte instead.
 
-## EXPERIMENTAL SCHEDULER-HARDENING FLAGS (consolidated-flows-and-satellite, Todos 14-15)
+## EXPERIMENTAL SCHEDULER-HARDENING FLAGS (consolidated-flows-and-satellite, Todos 14-15) — RETIRED, ACCEPTED-AND-IGNORED
+
+**Current contract (4.0.0, ADR-004).** `--earned-ack-window`, `--stall-deselect`,
+`--stall-min-in-flight`, `--stall-ack-stale-ms` and `--stall-reprobe-ms` are all
+**parsed, accepted, and have NO effect.** The stall four warn exactly once at startup
+when explicitly supplied (a value equal to the old default still counts as supplied;
+omitted options do not warn); `--earned-ack-window` is parsed default OFF and inert.
+The mechanisms they toggled are superseded, not disabled: shared health admission owns
+stall handling for every link (a Stalled/Degraded link is held out and probed, never
+selected), and the arrival-scoped ACK policy already grows only the link that earned an
+ACK. There is no way to re-enable the old mechanisms, and `SchedulerFeatures` bits are
+test-build-only. Do NOT remove the flags from clap: CeraUI does not pass them, but a
+hand-run invocation from a 3.x runbook must keep starting.
+
+**Hardware gate status.** The original gate ("do not enable in production until run on
+a real Starlink + cellular bond") is **moot for the flags** — nothing to enable — and
+**pending for the successor**: the bonded-path canary (`docs/evidence/bpc/canary/canary.json`,
+Enhanced survivor vs released 3.3.0, 2×1800 s) has NOT been run because the bench host
+has no rig. The formerly `#[ignore]`d `stall_deselect_real_starlink_repro` hardware test
+no longer exists (`cargo test --all-features stall_deselect_real_starlink_repro --
+--ignored` selects zero tests); `src/tests/stall_deselect_tests.rs` now asserts the
+flags are inert. Do not cite the shared-admission stall handling as hardware-validated
+until the canary passes.
 
 **Enhanced cooldown candidate (2026-09-16):** See [`docs/notes/enhanced-cooldown-evaluation-2026-09.md`](docs/notes/enhanced-cooldown-evaluation-2026-09.md) — unaccepted, behaviour reverted, tests retained.
 
-Two CLI flags harden the default `enhanced` mode against a satellite/LAN failure signature
-(a link that keeps a high scheduling weight while it silently degrades). Both are
-**`[EXPERIMENTAL]` in their `--help` text and default OFF everywhere** (CLI parse default,
-`DynamicConfig` atomic default, `ConfigSnapshot` default). Neither is validated against real
-bond hardware — see the HARDWARE-VALIDATION GATE below. Full operator-facing description:
-`README.md` → "Experimental Scheduler-Hardening Flags".
+**The following records the superseded mechanisms as they were designed (history, not
+current behaviour).** Two CLI flags hardened the then-default `enhanced` mode against a
+satellite/LAN failure signature (a link that keeps a high scheduling weight while it
+silently degrades). Both were `[EXPERIMENTAL]` in their `--help` text and default OFF.
 
 - **`earned_ack_window`** (`--earned-ack-window`, Todo 14) — gates broadcast-ACK window
   growth to the link that actually earned the ACK, with the rest growing at most once per
@@ -2593,11 +2733,11 @@ bond hardware — see the HARDWARE-VALIDATION GATE below. Full operator-facing d
   normal selector so a link is always returned. Tests: `src/tests/stall_deselect_tests.rs`
   (11 tests + 1 `#[ignore]`d hardware-repro test).
 
-**HARDWARE-VALIDATION GATE (unrun):** both flags are unit- and golden-trace-tested for
-flag-off byte-identical behavior against the pre-flag code, but neither has been exercised
-against a real bonded link (e.g. Starlink + cellular) outside this repo's in-process test
-harness. Do not enable either flag in production, and do not cite either as a proven
-improvement, until validated on real bond hardware. Mirrors the hardware-validation-gate
+**HARDWARE-VALIDATION GATE (historical wording; see "Hardware gate status" above):** both
+flags were unit- and golden-trace-tested for flag-off byte-identical behavior against the
+pre-flag code, but neither was ever exercised against a real bonded link (e.g. Starlink +
+cellular) outside this repo's in-process test harness before they were retired. The
+same caveat now attaches to the shared-admission successor via the pending canary. Mirrors the hardware-validation-gate
 pattern used elsewhere in this workspace (see `docs/notes/sendmmsg-deferred.md` for how this
 repo tracks a deferred/unrun item, and the [workspace diagnosis](https://github.com/CERALIVE/ceralive/blob/master/docs/notes/srtla-starlink-lan-diagnosis.md)
 §6 for the mode-scoped mechanism analysis both flags address).
