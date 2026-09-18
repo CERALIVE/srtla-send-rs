@@ -37,13 +37,7 @@ async fn scheduler_features_remain_private_on_all_serialized_surfaces() {
     let stats = SharedStats::new();
     let mut shared = SchedulerShared::new(stats.clone());
     let mut conns = pool_of(2).await;
-    for mode in [
-        SchedulingMode::Classic,
-        SchedulingMode::Enhanced,
-        SchedulingMode::RttThreshold,
-        SchedulingMode::Edpf,
-        SchedulingMode::Adaptive,
-    ] {
+    for mode in [SchedulingMode::Enhanced] {
         config.set_mode(mode);
         for quality in [false, true] {
             config.set_quality_enabled(quality);

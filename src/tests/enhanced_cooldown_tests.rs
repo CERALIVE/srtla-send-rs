@@ -9,7 +9,7 @@
 //! adaptive) produce byte-identical decision streams with the restored cooldown.
 
 use crate::config::DynamicConfig;
-use crate::sender::selection::{EdpfSchedulerState, select_connection_idx};
+use crate::sender::selection::{SchedulerShared, select_connection_idx};
 use crate::test_helpers::create_selection_test_connections as create_test_connections;
 use crate::utils::now_ms;
 
@@ -37,7 +37,7 @@ async fn enhanced_cooldown_holds_valid_incumbent_within_15ms() {
         last_switch_time_ms,
         current_time_ms,
         &cfg,
-        &mut EdpfSchedulerState::default(),
+        &mut SchedulerShared::default(),
     );
 
     // Then: the incumbent is held despite the better score, because cooldown is active
@@ -70,7 +70,7 @@ async fn enhanced_cooldown_allows_switch_after_15ms_expires() {
         last_switch_time_ms,
         current_time_ms,
         &cfg,
-        &mut EdpfSchedulerState::default(),
+        &mut SchedulerShared::default(),
     );
 
     // Then: the better connection is selected because cooldown has expired
@@ -102,7 +102,7 @@ async fn enhanced_cooldown_does_not_apply_on_first_selection() {
         0,
         current_time_ms,
         &cfg,
-        &mut EdpfSchedulerState::default(),
+        &mut SchedulerShared::default(),
     );
 
     // Then: the best connection is selected immediately (cooldown does not apply)
@@ -137,7 +137,7 @@ async fn enhanced_cooldown_does_not_hold_invalid_incumbent() {
         last_switch_time_ms,
         current_time_ms,
         &cfg,
-        &mut EdpfSchedulerState::default(),
+        &mut SchedulerShared::default(),
     );
 
     // Then: the best valid connection is selected (cooldown does not hold invalid incumbent)
@@ -173,7 +173,7 @@ async fn enhanced_cooldown_boundary_at_exactly_15ms() {
         last_switch_time_ms,
         current_time_ms,
         &cfg,
-        &mut EdpfSchedulerState::default(),
+        &mut SchedulerShared::default(),
     );
 
     // Then: cooldown is NOT active (15 < 15 is false), so the better connection is selected

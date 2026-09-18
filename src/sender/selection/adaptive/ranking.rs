@@ -5,7 +5,7 @@ use crate::sender::selection::SchedulerFeatures;
 use crate::sender::selection::admission::Admission;
 
 pub(crate) enum Selection {
-    Ranked { index: usize, score: f64 },
+    Ranked,
     Carrier(Option<usize>),
 }
 
@@ -15,23 +15,20 @@ pub(crate) fn refresh(
     now: u64,
     admission: &mut Admission,
 ) -> Selection {
-    let mut best: Option<(usize, f64)> = None;
+    let mut has_candidate = false;
     if !admission.fallback {
         for offset in 0..admission.eligible.len() {
             let i = admission.eligible[offset];
             let conn = &mut conns[i];
             let weight = admission.compute_weight(i, conn);
-            let score = weight.score();
             conn.adaptive.weight = Some(weight);
-            if best.is_none_or(|(_, previous)| score > previous) {
-                best = Some((i, score));
-            }
+            has_candidate = true;
         }
     }
-    if let Some((index, score)) = best {
+    if has_candidate {
         state.sole_carrier = None;
         state.sole_identity = None;
-        return Selection::Ranked { index, score };
+        return Selection::Ranked;
     }
     if admission.features.contains(SchedulerFeatures::SOLE) {
         if let Some(i) = sole::select(conns, state, now) {

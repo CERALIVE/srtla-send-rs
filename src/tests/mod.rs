@@ -71,9 +71,6 @@ pub mod integration_tests;
 pub mod end_to_end_tests;
 
 #[cfg(test)]
-pub mod rtt_threshold_tests;
-
-#[cfg(test)]
 pub mod edpf_tests;
 
 #[cfg(all(test, unix))]

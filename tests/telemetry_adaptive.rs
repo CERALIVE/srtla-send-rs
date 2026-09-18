@@ -83,7 +83,7 @@ async fn spawn_listening(paths: &ChildPaths<'_>, receiver_port: u16) -> (Sender,
                     receiver_port.to_string(),
                 ])
                 .arg(paths.ips)
-                .args(["--mode", "adaptive", "--stats-file-interval", "100"])
+                .args(["--mode", "enhanced", "--stats-file-interval", "100"])
                 .arg("--stats-file")
                 .arg(paths.stats)
                 .stdin(Stdio::null())

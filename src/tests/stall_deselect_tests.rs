@@ -2,9 +2,7 @@
 
 use crate::connection::health::{HealthMachine, HealthState};
 use crate::mode::SchedulingMode;
-use crate::sender::selection::{
-    EdpfSchedulerState, SchedulerShared, select_connection_idx_with_state,
-};
+use crate::sender::selection::{SchedulerShared, select_connection_idx_with_state};
 use crate::tests::adaptive_tests::{config, pool_of};
 use crate::utils::test_clock::TestClock;
 
@@ -12,13 +10,7 @@ use crate::utils::test_clock::TestClock;
 async fn stall_flag_and_tunables_are_ignored_by_every_mode() {
     // Given a superior stalled link and a healthy alternative, under both flag values.
     let _clock = TestClock::new(10_000);
-    for mode in [
-        SchedulingMode::Classic,
-        SchedulingMode::Enhanced,
-        SchedulingMode::RttThreshold,
-        SchedulingMode::Edpf,
-        SchedulingMode::Adaptive,
-    ] {
+    for mode in [SchedulingMode::Enhanced] {
         for enabled in [false, true] {
             let mut conns = pool_of(2).await;
             conns[0].health = HealthMachine::new(HealthState::Stalled, 0);
@@ -36,7 +28,6 @@ async fn stall_flag_and_tunables_are_ignored_by_every_mode() {
                 10_000,
                 10_001,
                 &cfg,
-                &mut EdpfSchedulerState::default(),
                 &mut SchedulerShared::default(),
             );
             // Then shared admission excludes it without touching registration or the window.
@@ -65,7 +56,6 @@ async fn stale_legacy_signal_alone_does_not_override_healthy_admission() {
         0,
         10_000,
         &cfg,
-        &mut EdpfSchedulerState::default(),
         &mut SchedulerShared::default(),
     );
     // Then the high-capacity Healthy link remains usable despite the old signal.
@@ -85,7 +75,6 @@ async fn admission_all_stalled_rotates_on_proof_deadline_not_legacy_reprobe() {
     cfg.stall_deselect = true;
     cfg.stall_reprobe_ms = 0;
     let mut shared = SchedulerShared::default();
-    let mut edpf = EdpfSchedulerState::default();
     let mut trace = Vec::new();
     // When election, proof-wait and proof-expiry ticks are replayed sequentially.
     for now in [10_000, 10_100, 11_999, 12_000] {
@@ -96,7 +85,6 @@ async fn admission_all_stalled_rotates_on_proof_deadline_not_legacy_reprobe() {
             0,
             now,
             &cfg,
-            &mut edpf,
             &mut shared,
         ));
     }
@@ -121,7 +109,6 @@ async fn admission_recovered_link_returns_without_legacy_reprobe_delay() {
         0,
         10_000,
         &cfg,
-        &mut EdpfSchedulerState::default(),
         &mut SchedulerShared::default(),
     );
     // Then the recovered link immediately participates in ranking.

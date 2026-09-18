@@ -22,41 +22,8 @@ mod tests {
     use crate::utils::now_ms;
 
     #[test]
-    fn test_select_connection_idx_classic() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let mut connections = rt.block_on(create_test_connections(3));
-
-        // Test classic mode - should pick connection with highest score
-        connections[1].in_flight_packets = 0; // Best score
-        connections[0].in_flight_packets = 5; // Lower score
-        connections[2].in_flight_packets = 10; // Lowest score
-
-        let config = ConfigSnapshot {
-            features: Default::default(),
-            mode: SchedulingMode::Classic,
-            quality_enabled: false,
-            exploration_enabled: false,
-            rtt_delta_ms: 30,
-            earned_ack_window: false,
-            stall_deselect: false,
-            stall_min_in_flight: 32,
-            stall_ack_stale_ms: 3000,
-            stall_reprobe_ms: 1000,
-        };
-
-        let selected = select_connection_idx(
-            &mut connections,
-            None,
-            0,
-            0,
-            &config,
-            &mut EdpfSchedulerState::default(),
-        );
-        assert_eq!(selected, Some(1));
-    }
-
-    #[test]
     fn test_select_connection_idx_quality_scoring() {
+        let _clock = crate::utils::test_clock::TestClock::new(40_000);
         let rt = tokio::runtime::Runtime::new().unwrap();
         let mut connections = rt.block_on(create_test_connections(3));
         let current_time = now_ms();
@@ -91,7 +58,7 @@ mod tests {
             0,
             current_time,
             &config,
-            &mut EdpfSchedulerState::default(),
+            &mut SchedulerShared::default(),
         );
 
         // Should prefer connection 1 (no NAKs)
@@ -100,6 +67,7 @@ mod tests {
 
     #[test]
     fn test_select_connection_idx_burst_nak_penalty() {
+        let _clock = crate::utils::test_clock::TestClock::new(40_000);
         let rt = tokio::runtime::Runtime::new().unwrap();
         let mut connections = rt.block_on(create_test_connections(3));
         let current_time = now_ms();
@@ -133,7 +101,7 @@ mod tests {
             0,
             current_time,
             &config,
-            &mut EdpfSchedulerState::default(),
+            &mut SchedulerShared::default(),
         );
 
         // Should prefer connection 2 (never had NAKs, best quality)
@@ -174,7 +142,7 @@ mod tests {
             last_switch_time_ms,
             current_time_ms,
             &config,
-            &mut EdpfSchedulerState::default(),
+            &mut SchedulerShared::default(),
         );
         assert_eq!(
             selected,
@@ -221,59 +189,13 @@ mod tests {
             last_switch_time_ms,
             current_time_ms,
             &config,
-            &mut EdpfSchedulerState::default(),
+            &mut SchedulerShared::default(),
         );
         assert_eq!(
             selected,
             Some(1),
             "Should immediately route packets via valid connection if current is timed out, \
              bypassing cooldown"
-        );
-    }
-
-    #[test]
-    fn test_classic_mode_ignores_time_dampening() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let mut connections = rt.block_on(create_test_connections(3));
-
-        // Setup: Connection 0 is currently selected, Connection 1 has better score
-        connections[0].in_flight_packets = 5; // Lower score
-        connections[1].in_flight_packets = 0; // Best score
-        connections[2].in_flight_packets = 10; // Worst score
-
-        let last_switch_time_ms = now_ms();
-        let current_time_ms = last_switch_time_ms + 200; // 200ms after last switch (within cooldown)
-
-        let config = ConfigSnapshot {
-            features: Default::default(),
-            mode: SchedulingMode::Classic,
-            quality_enabled: false,
-            exploration_enabled: false,
-            rtt_delta_ms: 30,
-            earned_ack_window: false,
-            stall_deselect: false,
-            stall_min_in_flight: 32,
-            stall_ack_stale_ms: 3000,
-            stall_reprobe_ms: 1000,
-        };
-
-        // Classic mode: per-packet selection ALWAYS picks highest score connection
-        // No dampening, no hysteresis - matches original C implementation
-        let selected = select_connection_idx(
-            &mut connections,
-            Some(0),
-            last_switch_time_ms,
-            current_time_ms,
-            &config,
-            &mut EdpfSchedulerState::default(),
-        );
-
-        // Per-packet routing immediately uses connection 1 (best score)
-        assert_eq!(
-            selected,
-            Some(1),
-            "Classic mode per-packet selection should ignore time-based dampening and always \
-             route via highest score connection"
         );
     }
 
@@ -616,7 +538,7 @@ mod tests {
             0,
             0,
             &config,
-            &mut EdpfSchedulerState::default(),
+            &mut SchedulerShared::default(),
         );
 
         // Should return None when all connections have score -1
@@ -648,7 +570,7 @@ mod tests {
             0,
             0,
             &config,
-            &mut EdpfSchedulerState::default(),
+            &mut SchedulerShared::default(),
         );
 
         // The result depends on timing, but should not panic
@@ -1313,7 +1235,7 @@ mod tests {
             last_switch,
             current,
             &config,
-            &mut EdpfSchedulerState::default(),
+            &mut SchedulerShared::default(),
         );
 
         assert_eq!(
@@ -1360,7 +1282,7 @@ mod tests {
             last_switch,
             current,
             &config,
-            &mut EdpfSchedulerState::default(),
+            &mut SchedulerShared::default(),
         );
 
         assert_eq!(
@@ -1499,51 +1421,6 @@ mod tests {
         );
     }
 
-    /// Classic mode tie-break: when two links have identical capacity scores the
-    /// FIRST (lowest index) wins, because `select_connection` only replaces the
-    /// best on a strictly greater score. This matches the original C behavior.
-    #[test]
-    fn classic_tie_break_first_wins() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let mut connections = rt.block_on(create_test_connections(3));
-
-        // conns 0 and 1 tie on score (100); conn 2 is worse.
-        connections[0].window = 100;
-        connections[0].in_flight_packets = 0;
-        connections[1].window = 100;
-        connections[1].in_flight_packets = 0;
-        connections[2].window = 50;
-        connections[2].in_flight_packets = 0;
-
-        let config = ConfigSnapshot {
-            features: Default::default(),
-            mode: SchedulingMode::Classic,
-            quality_enabled: false,
-            exploration_enabled: false,
-            rtt_delta_ms: 30,
-            earned_ack_window: false,
-            stall_deselect: false,
-            stall_min_in_flight: 32,
-            stall_ack_stale_ms: 3000,
-            stall_reprobe_ms: 1000,
-        };
-
-        let selected = select_connection_idx(
-            &mut connections,
-            None,
-            0,
-            0,
-            &config,
-            &mut EdpfSchedulerState::default(),
-        );
-
-        assert_eq!(
-            selected,
-            Some(0),
-            "equal scores must resolve to the first (lowest-index) connection"
-        );
-    }
-
     /// Exploration fallback: with exploration enabled and the switch cooldown
     /// elapsed, when the capacity-best link is degrading (recent NAK) and the
     /// second-best has recovered, the sender explores the second-best link
@@ -1588,7 +1465,7 @@ mod tests {
             last_switch,
             current,
             &config,
-            &mut EdpfSchedulerState::default(),
+            &mut SchedulerShared::default(),
         );
 
         assert_eq!(
@@ -1641,7 +1518,7 @@ mod lifecycle {
             &local,
             &SequenceTracker::new(),
             &ConfigSnapshot {
-                mode: SchedulingMode::Adaptive,
+                mode: SchedulingMode::Enhanced,
                 ..crate::config::DynamicConfig::new().snapshot()
             },
             &SharedStats::new(),

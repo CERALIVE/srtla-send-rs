@@ -190,7 +190,7 @@ impl Stack {
                 "5000",
                 ips.to_str().unwrap(),
                 "--mode",
-                "classic",
+                "enhanced",
             ],
             &env,
         )?);

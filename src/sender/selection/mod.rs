@@ -3,27 +3,20 @@
 pub mod adaptive;
 pub(crate) mod admission;
 pub mod blest;
-mod classic;
 pub mod edpf;
 mod enhanced;
 mod exploration;
 mod features;
 pub mod iods;
-#[cfg(test)]
-mod legacy;
 mod quality;
 mod shared;
 mod signals;
-#[cfg(test)]
-pub use legacy::{select_by_mode, select_connection_idx};
-#[cfg(feature = "test-internals")]
-pub mod rtt_threshold;
-#[cfg(not(feature = "test-internals"))]
-mod rtt_threshold;
 
 use adaptive::ranking::Selection;
 pub use features::SchedulerFeatures;
 pub use quality::calculate_quality_multiplier;
+#[cfg(test)]
+pub use select_connection_idx_with_state as select_connection_idx;
 pub use shared::SchedulerShared;
 
 use crate::config::ConfigSnapshot;
@@ -45,7 +38,6 @@ pub fn select_connection_idx_with_state(
     last_switch_time_ms: u64,
     current_time_ms: u64,
     config: &ConfigSnapshot,
-    edpf_state: &mut EdpfSchedulerState,
     shared: &mut SchedulerShared,
 ) -> Option<usize> {
     let mut admission = admission::admit(conns, current_time_ms, config, shared);
@@ -56,7 +48,6 @@ pub fn select_connection_idx_with_state(
         last_switch_time_ms,
         current_time_ms,
         config,
-        edpf_state,
         ranking,
     )
 }
@@ -68,15 +59,13 @@ fn select_by_mode_with_state(
     last_switch_time_ms: u64,
     current_time_ms: u64,
     config: &ConfigSnapshot,
-    edpf_state: &mut EdpfSchedulerState,
     ranking: Selection,
 ) -> Option<usize> {
-    let ranking = match ranking {
+    match ranking {
         Selection::Carrier(index) => return index,
-        ranked @ Selection::Ranked { .. } => ranked,
-    };
+        Selection::Ranked => {}
+    }
     match config.mode {
-        SchedulingMode::Classic => classic::select_connection(conns),
         SchedulingMode::Enhanced => enhanced::select_connection(
             conns,
             last_idx,
@@ -84,29 +73,20 @@ fn select_by_mode_with_state(
             current_time_ms,
             config.effective_exploration_enabled(),
         ),
-        SchedulingMode::RttThreshold => rtt_threshold::select_connection(
-            conns,
-            last_idx,
-            last_switch_time_ms,
-            current_time_ms,
-            config.rtt_delta_ms,
-        ),
-        SchedulingMode::Edpf => edpf_pipeline_select(conns, config, edpf_state),
-        SchedulingMode::Adaptive => adaptive::select_ranked(
-            conns,
-            last_idx,
-            last_switch_time_ms,
-            current_time_ms,
-            ranking,
-        ),
     }
 }
 
-fn edpf_pipeline_select(
-    conns: &[SrtlaConnection],
-    _config: &ConfigSnapshot,
+pub fn edpf_pipeline_select(
+    conns: &mut [SrtlaConnection],
+    config: &ConfigSnapshot,
     edpf_state: &mut EdpfSchedulerState,
 ) -> Option<usize> {
+    let mut shared = SchedulerShared::default();
+    let mut admission = admission::admit(conns, 0, config, &mut shared);
+    match adaptive::ranking::refresh(conns, &mut shared, 0, &mut admission) {
+        Selection::Carrier(index) => return index,
+        Selection::Ranked => {}
+    }
     use edpf::SRT_PKT_SIZE;
     let EdpfSchedulerState { blest, iods } = edpf_state;
     let candidates = with_congestion_escape(conns, blest.filter(conns));

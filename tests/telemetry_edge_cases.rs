@@ -153,9 +153,7 @@ fn active_link_with_zero_traffic_reports_zero_bitrate() {
 
 #[test]
 fn zero_traffic_link_stays_active_in_projection() {
-    // Active link, no capacity signal yet (base_score 0, 0 B/s). conns_from_stats
-    // keeps it active with the equal-share fallback and a zero bitrate, rather
-    // than reporting the only uplink as all-zero weight.
+    // Given an active idle link without a measured selection weight.
     let snap = StatsSnapshot {
         links: vec![link(true, 0, 20, 0)],
         ..StatsSnapshot::default()
@@ -164,8 +162,8 @@ fn zero_traffic_link_stays_active_in_projection() {
     assert_eq!(conns.len(), 1);
     assert_eq!(conns[0].bitrate_bytes_per_sec, 0);
     assert_eq!(
-        conns[0].weight_percent, 100,
-        "sole active link gets full share"
+        conns[0].weight_percent, 0,
+        "shared admission must not invent equal-share weight without a capacity signal"
     );
     let json = json(FIXED_MS, &conns);
     assert!(json.contains("\"bitrate_bps\":0"), "got {json}");

@@ -12,7 +12,7 @@ use tracing::{debug, warn};
 pub(crate) use super::ack::apply_srtla_ack;
 use super::ack::apply_srtla_ack_frame;
 pub(crate) use super::ack::{AckContext, AckPolicy};
-use super::selection::{EdpfSchedulerState, SchedulerShared, select_connection_idx_with_state};
+use super::selection::{SchedulerShared, select_connection_idx_with_state};
 use super::sequence::SequenceTracker;
 use super::uplink::UplinkPacket;
 use crate::config::ConfigSnapshot;
@@ -315,7 +315,6 @@ pub async fn handle_srt_packet(
     last_client_addr: &mut Option<SocketAddr>,
     registration_complete: bool,
     config_snap: &ConfigSnapshot,
-    edpf_state: &mut EdpfSchedulerState,
     adaptive_state: &mut SchedulerShared,
 ) -> SrtPacketOutcome {
     match res {
@@ -361,7 +360,6 @@ pub async fn handle_srt_packet(
                 *last_switch_time_ms,
                 packet_time_ms,
                 config_snap,
-                edpf_state,
                 adaptive_state,
             );
             if let Some(sel_idx) = sel_idx {

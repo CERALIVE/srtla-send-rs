@@ -157,10 +157,10 @@ fn set_mode_changes_dynamic_config() {
     let mut client = Client::connect(&path);
 
     let resp =
-        client.call(r#"{"jsonrpc":"2.0","method":"set-mode","params":{"mode":"classic"},"id":2}"#);
+        client.call(r#"{"jsonrpc":"2.0","method":"set-mode","params":{"mode":"enhanced"},"id":2}"#);
     assert_eq!(resp["result"]["ok"], Value::Bool(true));
     assert_eq!(resp["id"], Value::from(2));
-    wait_for(|| config.mode() == SchedulingMode::Classic);
+    wait_for(|| config.mode() == SchedulingMode::Enhanced);
 
     // Legacy text `mode enhanced` on the SAME socket still applies.
     client.send_no_reply("mode enhanced");
@@ -180,7 +180,7 @@ fn set_rtt_delta_changes_config() {
     let resp: Value = serde_json::from_str(&resp_str).expect("valid JSON");
     assert_eq!(resp["result"]["ok"], Value::Bool(true));
     assert_eq!(resp["id"], Value::from(3));
-    assert_eq!(config.snapshot().rtt_delta_ms, 75);
+    assert_eq!(config.snapshot().rtt_delta_ms, 30);
 }
 
 // ---- The full loopback roundtrip the checklist requires --------------------
@@ -195,14 +195,15 @@ fn loopback_roundtrip_hello_setmode_setrttdelta() {
     assert_eq!(hello["result"]["engine"], Value::from("srtla_send"));
 
     let set_mode =
-        client.call(r#"{"jsonrpc":"2.0","method":"set-mode","params":{"mode":"classic"},"id":2}"#);
+        client.call(r#"{"jsonrpc":"2.0","method":"set-mode","params":{"mode":"enhanced"},"id":2}"#);
     assert_eq!(set_mode["result"]["ok"], Value::Bool(true));
-    wait_for(|| config.mode() == SchedulingMode::Classic);
+    wait_for(|| config.mode() == SchedulingMode::Enhanced);
 
     let set_rtt =
         client.call(r#"{"jsonrpc":"2.0","method":"set-rtt-delta","params":{"ms":75},"id":3}"#);
     assert_eq!(set_rtt["result"]["ok"], Value::Bool(true));
-    wait_for(|| config.snapshot().rtt_delta_ms == 75);
+    assert_eq!(set_rtt["result"]["deprecated"], true);
+    assert_eq!(config.snapshot().rtt_delta_ms, 30);
 }
 
 // ---- 4. whitespace + key-order variants parse to a valid response ----------
@@ -301,8 +302,8 @@ fn legacy_text_protocol_still_works() {
 
     // A plain-text command (no leading `{`) on the same socket that serves
     // JSON-RPC routes to the legacy parser and mutates config.
-    client.send_no_reply("mode classic");
-    wait_for(|| config.mode() == SchedulingMode::Classic);
+    client.send_no_reply("mode enhanced");
+    wait_for(|| config.mode() == SchedulingMode::Enhanced);
 }
 
 // ---- 10. hello matches ADR-001 §Methods (additive superset) ----------------
@@ -359,7 +360,7 @@ fn set_rtt_delta_accepts_delta_ms() {
         &SharedStats::new(),
     );
     let status: Value = serde_json::from_str(&status_str).expect("valid JSON");
-    assert_eq!(status["result"]["rtt_delta_ms"], Value::from(50));
+    assert_eq!(status["result"]["rtt_delta_ms"], Value::from(30));
 }
 
 // ---- 12. set-rtt-delta accepts the `ms` back-compat alias -------------------
@@ -381,7 +382,7 @@ fn set_rtt_delta_accepts_ms_alias() {
         &SharedStats::new(),
     );
     let status: Value = serde_json::from_str(&status_str).expect("valid JSON");
-    assert_eq!(status["result"]["rtt_delta_ms"], Value::from(50));
+    assert_eq!(status["result"]["rtt_delta_ms"], Value::from(30));
 }
 
 // ---- 13. set-rtt-delta with no usable param -> -32602 invalid params --------
@@ -410,9 +411,9 @@ fn set_mode_accepts_edpf() {
         &SharedStats::new(),
     );
     let resp: Value = serde_json::from_str(&resp_str).expect("valid JSON");
-    assert_eq!(resp["result"]["ok"], Value::Bool(true));
+    assert_eq!(resp["error"]["data"]["kind"], "retired_mode");
     assert_eq!(resp["id"], Value::from(1));
-    assert_eq!(config.mode(), SchedulingMode::Edpf);
+    assert_eq!(config.mode(), SchedulingMode::Enhanced);
 }
 
 // ---- 15. a valid-JSON array is an Invalid Request, NOT a panic --------------
@@ -676,9 +677,9 @@ fn adaptive_jsonrpc_mode_round_trips() {
     let (path, _dir) = spawn_listener(&config);
     let mut client = Client::connect(&path);
     let response = client.call(r#"{"method":"set-mode","params":{"mode":"adaptive"},"id":1}"#);
-    assert_eq!(response["result"]["ok"], true);
+    assert_eq!(response["error"]["data"]["kind"], "retired_mode");
     let status = client.call(r#"{"method":"get-status","id":2}"#);
-    assert_eq!(status["result"]["mode"], "adaptive");
+    assert_eq!(status["result"]["mode"], "enhanced");
 }
 
 #[test]

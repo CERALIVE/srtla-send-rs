@@ -121,7 +121,7 @@ fn start_stack(topo: &TwinTopology, ips: &Path) -> Result<[NamespaceProcess; 3]>
             "5000",
             ips.to_str().context("UTF-8 ips path")?,
             "--mode",
-            "classic",
+            "enhanced",
             "--verbose",
         ],
     )?;

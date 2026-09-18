@@ -75,12 +75,6 @@ pub(crate) fn log_connection_status(
     // Show mode and relevant settings
     info!("  Mode: {}", snap.mode);
     match snap.mode {
-        crate::mode::SchedulingMode::Classic => {
-            info!(
-                "    Capacity ranking; shared quality: {}",
-                snap.effective_quality_enabled()
-            );
-        }
         crate::mode::SchedulingMode::Enhanced => {
             info!(
                 "    Quality: {}, Exploration: {}",
@@ -92,17 +86,6 @@ pub(crate) fn log_connection_status(
                 }
             );
         }
-        crate::mode::SchedulingMode::RttThreshold => {
-            info!(
-                "    Quality: {}, RTT delta: {}ms",
-                if snap.quality_enabled { "ON" } else { "OFF" },
-                snap.rtt_delta_ms
-            );
-        }
-        crate::mode::SchedulingMode::Edpf => {
-            info!("    EDPF pipeline: BLEST + IoDS + EDPF");
-        }
-        crate::mode::SchedulingMode::Adaptive => {}
     }
 
     // Show packet log utilization
@@ -291,7 +274,7 @@ mod tests {
         let mut conn = create_test_connection().await;
         conn.priority_baseline = Some(crate::bind_map::Priority::try_from(0.1).unwrap());
         let config = DynamicConfig::new();
-        config.set_mode(crate::mode::SchedulingMode::Adaptive);
+        config.set_mode(crate::mode::SchedulingMode::Enhanced);
         let rendered = capture_logs(|| {
             log_connection_status(&[conn], None, &config);
         });

@@ -5,7 +5,7 @@ use crate::telemetry_doc::conns_from_stats;
 
 fn cfg() -> ConfigSnapshot {
     ConfigSnapshot {
-        mode: SchedulingMode::Adaptive,
+        mode: SchedulingMode::Enhanced,
         ..config()
     }
 }
@@ -117,12 +117,7 @@ async fn recovery_resets_cached_weights_and_legacy_modes_bypass_them() {
     stats.update(&conns, &cfg());
     // Then the old generation cannot retain weight, and legacy modes ignore the cache.
     assert_eq!(stats.get().links[0].effective_multiplier, 0.0);
-    for mode in [
-        SchedulingMode::Classic,
-        SchedulingMode::Enhanced,
-        SchedulingMode::RttThreshold,
-        SchedulingMode::Edpf,
-    ] {
+    for mode in [SchedulingMode::Enhanced] {
         let legacy = ConfigSnapshot { mode, ..config() };
         state.update_stats(&mut conns, &legacy);
         let snapshot = stats.get();

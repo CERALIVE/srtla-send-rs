@@ -10,7 +10,6 @@ struct Forwarding {
     conns: SmallVec<SrtlaConnection, 4>,
     peers: [UdpSocket; 2],
     state: AdaptiveState,
-    edpf: EdpfSchedulerState,
     sequences: SequenceTracker,
     last: Option<usize>,
     switched: u64,
@@ -33,7 +32,6 @@ impl Forwarding {
             conns,
             peers,
             state: AdaptiveState::default(),
-            edpf: EdpfSchedulerState::default(),
             sequences: SequenceTracker::new(),
             last: None,
             switched: 0,
@@ -49,7 +47,7 @@ impl Forwarding {
         packet[..4].copy_from_slice(&seq.to_be_bytes());
         packet[4] = if retransmitted { 0x04 } else { 0 };
         let cfg = ConfigSnapshot {
-            mode: "adaptive".parse().unwrap(),
+            mode: "enhanced".parse().unwrap(),
             ..config()
         };
         handle_srt_packet(
@@ -62,7 +60,6 @@ impl Forwarding {
             &mut None,
             true,
             &cfg,
-            &mut self.edpf,
             &mut self.state,
         )
         .await

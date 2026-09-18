@@ -32,13 +32,13 @@ async fn learned_wire_rate_survives_recovery_and_socket_recreation() -> anyhow::
     assert_eq!(conn.rate_cap.target_bps(), 1_000_000.0);
     // When production configuration disables hard admission and rebuilds the socket.
     clock.set(2000);
-    super::configure(std::slice::from_mut(&mut conn), SchedulingMode::Adaptive);
+    super::configure(std::slice::from_mut(&mut conn), SchedulingMode::Enhanced);
     assert_eq!(conn.wire_rate.rate_bps(), 8_000_000.0);
     assert!(!conn.batch_sender.wire_limited());
     conn.mark_for_recovery();
     conn.reconnect().await?;
     clock.set(3000);
-    super::configure(std::slice::from_mut(&mut conn), SchedulingMode::Adaptive);
+    super::configure(std::slice::from_mut(&mut conn), SchedulingMode::Enhanced);
     // Then learned rate survives, with new-generation validation rather than cold bootstrap.
     assert_eq!(conn.wire_rate.rate_bps(), 8_000_000.0);
     assert_eq!(conn.wire_rate.phase(), WireRatePhase::Searching);

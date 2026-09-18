@@ -68,7 +68,7 @@ async fn coalesced_ack_samples_only_the_final_original() {
     dispatch(
         &mut conns,
         &(0..10).collect::<Vec<_>>(),
-        SchedulingMode::Adaptive,
+        SchedulingMode::Enhanced,
     )
     .await;
     // Then all delivery credit survives, but precisely one 60ms sample reaches RTT.
@@ -107,7 +107,7 @@ async fn coalesced_ack_ending_in_probe_does_not_sample_an_earlier_original() {
     dispatch(
         &mut conns,
         &[0, 1, 2, 3, 4, 5, 6, 7, 8, 10],
-        SchedulingMode::Adaptive,
+        SchedulingMode::Enhanced,
     )
     .await;
     // Then original delivery and probe proof are credited without any path RTT sample.
@@ -126,7 +126,7 @@ async fn coalesced_ack_ending_in_retransmission_does_not_sample_earlier_entries(
     dispatch(
         &mut conns,
         &(0..10).collect::<Vec<_>>(),
-        SchedulingMode::Adaptive,
+        SchedulingMode::Enhanced,
     )
     .await;
     // Then all delivery is credited, but no earlier coalesced timing is substituted.
@@ -143,7 +143,7 @@ async fn coalesced_ack_uses_receiver_order_not_the_largest_sequence() {
     dispatch(
         &mut conns,
         &[9, 8, 7, 6, 5, 4, 3, 2, 1, 0],
-        SchedulingMode::Adaptive,
+        SchedulingMode::Enhanced,
     )
     .await;
     // Then the final entry's real delay is preserved, not optimized away by sorting.
@@ -165,7 +165,7 @@ async fn coalesced_ack_frames_sample_independently_but_replays_do_not() {
     let mut conns = [staggered_originals(&clock).await];
     // When both frames and a replay of the second are dispatched.
     for sequences in [&[0, 1, 2, 3, 4][..], &[5, 6, 7, 8, 9], &[5, 6, 7, 8, 9]] {
-        dispatch(&mut conns, sequences, SchedulingMode::Adaptive).await;
+        dispatch(&mut conns, sequences, SchedulingMode::Enhanced).await;
     }
     // Then each new frame contributes one sample and the replay contributes none.
     assert_eq!(
@@ -197,7 +197,7 @@ async fn coalesced_ack_probe_only_frame_never_samples_original_rtt() {
     dispatch(
         &mut conns,
         &(10..20).collect::<Vec<_>>(),
-        SchedulingMode::Adaptive,
+        SchedulingMode::Enhanced,
     )
     .await;
     // Then probe health proof is retained without original credit or RTT samples.

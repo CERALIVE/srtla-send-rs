@@ -18,7 +18,7 @@ async fn negotiated_loss_deadline_qualifies_settlement_without_refreshing_cohort
     adaptive.update_stats(
         &mut conns,
         &ConfigSnapshot {
-            mode: SchedulingMode::Adaptive,
+            mode: SchedulingMode::Enhanced,
             ..DynamicConfig::new().snapshot()
         },
     );

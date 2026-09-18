@@ -90,17 +90,16 @@ pub struct Cli {
     #[arg(long = "control-socket")]
     pub control_socket: Option<String>,
 
-    /// Scheduling mode: classic, enhanced (default), rtt-threshold, edpf,
-    /// adaptive (experimental in 3.4.0: self-tuning health-gated scheduler)
-    #[arg(long = "mode", value_enum, default_value = "enhanced")]
+    /// Scheduling mode: enhanced only in 4.0.0 (see docs/release-notes-4.0.0.md)
+    #[arg(long = "mode", value_parser = crate::mode::ModeParser, default_value = "enhanced")]
     pub mode: SchedulingMode,
-    /// Disable the shared quality multiplier in every scheduling mode
+    /// Retired: accepted and ignored, with one startup warning
     #[arg(long = "no-quality")]
     pub no_quality: bool,
-    /// Enable connection exploration (enhanced only)
+    /// Retired: accepted and ignored, with one startup warning
     #[arg(long = "exploration")]
     pub exploration: bool,
-    /// RTT delta threshold in ms (rtt-threshold only, links within min_rtt + delta are "fast")
+    /// Retired: accepted and ignored, with one startup warning
     #[arg(long = "rtt-delta-ms", default_value = "30")]
     pub rtt_delta_ms: u32,
     /// [EXPERIMENTAL, retired] Accepted for compatibility; shared arrival-scoped
@@ -469,7 +468,7 @@ mod tests {
             "5001",
             "/tmp/srtla_ips",
             "--mode",
-            "classic",
+            "enhanced",
             "--no-quality",
             "--exploration",
             "--rtt-delta-ms",
@@ -478,7 +477,7 @@ mod tests {
             "/tmp/srtla.sock",
         ])
         .expect("upstream flags should still parse");
-        assert_eq!(cli.mode, SchedulingMode::Classic);
+        assert_eq!(cli.mode, SchedulingMode::Enhanced);
         assert!(cli.no_quality);
         assert!(cli.exploration);
         assert_eq!(cli.rtt_delta_ms, 50);

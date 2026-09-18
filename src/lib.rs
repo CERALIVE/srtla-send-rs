@@ -58,6 +58,9 @@ pub mod test_helpers;
 #[cfg(all(test, not(loom)))]
 pub mod tests;
 
+#[cfg(all(test, unix, feature = "test-internals", not(loom)))]
+mod retired_control_tests;
+
 // Re-export commonly used items
 #[cfg(not(loom))]
 pub use config::{ConfigSnapshot, DynamicConfig};

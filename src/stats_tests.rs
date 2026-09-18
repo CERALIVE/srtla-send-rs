@@ -9,13 +9,7 @@ async fn scheduler_observations_follow_mode_and_effective_priority() {
     conns[0].priority_override_conn = Some(crate::bind_map::Priority::try_from(0.2).unwrap());
     let stats = SharedStats::new();
     // When snapshots are published in each mode.
-    for mode in [
-        SchedulingMode::Adaptive,
-        SchedulingMode::Classic,
-        SchedulingMode::Enhanced,
-        SchedulingMode::RttThreshold,
-        SchedulingMode::Edpf,
-    ] {
+    for mode in [SchedulingMode::Enhanced] {
         stats.update(
             &conns,
             &ConfigSnapshot {

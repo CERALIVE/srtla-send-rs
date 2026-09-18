@@ -6,7 +6,6 @@ use crate::config::{ConfigSnapshot, DynamicConfig};
 use crate::connection::SrtlaConnection;
 use crate::connection::health::{HealthMachine, HealthState};
 use crate::sender::selection::adaptive::{self, AdaptiveFeatures, AdaptiveState};
-use crate::sender::selection::{EdpfSchedulerState, select_connection_idx};
 use crate::stats::SharedStats;
 use crate::test_helpers::create_test_connections;
 use crate::utils::test_clock::TestClock;
@@ -72,70 +71,6 @@ fn pick_with_features(
         state,
     )
     .unwrap()
-}
-
-#[tokio::test]
-async fn all_healthy_trace_is_byte_identical_to_enhanced() {
-    // Given identical neutral pools and independent history, with quality enabled.
-    let clock = TestClock::new(10_000);
-    let mut enhanced = pool().await;
-    let mut adaptive = pool().await;
-    let (mut old_state, mut state) = (EdpfSchedulerState::default(), AdaptiveState::default());
-    let (mut old_last, mut new_last) = (None, None);
-    let (mut old_switch, mut new_switch) = (0, 0);
-    let (mut old_bytes, mut new_bytes) = (Vec::new(), Vec::new());
-    // When 200 packets experience queued backlog, ACK-like drains and score changes.
-    for packet in 0..200_u64 {
-        let now = 10_000 + packet * 3;
-        clock.set(now);
-        for conns in [&mut enhanced, &mut adaptive] {
-            for (i, conn) in conns.iter_mut().enumerate() {
-                conn.in_flight_packets =
-                    i32::try_from((packet / 7 + u64::try_from(i).unwrap() * 9) % 20).unwrap();
-            }
-        }
-        let old = select_connection_idx(
-            &mut enhanced,
-            old_last,
-            old_switch,
-            now,
-            &config(),
-            &mut old_state,
-        )
-        .unwrap();
-        let new = adaptive::select(
-            &mut adaptive,
-            new_last,
-            new_switch,
-            now,
-            &config(),
-            &mut state,
-        )
-        .unwrap();
-        old_bytes.push(u8::try_from(old).unwrap());
-        new_bytes.push(u8::try_from(new).unwrap());
-        if old_last != Some(old) {
-            old_switch = now;
-        }
-        if new_last != Some(new) {
-            new_switch = now;
-        }
-        old_last = Some(old);
-        new_last = Some(new);
-        // Real queued_count participates in get_score, not a parallel formula.
-        for (conns, selected) in [(&mut enhanced, old), (&mut adaptive, new)] {
-            conns[selected].queue_data_packet(&[0; 16], Some(u32::try_from(packet).unwrap()), now);
-            if packet % 5 == 4 {
-                for conn in conns {
-                    conn.batch_sender.reset();
-                }
-            }
-        }
-    }
-    // Then the full ordered byte traces match, including real switches and holds.
-    assert_eq!(new_bytes, old_bytes);
-    assert!(old_bytes.windows(2).any(|w| w[0] != w[1]));
-    assert!(old_bytes.windows(2).any(|w| w[0] == w[1]));
 }
 
 #[tokio::test]

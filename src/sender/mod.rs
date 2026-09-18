@@ -51,9 +51,9 @@ use packet_handler::{
 };
 pub use selection::adaptive::{AdaptiveState, preference_multiplier};
 #[cfg(test)]
-pub use selection::select_connection_idx;
+pub use selection::select_connection_idx_with_state as select_connection_idx;
 #[allow(unused_imports)]
-pub use selection::{EdpfSchedulerState, calculate_quality_multiplier};
+pub use selection::{EdpfSchedulerState, calculate_quality_multiplier, edpf_pipeline_select};
 pub use selection::{SchedulerFeatures, SchedulerShared};
 #[allow(unused_imports)]
 pub use sequence::{SEQ_TRACKING_SIZE, SEQUENCE_TRACKING_MAX_AGE_MS, SequenceTracker};
@@ -220,7 +220,6 @@ pub async fn run_sender_with_config(
     let mut seq_tracker = SequenceTracker::new();
     let mut last_selected_idx: Option<usize> = None;
     let mut last_switch_time_ms: u64 = 0; // Track time of last connection switch
-    let mut edpf_state = EdpfSchedulerState::default();
     let mut adaptive_state = SchedulerShared::new(shared_stats.clone());
     let mut health_ticks = HealthTicker::default();
     let mut all_failed_at: Option<Instant> = None;
@@ -307,7 +306,6 @@ pub async fn run_sender_with_config(
                             &mut last_client_addr,
                             reg.has_connected,
                             &config_snap,
-                            &mut edpf_state,
                             &mut adaptive_state,
                         )
                         .await;
@@ -446,7 +444,7 @@ pub async fn run_sender_with_config(
                                 Ok(received), &mut recv_buf, &mut connections,
                                 &mut last_selected_idx, &mut last_switch_time_ms,
                                 &mut seq_tracker, &mut last_client_addr, reg.has_connected,
-                                &config_snap, &mut edpf_state, &mut adaptive_state,
+                            &config_snap, &mut adaptive_state,
                             ).await;
                             pending_local = match outcome {
                                 packet_handler::SrtPacketOutcome::Consumed => None,

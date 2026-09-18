@@ -85,8 +85,8 @@ const SRTLA_PORT: u16 = 5000;
 const SRT_PORT: u16 = 4003;
 const SINK_PORT: u16 = 9999;
 
-const STEP_A_MODES: [&str; 4] = ["enhanced", "classic", "rtt-threshold", "edpf"];
-const STEP_B_MODES: [&str; 2] = ["enhanced", "rtt-threshold"];
+const STEP_A_MODES: [&str; 1] = ["enhanced"];
+const STEP_B_MODES: [&str; 1] = ["enhanced"];
 
 /// Adoption rule, pre-committed and applied mechanically per mode.
 const GOODPUT_FLOOR_RATIO: f64 = 0.99;

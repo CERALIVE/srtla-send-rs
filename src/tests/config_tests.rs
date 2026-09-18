@@ -14,8 +14,8 @@ mod tests {
             &crate::stats::SharedStats::new(),
         );
         let status: serde_json::Value = serde_json::from_str(&response).unwrap();
-        assert_eq!(status["result"]["mode"], "adaptive");
-        assert_eq!(config.mode(), SchedulingMode::Adaptive);
+        assert_eq!(status["result"]["mode"], "enhanced");
+        assert_eq!(config.mode(), SchedulingMode::Enhanced);
     }
 
     #[test]
@@ -50,7 +50,7 @@ mod tests {
         assert!(!snap.stall_deselect);
 
         let config = DynamicConfig::from_cli(
-            SchedulingMode::Classic,
+            SchedulingMode::Enhanced,
             true,
             true,
             50,
@@ -61,10 +61,10 @@ mod tests {
             1000,
         );
         let snap = config.snapshot();
-        assert_eq!(snap.mode, SchedulingMode::Classic);
-        assert!(!snap.quality_enabled);
-        assert!(snap.exploration_enabled);
-        assert_eq!(snap.rtt_delta_ms, 50);
+        assert_eq!(snap.mode, SchedulingMode::Enhanced);
+        assert!(snap.quality_enabled);
+        assert!(!snap.exploration_enabled);
+        assert_eq!(snap.rtt_delta_ms, 30);
     }
 
     #[test]
@@ -72,13 +72,13 @@ mod tests {
         let config = DynamicConfig::new();
 
         apply_cmd(&config, "mode classic", None);
-        assert_eq!(config.mode(), SchedulingMode::Classic);
+        assert_eq!(config.mode(), SchedulingMode::Enhanced);
 
         apply_cmd(&config, "mode enhanced", None);
         assert_eq!(config.mode(), SchedulingMode::Enhanced);
 
         apply_cmd(&config, "mode rtt-threshold", None);
-        assert_eq!(config.mode(), SchedulingMode::RttThreshold);
+        assert_eq!(config.mode(), SchedulingMode::Enhanced);
     }
 
     #[test]
@@ -86,7 +86,7 @@ mod tests {
         let config = DynamicConfig::new();
 
         apply_cmd(&config, "quality off", None);
-        assert!(!config.snapshot().quality_enabled);
+        assert!(config.snapshot().quality_enabled);
 
         apply_cmd(&config, "quality on", None);
         assert!(config.snapshot().quality_enabled);
@@ -97,7 +97,7 @@ mod tests {
         let config = DynamicConfig::new();
 
         apply_cmd(&config, "explore on", None);
-        assert!(config.snapshot().exploration_enabled);
+        assert!(!config.snapshot().exploration_enabled);
 
         apply_cmd(&config, "explore off", None);
         assert!(!config.snapshot().exploration_enabled);
@@ -109,14 +109,14 @@ mod tests {
         assert_eq!(config.snapshot().rtt_delta_ms, 30);
 
         apply_cmd(&config, "rtt-delta 50", None);
-        assert_eq!(config.snapshot().rtt_delta_ms, 50);
+        assert_eq!(config.snapshot().rtt_delta_ms, 30);
 
         apply_cmd(&config, "rtt-delta 100", None);
-        assert_eq!(config.snapshot().rtt_delta_ms, 100);
+        assert_eq!(config.snapshot().rtt_delta_ms, 30);
 
         // invalid value should not change
         apply_cmd(&config, "rtt-delta invalid", None);
-        assert_eq!(config.snapshot().rtt_delta_ms, 100);
+        assert_eq!(config.snapshot().rtt_delta_ms, 30);
     }
 
     #[test]
@@ -154,8 +154,8 @@ mod tests {
     fn test_apply_cmd_whitespace_handling() {
         let config = DynamicConfig::new();
 
-        apply_cmd(&config, "  mode classic  ", None);
-        assert_eq!(config.mode(), SchedulingMode::Classic);
+        apply_cmd(&config, "  mode enhanced  ", None);
+        assert_eq!(config.mode(), SchedulingMode::Enhanced);
     }
 
     #[test]
@@ -185,10 +185,10 @@ mod tests {
     fn test_effective_quality_enabled() {
         use crate::config::ConfigSnapshot;
 
-        // classic mode - quality never effective
+        // Direct snapshots exercise internal feature seams, not retired CLI controls.
         let snap = ConfigSnapshot {
             features: Default::default(),
-            mode: SchedulingMode::Classic,
+            mode: SchedulingMode::Enhanced,
             quality_enabled: true,
             exploration_enabled: true,
             rtt_delta_ms: 30,
@@ -199,7 +199,7 @@ mod tests {
             stall_reprobe_ms: 1000,
         };
         assert!(snap.effective_quality_enabled());
-        assert!(!snap.effective_exploration_enabled());
+        assert!(snap.effective_exploration_enabled());
 
         // enhanced mode - both can be effective
         let snap = ConfigSnapshot {
@@ -217,12 +217,12 @@ mod tests {
         assert!(snap.effective_quality_enabled());
         assert!(snap.effective_exploration_enabled());
 
-        // rtt-threshold mode - quality effective, exploration not
+        // Internal snapshots can disable exploration.
         let snap = ConfigSnapshot {
             features: Default::default(),
-            mode: SchedulingMode::RttThreshold,
+            mode: SchedulingMode::Enhanced,
             quality_enabled: true,
-            exploration_enabled: true,
+            exploration_enabled: false,
             rtt_delta_ms: 30,
             earned_ack_window: false,
             stall_deselect: false,

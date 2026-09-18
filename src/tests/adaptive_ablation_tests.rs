@@ -255,9 +255,6 @@ async fn the_pool_distinguishes_exactly_the_frozen_feature_set() {
     assert_eq!(diverging, DIVERGING, "ablation coverage of the fixed pool");
 }
 
-#[path = "adaptive/ablation_equivalence.rs"]
-mod equivalence;
-
 #[cfg(feature = "test-internals")]
 #[path = "adaptive/ablation_env.rs"]
 mod env;

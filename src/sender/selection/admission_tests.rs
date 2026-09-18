@@ -1,7 +1,7 @@
 use super::*;
 use crate::connection::health::{HealthMachine, HealthState};
 use crate::mode::SchedulingMode;
-use crate::sender::selection::{EdpfSchedulerState, select_connection_idx_with_state};
+use crate::sender::selection::select_connection_idx_with_state;
 use crate::tests::adaptive_tests::{config, pool_of};
 use crate::utils::test_clock::TestClock;
 
@@ -99,13 +99,7 @@ async fn admission_empty_only_when_no_connected_link_exists() {
 async fn admission_down_connected_fallback_preserves_negative_base_order_in_every_mode() {
     // Given hard-ineligible connected links with negative capacity scores.
     let _clock = TestClock::new(10_000);
-    for mode in [
-        SchedulingMode::Classic,
-        SchedulingMode::Enhanced,
-        SchedulingMode::RttThreshold,
-        SchedulingMode::Edpf,
-        SchedulingMode::Adaptive,
-    ] {
+    for mode in [SchedulingMode::Enhanced] {
         let mut conns = pool_of(2).await;
         for c in &mut conns {
             c.health = HealthMachine::new(HealthState::Down, 0);
@@ -120,7 +114,6 @@ async fn admission_down_connected_fallback_preserves_negative_base_order_in_ever
             0,
             10_000,
             &cfg,
-            &mut EdpfSchedulerState::default(),
             &mut SchedulerShared::default(),
         );
         // Then the old base-only fallback wins without quality computation on held links.

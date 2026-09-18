@@ -8,7 +8,7 @@ use crate::telemetry_doc::conns_from_stats;
 
 fn adaptive_config() -> ConfigSnapshot {
     ConfigSnapshot {
-        mode: SchedulingMode::Adaptive,
+        mode: SchedulingMode::Enhanced,
         ..config()
     }
 }

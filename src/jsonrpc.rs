@@ -89,11 +89,8 @@ pub(crate) fn dispatch_jsonrpc(frame: &str, config: &DynamicConfig, stats: &Shar
         "get-capabilities" => success_response(id, capabilities_result()),
         "set-mode" => set_mode(id, params, config),
         "set-link-priority" => set_link_priority(id, params, stats),
-        "set-quality" => set_bool(id, params, |enabled| config.set_quality_enabled(enabled)),
-        "set-exploration" => set_bool(id, params, |enabled| {
-            config.set_exploration_enabled(enabled)
-        }),
-        "set-rtt-delta" => set_rtt_delta(id, params, config),
+        "set-quality" | "set-exploration" => set_bool(id, params),
+        "set-rtt-delta" => set_rtt_delta(id, params),
         "get-status" => success_response(id, status_result(config, stats)),
         _ => error_response(id, METHOD_NOT_FOUND, "Method not found"),
     }
@@ -265,31 +262,34 @@ fn set_mode(id: Value, params: Option<&Value>, config: &DynamicConfig) -> String
             config.set_mode(mode);
             success_response(id, ok_result())
         }
-        Err(_) => error_response(
-            id,
-            INVALID_PARAMS,
-            "invalid mode; use classic, enhanced, rtt-threshold, edpf, or adaptive",
-        ),
+        Err(error) => {
+            let kind = match error {
+                crate::mode::ModeError::Retired => "retired_mode",
+                crate::mode::ModeError::Unknown => "unknown_mode",
+            };
+            json!({"jsonrpc":"2.0", "id":id, "error":{
+                "code":INVALID_PARAMS, "message":error.to_string(),
+                "data":{"kind":kind, "mode":mode_str}
+            }})
+            .to_string()
+        }
     }
 }
 
-/// Shared `params.enabled` validation for the boolean toggles; `apply` runs the
-/// per-method `DynamicConfig` setter.
-fn set_bool(id: Value, params: Option<&Value>, apply: impl FnOnce(bool)) -> String {
-    let Some(enabled) = params
+fn set_bool(id: Value, params: Option<&Value>) -> String {
+    let Some(_) = params
         .and_then(|p| p.get("enabled"))
         .and_then(Value::as_bool)
     else {
         return error_response(id, INVALID_PARAMS, "requires params.enabled (boolean)");
     };
-    apply(enabled);
-    success_response(id, ok_result())
+    success_response(id, crate::config::deprecated_result())
 }
 
-fn set_rtt_delta(id: Value, params: Option<&Value>, config: &DynamicConfig) -> String {
+fn set_rtt_delta(id: Value, params: Option<&Value>) -> String {
     // ADR-001 canonical key is `delta_ms`; `ms` is a back-compat alias.
     // `delta_ms` wins when both are present.
-    let Some(ms) = params
+    let Some(_) = params
         .and_then(|p| p.get("delta_ms").or_else(|| p.get("ms")))
         .and_then(Value::as_u64)
         .and_then(|v| u32::try_from(v).ok())
@@ -300,8 +300,7 @@ fn set_rtt_delta(id: Value, params: Option<&Value>, config: &DynamicConfig) -> S
             "set-rtt-delta requires params.delta_ms (u32 milliseconds; `ms` accepted as alias)",
         );
     };
-    config.set_rtt_delta_ms(ms);
-    success_response(id, ok_result())
+    success_response(id, crate::config::deprecated_result())
 }
 
 fn ok_result() -> Value {

@@ -246,8 +246,7 @@ fn stats_file_interval_default_matches_the_named_constant() {
 
 #[test]
 fn mode_accepts_exactly_the_five_scheduling_modes() {
-    // Deliberate Todo 24 contract extension: adaptive is a VALUE, not a new flag;
-    // the enhanced default and the frozen FLAG_CONTRACT are unchanged.
+    // Given the 4.0.0 value set; flag names and positional arguments stay frozen.
     let cmd = command();
     let arg = cmd
         .get_arguments()
@@ -260,7 +259,7 @@ fn mode_accepts_exactly_the_five_scheduling_modes() {
         .collect();
     assert_eq!(
         values,
-        vec!["classic", "enhanced", "rtt-threshold", "edpf", "adaptive"],
+        vec!["enhanced"],
         "the scheduling-mode value set is part of the CLI surface"
     );
 }

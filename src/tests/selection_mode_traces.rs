@@ -2,7 +2,7 @@
 
 use crate::mode::SchedulingMode;
 use crate::sender::selection::adaptive::AdaptiveState;
-use crate::sender::selection::{EdpfSchedulerState, select_connection_idx_with_state};
+use crate::sender::selection::select_connection_idx_with_state;
 use crate::tests::adaptive_tests::{config, pool_of};
 use crate::utils::test_clock::TestClock;
 
@@ -15,7 +15,6 @@ async fn trace(mode: SchedulingMode) -> String {
     }
     let mut cfg = config();
     cfg.mode = mode;
-    let mut edpf = EdpfSchedulerState::default();
     let mut adaptive = AdaptiveState::default();
     let (mut last, mut switched) = (None, 0);
     let mut bytes = String::new();
@@ -30,16 +29,9 @@ async fn trace(mode: SchedulingMode) -> String {
             conns[0].connected = false;
             conns[0].last_received = None;
         }
-        let selected = select_connection_idx_with_state(
-            &mut conns,
-            last,
-            switched,
-            now,
-            &cfg,
-            &mut edpf,
-            &mut adaptive,
-        )
-        .expect("live alternatives");
+        let selected =
+            select_connection_idx_with_state(&mut conns, last, switched, now, &cfg, &mut adaptive)
+                .expect("live alternatives");
         assert_eq!(
             adaptive.targets.len(),
             conns.len(),
@@ -85,28 +77,10 @@ async fn trace(mode: SchedulingMode) -> String {
 #[tokio::test]
 async fn unaffected_modes_match_pre_fix_bytes() {
     // Given frozen baseline decisions, with backlog changes, holds and a link loss.
-    let cases = [
-        (
-            SchedulingMode::Enhanced,
-            "00000000000000222220000022222000002222202222222222222222222222222222222222222111",
-        ),
-        (
-            SchedulingMode::Classic,
-            "00000000000000222020220202202022020220202222222222222222222222222222222222222111",
-        ),
-        (
-            SchedulingMode::RttThreshold,
-            "00000000000000000000000000000000000000001111111111111111111111111111111111111111",
-        ),
-        (
-            SchedulingMode::Edpf,
-            "00010222220001122222011102222211011000221111122222111112222211111222221111122222",
-        ),
-        (
-            SchedulingMode::Adaptive,
-            "00000000000000222220000022222000002222202222222222222222222222222222222222222111",
-        ),
-    ];
+    let cases = [(
+        SchedulingMode::Enhanced,
+        "00000000000000222220000022222000002222202222222222222222222222222222222222222111",
+    )];
     // When each mode runs through the production dispatcher with owned state.
     let mut actual = Vec::new();
     for (mode, _) in cases {
@@ -114,6 +88,17 @@ async fn unaffected_modes_match_pre_fix_bytes() {
     }
     // Then its complete decision stream remains byte-identical, not just its totals.
     assert_eq!(actual, cases.map(|(_, expected)| expected));
+    let frozen: String = cases
+        .iter()
+        .zip(&actual)
+        .map(|((mode, _), bytes)| format!("{mode} {bytes}\n"))
+        .collect();
+    let historical = include_str!("../../tests/fixtures/selection-traces-pre-deletion.txt");
+    let survivor = historical
+        .lines()
+        .find(|line| line.starts_with("enhanced "))
+        .unwrap();
+    assert_eq!(frozen, format!("{survivor}\n"));
 }
 
 #[tokio::test]
@@ -121,13 +106,7 @@ async fn shared_admission_excludes_degraded_links_in_every_mode() {
     // Given an otherwise superior degraded link and one healthy alternative.
     use crate::connection::health::{HealthMachine, HealthState};
     let _clock = TestClock::new(10_000);
-    for mode in [
-        SchedulingMode::Classic,
-        SchedulingMode::Enhanced,
-        SchedulingMode::RttThreshold,
-        SchedulingMode::Edpf,
-        SchedulingMode::Adaptive,
-    ] {
+    for mode in [SchedulingMode::Enhanced] {
         let mut conns = pool_of(2).await;
         conns[0].health = HealthMachine::new(HealthState::Degraded, 0);
         conns[1].window = 1;
@@ -140,7 +119,6 @@ async fn shared_admission_excludes_degraded_links_in_every_mode() {
             10_000,
             10_001,
             &cfg,
-            &mut EdpfSchedulerState::default(),
             &mut AdaptiveState::default(),
         );
         // Then admission wins over every mode's ranking and hold behavior.

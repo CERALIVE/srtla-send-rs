@@ -36,6 +36,17 @@ default-on receiver re-home plus automatic `4.0.1` bump were not imported. See
 
 ### Scheduling Modes
 
+**4.0.0: Enhanced is the sole selectable scheduler and remains the default.**
+Classic, RTT-threshold, EDPF and Adaptive mode arguments are rejected at startup;
+see [4.0.0 release notes](docs/release-notes-4.0.0.md) for the migration, retired
+no-op controls, historical EDPF carve-out and downgrade instructions. The choice
+is the frozen empty-covering-set fallback, NOT a performance-coverage win; the
+hardware canary is still pending. Shared health, deadline, weighting and probe
+mechanisms remain active, with the surviving selection trace unchanged.
+
+**The following pre-4.0.0 mode comparisons and experiment narratives are historical,
+not available mode choices or current CLI instructions.**
+
 All five modes now share health/deadline admission, quality × rejoin ramp ×
 Healthy-only priority × soft rate-cap weighting, and paced duplicate probes.
 Modes choose the ranking formula, not which health signals exist. This is the
@@ -99,23 +110,23 @@ NAK-off blindness remains present on G. See
 - **Quality Scoring**: Automatic preference for higher-quality connections
 - **Score Hysteresis**: 10% threshold prevents noise-driven flip-flopping while maintaining natural load distribution
 
-#### Classic Mode
+#### Classic Mode (removed in 4.0.0 — history)
 
 - Capacity argmax after shared admission and weighting; no cooldown or exploration
 - No longer an exact C-sender behavior mode; quality/health/preferences apply
-- Enable via `--mode classic`
+- The former `--mode classic` invocation is now rejected.
 
-#### RTT-Threshold Mode
+#### RTT-Threshold Mode (removed in 4.0.0 — history)
 
 - **Reduces Packet Reordering**: Groups links by RTT and strongly prefers low-RTT ("fast") links
 - **Threshold-Based Selection**: Links within `min_rtt + delta` are considered "fast"
 - **Quality-Aware Within Fast Links**: Applies NAK penalties when choosing among fast links
 - **Automatic Fallback**: Uses slow links only when fast links are saturated
-- **Enable via**: `--mode rtt-threshold`
+- The former `--mode rtt-threshold` invocation is now rejected.
 - **Configure delta**: `--rtt-delta-ms N` (default 30ms) or runtime `rtt-delta N`
 - **Use Case**: Heterogeneous networks where some links have significantly higher latency (e.g., satellite + cellular)
 
-#### EDPF Mode
+#### EDPF Mode (removed from CLI in 4.0.0 — retained regression evidence)
 
 Earliest Delivery Path First. Instead of scoring links by capacity or RTT group, EDPF predicts when a packet would actually *arrive* over each link and picks the lowest. Selection runs through a three-stage pipeline:
 
@@ -125,11 +136,11 @@ Earliest Delivery Path First. Instead of scoring links by capacity or RTT group,
 
 The scheduler state (BLEST + IoDS) is owned per send-loop (no thread-local), so selection is deterministic and allocation-free on the hot path.
 
-- **Enable via**: `--mode edpf`
+- The former `--mode edpf` invocation is now rejected; the algorithm and E1/E2 regression evidence remain outside CLI dispatch.
 - **Tradeoffs**: models delivery time at greater computation cost than Classic. The shared multiplier replaces the old quality-cache input inside effective capacity, preserving its clamp, bootstrap and velocity/BDP terms. Exploration does not apply.
 - **Use Case**: Bonding links with differing bandwidth *and* latency where keeping the SRT stream in order with minimal added delay matters more than raw capacity packing.
 
-#### Adaptive Mode [PARTIAL]
+#### Adaptive Mode (removed in 4.0.0 — history)
 
 **Final Todo 30 status (2026-09-15): scoped completion with documented findings,
 not scheduler acceptance.** Nine non-adaptive targets have historical privileged
@@ -254,12 +265,12 @@ Evidence is bounded and scoped to the socket and current Stalled epoch.
 These correctness fixes are regression-tested; the privileged D/G/twin integration
 scenarios still expose unresolved recovery/selection behaviour and are not green.
 
-### Optional Smart Exploration (Enhanced Mode Only)
+### Optional Smart Exploration (retired in 4.0.0 — history)
 
 - **Context-Aware Discovery**: Tests alternative connections when current best is degrading and alternatives have recovered
 - **Periodic Fallback**: Every 30 seconds for 300ms as a safety net
 - **Smart Switching**: Tries second-best connections instead of always sticking to current best
-- **Enable via**: `--exploration` flag or runtime command `explore on`
+- `--exploration` and `explore on` are now accepted no-ops.
 - **Use Case**: More aggressive connection testing in unstable network conditions
 
 ## Assumptions and Prerequisites
@@ -343,7 +354,7 @@ and pull request (`.github/workflows/ci.yml`):
   gate to verify every publication-capable job is skipped
 - `uv run scripts/rust_cache_contract_test.py` verifies the cache action, key dimensions,
   bounded-target settings, and failure-propagation shape across both Rust workflows
-- `bash scripts/release_version_contract_test.sh` proves `v3.3.0` selects 3.3.0 package
+- `bash scripts/release_version_contract_test.sh` proves `v4.0.0` selects 4.0.0 package
   metadata/artifact names and rejects a tag that differs from `Cargo.toml`
 - `bash scripts/deb_version_ordering_test.sh` derives the package version from `Cargo.toml`,
   proves a patch bump sorts newer under Debian ordering, and reports whether the known stale
@@ -356,9 +367,10 @@ and pull request (`.github/workflows/ci.yml`):
 `arm64`/`amd64`), and declares `Conflicts: srtla (<< <cutover>)` because the `srtla`
 package still ships the C `srtla_send`. Pushing a `v*` tag runs
 `.github/workflows/release.yml`, which rebuilds both architectures and attaches the
-`.deb`s to the GitHub release. The current source package version is `3.3.0`, producing
-`srtla-send-rs_3.3.0_arm64.deb` and `srtla-send-rs_3.3.0_amd64.deb`; a tag build is
-accepted only when the tag is `v3.3.0`. See `AGENTS.md` → CI / PACKAGING for the full
+`.deb`s to the GitHub release. The current source package version is `4.0.0`, producing
+`srtla-send-rs_4.0.0_arm64.deb` and `srtla-send-rs_4.0.0_amd64.deb`; a tag build is
+accepted only when the tag is `v4.0.0`. Released 3.3.0 remains the rollback artifact;
+no tag or publication is made by this change. See `AGENTS.md` → CI / PACKAGING for the full
 contract. Release binaries are built against Debian 12 rather than the moving GitHub
 runner userspace, keeping their GLIBC requirements compatible with the Bookworm device
 image on both architectures.
@@ -1399,18 +1411,18 @@ srtla_send [OPTIONS] SRT_LISTEN_PORT SRTLA_HOST SRTLA_PORT BIND_IPS_FILE
 
 - `--verbose`: Enable verbose (debug-level) logging
 - `--dry-run`: Validate the IP list and resolve the receiver, print them, then exit without binding any socket (non-zero exit if the IP list is unusable)
-- `--mode <MODE>`: Ranking mode: `classic`, `enhanced` (default), `rtt-threshold`, `edpf`, `adaptive`; shared admission applies to all five
-- `--no-quality`: Disable the shared quality multiplier in every mode
-- `--exploration`: Enable connection exploration (enhanced only)
-- `--rtt-delta-ms <N>`: RTT delta threshold in ms (default: 30, rtt-threshold only)
+- `--mode <MODE>`: Only `enhanced` (default); retired values are clap errors naming 4.0.0 and its release notes
+- `--no-quality`: Accepted and ignored, one startup WARN when supplied
+- `--exploration`: Accepted and ignored, one startup WARN when supplied
+- `--rtt-delta-ms <N>`: Accepted and ignored, one startup WARN when supplied (parsed default: 30)
 - `--control-socket <PATH>`: Unix domain socket path for remote control (e.g., `/tmp/srtla.sock`)
 - `--stats-file <PATH>`: Write per-uplink telemetry JSON to `<PATH>` (opt-in; see [Telemetry](#telemetry))
 - `--stats-file-interval <MS>`: Telemetry write cadence in milliseconds (default: 1000)
 - `--earned-ack-window`: Retired compatibility flag; accepted and ignored under shared arrival-scoped ACK handling
 - `--stall-deselect`: Retired compatibility flag; accepted and ignored with one WARN per process
-- `--stall-min-in-flight <N>`: Ignored compatibility setting (parsed default: 32)
-- `--stall-ack-stale-ms <MS>`: Ignored compatibility setting (parsed default: 3000)
-- `--stall-reprobe-ms <MS>`: Ignored compatibility setting (parsed default: 1000)
+- `--stall-min-in-flight <N>`: Ignored compatibility setting, one startup WARN when supplied (parsed default: 32)
+- `--stall-ack-stale-ms <MS>`: Ignored compatibility setting, one startup WARN when supplied (parsed default: 3000)
+- `--stall-reprobe-ms <MS>`: Ignored compatibility setting, one startup WARN when supplied (parsed default: 1000)
 - `--bind-map <PATH>`: Optional versioned bind-map sidecar describing `BIND_IPS_FILE` positionally (see [Bind-map sidecar](#bind-map-sidecar-optional)). Absent means byte-identical legacy behavior
 - `--capabilities-json`: Print a machine-readable capability document and exit `0` (see [Capability probe](#capability-probe))
 - `-v, --version`: Print version and exit (see [Version output](#version-output))
@@ -1422,7 +1434,7 @@ parenthetical, and the package name:
 
 ```bash
 $ ./target/release/srtla_send -v
-3.3.0 (main@974c8b9) [srtla_send]
+4.0.0 (main@<commit>) [srtla_send]
 ```
 
 The parenthetical is emitted only when the build could resolve a commit. Building
@@ -1432,10 +1444,10 @@ is omitted entirely rather than filled with a placeholder:
 
 ```bash
 $ ./target/release/srtla_send -v
-3.3.0 [srtla_send]
+4.0.0 [srtla_send]
 ```
 
-A tag build (detached HEAD) reports the bare hash, `3.3.0 (974c8b9) [srtla_send]`,
+A tag build (detached HEAD) reports the bare hash, `4.0.0 (<commit>) [srtla_send]`,
 and a build from a modified working tree suffixes the hash with `-dirty`.
 
 ### Configuration check
@@ -1470,19 +1482,19 @@ With `srtla_send` running on the sender, SRT-enabled applications should stream 
 RUST_LOG=info ./target/release/srtla_send --control-socket /tmp/srtla.sock 6000 rec.example.com 5000 ./uplinks.txt
 ```
 
-**With classic mode:**
+**With the sole scheduler explicitly selected:**
 
 ```bash
-./target/release/srtla_send --mode classic 6000 rec.example.com 5000 ./uplinks.txt
+./target/release/srtla_send --mode enhanced 6000 rec.example.com 5000 ./uplinks.txt
 ```
 
-**With RTT-threshold mode:**
+**Inspect the running scheduler:**
 
 ```bash
-./target/release/srtla_send --mode rtt-threshold --rtt-delta-ms 50 6000 rec.example.com 5000 ./uplinks.txt
+echo '{"id":1,"method":"get-status"}' | socat - UNIX-CONNECT:/tmp/srtla.sock
 ```
 
-**With quality scoring disabled:**
+**Legacy quality option (accepted but ignored, with a warning):**
 
 ```bash
 ./target/release/srtla_send --no-quality 6000 rec.example.com 5000 ./uplinks.txt
@@ -1524,22 +1536,21 @@ Use the `--control-socket` option to enable remote control via Unix socket:
 ./target/release/srtla_send --control-socket /tmp/srtla.sock 6000 10.0.0.1 5000 /tmp/srtla_ips
 
 # Send commands remotely
-echo 'mode classic' | socat - UNIX-CONNECT:/tmp/srtla.sock
+echo 'mode enhanced' | socat - UNIX-CONNECT:/tmp/srtla.sock
 echo 'status' | socat - UNIX-CONNECT:/tmp/srtla.sock
 ```
 
 ### Available Commands
 
-- `mode classic` - Switch to classic mode
-- `mode enhanced` - Switch to enhanced mode (default)
-- `mode rtt-threshold` - Switch to RTT-threshold mode
-- `mode edpf` - Switch to EDPF (Earliest Delivery Path First) mode
-- `quality on|off` - Enable/disable quality scoring
-- `explore on|off` - Enable/disable connection exploration
-- `rtt-delta <ms>` - Set RTT delta threshold in milliseconds
+- `mode enhanced` - Confirm the sole running mode; retired values are errors
+- `quality on|off` - Success with `deprecated: true, effect: "none"`; configuration unchanged
+- `explore on|off` - Success with `deprecated: true, effect: "none"`; configuration unchanged
+- `rtt-delta <ms>` - Success with `deprecated: true, effect: "none"`; configuration unchanged
 - `status` - Display current configuration
 
 ### Connection Selection Algorithm Details
+
+2026-09-18 — classic/rtt-threshold/edpf/adaptive modes removed in 4.0.0 — read as history.
 
 **Classic Mode**: Capacity argmax over shared admission weights, without cooldown.
 
@@ -1814,7 +1825,7 @@ exits `0`. It binds no sockets, writes no files, and needs no positional argumen
 
 ```bash
 $ ./target/release/srtla_send --capabilities-json
-{"schema_version":1,"binary":"srtla_send","version":"3.3.0","capabilities":{"bind_map":true,...}}
+{"schema_version":1,"binary":"srtla_send","version":"4.0.0","capabilities":{"bind_map":true,...}}
 ```
 
 It exists so a supervisor can decide **before spawning a stream** whether to pass
@@ -1948,8 +1959,8 @@ With properly configured connections, you should observe:
 **If only some connections are used**:
 
 1. Check for NAKs in logs - degraded connections naturally get less traffic in enhanced mode
-2. Try classic mode: `mode classic` - changes ranking, not shared health or quality admission
-3. Temporarily disable quality scoring: `quality off`
+2. Inspect `get-status` and each link's health and route axis; Enhanced is the only scheduler
+3. Check whether deadline admission, rejoining or the soft rate cap is reducing a link's weight; legacy quality controls have no effect
 4. Verify all uplinks can reach the receiver (check for timeout messages)
 5. Check RTT differences - high-RTT connections get slightly less traffic in enhanced mode (3% max difference)
 
@@ -1966,7 +1977,7 @@ With properly configured connections, you should observe:
 1. This should be minimal with 10% hysteresis in enhanced mode
 2. Check if scores are truly identical (look for hysteresis messages in debug logs)
 3. Verify connections have stable quality (no intermittent NAKs)
-4. Consider using classic mode for perfectly equal connections
+4. Inspect offered load, queued packets and link health rather than switching modes
 
 ## Performance Tuning
 
@@ -2000,7 +2011,7 @@ If needed, these can be adjusted in `src/sender/selection/`:
 
 - `RTT_VELOCITY_GATE_THRESHOLD`: 2.0 (ms per Kalman update, NOT ms/second) - halves the window-recovery increment while RTT is rising this fast or faster; sim-tested only, see [Experimental scheduler-hardening flags](#experimental-scheduler-hardening-flags)-style hardware-validation caveat in `AGENTS.md`
 
-**EDPF Mode (`selection/edpf.rs`), `--mode edpf` only:**
+**Historical EDPF regression module (`selection/edpf.rs`), not CLI selectable:**
 
 - `VELOCITY_PENALTY_FACTOR`: 0.005 - scales the RTT-velocity ranking penalty added to predicted arrival time
 - `BDP_OVERRUN_MULT`: 1.5 (with a 1ms propagation floor) - ranking penalty multiplier for links over their bandwidth-delay-product cap; a ranking term, not an exclusion, so an all-over-cap pool still selects the least-overrun link instead of emptying
@@ -2019,6 +2030,6 @@ For maximum throughput:
 
 For maximum stability:
 
-- Use classic mode (`--mode classic`) for predictable, simple behavior
-- Disable exploration (`explore off`) if not needed
+- Use the default Enhanced scheduler; there is no mode switch in 4.0.0
+- Exploration is retired; `explore off` and `explore on` have no effect
 - Increase hysteresis threshold if experiencing unnecessary switching

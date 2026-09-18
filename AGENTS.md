@@ -1,5 +1,48 @@
 # srtla-send-rs
 
+## 4.0.0 SCHEDULER RETIREMENT (bonded-path convergence, Todo 21)
+
+This section supersedes the historical five-mode descriptions below. Enhanced
+is the ONLY `SchedulingMode` variant and CLI value, and remains the default.
+Classic/RTT-threshold/EDPF/Adaptive spellings are clap errors naming 4.0.0 and
+`docs/release-notes-4.0.0.md`; RPC rejects them with `-32602` and typed
+`error.data.kind = retired_mode`. No warning-and-remap compatibility window.
+The frozen verdict selected Enhanced by empty-covering-set fallback, not genuine
+coverage. M5 skipped for Enhanced; hardware canary remains pending, not pass.
+
+Quality/exploration/RTT-delta and the four stall CLI inputs are present, accepted,
+no effect, with exactly one startup WARN per explicitly supplied option (clap
+ValueSource distinguishes supplied numeric defaults). Quality/explore/RTT control
+writes return success plus `{deprecated:true,effect:"none"}` without mutation.
+Discovery arrays remain byte-identical. `--earned-ack-window` is untouched.
+Shared admission, weighting, sole election, probes and ACK policy remain active;
+Adaptive's separate selector is gone, not the shared machinery it donated in Todo32.
+
+**EDPF exception:** keep `selection/edpf.rs`, BLEST/IoDS support and both EDPF
+test files because Todo34 skipped fold-in and ported no E1/E2 pins. Unit tests
+call the retained pipeline directly. `netns_edpf` runs the hash-verified
+pre-deletion `m4a-ours-new/edpf` artifact; absent artifacts explicitly skip,
+hash mismatches fail. No production selector dispatches to EDPF. Adaptive-only
+CLI/netns tests retire with the mode; previous G/twin failures are history, NOT
+fixed behavior. Shared mechanism tests now call the real Enhanced dispatcher.
+Both pre-shared-layer and five-arm pre-deletion trace fixtures stay frozen;
+the surviving Enhanced trace must remain byte-identical.
+
+Historical manifests require `bash scripts/bench/run_campaign.sh
+--historical-from-lock MANIFEST`. Parent and worker verify locked candidate
+SHA-256s, use locked paths and never rewrite historical locks. Missing lock
+entries fail closed. The owner C1 file remains byte-untouched; retired mode
+arguments force historical classification even without a marker. Do not narrow
+frozen statistical rules or historical matrices to the current CLI set.
+
+Capability comparison permits the mandatory `version` value change to4.0.0;
+all other differences from released3.3.0 are additive (`adaptive_scheduler`,
+`link_priority`, introduced earlier). `adaptive_scheduler` describes shared
+health adaptation, not acceptance of the removed mode. Probe/live docs agree.
+Package epoch and cutover2026.6.2 stay unchanged; published3.3.0 and the external
+versions.yaml pin remain rollback inputs. Binding spawn union is BREAKING;
+control status `mode` is `string`. No release/tag/push is part of this task.
+
 ## AUTHORITATIVE VERDICT / LINEAGE GATE (Todo 34)
 
 The primary authoritative verdict is byte-identical to Todo20's provisional
@@ -280,7 +323,7 @@ RTT). On the device it is driven by CeraUI and feeds the bonded path into
 `irl-srt-server`. Canonical branch `main`; sibling checkout under the workspace root
 (see CRITICAL CONSTRAINTS below).
 
-> **Status:** current source v3.3.0; CeraLive parity milestone v1.0.0 complete. Fork created from upstream HEAD;
+> **Status:** current source v4.0.0 (breaking mode retirement, not yet released); CeraLive parity milestone v1.0.0 complete. Fork created from upstream HEAD;
 > nightly pinned; full gate green on the pinned toolchain. Landed: CLI parity contract
 > (Task 9: `--verbose`/`--dry-run`/`--stats-file`/`--stats-file-interval`), the opt-in
 > ADR-001 telemetry sink (Task 10: `src/telemetry_file.rs`), signal/startup parity
@@ -460,9 +503,12 @@ CeraUI and the device integration depend on these staying stable:
   a specific error), `--stats-file <path>` and `--stats-file-interval <ms>` (default
   `1000`). The `--stats-file` telemetry sink is **implemented** (`src/telemetry_file.rs`)
   and opt-in — absent means no file is ever written.
-- **Upstream scheduler/control-socket flags** (`--mode`, `--no-quality`, `--exploration`,
-  `--rtt-delta-ms`, `--control-socket`) stay present and functional but are **not**
-  surfaced in CeraUI.
+- **Legacy scheduler controls** (`--no-quality`, `--exploration`, `--rtt-delta-ms`
+  and all four stall options) are **present, accepted, no effect** in4.0.0;
+  each explicitly supplied CLI option warns once. Runtime quality/exploration/RTT
+  writes return additive deprecation success without mutation. `--mode` accepts
+  only `enhanced`; `--control-socket` remains functional. `--earned-ack-window`
+  remains unchanged. These scheduler controls are not surfaced in CeraUI.
 - **Optional bind-map sidecar (`--bind-map <path>`, ADR-003) — ADDITIVE, never required.**
   `BIND_IPS_FILE` stays **byte-unchanged**; the mapping rides a *separate* versioned JSON
   sidecar that describes it **positionally** (the Nth row describes the Nth accepted IP
@@ -1323,7 +1369,7 @@ workflows. It pins the contract the device image depends on:
 `srtla-send-rs` is the one first-party component that does NOT follow the CeraLive
 CalVer (`YYYY.MINOR.PATCH`) scheme. Its `.deb` version comes directly from
 `Cargo.toml` `[package] version`, which tracks upstream irlserver semver.
-Current source package version: `3.3.0`. The workspace `versions.yaml` and the latest
+Current source package version: `4.0.0`. The workspace `versions.yaml` and the latest
 published GitHub release are both pinned at `v3.3.0`.
 
 Rationale: this repo is a fork of `irlserver/srtla_send`; keeping the upstream semver
@@ -1333,7 +1379,7 @@ version-only commit is still a deliberate fork release decision, not an automati
 The GitHub release **tag** namespace is `v<package-version>`. A tag-triggered package
 build must match the committed `Cargo.toml` version; `ci/build-deb.sh` rejects a tag ref
 whose `GITHUB_REF_NAME` differs from `v<package-version>`. For this source version, the
-only valid release tag is `v3.3.0`.
+only valid release tag is `v4.0.0`; this task does not create it.
 
 The `@ceralive/srtla-send` npm binding ships on its own `bindings-vYYYY.M.P` tag
 namespace and uses CalVer independently of the Rust crate version.
@@ -1663,6 +1709,8 @@ campaign execution and feature/constant publication remain separate tasks. Neith
 script changes Rust code or proves that a scheduler should actually be retired.
 
 ## ADAPTIVE SELECTION (scheduler evaluation, Todo 22) [PARTIAL]
+
+2026-09-18 — classic/rtt-threshold/edpf/adaptive modes removed in 4.0.0 — read as history.
 
 `SchedulingMode::Adaptive` is additive (`adaptive`, atomic value 4); Enhanced stays
 the default and existing encodings/spellings remain unchanged. The send loop owns
@@ -2289,12 +2337,10 @@ scripts/netns_test_gate.sh  bounded privileged network-namespace test runner
 
 Conventions (enforced by the gate): edition 2024, `anyhow::Result`, `tracing` macros,
 Tokio async, imports grouped std → external → crate (module granularity), constants
-`SCREAMING_SNAKE_CASE`. Four established modes plus the partial adaptive integration
-above; enhanced (default) adds NAK-decay quality scoring + optional exploration.
-EDPF (`--mode edpf`) is Earliest Delivery Path First — a BLEST (static-OWD HoL
-guard) → IoDS (bounded in-order constraint) → EDPF (lowest predicted arrival)
-pipeline with per-loop owned scheduler state (no thread-local). See `README.md`
-for the full operator/runtime reference (modes, runtime commands, tuning constants).
+`SCREAMING_SNAKE_CASE`. One scheduling mode: Enhanced, with shared admission,
+NAK-decay quality weighting, cooldown and hysteresis. Exploration controls are
+retired no-ops. EDPF/BLEST/IoDS remain only as the explicitly retained regression
+pipeline, never CLI dispatch. See `README.md` and `docs/release-notes-4.0.0.md`.
 
 ## ANTI-PATTERNS
 
@@ -2590,6 +2636,8 @@ value are unchanged.
 
 ### S6 — Kalman RTT clamped to ≥0; RTT-threshold classifier uses has_rtt_sample()
 
+2026-09-18 — classic/rtt-threshold/edpf/adaptive modes removed in 4.0.0 — read as history.
+
 `get_smooth_rtt_ms()` (`connection/mod.rs`) now clamps the Kalman filter output
 to `0.0_f64.max(value)` before returning. A negative Kalman estimate (possible
 during filter warm-up on a link with high jitter) can no longer propagate to
@@ -2658,6 +2706,8 @@ emitted. The first two fail on the pre-fix ordering.
 
 ## ROBUSTNESS FIXES (EDPF bonding, 2026-08-15)
 
+2026-09-18 — classic/rtt-threshold/edpf/adaptive modes removed in 4.0.0 — read as history.
+
 `--mode edpf` did not work at all, and `tests/netns_edpf.rs` had been red since it
 was written. Two independent defects in the EDPF pipeline, both inherited from the
 upstream commits that introduced it (`27c6c00`, `80cd0c4`). Neither touches the
@@ -2665,6 +2715,8 @@ parity contract; the other three modes are unaffected (their selectors never cal
 the EDPF predictor).
 
 ### E1 — EDPF could never bootstrap (`src/sender/selection/edpf.rs`)
+
+2026-09-18 — classic/rtt-threshold/edpf/adaptive modes removed in 4.0.0 — read as history.
 
 `predicted_arrival` returned `None` when `conn.bitrate.current_bitrate_bps <= 0.0`.
 That field is a **measurement** of bytes this uplink has already sent, so it is
@@ -2682,6 +2734,8 @@ replaces it within one 2 s bitrate window. This also covers a link idle longer t
 that window, whose measurement decays back to `0.0`.
 
 ### E2 — BLEST permanently starved the high-latency uplink (`selection/mod.rs`)
+
+2026-09-18 — classic/rtt-threshold/edpf/adaptive modes removed in 4.0.0 — read as history.
 
 `BlestFilter` is a static, capacity-blind OWD guard: a link more than 50 ms of OWD
 behind the fastest is excluded on **every** tick regardless of congestion, and the
@@ -2777,6 +2831,8 @@ downward-bias regression on every real (non-sub-ms) link. `src/connection/rtt.rs
 `src/connection/ack_nak.rs`.
 
 ### EDPF velocity + BDP-overrun RANKING penalty (todo 11, ported from upstream `57525c7` + `d53d8bc`) — SIM-TESTED, NOT HARDWARE-VALIDATED
+
+2026-09-18 — classic/rtt-threshold/edpf/adaptive modes removed in 4.0.0 — read as history.
 
 Upstream's own shape (`DO-NOT-PORT-AS-IS` per the triage doc's frozen bug list) hard
 -excludes a link once its bandwidth-delay product is exceeded — if every candidate

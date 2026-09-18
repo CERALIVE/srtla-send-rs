@@ -73,7 +73,7 @@ pub fn run(sender_binary: &str) -> Result<()> {
             &args.iter().map(String::as_str).collect::<Vec<_>>(),
         )?;
         wait_for_udp_listener(&topology.receiver_ns, 5000, Duration::from_secs(5))?;
-        let args = topology.sender_args((5555, 5000), &["--mode", "classic"])?;
+        let args = topology.sender_args((5555, 5000), &["--mode", "enhanced"])?;
         let mut launch = vec!["RUST_LOG=info", sender_binary];
         launch.extend(args.iter().map(String::as_str));
         let mut sender = NamespaceProcess::spawn_process_only(&topology.sender_ns, "env", &launch)?;

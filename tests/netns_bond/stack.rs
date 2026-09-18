@@ -64,7 +64,8 @@ impl Stack {
             &argv.iter().map(String::as_str).collect::<Vec<_>>(),
         )?;
         wait_for_udp_listener(&topo.receiver_ns, 5000, Duration::from_secs(5))?;
-        let sender = topo.spawn_sender(env!("CARGO_BIN_EXE_srtla_send"), &["--mode", "classic"])?;
+        let sender =
+            topo.spawn_sender(env!("CARGO_BIN_EXE_srtla_send"), &["--mode", "enhanced"])?;
         Ok(Self {
             sender,
             processes: vec![server, receiver],

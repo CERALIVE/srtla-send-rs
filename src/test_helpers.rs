@@ -147,9 +147,11 @@ pub async fn create_selection_test_connections(count: usize) -> SmallVec<SrtlaCo
             now_ms(),
         );
     }
-    let config = crate::config::DynamicConfig::new();
-    config.set_quality_enabled(false);
-    crate::sender::SchedulerShared::default().update_stats(&mut conns, &config.snapshot());
+    let config = crate::config::ConfigSnapshot {
+        quality_enabled: false,
+        ..crate::config::DynamicConfig::new().snapshot()
+    };
+    crate::sender::SchedulerShared::default().update_stats(&mut conns, &config);
     conns
 }
 
