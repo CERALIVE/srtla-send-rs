@@ -1,3 +1,4 @@
+2026-09-18 — classic/rtt-threshold/edpf/adaptive modes removed in 4.0.0 — read as history.
 # Receiver-policy evaluation: `nakreport=0` and `reorderfreeze=1` on the C1 bench (2026-09)
 
 ## Scope and outcome

@@ -1,3 +1,4 @@
+2026-09-18 — classic/rtt-threshold/edpf/adaptive modes removed in 4.0.0 — read as history.
 # Upstream sync triage: irlserver/srtla_send `80cd0c4..c9f6bb2` (2026-08)
 
 Successor to `docs/notes/strata-port-evaluation.md` (2026-06-23 audit @ `1866c6c`). That

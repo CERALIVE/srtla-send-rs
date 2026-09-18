@@ -1,3 +1,4 @@
+2026-09-18 — classic/rtt-threshold/edpf/adaptive modes removed in 4.0.0 — read as history.
 # Enhanced cooldown candidate — UNACCEPTED; behaviour reverted; tests retained (2026-09-16)
 
 ## Decision
