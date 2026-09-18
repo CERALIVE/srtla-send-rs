@@ -4,7 +4,7 @@
   "candidates": [
     {
       "label": "classic",
-      "bin": "/tmp/srtla-bench/bins/srtla_send-c984555d8998684611b5f3838577392eb8ebaa9e-0ca536cd1d8feef4",
+      "bin": "/home/andres/.cache/opencode/tmp/srtla-bench/bins/srtla_send-7e9a780a8e94b0c89dfb5b68b6448ca222faf12d-4a11c169ec51c134",
       "args": ["--mode", "classic"],
       "env": {},
       "stats_file": true,
@@ -15,7 +15,7 @@
     },
     {
       "label": "enhanced",
-      "bin": "/tmp/srtla-bench/bins/srtla_send-c984555d8998684611b5f3838577392eb8ebaa9e-0ca536cd1d8feef4",
+      "bin": "/home/andres/.cache/opencode/tmp/srtla-bench/bins/srtla_send-7e9a780a8e94b0c89dfb5b68b6448ca222faf12d-4a11c169ec51c134",
       "args": ["--mode", "enhanced"],
       "env": {},
       "stats_file": true,
@@ -26,7 +26,7 @@
     },
     {
       "label": "rtt-threshold",
-      "bin": "/tmp/srtla-bench/bins/srtla_send-c984555d8998684611b5f3838577392eb8ebaa9e-0ca536cd1d8feef4",
+      "bin": "/home/andres/.cache/opencode/tmp/srtla-bench/bins/srtla_send-7e9a780a8e94b0c89dfb5b68b6448ca222faf12d-4a11c169ec51c134",
       "args": ["--mode", "rtt-threshold"],
       "env": {},
       "stats_file": true,
@@ -37,7 +37,7 @@
     },
     {
       "label": "edpf",
-      "bin": "/tmp/srtla-bench/bins/srtla_send-c984555d8998684611b5f3838577392eb8ebaa9e-0ca536cd1d8feef4",
+      "bin": "/home/andres/.cache/opencode/tmp/srtla-bench/bins/srtla_send-7e9a780a8e94b0c89dfb5b68b6448ca222faf12d-4a11c169ec51c134",
       "args": ["--mode", "edpf"],
       "env": {},
       "stats_file": true,
@@ -48,7 +48,7 @@
     },
     {
       "label": "adaptive",
-      "bin": "/tmp/srtla-bench/bins/srtla_send-c984555d8998684611b5f3838577392eb8ebaa9e-0ca536cd1d8feef4",
+      "bin": "/home/andres/.cache/opencode/tmp/srtla-bench/bins/srtla_send-7e9a780a8e94b0c89dfb5b68b6448ca222faf12d-4a11c169ec51c134",
       "args": ["--mode", "adaptive"],
       "env": {"SRTLA_ADAPTIVE_FEATURES": "all"},
       "stats_file": true,
@@ -64,14 +64,14 @@
     },
     {
       "label": "upstream-classic",
-      "bin": "/tmp/srtla-bench/externals/upstream-srtla_send",
+      "bin": "/home/andres/.cache/opencode/tmp/srtla-bench/externals/upstream-srtla_send",
       "args": ["--mode", "classic"],
       "env": {},
       "stats_file": false
     },
     {
       "label": "upstream-enhanced",
-      "bin": "/tmp/srtla-bench/externals/upstream-srtla_send",
+      "bin": "/home/andres/.cache/opencode/tmp/srtla-bench/externals/upstream-srtla_send",
       "args": ["--mode", "enhanced"],
       "env": {},
       "stats_file": false
@@ -80,7 +80,7 @@
   "receivers": [
     {
       "name": "ceralive",
-      "bin": "/tmp/srtla-bench/externals/ceralive-srtla_rec"
+      "bin": "/home/andres/.cache/opencode/tmp/srtla-bench/externals/ceralive-srtla_rec"
     }
   ],
   "cells": [

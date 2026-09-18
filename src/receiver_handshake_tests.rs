@@ -65,6 +65,7 @@ async fn receiver_handshake_survives_pool_addition_reorder_and_replacement() {
 }
 
 #[test]
+#[cfg(all(unix, not(loom)))]
 fn receiver_handshake_get_status_omits_unknown_and_preserves_false() {
     let stats = SharedStats::new();
     let config = DynamicConfig::new();

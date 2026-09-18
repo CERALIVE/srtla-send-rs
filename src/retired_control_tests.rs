@@ -1,10 +1,12 @@
 use serde_json::{Value, json};
 
 use crate::config::{CmdResponse, DynamicConfig, apply_cmd};
+#[cfg(all(unix, not(loom)))]
 use crate::jsonrpc::dispatch_jsonrpc;
 use crate::stats::SharedStats;
 
 #[test]
+#[cfg(all(unix, not(loom)))]
 fn retired_rpc_controls_succeed_without_changing_status_or_effective_config() {
     // Given each valid retired control request and a fresh configuration.
     for (method, params) in [
@@ -63,6 +65,7 @@ fn retired_text_controls_return_deprecation_without_mutation() {
 }
 
 #[test]
+#[cfg(all(unix, not(loom)))]
 fn retired_rpc_modes_return_typed_errors_without_mutation() {
     // Given each removed CLI mode.
     for mode in ["classic", "rtt-threshold", "edpf", "adaptive"] {
@@ -82,6 +85,7 @@ fn retired_rpc_modes_return_typed_errors_without_mutation() {
 }
 
 #[test]
+#[cfg(all(unix, not(loom)))]
 fn control_discovery_arrays_remain_byte_identical() {
     // Given the frozen pre-retirement arrays.
     let hello = r#"["stats-subscription","set-mode","set-quality","set-exploration","set-rtt-delta","get-status"]"#;

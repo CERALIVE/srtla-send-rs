@@ -4,6 +4,7 @@ mod tests {
     use crate::mode::SchedulingMode;
 
     #[test]
+    #[cfg(all(unix, not(loom)))]
     fn adaptive_text_mode_round_trips_through_status() {
         // Given the unchanged default, When text selects adaptive, Then status agrees.
         let config = DynamicConfig::new();

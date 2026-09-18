@@ -1,6 +1,7 @@
 use serde_json::Value;
 
 use crate::config::DynamicConfig;
+#[cfg(all(unix, not(loom)))]
 use crate::jsonrpc::dispatch_jsonrpc;
 use crate::mode::SchedulingMode;
 use crate::sender::SchedulerShared;
@@ -31,6 +32,7 @@ fn assert_private_keys_absent(value: &Value) {
 }
 
 #[tokio::test]
+#[cfg(all(unix, not(loom)))]
 async fn scheduler_features_remain_private_on_all_serialized_surfaces() {
     // Given real admitted links and each mode with quality enabled and disabled.
     let config = DynamicConfig::new();
