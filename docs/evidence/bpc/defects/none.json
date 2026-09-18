@@ -1,0 +1,99 @@
+{
+  "round": 1,
+  "outcome": "no admissible scheduler correctness defect established",
+  "selected_alternative": "retain the frozen M4 observations and all scheduler behavior; no reruns or retuning",
+  "admitted_defects": [],
+  "fixes": 0,
+  "reverted_fixes": [],
+  "cells_rerun": [],
+  "coverage_delta": 0,
+  "m1_rule_reinvoked": false,
+  "m1_rule_reason": "Neither classic nor enhanced was changed; the separate Todo 24 M3-blocker obligation remains.",
+  "campaign": "m4a-ours-new",
+  "pre_fix_binary_sha256": "b88042354e9973c8ad4418a4c6da93a93eacf77e67e3e168651afbe41e7c2107",
+  "pre_fix_source_sha": null,
+  "source_provenance": {
+    "candidate_lock_has_source_sha": false,
+    "embedded_version": "3.3.0 (feat/adaptive-scheduler-bench@87328c6-dirty) [srtla_send]",
+    "embedded_base_sha": "87328c682d3648ed81e048d87603bbe030f1360d",
+    "investigated_head": "41dcb50e037e8c2ff3e4486d299dbbfb0246402f",
+    "src_tree_unchanged_since_embedded_base": true,
+    "limitation": "The lock candidates contain binary hashes but no source_sha. The embedded base is diagnostic provenance, not an assertion that the dirty campaign build was made from that exact clean commit. artifacts.ours-new.source_sha identifies libsrt, not this sender. No historical hash was backfilled."
+  },
+  "campaign_interpretation": {
+    "primary_candidate_cells": 100,
+    "failed_zero_drop_belated_gate": 100,
+    "fallback_ship_set": ["enhanced"],
+    "genuine_coverage_pct": 0,
+    "sacrificed_scenarios": 19,
+    "exempt_scenario": "D",
+    "limitation": "Gate failure alone does not establish a scheduler defect. Conversely, baseline loss does not prove every measured drop is unavoidable; B1/B2 delivery deficits remain unresolved."
+  },
+  "investigations": [
+    {
+      "mode": "classic",
+      "designed_cells": [],
+      "disposition": "skipped by the predeclared map; no design claim admits a candidate"
+    },
+    {
+      "mode": "enhanced",
+      "designed_cells": ["F", "G", "M1"],
+      "lost_cells_by_goodput_winner": ["F", "G", "M1"],
+      "gate_failed_cells": ["F", "G", "M1"],
+      "design_claim_citation": "README.md: Enhanced Mode (Default), Quality Scoring and Exponential NAK Decay; src/sender/selection/enhanced.rs:3-10,18-34",
+      "mechanisms_examined": ["shared admission weight product applied once", "post-grace NAK decay and burst penalty", "50ms quality-cache refresh", "15ms incumbent cooldown and 10% hysteresis"],
+      "claim_probe": "defect_probe_enhanced_sustained_loss_lowers_rank",
+      "claim_probe_result": "PASS on embedded base: 100 fixed-clock sustained-loss selections prefer the clean equal-capacity link; burst quality is 0.35 and applied once",
+      "admitted_by": [true, true, false, false, true],
+      "causal_assessment": "No reversed/doubled quality penalty or invalid-incumbent retention was established. F/G have zero median viewer loss and drops with near-offered delivery, but nonzero belated packets. M1 has real delivery loss during its capacity/RTT/loss ramps; no isolated violation ties that loss to this mode's code.",
+      "disposition": "not admitted; no failing claim test and no demonstrated code-defect-to-cell causal chain"
+    },
+    {
+      "mode": "rtt-threshold",
+      "designed_cells": ["B1", "B2", "M2"],
+      "lost_cells_by_goodput_winner": ["B1", "B2"],
+      "gate_failed_cells": ["B1", "B2", "M2"],
+      "design_claim_citation": "README.md: RTT-Threshold Mode, Reduces Packet Reordering / Automatic Fallback / Use Case; src/sender/selection/rtt_threshold.rs:37-113",
+      "mechanisms_examined": ["minimum measured RTT and min+delta grouping", "zero-score fast-path capacity fallback", "clamped-zero versus missing RTT samples", "held-link exclusion and cooldown"],
+      "claim_probe": "defect_probe_rtt_split_falls_back_at_zero_fast_score",
+      "claim_probe_result": "PASS on embedded base: production dispatch falls back to the slow path when the measured fast path has zero capacity score",
+      "admitted_by": [true, true, false, false, true],
+      "causal_assessment": "B1/B2 lose substantial goodput, but saturation is a congestion-window score, not physical qdisc utilization. Changing that policy to a bandwidth oracle would be a redesign, not a demonstrated implementation correction. M2 is already the median-goodput winner and was not eligible for a winner-cell rerun.",
+      "disposition": "not admitted; no failing claim test or demonstrated causal violation"
+    },
+    {
+      "mode": "edpf",
+      "designed_cells": ["B1", "B2", "M2", "M3"],
+      "lost_cells_by_goodput_winner": ["B1", "B2", "M2", "M3"],
+      "gate_failed_cells": ["B1", "B2", "M2", "M3"],
+      "design_claim_citation": "README.md: EDPF Mode, BLEST congestion escape / IoDS reset / EDPF argmin / Use Case; src/sender/selection/mod.rs:105-151",
+      "mechanisms_examined": ["flat bootstrap for unmeasured links", "BLEST congestion escape", "IoDS empty-set reset", "queued/in-flight arrival prediction", "all-over-BDP ranking rather than exclusion"],
+      "claim_probe": "defect_probe_edpf_bootstrap_survives_ordering_reset",
+      "claim_probe_result": "PASS on embedded base: an all-unmeasured heterogeneous pool survives the IoDS empty-set reset and selects the lowest-delay link",
+      "admitted_by": [true, true, false, false, true],
+      "causal_assessment": "The prior E1/E2 failures are already repaired. A measured-send-rate predictor is not a physical-capacity oracle, and its heuristic errors are not proof of a correctness violation. An allocation-free documentation mismatch has no demonstrated causal connection to the lost cells and is backlogged, not repaired.",
+      "disposition": "not admitted; no failing functional claim test or demonstrated causal violation"
+    },
+    {
+      "mode": "adaptive",
+      "disposition": "excluded for performance; no new panic, nondeterminism or empty-connected-pool correctness bug established; no whole-matrix smoke triggered"
+    }
+  ],
+  "defect_backlog": [
+    {
+      "mode": "edpf",
+      "kind": "unadmitted documentation/implementation mismatch",
+      "claim": "README.md EDPF Mode calls the hot path allocation-free, but blest.rs:33 and iods.rs:28-43 allocate Vec results.",
+      "missing_admission": "No allocator-counting failure at exact campaign source and no causal proof that allocations cause these lost cells. Not a second fix or permission for performance tuning."
+    }
+  ],
+  "constraints": {
+    "threshold_changes": false,
+    "ablation_constant_changes": false,
+    "premature_nak_path_changes": false,
+    "adaptive_performance_changes": false,
+    "candidate_lock_changes": false,
+    "frozen_measurement_changes": false,
+    "c1_manifest_changes": false
+  }
+}

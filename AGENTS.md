@@ -1,5 +1,17 @@
 # srtla-send-rs
 
+## BOUNDED DEFECT ROUND (Todo 33)
+
+No scheduler correction was admitted after the M4 investigation. Passing claim
+probes are not failing-first proof; the strict empty-covering-set outcome remains.
+`docs/evidence/bpc/defects/none.json` records per-mode predicates, provenance gaps
+and the unadmitted EDPF allocation-claim backlog. Zero superseding runs are recorded
+in `defects/reruns/summary.json`, including the native empty reporter envelope for
+the unchanged Todo34 reader. `uv run scripts/bench/pr_description.py --check-defects
+docs/evidence/bpc/defects/` checks structural evidence and caps only, not causality.
+No M1-rule rerun was triggered, no source policy/constant or locked artifact changed,
+and no full-green or shipping acceptance follows. See the defects README for limits.
+
 ## M4 PROVISIONAL MATRIX (Todo 20)
 
 `m4a-ours-new.json` declares110 metric cells/546 indices:100 five-CLI primary

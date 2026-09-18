@@ -827,6 +827,14 @@ no new live run or scheduler change was used to obtain the scoped pass.
 
 #### M4 provisional ours-new matrix
 
+**Bounded defect round (Todo 33):** no scheduler repair met all five admission
+predicates. Claim-specific probes passed; B1/B2 delivery deficits remain unresolved,
+not dismissed as unavoidable loss. No measurement, threshold or sender behavior
+changed. The [defect-round record](docs/evidence/bpc/defects/README.md) includes
+the explicit no-admission decision and empty rerun summary for Todo34. Its checker
+is `uv run scripts/bench/pr_description.py --check-defects docs/evidence/bpc/defects/`;
+this validates evidence structure, not historical causality or shipping acceptance.
+
 The M4 manifest declares110 metric cells/546 planned indices, plus two separate
 600-second M8 soaks. Its20 primary groups each compare all five shipped CLI modes
 atN5 under TTL200; upstream references and the enhanced M4 FEC off/on pair are
