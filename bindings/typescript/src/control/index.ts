@@ -6,6 +6,8 @@
  */
 import { type Telemetry, telemetrySchema } from '../telemetry/index.js';
 
+export { controlStatusSchema, type GetStatusResult } from './status.js';
+
 export const STATS_SUBSCRIPTION_CAPABILITY = 'stats-subscription';
 
 export interface HelloResult {

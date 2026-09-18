@@ -12,13 +12,11 @@ const DEFAULT_SYSTEM_PATH = '/usr/bin/srtla_send';
 
 /**
  * Scheduling algorithm accepted by `--mode` (`src/mode.rs`). Spellings are the
- * exact `SchedulingMode` `Display`/`FromStr` strings, including `adaptive`
- * (experimental as of 3.4.0). Omitting `mode` leaves the binary on its own
- * default (`enhanced`).
+ * exact 4.0.0 spelling. Omitting `mode` leaves the binary on `enhanced`.
  */
-export type SchedulingMode = 'classic' | 'enhanced' | 'rtt-threshold' | 'edpf' | 'adaptive';
+export type SchedulingMode = 'enhanced';
 
-const SCHEDULING_MODES = ['classic', 'enhanced', 'rtt-threshold', 'edpf', 'adaptive'] as const;
+const SCHEDULING_MODES = ['enhanced'] as const;
 
 export const srtlaSendOptionsSchema = z.object({
 	listenPort: z

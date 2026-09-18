@@ -91,14 +91,14 @@ describe('mode arg', () => {
 	});
 
 	test('buildSrtlaSendArgs_mode_emitted_when_set', () => {
-		const args = buildSrtlaSendArgs({ srtlaHost: 'host', mode: 'adaptive' });
+		const args = buildSrtlaSendArgs({ srtlaHost: 'host', mode: 'enhanced' });
 		const idx = args.indexOf('--mode');
 		expect(idx).toBeGreaterThanOrEqual(0);
-		expect(args[idx + 1]).toBe('adaptive');
+		expect(args[idx + 1]).toBe('enhanced');
 	});
 
 	test('buildSrtlaSendArgs_mode_accepts_every_scheduling_mode', () => {
-		const modes: SchedulingMode[] = ['classic', 'enhanced', 'rtt-threshold', 'edpf', 'adaptive'];
+		const modes: SchedulingMode[] = ['enhanced'];
 		for (const mode of modes) {
 			const args = buildSrtlaSendArgs({ srtlaHost: 'host', mode });
 			const idx = args.indexOf('--mode');
@@ -107,7 +107,7 @@ describe('mode arg', () => {
 	});
 
 	test('buildSrtlaSendArgs_mode_precedes_verbose', () => {
-		const args = buildSrtlaSendArgs({ srtlaHost: 'host', mode: 'edpf', verbose: true });
+		const args = buildSrtlaSendArgs({ srtlaHost: 'host', mode: 'enhanced', verbose: true });
 		expect(args.indexOf('--mode')).toBeLessThan(args.indexOf('--verbose'));
 	});
 
