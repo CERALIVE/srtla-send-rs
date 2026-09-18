@@ -1,3 +1,4 @@
+2026-09-18 — classic/rtt-threshold/edpf/adaptive modes removed in 4.0.0 — read as history.
 # Scheduler evaluation — September 2026
 
 ## Final Todo 30 disposition — scoped completion with documented findings

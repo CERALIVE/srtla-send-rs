@@ -1,3 +1,4 @@
+2026-09-18 — classic/rtt-threshold/edpf/adaptive modes removed in 4.0.0 — read as history.
 # Round 8: independent keepalive silence — negative A/D result
 
 Date: 2026-09-15. Base: `bb1df19f58add402b16075415c514f62257eaa48`.
