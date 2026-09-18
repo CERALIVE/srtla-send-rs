@@ -7,13 +7,12 @@
 
 // allow: SIZE_OK — Existing harness compatibility surface; conformance is kept here by the task's explicit file fence.
 
-use std::collections::{HashSet, VecDeque};
-use std::io::Read;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 #[cfg(test)]
 use std::process::Stdio;
 use std::process::{Child, Command};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -23,7 +22,9 @@ use crate::impairment::{ImpairmentConfig, apply_impairment};
 use crate::test_util::unique_ns_name;
 use crate::topology::Namespace;
 
+mod output;
 mod process_control;
+use output::{OutputTail, drain_pipe, new_output_tail, output_lines};
 mod sls_runtime;
 pub use process_control::ProcessControlError;
 
@@ -119,44 +120,6 @@ pub fn check_impairment_deps() -> std::result::Result<(), SkipReason> {
 // NamespaceProcess
 // ---------------------------------------------------------------------------
 
-const OUTPUT_TAIL_BYTES: usize = 64 * 1024;
-
-type OutputTail = Arc<Mutex<VecDeque<u8>>>;
-
-fn new_output_tail() -> OutputTail {
-    Arc::new(Mutex::new(VecDeque::with_capacity(OUTPUT_TAIL_BYTES)))
-}
-
-fn drain_pipe<R>(mut reader: R, tail: OutputTail) -> JoinHandle<()>
-where
-    R: Read + Send + 'static,
-{
-    std::thread::spawn(move || {
-        let mut buffer = [0_u8; 8192];
-        while let Ok(bytes_read) = reader.read(&mut buffer) {
-            if bytes_read == 0 {
-                break;
-            }
-            if let Ok(mut output) = tail.lock() {
-                output.extend(&buffer[..bytes_read]);
-                while output.len() > OUTPUT_TAIL_BYTES {
-                    output.pop_front();
-                }
-            }
-        }
-    })
-}
-
-fn output_lines(tail: &OutputTail) -> Vec<String> {
-    let Ok(mut output) = tail.lock() else {
-        return Vec::new();
-    };
-    String::from_utf8_lossy(output.make_contiguous())
-        .lines()
-        .map(str::to_owned)
-        .collect()
-}
-
 /// A child process running inside a network namespace.
 ///
 /// Captures stdout+stderr and kills the process on drop.
@@ -246,6 +209,10 @@ impl NamespaceProcess {
         let mut lines = output_lines(&self.stdout_tail);
         lines.extend(output_lines(&self.stderr_tail));
         lines
+    }
+
+    pub fn stderr_line_count(&self) -> Result<u64> {
+        output::line_count(&self.stderr_tail)
     }
 
     fn join_drains(&mut self) {
@@ -388,6 +355,21 @@ mod namespace_process_tests {
     use std::time::{Duration, Instant};
 
     use super::{NamespaceProcess, ProcessScope, new_output_tail};
+
+    #[test]
+    fn stderr_count_survives_tail_truncation() {
+        let child = Command::new("python3")
+            .args(["-c", "import sys; sys.stderr.write('line\\n' * 20000)"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut process = NamespaceProcess::from_child(child, ProcessScope::Pids(vec![])).unwrap();
+        process.child.wait().unwrap();
+        process.join_drains();
+        assert_eq!(process.stderr_line_count().unwrap(), 20000);
+        assert!(process.stderr_lines().len() < 20000);
+    }
 
     #[test]
     fn restart_process_only_when_already_exited_preserves_other_pids() {

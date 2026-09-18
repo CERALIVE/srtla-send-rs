@@ -14,6 +14,8 @@ mod m1_tests;
 mod m2_tests;
 #[path = "bench_support/m3_tests.rs"]
 mod m3_tests;
+#[path = "bench_support/m4_tests.rs"]
+mod m4_tests;
 #[path = "bench_support/manifest.rs"]
 mod manifest;
 #[path = "support/measurement_lock.rs"]

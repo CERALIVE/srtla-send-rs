@@ -131,8 +131,19 @@ impl Manifest {
             );
             match cell.sink.as_str() {
                 "slt" => ensure!(
-                    cell.metrics == "full" && !cell.fec && cell.port > 0,
-                    "slt requires full metrics, a port and FEC off"
+                    cell.metrics == "full"
+                        && cell.port > 0
+                        && (!cell.fec
+                            || (matches!(
+                                self.campaign.as_str(),
+                                "m4a-ours-new" | "m4-resume-smoke"
+                            ) && cell.scenario == "M4"
+                                && cell.candidate == "enhanced"
+                                && cell.variant == "fec-pair"
+                                && !cell.covering
+                                && receiver.lineage.as_deref() == Some("ours-new"))),
+                    "slt requires full metrics and a port; FEC is limited to the M4 noncovering \
+                     pair"
                 ),
                 "sls" => ensure!(
                     cell.metrics == "none"

@@ -825,6 +825,26 @@ no new live run or scheduler change was used to obtain the scoped pass.
 
 ### Statistical reports and retention decisions
 
+#### M4 provisional ours-new matrix
+
+The M4 manifest declares110 metric cells/546 planned indices, plus two separate
+600-second M8 soaks. Its20 primary groups each compare all five shipped CLI modes
+atN5 under TTL200; upstream references and the enhanced M4 FEC off/on pair are
+noncovering. FEC uses the same filter on both ends; its default on-request ARQ is
+not a test of the periodic-NAK gate. The preflight validator checks exact scope.
+`decide.py --rule lineage-d1 --summaries <summary.json> --out <verdict.json>`
+applies the new frozen base-agnostic rule, including post-settle metrics-v2 gates
+and explicit sacrificed cells. This is distinct from the historical `d1` below.
+Results are provisional; Todo34 owns the authoritative rerun, lineage gate and
+reserved4003 block. All546 metric indices and two soaks completed in12h43m28s.
+The frozen rule selected enhanced **only as its empty-set fallback**:0% coverage,
+19 sacrificed scenarios, and D explicitly exempt after all five failed coverage.
+No primary mode/scenario cell passed the strict zero-drop/belated all-runs gate.
+FEC narrowly passed (−4.82% goodput); both crash-free M8 soaks failed final link
+health. This is not a recommendation to ship or retire modes. See the
+[M4 measured results](docs/evidence/bpc/m4/README.md) and
+[frozen method](docs/evidence/bpc/m4/method.md).
+
 #### M3 rollout interoperability
 
 The M3 manifest covers existing/new sender × old/new receiver quadrants, including
@@ -928,7 +948,8 @@ template hashes enter the fingerprint. Early ring counters can be `-1` (unknown)
 never interpreted as zero. `report.py` emits SLS records only in the separate
 `conformance` collection/table, not metric groups or paired comparisons.
 `decide.py` independently excludes SLS tags and canonical SLS identities from
-D-1 and ablation; `--rule lineage-d1` names the existing lineage-grouped D-1 rule.
+D-1 and ablation. `--rule lineage-d1` now uses the separate frozen M4 rule above;
+SLS cannot satisfy any of its primary coverage obligations.
 No twin-port equivalence or reserved-block non-inferiority verdict is implied.
 
 The standalone Python tools use uv inline dependencies (`numpy==2.*`, `pydantic==2.*`):

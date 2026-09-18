@@ -61,11 +61,18 @@ pub fn arguments(request: &Request) -> Result<Vec<String>> {
 pub fn listener(request: &Request, topo: &BondTopology) -> Result<NamespaceProcess> {
     let cell = &request.manifest.cells[request.work.cell];
     if request.srt_binary.file_name().and_then(|n| n.to_str()) != Some("srt-sink-min") {
-        let args = request.receiver_spec.listener_argv(
+        let mut args = request.receiver_spec.listener_argv(
             crate::manifest::preset(&cell.srt_profile)?,
             cell.port,
             Some(&request.result.record.raw.stats_csv_path),
         )?;
+        if cell.fec {
+            let uri = args
+                .iter_mut()
+                .find(|arg| arg.starts_with("srt://"))
+                .context("listener SRT URI")?;
+            uri.push_str("&packetfilter=fec,cols:10,rows:5");
+        }
         return NamespaceProcess::spawn_process_only(
             &topo.receiver_ns,
             utf8(&request.srt_binary)?,

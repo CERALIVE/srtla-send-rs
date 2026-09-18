@@ -717,6 +717,7 @@ class DecisionTests(unittest.TestCase):
 class Arguments(argparse.Namespace):
     self_test: bool = False
     summary: Path | None = None
+    summaries: list[Path] | None = None
     rule: Literal["d1", "lineage-d1", "ablation", "m1-ttl"] = "d1"
     candidates: str = ",".join(CANDIDATES)
     scenarios: str = ",".join(SCENARIOS)
@@ -729,6 +730,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Fail-closed scheduler retention rule")
     _ = parser.add_argument("--self-test", action="store_true")
     _ = parser.add_argument("--summary", type=Path)
+    _ = parser.add_argument("--summaries", nargs="+", type=Path)
     _ = parser.add_argument(
         "--rule", choices=("d1", "lineage-d1", "ablation", "m1-ttl"), default="d1"
     )
@@ -743,6 +745,27 @@ def main() -> int:
             unittest.defaultTestLoader.loadTestsFromTestCase(DecisionTests)
         )
         return int(not result.wasSuccessful())
+    if args.rule == "lineage-d1":
+        sys.modules.setdefault("decide", sys.modules[__name__])
+        from lineage_rule import decide_lineage
+        from report import EvidenceError, publish
+
+        paths = args.summaries or ([args.summary] if args.summary else [])
+        if not paths or args.out is None:
+            parser.error("--summaries and --out are required for lineage-d1")
+        if args.out.resolve() in {path.resolve() for path in paths}:
+            parser.error("summary and output paths must be distinct")
+        try:
+            args.out.unlink(missing_ok=True)
+            groups = tuple(g for path in paths for g in Summary.model_validate_json(path.read_bytes()).groups)
+            result = decide_lineage(Summary(schema_version=1, groups=groups))
+            publish(args.out, result.model_dump_json(indent=2) + "\n")
+        except (OSError, ValidationError, EvidenceError) as error:
+            print(str(error), file=sys.stderr)
+            return 1
+        return 0
+    if args.summaries is not None:
+        parser.error("--summaries is only supported by lineage-d1")
     if args.summary is None or args.out is None:
         parser.error("--summary and --out are required")
     if args.rule == "m1-ttl":
@@ -766,7 +789,7 @@ def main() -> int:
             tuple(args.candidates.split(",")), tuple(args.scenarios.split(",")), args.n
         )
         match args.rule:
-            case "d1" | "lineage-d1":
+            case "d1":
                 verdict = decide(summary, request)
             case "ablation":
                 verdict = ablation(summary, request, args.baseline)

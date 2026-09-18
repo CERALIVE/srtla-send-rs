@@ -20,12 +20,30 @@ pub fn execute(request: &mut Request) -> Result<()> {
         .manifest
         .cell_profile(&request.manifest.cells[request.work.cell])?;
     let mut stack = Stack::start(request, &profile)?;
+    let observation_start = Instant::now();
+    let stderr_start = stack.sender.stderr_line_count()?;
     let result = match request.result.record.sink.as_str() {
         "sls" => super::conformance::measure(request, &profile, &mut stack),
         "slt" => measure(request, &profile, &mut stack),
         _ => anyhow::bail!("unsupported sink"),
     };
     stack.logs(&request.artifacts)?;
+    if matches!(
+        request.manifest.campaign.as_str(),
+        "m4a-ours-new" | "m4-soak" | "m4-resume-smoke"
+    ) {
+        crate::checkpoint::atomic(
+            &request.artifacts.join("m4-observation.json"),
+            &serde_json::json!({
+                "duration_seconds": observation_start.elapsed().as_secs_f64(),
+                "sender_stderr_lines": stack.sender.stderr_line_count()?.saturating_sub(stderr_start),
+                "sender_alive": stack.sender.is_alive(),
+                "receiver_alive": stack.receiver.is_alive(),
+                "caller_alive": stack.caller.is_alive(),
+                "listener_alive": stack.listener.is_alive()
+            }),
+        )?;
+    }
     stack.finish_pcaps(
         result.is_err()
             || request.result.record.scenario.id == "S-FREEZE-NORDR"

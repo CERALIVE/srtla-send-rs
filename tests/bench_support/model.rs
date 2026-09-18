@@ -29,7 +29,7 @@ impl Manifest {
     pub fn retains_measured_timeouts(&self) -> bool {
         matches!(
             self.campaign.as_str(),
-            "m1-ttl" | "m2-sender" | "m3-interop"
+            "m1-ttl" | "m2-sender" | "m3-interop" | "m4a-ours-new" | "m4-soak" | "m4-resume-smoke"
         )
     }
 }
@@ -37,6 +37,8 @@ impl Manifest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Candidate {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_class: Option<CandidateClass>,
     pub label: String,
     pub bin: PathBuf,
     #[serde(default)]
@@ -48,6 +50,13 @@ pub struct Candidate {
     pub stats_file: bool,
     #[serde(default = "covering_default")]
     pub control_socket: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CandidateClass {
+    Cli,
+    Baseline,
 }
 
 impl Candidate {

@@ -164,6 +164,9 @@ impl Stack {
         if cell.sink == "sls" {
             caller_uri.push_str("&streamid=publish/live/conformance");
         }
+        if cell.fec {
+            caller_uri.push_str("&packetfilter=fec,cols:10,rows:5");
+        }
         let caller = NamespaceProcess::spawn_process_only(
             &topo.sender_ns,
             utf8(super::numeric_sink::caller(request)?)?,

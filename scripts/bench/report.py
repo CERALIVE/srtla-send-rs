@@ -653,7 +653,10 @@ def checks(records: Sequence[RunRecord]) -> dict[str, float | None]:
             case _:
                 # Scenario identifiers are open manifest strings, not a closed enum.
                 continue
-    return {name: sum(values) / len(records) for name, values in results.items()}
+    rates = {name: sum(values) / len(records) for name, values in results.items()}
+    if records and records[0].campaign in ("m4a-ours-new", "m4-soak", "m4-resume-smoke"):
+        rates["settled_rate"] = sum(r.status == "ok" for r in records) / len(records)
+    return rates
 
 
 def metrics_v2_checks(records: Sequence[RunRecord]) -> dict[str, float | None]:
@@ -838,7 +841,7 @@ def load_records(
         raise EvidenceError("M2 outcome coverage is restricted to m2-sender")
     if m3_outcomes and (manifest.campaign != "m3-interop" or smoke_coverage or m1_outcomes or m2_outcomes):
         raise EvidenceError("M3 outcome coverage is restricted to m3-interop")
-    measured_outcomes = m1_outcomes or m2_outcomes or m3_outcomes
+    measured_outcomes = m1_outcomes or m2_outcomes or m3_outcomes or manifest.campaign in ("m4a-ours-new", "m4-soak", "m4-resume-smoke")
     if smoke_coverage:
         required = {
             (name, "A", "ceralive", "production", 2) for name in ("classic", "enhanced")
@@ -1996,6 +1999,11 @@ def main() -> int:
         manifest = Manifest.model_validate_json(
             args.manifest.read_text(encoding="utf-8")
         )
+        if manifest.campaign == "m4a-ours-new":
+            sys.modules.setdefault("report", sys.modules[__name__])
+            from m4_manifest import M4Manifest, validate
+
+            validate(M4Manifest.model_validate_json(args.manifest.read_bytes()))
         if args.m3_outcomes and (manifest.campaign != "m3-interop" or args.m2_outcomes or args.smoke_coverage):
             raise EvidenceError("M3 outcome coverage is restricted to m3-interop")
         if manifest.campaign == "m3-interop":

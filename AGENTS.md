@@ -1,5 +1,27 @@
 # srtla-send-rs
 
+## M4 PROVISIONAL MATRIX (Todo 20)
+
+`m4a-ours-new.json` declares110 metric cells/546 indices:100 five-CLI primary
+cells atN5,8 upstream reference cells atN5,2 enhanced FEC pair cells atN3.
+Separate `m4-soak.json` has two600s non-metric M8 runs under BENCH_SOAK=1.
+The exact matrix validator runs before measurement. `lineage-d1` is now the
+frozen base-agnostic CLI-only rule, not an alias for adaptive-preferring `d1`.
+Full-window settle-timeout outcomes remain failed and cannot cover; required
+metrics-v2 gates are blocking. D's all-five-fail exemption is explicit, never
+pre-applied. FEC is wired on both SRT ends only for the noncovering M4 pair.
+Process stderr counts survive64KiB log-tail truncation. Frozen method:
+`docs/evidence/bpc/m4/method.md`; measured results: `docs/evidence/bpc/m4/README.md`.
+Completed548 planned indices including soaks in12h43m28s, no cell reruns.
+The provisional rule returns enhanced only by the EMPTY-SET terminal:0% coverage,
+19 sacrificed scenarios and D explicitly exempt because all five fail coverage.
+Every primary mode/scenario cell fails the zero-drop/belated all-runs gate.
+FEC passes narrowly (ratio0.951794); both M8 soaks fail final link health (three
+Degraded each), despite zero crashes and no monotonic decline. This is NOT shipping
+acceptance. Both full feature suites retain known G/twin failures; no waiver added.
+**Scope correction:** Todo34, not Todo20, owns m4b and the DISTINCT4003 block;
+older Todo19 assignments below are superseded by the owner's Todo20 directive.
+
 ## SLS TWIN-PORT CAMPAIGN (Todo 19)
 
 `scripts/bench/manifests/twinport-{default,legacy-l2}.json` each runs enhanced/M1

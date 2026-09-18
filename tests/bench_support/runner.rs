@@ -26,6 +26,14 @@ pub fn campaign(smoke: bool) -> Result<()> {
         manifest.smoke();
     }
     manifest.validate()?;
+    ensure!(
+        manifest.cells.iter().all(|cell| cell.scenario != "M8"
+            || (manifest.campaign == "m4-soak"
+                && cell.runs == 1
+                && !cell.covering
+                && std::env::var("BENCH_SOAK").as_deref() == Ok("1"))),
+        "M8 requires a separate noncovering m4-soak N=1 manifest and BENCH_SOAK=1"
+    );
     for candidate in &mut manifest.candidates {
         candidate.bin = candidate.bin.canonicalize()?;
     }
