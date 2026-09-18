@@ -7,6 +7,7 @@ pub mod conformance;
 mod csv_capture;
 mod edge_tests;
 mod foreign;
+mod historical_tests;
 mod live;
 pub mod numeric_sink;
 pub mod record;

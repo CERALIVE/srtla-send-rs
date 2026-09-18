@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub historical: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caller_bin: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

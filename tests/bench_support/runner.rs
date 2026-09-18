@@ -26,6 +26,13 @@ pub fn campaign(smoke: bool) -> Result<()> {
         manifest.smoke();
     }
     manifest.validate()?;
+    let lock_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scripts/bench/receivers.lock.json");
+    let historical = super::candidate_lock::resolve(
+        &lock_path,
+        &mut manifest,
+        std::env::var("BENCH_HISTORICAL_FROM_LOCK").as_deref() == Ok("1"),
+    )?;
     ensure!(
         manifest.cells.iter().all(|cell| cell.scenario != "M8"
             || (manifest.campaign == "m4-soak"
@@ -68,10 +75,9 @@ pub fn campaign(smoke: bool) -> Result<()> {
     std::fs::create_dir_all(&artifacts)?;
     let artifacts = artifacts.canonicalize()?;
     let _guard = crate::measurement::measurement_lock();
-    super::candidate_lock::record(
-        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scripts/bench/receivers.lock.json"),
-        &manifest,
-    )?;
+    if !historical {
+        super::candidate_lock::record(&lock_path, &manifest)?;
+    }
     atomic(&output.join("manifest.json"), &manifest)?;
     let work = manifest.order();
     let mut order_index = 0_u32;
@@ -154,6 +160,11 @@ pub fn worker() -> Result<()> {
     let mut request: Request = serde_json::from_slice(&std::fs::read(path)?)?;
     atomic(&request.artifacts.join("owner.json"), &std::process::id())?;
     request.manifest.validate()?;
+    super::candidate_lock::resolve(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scripts/bench/receivers.lock.json"),
+        &mut request.manifest,
+        std::env::var("BENCH_HISTORICAL_FROM_LOCK").as_deref() == Ok("1"),
+    )?;
     let result = live::execute(&mut request);
     match result {
         Ok(()) => {

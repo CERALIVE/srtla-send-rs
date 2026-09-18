@@ -1,11 +1,50 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Result, ensure};
 use network_sim::metrics::identity::Hash256;
 use serde::{Deserialize, Serialize};
 
 use crate::manifest::Manifest;
+
+#[path = "../support/locked_sender.rs"]
+mod locked_sender;
+
+pub fn requires_history(manifest: &Manifest) -> bool {
+    let retired = |mode: &str| matches!(mode, "classic" | "rtt-threshold" | "edpf" | "adaptive");
+    manifest.historical
+        || manifest.candidates.iter().any(|candidate| {
+            retired(&candidate.label)
+                || candidate
+                    .args
+                    .windows(2)
+                    .any(|args| args[0] == "--mode" && retired(&args[1]))
+                || candidate
+                    .args
+                    .iter()
+                    .any(|arg| arg.strip_prefix("--mode=").is_some_and(retired))
+        })
+}
+
+pub fn resolve(path: &Path, manifest: &mut Manifest, from_lock: bool) -> Result<bool> {
+    if !requires_history(manifest) {
+        return Ok(false);
+    }
+    ensure!(
+        from_lock,
+        "historical campaign requires --historical-from-lock; current binaries are forbidden"
+    );
+    let lock = locked_sender::LockedSenders::read(path)?;
+    let paths = manifest
+        .candidates
+        .iter()
+        .map(|candidate| lock.verified(&manifest.campaign, &candidate.label))
+        .collect::<Result<Vec<_>>>()?;
+    for (candidate, path) in manifest.candidates.iter_mut().zip(paths) {
+        candidate.bin = path;
+    }
+    Ok(true)
+}
 
 #[derive(Default, Deserialize, Serialize)]
 struct Lock {
@@ -24,6 +63,10 @@ struct CandidateArtifact {
 }
 
 pub fn record(path: &Path, manifest: &Manifest) -> Result<()> {
+    ensure!(
+        !requires_history(manifest),
+        "historical candidate locks are read-only"
+    );
     let mut lock: Lock = match std::fs::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes)?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Lock::default(),

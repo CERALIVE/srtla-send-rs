@@ -1,4 +1,5 @@
 {
+  "historical": true,
   "campaign": "m2-sender",
   "seed": 20260913,
   "caller_bin": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/ours-new/srt-live-transmit",

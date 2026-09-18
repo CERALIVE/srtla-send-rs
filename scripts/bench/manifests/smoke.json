@@ -1,4 +1,5 @@
 {
+  "historical": true,
   "campaign": "smoke",
   "seed": 1,
   "scenarios": ["A", "D"],

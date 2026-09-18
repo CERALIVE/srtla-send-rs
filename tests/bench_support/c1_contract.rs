@@ -10,7 +10,7 @@ fn c1() -> manifest::Manifest {
 
 #[test]
 fn c1_keeps_all_seven_candidates_and_455_runs() {
-    // Given the explicit C1 campaign, including the intentionally divergent upstream.
+    // Given the frozen historical C1 matrix, not the 4.0.0 selectable mode set.
     let manifest = c1();
     let candidates = [
         "classic",
@@ -86,7 +86,7 @@ fn c1_fork_modes_declare_the_test_builds_observed_configuration() {
                             "deadline_hold_fraction": 0.5, "ratecap_loss_backoff": 0.85}
     })).unwrap();
     // When selecting fork arms, then expectations match without altering legacy mode env.
-    for label in ["classic", "enhanced", "rtt-threshold", "edpf", "adaptive"] {
+    for label in ["enhanced"] {
         let candidate = manifest
             .candidates
             .iter()
@@ -95,12 +95,17 @@ fn c1_fork_modes_declare_the_test_builds_observed_configuration() {
         assert!(candidate.stats_file);
         assert_eq!(candidate.effective_config.as_ref(), Some(&expected));
         assert_eq!(candidate.args, ["--mode", label]);
-        if label == "adaptive" {
-            assert_eq!(candidate.env.len(), 1);
-            assert_eq!(candidate.env["SRTLA_ADAPTIVE_FEATURES"], "all");
-        } else {
-            assert!(candidate.env.is_empty());
-        }
+        assert!(candidate.env.is_empty());
         assert_eq!(candidate.bin, manifest.candidates[0].bin);
     }
+}
+
+#[test]
+fn c1_is_historical_without_editing_the_owners_manifest() {
+    // Given the owner-protected manifest, When classified, Then locked execution is mandatory.
+    assert!(crate::bench_support::candidate_lock::requires_history(&c1()));
+    assert_eq!(
+        <srtla_send::SchedulingMode as clap::ValueEnum>::value_variants(),
+        &[srtla_send::SchedulingMode::Enhanced]
+    );
 }

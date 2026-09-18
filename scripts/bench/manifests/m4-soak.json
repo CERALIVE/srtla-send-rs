@@ -1,4 +1,5 @@
 {
+  "historical": true,
   "campaign": "m4-soak",
   "seed": 20260913,
   "cells": [
