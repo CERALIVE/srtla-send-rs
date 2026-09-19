@@ -718,12 +718,16 @@ class Arguments(argparse.Namespace):
     self_test: bool = False
     summary: Path | None = None
     summaries: list[Path] | None = None
-    rule: Literal["d1", "lineage-d1", "ablation", "m1-ttl"] = "d1"
+    rule: Literal["d1", "lineage-d1", "ablation", "m1-ttl", "m3-frozen"] = "d1"
     candidates: str = ",".join(CANDIDATES)
     scenarios: str = ",".join(SCENARIOS)
     n: int = 10
     baseline: str = "adaptive"
     out: Path | None = None
+    retransmit: Literal["required", "unavailable"] = "required"
+    spike: Path | None = None
+    m3_raw_root: Path | None = None
+    provenance: Path | None = None
 
 
 def main() -> int:
@@ -732,13 +736,21 @@ def main() -> int:
     _ = parser.add_argument("--summary", type=Path)
     _ = parser.add_argument("--summaries", nargs="+", type=Path)
     _ = parser.add_argument(
-        "--rule", choices=("d1", "lineage-d1", "ablation", "m1-ttl"), default="d1"
+        "--rule",
+        choices=("d1", "lineage-d1", "ablation", "m1-ttl", "m3-frozen"),
+        default="d1",
     )
     _ = parser.add_argument("--candidates", default=",".join(CANDIDATES))
     _ = parser.add_argument("--scenarios", default=",".join(SCENARIOS))
     _ = parser.add_argument("--n", type=int, default=10)
     _ = parser.add_argument("--baseline", default="adaptive")
     _ = parser.add_argument("--out", type=Path)
+    _ = parser.add_argument(
+        "--retransmit", choices=("required", "unavailable"), default="required"
+    )
+    _ = parser.add_argument("--spike", type=Path)
+    _ = parser.add_argument("--m3-raw-root", type=Path)
+    _ = parser.add_argument("--provenance", type=Path)
     args = parser.parse_args(namespace=Arguments())
     if args.self_test:
         result = unittest.TextTestRunner(verbosity=2).run(
@@ -768,6 +780,37 @@ def main() -> int:
         parser.error("--summaries is only supported by lineage-d1")
     if args.summary is None or args.out is None:
         parser.error("--summary and --out are required")
+    if args.rule == "m3-frozen":
+        from m3_frozen import build, load_summary
+        from m3_models import Spike
+        from m3_provenance import load_provenance
+        from report import EvidenceError
+
+        if args.spike is None:
+            parser.error("--spike is required for m3-frozen")
+        if args.out.resolve() in {args.summary.resolve(), args.spike.resolve()}:
+            parser.error("input and output paths must be distinct")
+        try:
+            args.out.unlink(missing_ok=True)
+            summary = load_summary(args.summary)
+            spike = Spike.model_validate_json(args.spike.read_bytes())
+            provenance = load_provenance(summary, args.provenance)
+            result, errors = build(
+                summary,
+                provenance,
+                retransmit=args.retransmit,
+                raw_root=args.m3_raw_root,
+                spike_comparisons=spike.comparisons,
+            )
+            _ = args.out.write_text(
+                result.model_dump_json(indent=2) + "\n", encoding="utf-8"
+            )
+        except (OSError, ValidationError, EvidenceError) as error:
+            print(str(error), file=sys.stderr)
+            return 1
+        for error in errors:
+            print(error, file=sys.stderr)
+        return 1 if errors else 0
     if args.rule == "m1-ttl":
         from m1_models import M1Summary
         from m1_rule import decide as decide_m1
