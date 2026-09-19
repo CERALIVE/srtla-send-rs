@@ -188,7 +188,7 @@ fn manifest_listener_override_replaces_query_key_without_changing_presets() {
         args[0],
         "srt://:4002?mode=listener&latency=2000&reorderfreeze=1&lossmaxttl=200&periodicnakgate=1"
     );
-    assert_eq!(network_sim::harness::SrtProfile::PRODUCTION.lossmaxttl, 40);
+    assert_eq!(network_sim::harness::SrtProfile::PRODUCTION.lossmaxttl, 200);
 }
 
 #[test]

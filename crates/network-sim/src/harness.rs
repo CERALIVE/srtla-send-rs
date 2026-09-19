@@ -705,33 +705,85 @@ fn registered_uplink_count(log: &[String]) -> usize {
 pub struct SrtProfile {
     pub latency_ms: u32,
     pub lossmaxttl: u32,
+    /// Emit `reorderfreeze=1`; explicit so a profile cannot inherit it by accident.
+    pub reorderfreeze: bool,
     pub name: &'static str,
 }
 
 impl SrtProfile {
+    /// `lossmaxttl` is the receiver L1 policy value (`SLSSrt.cpp`), not a local guess.
     pub const PRODUCTION: Self = Self {
         latency_ms: 2000,
-        lossmaxttl: 40,
+        lossmaxttl: 200,
+        reorderfreeze: true,
         name: "production",
     };
     pub const STRICT: Self = Self {
         latency_ms: 500,
         lossmaxttl: 10,
+        reorderfreeze: false,
         name: "strict",
     };
     /// Sentinel for the old URI, not a request to configure libsrt with zeroes.
     pub const LEGACY_DEFAULT: Self = Self {
         latency_ms: 0,
         lossmaxttl: 0,
+        reorderfreeze: false,
         name: "legacy-default",
     };
+
+    /// The latency ladder: the same receiver policy at five latencies.
+    ///
+    /// Every rung varies ONLY `latency=`; `lossmaxttl=200` and `reorderfreeze=1`
+    /// are held identical to `PRODUCTION` (pinned by
+    /// `srt_profile_ladder_varies_only_latency`).
+    pub const LADDER: [Self; 5] = [
+        Self {
+            latency_ms: 200,
+            lossmaxttl: 200,
+            reorderfreeze: true,
+            name: "ladder-200",
+        },
+        Self {
+            latency_ms: 300,
+            lossmaxttl: 200,
+            reorderfreeze: true,
+            name: "ladder-300",
+        },
+        Self {
+            latency_ms: 500,
+            lossmaxttl: 200,
+            reorderfreeze: true,
+            name: "ladder-500",
+        },
+        Self {
+            latency_ms: 2000,
+            lossmaxttl: 200,
+            reorderfreeze: true,
+            name: "ladder-2000",
+        },
+        Self {
+            latency_ms: 5000,
+            lossmaxttl: 200,
+            reorderfreeze: true,
+            name: "ladder-5000",
+        },
+    ];
+
+    /// The ladder rung at `latency_ms`, or `None` when that latency is not a rung.
+    pub fn rung(latency_ms: u32) -> Option<Self> {
+        Self::LADDER
+            .iter()
+            .find(|rung| rung.latency_ms == latency_ms)
+            .copied()
+    }
 
     pub fn listener_uri(&self, port: u16) -> String {
         let uri = format!("srt://:{port}?mode=listener");
         if *self == Self::LEGACY_DEFAULT {
             uri
         } else {
-            let receiver_options = if *self == Self::PRODUCTION {
+            let receiver_options = if self.reorderfreeze {
                 "&reorderfreeze=1"
             } else {
                 ""
@@ -1794,7 +1846,7 @@ mod srt_profile_tests {
         for (profile, expected) in [
             (
                 SrtProfile::PRODUCTION,
-                "srt://:4001?mode=listener&latency=2000&lossmaxttl=40&reorderfreeze=1",
+                "srt://:4001?mode=listener&latency=2000&lossmaxttl=200&reorderfreeze=1",
             ),
             (
                 SrtProfile::STRICT,
@@ -1806,6 +1858,80 @@ mod srt_profile_tests {
             // Then tuning is exact: production freezes reordering without disabling NAK reports.
             assert_eq!(uri, expected);
         }
+    }
+
+    #[test]
+    fn production_lossmaxttl_matches_receiver_l1() {
+        // Given the receiver L1 LOSSMAXTTL policy is 200 (SLSSrt.cpp:300-303).
+        // When reading the production profile.
+        // Then the harness requests the same value instead of the stale 40.
+        assert_eq!(SrtProfile::PRODUCTION.lossmaxttl, 200);
+    }
+
+    /// Query parameters of a listener URI, so equality can be checked per key.
+    fn listener_query(uri: &str) -> std::collections::BTreeMap<String, String> {
+        uri.split_once('?')
+            .expect("listener URI has a query")
+            .1
+            .split('&')
+            .map(|pair| pair.split_once('=').expect("key=value query pair"))
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect()
+    }
+
+    /// Fails naming the first query key whose value diverges from `PRODUCTION`.
+    fn assert_only_latency_differs(profile: &SrtProfile) {
+        let production = listener_query(&SrtProfile::PRODUCTION.listener_uri(4001));
+        let actual = listener_query(&profile.listener_uri(4001));
+        let missing: Vec<_> = production
+            .keys()
+            .filter(|key| !actual.contains_key(*key))
+            .collect();
+        let extra: Vec<_> = actual
+            .keys()
+            .filter(|key| !production.contains_key(*key))
+            .collect();
+        assert!(
+            missing.is_empty() && extra.is_empty(),
+            "rung {} diverges from PRODUCTION on parameter(s): missing={missing:?} extra={extra:?}",
+            profile.name
+        );
+        for (key, production_value) in &production {
+            if key == "latency" {
+                continue;
+            }
+            let actual_value = &actual[key];
+            assert_eq!(
+                actual_value, production_value,
+                "rung {} diverges from PRODUCTION on parameter `{key}`",
+                profile.name
+            );
+        }
+        assert_eq!(
+            actual["latency"],
+            profile.latency_ms.to_string(),
+            "rung {} must request its own latency",
+            profile.name
+        );
+    }
+
+    #[test]
+    fn srt_profile_ladder_varies_only_latency() {
+        // Given the five ladder rungs and the production receiver policy.
+        for rung in SrtProfile::LADDER {
+            // When comparing each rung's listener URI against PRODUCTION's.
+            assert_only_latency_differs(&rung);
+            // Then only latency differs: reorderfreeze and lossmaxttl are identical.
+            assert_eq!(rung.lossmaxttl, 200, "rung {} maxttl", rung.name);
+            assert!(rung.reorderfreeze, "rung {} reorderfreeze", rung.name);
+        }
+        assert_eq!(
+            SrtProfile::LADDER.map(|rung| rung.latency_ms),
+            [200, 300, 500, 2000, 5000]
+        );
+        // And the `rung` constructor returns the matching rung, or None off-ladder.
+        assert_eq!(SrtProfile::rung(500).unwrap().latency_ms, 500);
+        assert!(SrtProfile::rung(250).is_none());
     }
 
     #[test]
@@ -1833,7 +1959,7 @@ mod srt_profile_tests {
                 "-statspf:csv",
                 "-stats",
                 "1000",
-                "srt://:4001?mode=listener&latency=2000&lossmaxttl=40&reorderfreeze=1",
+                "srt://:4001?mode=listener&latency=2000&lossmaxttl=200&reorderfreeze=1",
                 "udp://127.0.0.1:9999"
             ]
         );
