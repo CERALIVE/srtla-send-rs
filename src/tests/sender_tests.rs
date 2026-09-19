@@ -1485,10 +1485,9 @@ mod lifecycle {
     use tokio::net::UdpSocket;
     use tokio::time::{Duration, timeout};
 
-    #[cfg(not(unix))]
+    #[cfg(target_os = "linux")]
+    use crate::bind_map::IfaceName;
     use crate::bind_map::LinkId;
-    #[cfg(unix)]
-    use crate::bind_map::{IfaceName, LinkId};
     use crate::config::ConfigSnapshot;
     use crate::connection::delivery::{DataSend, DeliveryAck};
     use crate::connection::health::{HealthMachine, HealthState};

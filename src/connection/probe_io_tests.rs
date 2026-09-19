@@ -161,6 +161,8 @@ async fn probe_configured_limit_bounds_real_emission() {
     );
 }
 
+// Linux `sendmmsg` stops at the rejected oversized entry with a hard error.
+#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn probe_partial_batch_commits_only_accepted_copies() {
     // Given a mixed batch: valid probe, oversized original, unsent probe suffix.
@@ -183,6 +185,40 @@ async fn probe_partial_batch_commits_only_accepted_copies() {
     let bytes_before = conn.bitrate.bytes_sent_total;
     // When the real kernel accepts the prefix and rejects the oversized middle.
     assert!(conn.flush_batch().await.is_err());
+    // Then only the first probe is accounted; neither probe becomes a normal send.
+    assert_eq!(conn.probes.probes_sent, 1);
+    assert_eq!(conn.bitrate.bytes_sent_total - bytes_before, 20);
+    assert!(conn.probes.probe_log.contains_key(&1));
+    assert!(!conn.probes.probe_log.contains_key(&2));
+    assert_eq!(conn.delivery.attempts_since_proof, 0);
+    assert_eq!(conn.in_flight_packets, 0);
+    assert!(conn.has_queued_packets());
+}
+
+// The sequential fallback commits the same prefix but reports success.
+#[cfg(not(target_os = "linux"))]
+#[tokio::test]
+async fn probe_partial_batch_commits_only_accepted_copies_sequential_fallback() {
+    // Given a mixed batch: valid probe, oversized original, unsent probe suffix.
+    let _clock = TestClock::new(100);
+    let receiver = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let mut conn = create_test_connection_to(receiver.local_addr().unwrap()).await;
+    let target = ProbeTarget {
+        conn_id: conn.conn_id,
+        socket_generation: 0,
+        health: HealthState::Stalled,
+        deadline_held: true,
+        sole_carrier: false,
+        srtt_ms: 100,
+    };
+    let dispatch = ProbeScheduler::default().next(&[target], 100).unwrap();
+    assert!(conn.queue_probe_packet(&data(1), dispatch));
+    conn.queue_data_packet(&vec![0; 70_000], Some(99), 100);
+    assert!(conn.queue_probe_packet(&data(2), dispatch));
+    assert_eq!(conn.batch_sender.queued_count(), 1);
+    let bytes_before = conn.bitrate.bytes_sent_total;
+    // When the sequential path accepts the prefix and stops at the oversized middle.
+    assert!(conn.flush_batch().await.is_ok());
     // Then only the first probe is accounted; neither probe becomes a normal send.
     assert_eq!(conn.probes.probes_sent, 1);
     assert_eq!(conn.bitrate.bytes_sent_total - bytes_before, 20);

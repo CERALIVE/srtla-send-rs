@@ -179,6 +179,8 @@ async fn premature_nak_unknown_sequence_preserves_streak() {
     assert_eq!(conn.premature_nak_count, 1);
 }
 
+// Linux `sendmmsg` reports the oversized datagram as a hard error after the accepted prefix.
+#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn premature_nak_partial_send_protects_only_accepted_prefix() {
     // Given a valid packet followed by an oversized packet in one batch.
@@ -190,6 +192,30 @@ async fn premature_nak_partial_send_protects_only_accepted_prefix() {
     conn.queue_data_packet(&[0; 70_000], Some(1), 10_000);
     clock.set(10_015);
     assert!(conn.flush_batch().await.is_err());
+    assert_eq!(conn.delivery.sent_ms(0), Some(10_015));
+    assert_eq!(conn.delivery.sent_ms(1), None);
+    // When both sequences are reported, Then only the accepted prefix is handled/protected.
+    clock.set(10_018);
+    assert!(conn.handle_nak(0));
+    assert!(!conn.handle_nak(1));
+    assert_eq!(conn.premature_nak_count, 1);
+    assert_eq!(conn.in_flight_packets, 1);
+    assert_eq!(conn.congestion.nak_count, 0);
+}
+
+// The sequential fallback swallows an error once a non-empty prefix is committed.
+#[cfg(not(target_os = "linux"))]
+#[tokio::test]
+async fn premature_nak_partial_send_protects_only_accepted_prefix_sequential_fallback() {
+    // Given a valid packet followed by an oversized packet in one batch.
+    let clock = TestClock::new(10_000);
+    let receiver = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let mut conn = create_test_connection_to(receiver.local_addr().unwrap()).await;
+    conn.rtt.update_estimate(2);
+    conn.queue_data_packet(&[0; 16], Some(0), 10_000);
+    conn.queue_data_packet(&[0; 70_000], Some(1), 10_000);
+    clock.set(10_015);
+    assert!(conn.flush_batch().await.is_ok());
     assert_eq!(conn.delivery.sent_ms(0), Some(10_015));
     assert_eq!(conn.delivery.sent_ms(1), None);
     // When both sequences are reported, Then only the accepted prefix is handled/protected.

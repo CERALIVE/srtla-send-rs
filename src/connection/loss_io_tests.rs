@@ -38,6 +38,8 @@ async fn loss_counts_unique_attributed_normal_data_naks() {
     assert_eq!(conn.loss.probe_loss(), None);
 }
 
+// Linux `sendmmsg` surfaces the rejected oversized entry as a hard error.
+#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn loss_partial_send_counts_only_the_kernel_accepted_prefix() {
     // Given 99 accepted packets; the next batch has one valid then oversized DATA.
@@ -49,6 +51,29 @@ async fn loss_partial_send_counts_only_the_kernel_accepted_prefix() {
     clock.set(10_500);
     // When the kernel accepts the prefix but rejects the rest of the batch.
     assert!(conn.flush_batch().await.is_err());
+    assert!(conn.handle_nak(99));
+    assert!(!conn.handle_nak(100));
+    assert!(!conn.handle_nak(101));
+    clock.set(11_000);
+    conn.loss.advance(now_ms());
+    // Then the load floor is exactly met, using acceptance time rather than queue time.
+    assert_eq!(conn.loss.last_value(), Some(0.01));
+    assert_eq!(conn.loss.last_cohort_ms(), Some(11_000));
+}
+
+// The sequential fallback commits the same prefix but reports success.
+#[cfg(not(target_os = "linux"))]
+#[tokio::test]
+async fn loss_partial_send_counts_only_the_kernel_accepted_prefix_sequential_fallback() {
+    // Given 99 accepted packets; the next batch has one valid then oversized DATA.
+    let clock = TestClock::new(10_000);
+    let (mut conn, _peer) = accepted(99).await;
+    conn.queue_data_packet(&[0; 16], Some(99), 0);
+    conn.queue_data_packet(&[0; 70_000], Some(100), 0);
+    conn.queue_data_packet(&[0; 16], Some(101), 0);
+    clock.set(10_500);
+    // When the sequential path accepts the prefix and stops at the oversized entry.
+    assert!(conn.flush_batch().await.is_ok());
     assert!(conn.handle_nak(99));
     assert!(!conn.handle_nak(100));
     assert!(!conn.handle_nak(101));

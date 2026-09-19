@@ -36,6 +36,8 @@ async fn accepted_prefix_credits_actual_lengths_not_the_unsent_suffix() {
     }
 }
 
+// Linux `sendmmsg` surfaces the rejected oversized datagram as a hard error.
+#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn hard_error_after_accepted_prefix_still_records_delivery_attempt() {
     // Given a valid datagram followed by a kernel-rejected oversized datagram.
@@ -46,6 +48,27 @@ async fn hard_error_after_accepted_prefix_still_records_delivery_attempt() {
     conn.queue_data_packet(&vec![0; 70_000], Some(2), 9000);
     // When the real batch send partially succeeds before returning EMSGSIZE.
     assert!(conn.flush_batch().await.is_err());
+    // Then only the accepted DATA can prove delivery before caller recovery.
+    assert_eq!(conn.delivery.attempts_since_proof, 1);
+    assert_eq!(conn.batch_sender.queued_count(), 1);
+    assert!(!conn.handle_srtla_ack_specific(2, false));
+    assert_eq!(conn.delivery.last_data_proof_ms, 0);
+    assert!(conn.handle_srtla_ack_specific(1, false));
+    assert_eq!(conn.delivery.delivered_bps(now_ms()), 5264.0);
+}
+
+// The sequential fallback records the same accepted prefix but reports success.
+#[cfg(not(target_os = "linux"))]
+#[tokio::test]
+async fn accepted_prefix_records_delivery_attempt_sequential_fallback() {
+    // Given a valid datagram followed by an oversized datagram.
+    let _clock = TestClock::new(10_000);
+    let receiver = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let mut conn = create_test_connection_to(receiver.local_addr().unwrap()).await;
+    conn.queue_data_packet(&[0; 1316], Some(1), 9000);
+    conn.queue_data_packet(&vec![0; 70_000], Some(2), 9000);
+    // When the sequential path accepts the prefix and stops at the oversized entry.
+    assert!(conn.flush_batch().await.is_ok());
     // Then only the accepted DATA can prove delivery before caller recovery.
     assert_eq!(conn.delivery.attempts_since_proof, 1);
     assert_eq!(conn.batch_sender.queued_count(), 1);
