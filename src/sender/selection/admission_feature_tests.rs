@@ -134,6 +134,58 @@ async fn admission_sole_bit_preserves_election_and_base_only_escape() {
 }
 
 #[tokio::test]
+async fn preference_is_reached_from_admission() {
+    // Given two otherwise-identical Healthy links with wide windows and opposite
+    // bounded preferences, on the real admission path with only PREF enabled.
+    let _clock = TestClock::new(10_000);
+    let mut conns = crate::test_helpers::create_selection_test_connections(2).await;
+    for conn in &mut conns {
+        conn.window = 20_000;
+    }
+    conns[0].priority_baseline = Some(Priority::try_from(0.2).unwrap());
+    conns[1].priority_baseline = Some(Priority::try_from(-0.2).unwrap());
+    let cfg = ConfigSnapshot {
+        features: SchedulerFeatures::PREF,
+        ..config()
+    };
+    // When admission composes the selection weight for both links.
+    let mut admission = admit(&mut conns, 10_000, &cfg, &mut SchedulerShared::default());
+    let preferred = admission
+        .compute_weight(0, &mut conns[0])
+        .effective_multiplier;
+    let disfavoured = admission
+        .compute_weight(1, &mut conns[1])
+        .effective_multiplier;
+    // Then the preference formula reaches the product: +0.2 -> 1.2x, -0.2 -> 0.8x.
+    println!("priority +0.20 -> effective_multiplier {preferred}");
+    println!("priority -0.20 -> effective_multiplier {disfavoured}");
+    assert!(
+        (preferred - 1.2).abs() < 1e-12,
+        "preferred effective_multiplier: {preferred}"
+    );
+    assert!(
+        (disfavoured - 0.8).abs() < 1e-12,
+        "disfavoured effective_multiplier: {disfavoured}"
+    );
+
+    // Control: equal priorities must produce identical multipliers, so the
+    // divergence above is attributable to priority alone, not link position.
+    conns[0].priority_baseline = Some(Priority::try_from(0.0).unwrap());
+    conns[1].priority_baseline = Some(Priority::try_from(0.0).unwrap());
+    let mut admission = admit(&mut conns, 10_000, &cfg, &mut SchedulerShared::default());
+    let first = admission
+        .compute_weight(0, &mut conns[0])
+        .effective_multiplier;
+    let second = admission
+        .compute_weight(1, &mut conns[1])
+        .effective_multiplier;
+    assert!(
+        (first - second).abs() < 1e-12,
+        "equal priorities: {first} vs {second}"
+    );
+}
+
+#[tokio::test]
 async fn admission_sole_sequential_replay_preserves_proof_wait_and_challenger() {
     // Given an elected stalled carrier and a faster challenger learned during its hold.
     let _clock = TestClock::new(10_000);

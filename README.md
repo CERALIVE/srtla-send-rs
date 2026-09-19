@@ -1104,8 +1104,9 @@ same-identity socket replacement, and clear the conn override. Clearing either
 override affects only that layer, exposing the next remaining value.
 
 The pure `preference_multiplier` returns `1 + p * clamp((window−10000)/10000, 0, 1)`
-only for Healthy links, and `1.0` otherwise (including Rejoining). The adaptive
-selector consumes it; priority control commands and runtime telemetry echoes are not yet added.
+only for Healthy links, and `1.0` otherwise (including Rejoining). The selector consumes
+it; the JSON-RPC `set-link-priority` command and the telemetry `priority` echo expose it
+(see [Per-link priority](#per-link-priority)).
 Internally, `sender::pool_control::PoolControlRequest::SetLinkPriority` addresses
 either a typed `LinkId` or a telemetry-position `ConnId`. `submit` returns a oneshot
 reply: enqueue success alone is not application. The sender's event loop resolves
@@ -1871,6 +1872,19 @@ binding, no new failure mode. `--dry-run` validates both files and exits non-zer
 sidecar is unusable.
 Full contract: [`docs/adr/ADR-003-bind-map-contract.md`](docs/adr/ADR-003-bind-map-contract.md).
 
+### Per-link priority
+
+A sidecar row may carry an optional `priority`. Its value is bounded to
+**−0.20..=+0.20**, and a **lower value means LESS preferred**: `−0.20` scales a link's
+ranking weight down to at most `0.8×`, while `+0.20` scales it up to at most `1.2×`.
+The bias applies to **Healthy links only** and ramps in with the congestion window —
+`1.0 + priority × clamp((window − 10000) / 10000, 0, 1)` — so it is neutral at or below
+10000 packets in flight and reaches full strength by 20000. It is set per link by the
+sidecar row's `priority`, or at runtime through the JSON-RPC `set-link-priority` method
+(addressed by `link_id` or `conn_id`; `null` clears it). There is **no CLI flag** for
+priority. An absent value is unknown, not a fabricated zero. This bias only reorders
+ranking; it never makes a link eligible or ineligible.
+
 ## Capability probe
 
 `--capabilities-json` prints one line of JSON describing what this build supports, then
@@ -1910,6 +1924,10 @@ with.
   diagnostic for "how much of this link's traffic is the encoder re-sending" and it
   never influences scheduling or window arithmetic; it is deliberately **not** in the
   telemetry file. `health` and `priority` are optional, as in telemetry.
+- `links[].priority` — the link's effective preference bias, optional like `health`:
+  a **lower value means LESS preferred** on the same `−0.20..=+0.20` scale as a
+  [bind-map row's `priority`](#per-link-priority), changeable live via
+  `set-link-priority` (`null` clears it). Absent means unknown, not zero.
 - `receiver` — the bond-wide HSRSP observation: `nak_report` (periodic NAK reports
   on/off), `srt_version` (`"M.m.p"`), `rexmit_flag`. Each key is omitted when unknown
   and the object is `{}` before any handshake has passed through. Same fail-safe

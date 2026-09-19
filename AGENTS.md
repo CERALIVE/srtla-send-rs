@@ -595,6 +595,16 @@ CeraUI and the device integration depend on these staying stable:
   so egress leaves the named interface *and* the wire source address is deterministic —
   neither half substitutes for the other, and an unmapped link still takes the
   `SourceIpBinder` path verbatim.
+- **Per-link `priority` is a ranking bias, never an eligibility override.** Range is
+  `−0.20..=+0.20` (`src/bind_map/types.rs`), and **a lower value means LESS preferred**:
+  `−0.20` scales a link's weight to at most `0.8×`, `+0.20` to at most `1.2×`
+  (`1.0 + priority × clamp((window − 10000) / 10000, 0, 1)`). It applies to **Healthy
+  links only** and ramps in with the congestion window, so it is `1.0` at or below
+  10000 in flight. It is set by a bind-map row's `priority` or at runtime via the
+  JSON-RPC `set-link-priority` method (`src/jsonrpc.rs`, addressed by `link_id` or
+  `conn_id`; `null` clears it). **There is no CLI flag.** The formula lives in
+  `src/sender/selection/adaptive/preference.rs` and is applied by
+  `admission::compute_weight`, so it is live, not dormant.
 - **Link identity is the sidecar's `link_id`; `(ip, iface)` is only the current socket
   key.** Registration, stats, and telemetry state attach to `link_id`, which is stable
   across reloads, reconnects, and interface changes; dedup runs on the socket key, which

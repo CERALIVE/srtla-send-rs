@@ -1,7 +1,11 @@
 use crate::bind_map::Priority;
 use crate::connection::health::HealthState;
 
-/// Bounded preference for healthy links; dormant until adaptive selection is wired.
+/// Bounded Healthy-only ranking bias, multiplied into the admission weight.
+///
+/// Reached from `admission::compute_weight` (`admission.rs`), which folds this
+/// value into `SelectionWeight::effective_multiplier`; the bias ramps in with the
+/// congestion window and is `1.0` at or below 10000.
 #[must_use]
 pub fn preference_multiplier(priority: Option<Priority>, window: i32, health: HealthState) -> f64 {
     match health {
