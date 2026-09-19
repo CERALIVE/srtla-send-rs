@@ -15,6 +15,36 @@ outputs.
 | `report.py` | Fail-closed reduction of a results tree into `report.md` + `summary.json`. |
 | `decide.py` | Statistics and retention decisions over a reduced campaign. |
 
+## Latency as an outcome (opt-in per manifest)
+
+A manifest that sets `"latency_outcomes": true` makes `report.py` derive eight
+first-class fields per run from the receiver `-statsout` capture the runner attaches at
+`raw.stats_csv` (the normalised copy of `raw.stats_csv_path`), restricted to the
+measurement window:
+
+| Field | Meaning |
+| --- | --- |
+| `msrcvbuf_p50` / `msrcvbuf_p95` | Receive-buffer occupancy percentiles, retained rather than collapsed to the existing `ms_rcv_buf_min`. |
+| `headroom_min_ms` | `latency_ms − msrcvbuf_p95`; negative means the budget is already spent at p95. |
+| `starvation_margin` | `ms_rcv_buf_min / latency_ms`. |
+| `packets_per_second` | In-window received packets per second, summed per socket from the cumulative counters. |
+| `lossmaxttl_ms_equivalent` | `lossmaxttl / packets_per_second × 1000`. **LOSSMAXTTL is a packet count, not a time** (`irl-srt-server` `SLSRelay.hpp:68`); this is what that count is worth in milliseconds at the observed rate. |
+| `tolerance_saturated` | `lossmaxttl_ms_equivalent ≥ latency_ms` — the reorder tolerance has eaten the whole latency budget. |
+| `floor_clamped` | `latency_ms < negotiated_floor_ms`, read from `docs/evidence/bpc/foldin-v2/negotiated-floor.json`. A floor counts only where the receiver actually refused the request (`negotiated_ms > requested_ms`); the probe recorded there found the CeraLive receiver honours latencies below both **declared** floors, so a declared value alone never clamps a rung. An absent document means no floor, not a failure. |
+
+The same flag publishes a top-level `metric_directions` table and a per-metric
+`comparisons[...].metrics` entry on each paired cell. A `higher_is_better` metric
+(goodput) reports its ratio CI **lower** bound; a `lower_is_better` metric (belated,
+drop, recovery, `msrcvbuf_p95`, viewer loss, retransmit) reports its **upper** bound, so
+a candidate that halves belated is judged by the bound that can falsify the claim.
+`retransmit_pct` is emitted only where both arms carry a validated received-packet
+denominator (`diagnostics.retrans_ratio`) and is otherwise the literal string
+`unavailable`; it is never reconstructed from player, NAK or sender-side counters.
+
+**Every one of these is additive and omitted when absent — never written as `null`.**
+A manifest without the flag reduces byte-for-byte as it did before, which is what keeps
+the frozen M4 reduction (and the lineage rule that reads `metrics_v2_checks`) valid.
+
 ## Smoke campaign
 
 Run `BENCH_ARTIFACT_DIR=/absolute/artifact/root bash scripts/bench/build_candidate.sh`

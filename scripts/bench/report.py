@@ -24,7 +24,7 @@ import unittest
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, ClassVar, Final, Literal, assert_never, override
+from typing import Annotated, Any, ClassVar, Final, Literal, assert_never, override
 
 import numpy as np
 from numpy.typing import NDArray
@@ -34,7 +34,9 @@ from pydantic import (
     ConfigDict,
     Field,
     JsonValue,
+    SerializerFunctionWrapHandler,
     ValidationError,
+    model_serializer,
 )
 
 # allow: SIZE_OK — the task requires a single-file uv script including its schema
@@ -47,12 +49,65 @@ type Positive = Annotated[Finite, Field(ge=0)]
 type Rate = Annotated[Finite, Field(ge=0, le=1)]
 type Number = float | Literal["+inf"] | None
 type Hash = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+type Direction = Literal["higher_is_better", "lower_is_better"]
+
+# A ratio CI is read from the bound that can falsify the claim: a higher-is-better
+# metric must clear its lower bound, a lower-is-better metric must stay under its upper
+# bound. Keys are bare metric names; the metric table prefixes diagnostics with
+# "diagnostics.", which `direction_of` strips before looking a name up here.
+METRIC_DIRECTIONS: Final[dict[str, Direction]] = {
+    "useful_goodput_bps": "higher_is_better",
+    "viewer_loss_ratio": "lower_is_better",
+    "pkt_belated_delta": "lower_is_better",
+    "pkt_drop_delta": "lower_is_better",
+    "recovery_ms": "lower_is_better",
+    "msrcvbuf_p95": "lower_is_better",
+    "retransmit_pct": "lower_is_better",
+}
+# Populated together by `latency_outcome`; any one of them proves a reduction carries
+# receiver-CSV outcome evidence, which is what gates every additive emission below.
+LATENCY_FIELDS: Final = (
+    "msrcvbuf_p50",
+    "msrcvbuf_p95",
+    "headroom_min_ms",
+    "starvation_margin",
+    "packets_per_second",
+    "lossmaxttl_ms_equivalent",
+    "tolerance_saturated",
+    "floor_clamped",
+)
+NEGOTIATED_FLOOR: Final = (
+    Path(__file__).resolve().parents[2]
+    / "docs/evidence/bpc/foldin-v2/negotiated-floor.json"
+)
 
 
 class Document(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(
         frozen=True, strict=True, allow_inf_nan=False
     )
+
+
+class Additive(Document):
+    """Omits additive fields that hold nothing, so a frozen reduction keeps its bytes.
+
+    A campaign that predates a field must serialize exactly as it did before the field
+    existed — `null` is still a byte change, and the M4 lineage rule reads those bytes.
+    """
+
+    ADDITIVE: ClassVar[tuple[str, ...]] = ()
+
+    @model_serializer(mode="wrap")
+    def _omit_absent_additions(self, handler: SerializerFunctionWrapHandler) -> Any:
+        document: dict[str, Any] = handler(self)
+        for name in self.ADDITIVE:
+            if document.get(name) in (None, {}, [], ()):
+                _ = document.pop(name, None)
+        return document
+
+
+def direction_of(metric: str) -> Direction | None:
+    return METRIC_DIRECTIONS.get(metric.removeprefix("diagnostics."))
 
 
 class Cell(Document):
@@ -95,6 +150,7 @@ class ManifestReceiver(Document):
 
 class Manifest(Document):
     campaign: Annotated[str, Field(min_length=1)]
+    latency_outcomes: bool = False
     seed: Count
     cells: Annotated[tuple[Cell, ...], Field(min_length=1)]
     candidates: Annotated[tuple[Candidate, ...], Field(min_length=1)]
@@ -136,7 +192,7 @@ class RecordArm(Document):
     label: str
 
 
-class Envelope(Document):
+class Envelope(Additive):
     run_id: str | None = None
     supersedes: str | None = None
     candidate: RecordArm | None = None
@@ -281,6 +337,47 @@ class RunRecord(Envelope):
     load_intervals: tuple[LoadInterval, ...]
     loadavg_1m: Positive
     warnings: tuple[str, ...]
+    msrcvbuf_p50: Positive | None = None
+    msrcvbuf_p95: Positive | None = None
+    headroom_min_ms: Finite | None = None
+    starvation_margin: Positive | None = None
+    packets_per_second: Positive | None = None
+    lossmaxttl_ms_equivalent: Positive | None = None
+    tolerance_saturated: bool | None = None
+    floor_clamped: bool | None = None
+
+    ADDITIVE: ClassVar[tuple[str, ...]] = LATENCY_FIELDS
+
+
+class StatsRow(Document):
+    t_ms: int
+    socket_id: Count = 0
+    pkt_recv_total: Count = 0
+    ms_rcv_buf: Positive | None = None
+
+
+class StatsCapture(Document):
+    rows: tuple[StatsRow, ...] = ()
+
+
+class RawCapture(Document):
+    stats_csv: StatsCapture | None = None
+
+
+class CapturedEnvelope(Document):
+    raw: RawCapture | None = None
+
+
+class NegotiatedFloor(Document):
+    requested_ms: Positive
+    negotiated_ms: Positive
+
+    @property
+    def floor_ms(self) -> float | None:
+        # A floor exists only where the receiver actually refused the request. The
+        # foldin-v2 probe found the CeraLive receiver honours latencies below both
+        # declared floors, so a declared value is not evidence of one.
+        return self.negotiated_ms if self.negotiated_ms > self.requested_ms else None
 
 
 class RawPaths(Document):
@@ -302,7 +399,15 @@ class Stats(Document):
     nonfinite_rate: float | None
 
 
-class Pair(Document):
+class Comparison(Document):
+    direction: Direction
+    ratio_median: float | None
+    ci_lower: float | None
+    ci_upper: float | None
+    reported_bound: float | None
+
+
+class Pair(Additive):
     n: int
     dropped_indices: tuple[int, ...]
     ci_lower: float | None
@@ -311,6 +416,11 @@ class Pair(Document):
     recovery_ratio: float | None
     nonfinite_recovery: bool
     episode_mismatch: bool
+    metrics: dict[str, Comparison | Literal["unavailable"]] = Field(
+        default_factory=dict
+    )
+
+    ADDITIVE: ClassVar[tuple[str, ...]] = ("metrics",)
 
 
 class EpisodeStats(Document):
@@ -363,7 +473,7 @@ class Group(Document):
     cells: dict[str, Evidence]
 
 
-class Summary(Document):
+class Summary(Additive):
     schema_version: Literal[1] = 1
     bootstrap_resamples: int = RESAMPLES
     bootstrap_seed: int = SEED
@@ -371,6 +481,9 @@ class Summary(Document):
     groups: tuple[Group, ...]
     conformance: tuple[RunRecord, ...] = ()
     warnings: tuple[str, ...]
+    metric_directions: dict[str, Direction] = Field(default_factory=dict)
+
+    ADDITIVE: ClassVar[tuple[str, ...]] = ("metric_directions",)
 
 
 @dataclass(frozen=True, slots=True)
@@ -395,6 +508,67 @@ def number(value: float) -> Number:
         else value
         if math.isfinite(value)
         else None
+    )
+
+
+def negotiated_floor_ms(path: Path) -> float | None:
+    if not path.is_file():
+        return None
+    return NegotiatedFloor.model_validate_json(
+        path.read_text(encoding="utf-8")
+    ).floor_ms
+
+
+def received_packets(rows: Sequence[StatsRow]) -> int:
+    counters: dict[int, list[int]] = {}
+    for row in rows:
+        counters.setdefault(row.socket_id, []).append(row.pkt_recv_total)
+    return sum(max(values) - min(values) for values in counters.values())
+
+
+def latency_outcome(
+    record: RunRecord, capture: StatsCapture | None, floor_ms: float | None
+) -> dict[str, float | bool]:
+    latency = float(record.srt_profile.latency_ms)
+    outcome: dict[str, float | bool] = {
+        "floor_clamped": floor_ms is not None and latency < floor_ms
+    }
+    rows = [
+        row
+        for row in (capture.rows if capture is not None else ())
+        if record.window.start_ms <= row.t_ms <= record.window.end_ms
+    ]
+    buffers = [row.ms_rcv_buf for row in rows if row.ms_rcv_buf is not None]
+    if buffers:
+        p50, p95 = (float(np.percentile(buffers, q)) for q in (50, 95))
+        outcome |= {
+            "msrcvbuf_p50": p50,
+            "msrcvbuf_p95": p95,
+            "headroom_min_ms": latency - p95,
+        }
+    buffer_min = record.diagnostics.get("ms_rcv_buf_min")
+    if buffer_min is not None and latency > 0:
+        outcome["starvation_margin"] = buffer_min / latency
+    seconds = (record.window.end_ms - record.window.start_ms) / 1000
+    rate = received_packets(rows) / seconds if seconds > 0 else 0.0
+    if rate > 0:
+        # LOSSMAXTTL is a packet count (irl-srt-server SLSRelay.hpp:68); at the observed
+        # receive rate it buys this many milliseconds of reordering tolerance, which is
+        # only meaningful against the latency budget it competes with.
+        equivalent = record.srt_profile.lossmaxttl / rate * 1000
+        outcome |= {
+            "packets_per_second": rate,
+            "lossmaxttl_ms_equivalent": equivalent,
+            "tolerance_saturated": equivalent >= latency,
+        }
+    return outcome
+
+
+def latency_outcomes_present(records: Sequence[RunRecord]) -> bool:
+    return any(
+        getattr(record, field) is not None
+        for record in records
+        for field in LATENCY_FIELDS
     )
 
 
@@ -426,6 +600,74 @@ def statistics(values: Sequence[float | None]) -> Stats:
         ci_upper=number(ordered.item(math.ceil(RESAMPLES * 0.975) - 1)),
         nonfinite_rate=float(np.mean(~np.isfinite(data))),
     )
+
+
+def ratio_bounds(
+    x: NDArray[np.float64], y: NDArray[np.float64], indices: NDArray[np.int64]
+) -> tuple[float | None, float | None, float | None]:
+    denominator = np.median(y[indices], axis=1)
+    if not np.all(denominator > 0):
+        return (None, None, None)
+    ratios: NDArray[np.float64] = np.sort(np.median(x[indices], axis=1) / denominator)
+    return (
+        float(np.median(ratios)),
+        ratios.item(math.ceil(RESAMPLES * 0.025) - 1),
+        ratios.item(math.ceil(RESAMPLES * 0.975) - 1),
+    )
+
+
+def paired_value(record: RunRecord, metric: str) -> float | None:
+    match metric:
+        case "useful_goodput_bps":
+            return record.useful_goodput_bps
+        case "viewer_loss_ratio":
+            return record.viewer_loss_ratio
+        case "msrcvbuf_p95":
+            return record.msrcvbuf_p95
+        case "retransmit_pct":
+            ratio = record.diagnostics.get("retrans_ratio")
+            return None if ratio is None else 100 * ratio
+        case _:
+            return record.diagnostics.get(metric)
+
+
+def compare(
+    left: Sequence[RunRecord], right: Sequence[RunRecord], metric: str
+) -> Comparison | Literal["unavailable"] | None:
+    direction = METRIC_DIRECTIONS[metric]
+    values = [[paired_value(r, metric) for r in arm] for arm in (left, right)]
+    if any(value is None for arm in values for value in arm):
+        # A missing received-packet denominator is stated, never reconstructed from
+        # player, NAK or sender-side counters (docs/evidence/bpc/m4/README.md).
+        return "unavailable" if metric == "retransmit_pct" else None
+    indices = np.random.default_rng(SEED).integers(
+        len(left), size=(RESAMPLES, len(left))
+    )
+    median, lower, upper = ratio_bounds(
+        np.array(values[0], dtype=np.float64),
+        np.array(values[1], dtype=np.float64),
+        indices,
+    )
+    return Comparison(
+        direction=direction,
+        ratio_median=median,
+        ci_lower=lower,
+        ci_upper=upper,
+        reported_bound=lower if direction == "higher_is_better" else upper,
+    )
+
+
+def comparisons(
+    left: Sequence[RunRecord], right: Sequence[RunRecord]
+) -> dict[str, Comparison | Literal["unavailable"]]:
+    if not latency_outcomes_present((*left, *right)):
+        return {}
+    measured = {
+        metric: compare(left, right, metric)
+        for metric in METRIC_DIRECTIONS
+        if metric != "recovery_ms"
+    }
+    return {metric: value for metric, value in measured.items() if value is not None}
 
 
 def paired(left: Sequence[RunRecord], right: Sequence[RunRecord]) -> Pair:
@@ -487,6 +729,7 @@ def paired(left: Sequence[RunRecord], right: Sequence[RunRecord]) -> Pair:
                 recovery.append(math.inf)
     ratio = float(np.median(recovery)) if recovery else math.inf
     return Pair(
+        metrics=comparisons([a[i] for i in matched], [b[i] for i in matched]),
         n=len(matched),
         dropped_indices=dropped,
         ci_lower=ci[0],
@@ -540,6 +783,20 @@ def run_metrics(records: Sequence[RunRecord]) -> dict[str, Stats]:
             for name in names
         }
     )
+    if latency_outcomes_present(records):
+        # Booleans enter the table as 0/1 samples so a per-run label reduces to the
+        # rate of runs carrying it, in the same Stats shape as every other metric.
+        metrics.update(
+            {
+                field: statistics(
+                    [
+                        None if (value := getattr(r, field)) is None else float(value)
+                        for r in records
+                    ]
+                )
+                for field in LATENCY_FIELDS
+            }
+        )
     return metrics
 
 
@@ -834,6 +1091,7 @@ def validate_sls(record: RunRecord) -> None:
 def load_records(
     manifest: Manifest, roots: Sequence[Path], *, smoke_coverage: bool = False,
     m1_outcomes: bool = False, m2_outcomes: bool = False, m3_outcomes: bool = False,
+    negotiated_floor: Path | None = None,
 ) -> LoadedRecords:
     if m1_outcomes and (manifest.campaign != "m1-ttl" or smoke_coverage):
         raise EvidenceError("M1 outcome coverage is restricted to m1-ttl")
@@ -901,6 +1159,11 @@ def load_records(
         if not root.is_dir():
             raise EvidenceError(f"results directory not found: {root}")
     records: dict[str, dict[int, RunRecord]] = {key: {} for key in expected}
+    floor_ms = (
+        negotiated_floor_ms(negotiated_floor or NEGOTIATED_FLOOR)
+        if manifest.latency_outcomes
+        else None
+    )
     warnings: list[str] = []
     if smoke_coverage:
         warnings.append(
@@ -997,6 +1260,13 @@ def load_records(
                 assert_never(unreachable)
         if len({e.event_index for e in record.episodes}) != len(record.episodes):
             raise EvidenceError(f"duplicate event_index in {cell.id}")
+        if manifest.latency_outcomes:
+            capture = CapturedEnvelope.model_validate_json(text).raw
+            record = record.model_copy(
+                update=latency_outcome(
+                    record, capture.stats_csv if capture else None, floor_ms
+                )
+            )
         records[cell.id][record.run_index] = record
     missing = [
         f"{cell.id}: n={len(records[cell.id])}, required={1 if smoke_coverage else cell.runs}, "
@@ -1014,9 +1284,15 @@ def load_records(
 
 
 def build_summary(
-    manifest: Manifest, roots: Sequence[Path], *, smoke_coverage: bool = False
+    manifest: Manifest, roots: Sequence[Path], *, smoke_coverage: bool = False,
+    negotiated_floor: Path | None = None,
 ) -> Summary:
-    loaded = load_records(manifest, roots, smoke_coverage=smoke_coverage)
+    loaded = load_records(
+        manifest,
+        roots,
+        smoke_coverage=smoke_coverage,
+        negotiated_floor=negotiated_floor,
+    )
     records = loaded.by_cell
     candidates = {c.label: c for c in manifest.candidates}
     if len(candidates) != len(manifest.candidates) or any(
@@ -1095,10 +1371,14 @@ def build_summary(
                 cells=cells,
             )
         )
+    measured = any(
+        latency_outcomes_present(runs) for runs in records.values()
+    )
     return Summary(
         groups=tuple(groups),
         conformance=tuple(conformance),
         warnings=tuple(sorted(set(warnings))),
+        metric_directions=dict(METRIC_DIRECTIONS) if measured else {},
     )
 
 
