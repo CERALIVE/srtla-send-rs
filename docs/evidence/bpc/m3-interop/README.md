@@ -73,6 +73,7 @@ lever is TTL*/gate, which M1 chose. Do not revert policy for foreign-only
 failures. Todo27 must carry these limitations into cutover documentation.
 The separate owned rollout failure is a Todo24 blocker regardless of the
 foreign results or the substantial median-goodput improvement.
+The mandated `receiver_pr_blocker` action was performed by irl-srt-server todo 24 — the verbatim stated action, the evidence commit, and the residual carried into K13 are recorded in [`blocker-resolution.json`](./blocker-resolution.json).
 
 ## Conformance: eight PASS, one literal-echo FAIL
 
