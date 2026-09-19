@@ -231,8 +231,19 @@ async fn live_snapshot() -> Snapshot {
     }
 }
 
+/// Whether a second loopback source IP can be bound on this host. macOS only
+/// configures 127.0.0.1 by default, so this two-link scenario self-skips there
+/// while still running for real on the Linux device/CI target.
+fn second_loopback_bindable() -> bool {
+    std::net::UdpSocket::bind("127.0.0.2:0").is_ok()
+}
+
 #[tokio::test]
 async fn live_binary_publishes_zero_weight_for_data_blackhole_with_keepalives() {
+    if !second_loopback_bindable() {
+        eprintln!("Skipping: 127.0.0.2 is not locally bindable on this host");
+        return;
+    }
     // Given two registered loopback links; one echoes keepalives but never ACKs DATA.
     // When real traffic drives the sender's housekeeping and stats-file publication.
     let snapshot = live_snapshot().await;
