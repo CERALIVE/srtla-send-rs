@@ -21,8 +21,12 @@ async fn fresh_receiver_id_rebroadcasts_reg2_despite_old_group_grants() {
     reg.process_registration_packet(0, &create_reg2_packet(&fresh));
     reg.reg_driver_send_if_needed(&mut conns).await;
     // Then an old group's authorization cannot suppress this group's actual REG2 send.
-    let (len, _) = peer
-        .try_recv_from(&mut bytes)
-        .expect("new group REG2 must leave the socket immediately");
+    let (len, _) = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        peer.recv_from(&mut bytes),
+    )
+    .await
+    .expect("new group REG2 must leave the socket immediately")
+    .unwrap();
     assert_eq!(&bytes[..len], create_reg2_packet(&fresh));
 }
