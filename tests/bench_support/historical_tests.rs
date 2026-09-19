@@ -53,11 +53,12 @@ fn historical_execution_uses_locked_path_and_hash_not_manifest_path() {
     // When opting in to historical execution.
     assert!(candidate_lock::resolve(&lock, &mut manifest, true).unwrap());
     // Then both executable paths come from the verified lock.
+    let locked = std::fs::canonicalize(&binary).unwrap();
     assert!(
         manifest
             .candidates
             .iter()
-            .all(|candidate| candidate.bin == binary)
+            .all(|candidate| candidate.bin == locked)
     );
 }
 

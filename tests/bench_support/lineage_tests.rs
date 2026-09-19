@@ -149,24 +149,32 @@ fn manifest_cell_identity_excludes_candidate_but_includes_receiver_options() {
 
 #[test]
 fn manifest_receiver_override_replaces_defaults_without_environment_mutation() {
-    let json = manifest_json();
+    // Given a receiver and a default each naming a real temporary binary.
+    let dir = tempfile::tempdir().unwrap();
+    let srtla_rec = dir.path().join("srtla_rec");
+    std::fs::write(&srtla_rec, b"srtla_rec").unwrap();
+    let srt_live_transmit = dir.path().join("srt_live_transmit");
+    std::fs::write(&srt_live_transmit, b"srt_live_transmit").unwrap();
+    let mut json = manifest_json();
+    json["receivers"][0]["bin"] = srtla_rec.to_string_lossy().into_owned().into();
     let parsed = manifest::parse(&json.to_string()).unwrap();
     let defaults = network_sim::harness::ReceiverSpec {
         label: "belabox".into(),
         lineage: "belabox".into(),
         srtla_rec_kind: "belabox".into(),
         srtla_rec_bin: "/missing/default".into(),
-        srt_live_transmit_bin: "/bin/false".into(),
+        srt_live_transmit_bin: srt_live_transmit.to_string_lossy().into_owned(),
         listener_uri_extra: String::new(),
     };
+    // When the receiver resolves, then its binary replaces the missing default.
     let resolved = parsed.receivers[0].resolve(&defaults).unwrap();
     assert_eq!(
         resolved.srtla_rec_bin,
-        std::fs::canonicalize("/bin/true").unwrap()
+        std::fs::canonicalize(&srtla_rec).unwrap()
     );
     assert_eq!(
         resolved.srt_live_transmit_bin,
-        std::fs::canonicalize("/bin/false").unwrap()
+        std::fs::canonicalize(&srt_live_transmit).unwrap()
     );
     assert_eq!(resolved.srtla_rec_kind, "ceralive");
 }
@@ -195,22 +203,27 @@ fn manifest_listener_override_replaces_query_key_without_changing_presets() {
 fn manifest_candidate_lock_records_campaign_hashes_and_preserves_receiver_metadata() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("receivers.lock.json");
+    let candidate_bin = dir.path().join("srtla_send");
+    std::fs::write(&candidate_bin, b"locked candidate bytes").unwrap();
     std::fs::write(
         &path,
         r#"{"receivers":{"ours-new":{"revision":"pinned"}},"parallel_lanes":2}"#,
     )
     .unwrap();
-    let manifest = manifest::parse(&manifest_json().to_string()).unwrap();
+    // Given a manifest whose candidates name that real temporary binary.
+    let mut json = manifest_json();
+    for candidate in json["candidates"].as_array_mut().unwrap() {
+        candidate["bin"] = candidate_bin.to_string_lossy().into_owned().into();
+    }
+    let manifest = manifest::parse(&json.to_string()).unwrap();
     crate::bench_support::candidate_lock::record(&path, &manifest).unwrap();
     let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert_eq!(saved["receivers"]["ours-new"]["revision"], "pinned");
     assert_eq!(saved["parallel_lanes"], 2);
     assert_eq!(
         saved["candidates"]["unit"]["base"]["srtla_send_sha256"],
-        serde_json::to_value(
-            crate::bench_support::record::binary_hash(std::path::Path::new("/bin/true")).unwrap()
-        )
-        .unwrap()
+        serde_json::to_value(crate::bench_support::record::binary_hash(&candidate_bin).unwrap())
+            .unwrap()
     );
 }
 
