@@ -1,3 +1,4 @@
+2026-09-18 — classic/rtt-threshold/edpf/adaptive modes removed in 4.0.0 — read as history.
 # strata-port Branch Evaluation
 
 **Audited ref:** `refs/_audit/strata-port` @ `1866c6c` (irlserver upstream HEAD, pin-verified)

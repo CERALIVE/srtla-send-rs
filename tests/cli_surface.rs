@@ -245,7 +245,8 @@ fn stats_file_interval_default_matches_the_named_constant() {
 }
 
 #[test]
-fn mode_accepts_exactly_the_four_scheduling_modes() {
+fn mode_accepts_exactly_the_five_scheduling_modes() {
+    // Given the 4.0.0 value set; flag names and positional arguments stay frozen.
     let cmd = command();
     let arg = cmd
         .get_arguments()
@@ -258,7 +259,7 @@ fn mode_accepts_exactly_the_four_scheduling_modes() {
         .collect();
     assert_eq!(
         values,
-        vec!["classic", "enhanced", "rtt-threshold", "edpf"],
+        vec!["enhanced"],
         "the scheduling-mode value set is part of the CLI surface"
     );
 }

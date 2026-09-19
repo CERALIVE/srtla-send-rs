@@ -1,0 +1,48 @@
+{
+  "requested_ms": 200,
+  "negotiated_ms": 200,
+  "rcvlatency_floor_ms": 100,
+  "sls_conf_latency_min_ms": 200,
+  "governing": "requested",
+  "evidence": {
+    "measured_at_utc": "2026-09-19T00:48:07Z",
+    "receiver_lock_key": "ours-new",
+    "receiver_listener_uri": "srt://:4411?mode=listener&latency=200&reorderfreeze=1&periodicnakgate=1&lossmaxttl=200",
+    "receiver_srt_live_transmit": {
+      "path": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/ours-new/srt-live-transmit",
+      "sha256": "1610a06b83070bcf5297cac730e954fdae496975a3d06258482949d21fafcb69",
+      "srt_version": "1.5.7"
+    },
+    "receiver_srtla_rec": {
+      "path": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/ceralive-srtla_rec",
+      "sha256": "fa3524c844d1cd7f805fecc0b06fc68f1594c3a4b9e53cf27b7ea37a0c1e6ab7",
+      "version": "2026.6.2"
+    },
+    "sender": {
+      "path": "target/release/srtla_send",
+      "version": "4.0.0 (feat/adaptive-scheduler-bench)",
+      "control_method": "jsonrpc",
+      "control_request": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"get-status\"}\n"
+    },
+    "raw_control_result": {
+      "negotiated_latency_ms": 200,
+      "receiver": {
+        "nak_report": true,
+        "rexmit_flag": true,
+        "srt_version": "1.5.7"
+      },
+      "links": [
+        {
+          "conn_id": "0",
+          "health": "rejoining"
+        }
+      ]
+    },
+    "transport": "loopback 127.0.0.1, no network namespace, read-only; launches the same CeraLive receiver stack (srt-live-transmit + ceralive srtla_rec) that the harness's CeraLive receiver path starts",
+    "probe_below_declared_floors": {
+      "requested_ms": 50,
+      "negotiated_ms": 50,
+      "conclusion": "the ours-new CeraLive receiver enforces neither the 100 ms RCVLATENCY floor (irl-srt-server SLSSrt.cpp) nor the 200 ms sls.conf latency_min; requests down to 50 ms are honoured, so at requested_ms=200 the request governs and no ladder rung is floor_clamped (lowest rung 200 is not below 200)"
+    }
+  }
+}

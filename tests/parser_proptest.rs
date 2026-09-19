@@ -16,6 +16,7 @@
 //! while still covering all length/type branches.
 
 use proptest::prelude::*;
+use srtla_send::protocol::srt_handshake::parse_hsrsp_tsbpd_delay_ms;
 use srtla_send::protocol::{
     ConnectionInfo, SRT_CONTROL_HEADER_LEN, SRT_NAK_MAX_ENTRIES, SRT_TYPE_ACK, SRT_TYPE_NAK,
     SRTLA_ID_LEN, create_ack_packet, create_keepalive_packet, create_keepalive_packet_ext,
@@ -55,6 +56,57 @@ prop_compose! {
 }
 
 proptest! {
+    #[test]
+    fn hsrsp_arbitrary_bytes_never_panic(buf in prop::collection::vec(any::<u8>(), 0..2048)) {
+        let info = srtla_send::protocol::srt_handshake::parse_hsrsp(&buf);
+        prop_assert!(info.is_none_or(|i| i.tsbpd_delay_ms <= u32::from(u16::MAX)));
+    }
+
+    #[test]
+    fn hsrsp_arbitrary_extensions_never_panic(payload in prop::collection::vec(any::<u8>(), 0..2048)) {
+        let mut packet = include_bytes!("fixtures/srt-hsrsp-latency2000.bin")[..64].to_vec();
+        packet.extend_from_slice(&payload);
+        let info = srtla_send::protocol::srt_handshake::parse_hsrsp(&packet);
+        prop_assert!(info.is_none_or(|i| i.tsbpd_delay_ms <= u32::from(u16::MAX)));
+    }
+
+    #[test]
+    fn hsrsp_malformed_extension_length_is_rejected(words in 4_u16..=u16::MAX, body in any::<[u8; 12]>()) {
+        let mut packet = include_bytes!("fixtures/srt-hsrsp-latency2000.bin").to_vec();
+        packet[66..68].copy_from_slice(&words.to_be_bytes());
+        packet[68..80].copy_from_slice(&body);
+        prop_assert_eq!(srtla_send::protocol::srt_handshake::parse_hsrsp(&packet), None);
+    }
+
+    #[test]
+    fn hsrsp_arbitrary_fields_roundtrip(version in any::<u32>(), flags in any::<u32>(), delay in any::<u16>()) {
+        let mut packet = include_bytes!("fixtures/srt-hsrsp-latency2000.bin").to_vec();
+        packet[68..72].copy_from_slice(&version.to_be_bytes());
+        packet[72..76].copy_from_slice(&flags.to_be_bytes());
+        packet[76..78].copy_from_slice(&delay.to_be_bytes());
+        prop_assert_eq!(srtla_send::protocol::srt_handshake::parse_hsrsp(&packet),
+            Some(srtla_send::protocol::srt_handshake::HsrspInfo {
+                srt_version: version, flags, tsbpd_delay_ms: u32::from(delay),
+            }));
+    }
+
+    #[test]
+    fn srt_handshake_never_panics(buf in prop::collection::vec(any::<u8>(), 0..MAX_INPUT)) {
+        // Given arbitrary bytes, When parsed, Then return normally with a bounded delay.
+        let delay = parse_hsrsp_tsbpd_delay_ms(&buf);
+        prop_assert!(delay.is_none_or(|ms| ms <= u32::from(u16::MAX)));
+    }
+
+    #[test]
+    fn srt_handshake_extensions_never_panic(payload in prop::collection::vec(any::<u8>(), 0..MAX_INPUT)) {
+        // Given the captured header with arbitrary extensions, When parsed, Then never panic.
+        let fixture = include_bytes!("fixtures/srt-hsrsp-latency2000.bin");
+        let mut packet = fixture[..64].to_vec();
+        packet.extend_from_slice(&payload);
+        let delay = parse_hsrsp_tsbpd_delay_ms(&packet);
+        prop_assert!(delay.is_none_or(|ms| ms <= u32::from(u16::MAX)));
+    }
+
     // ---- ROBUSTNESS: arbitrary bytes never panic, results are bounded ----
 
     /// `parse_srt_nak` on arbitrary bytes never panics and never indexes OOB.

@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "arms": [
+    {
+      "name": "survivor",
+      "mode": "enhanced",
+      "binary": "current worktree HEAD post-ablation",
+      "duration_seconds": 1800,
+      "status": "pending"
+    },
+    {
+      "name": "ours-3.3.0",
+      "mode": "enhanced",
+      "binary_lock_path": ".candidates[\"m3-interop\"][\"ours-3.3.0\"]",
+      "sha256": "ebe34ee2bb6c8d832801e20ec32adc7cf8aba9c544915de751efad14f8f1d77c",
+      "duration_seconds": 1800,
+      "status": "pending"
+    }
+  ],
+  "outcome": "pending",
+  "selected_alternative": "enhanced stays default; flip is the first item of the next release",
+  "rig": {
+    "available": false,
+    "reason": "This cloud/dev sandbox has no real Starlink plus cellular bond hardware; no canary was run on the bench host."
+  },
+  "pass_criteria": {
+    "unrecovered_links": 0,
+    "stream_drops": 0,
+    "survivor_goodput_minimum_vs_ours_3_3_0": 0.95,
+    "pktRcvDrop_not_worse": true,
+    "cpu_rss": "recorded for release notes only; not gated"
+  },
+  "stall_deselect_real_starlink_repro": {
+    "source_inspection": "The current src/tests/stall_deselect_tests.rs contains no ignored hardware test or hardware guard; it now tests that retired stall compatibility flags are inert.",
+    "command": "cargo test --all-features stall_deselect_real_starlink_repro -- --ignored",
+    "exit_code": 0,
+    "result": "Cargo completed successfully but selected zero tests (966 unit tests and all integration tests filtered); no hardware condition was exercised."
+  },
+  "kit": {
+    "runner": "scripts/bench/canary/run-canary.sh",
+    "readme": "scripts/bench/canary/README.md",
+    "dry_run": "passed locally without binding sockets or making network calls"
+  }
+}

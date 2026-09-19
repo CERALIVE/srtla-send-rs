@@ -10,7 +10,6 @@ pub const SRTLA_TYPE_REG_NGP: u16 = 0x9211;
 pub const SRTLA_TYPE_REG_NAK: u16 = 0x9212;
 
 // SRT protocol constants (some used in tests or for protocol completeness)
-#[allow(dead_code)] // justified: used in integration_tests.rs for protocol validation
 pub const SRT_TYPE_HANDSHAKE: u16 = 0x8000;
 pub const SRT_TYPE_ACK: u16 = 0x8002;
 pub const SRT_TYPE_NAK: u16 = 0x8003;
@@ -18,6 +17,15 @@ pub const SRT_TYPE_NAK: u16 = 0x8003;
 pub const SRT_TYPE_SHUTDOWN: u16 = 0x8005;
 #[allow(dead_code)] // justified: used in integration_tests.rs for protocol validation
 pub const SRT_TYPE_DATA: u16 = 0x0000;
+
+// SRT handshake option bits (srtcore/handshake.h, SrtOptions).
+pub const SRT_OPT_TSBPDSND: u32 = 1 << 0;
+pub const SRT_OPT_TSBPDRCV: u32 = 1 << 1;
+pub const SRT_OPT_TLPKTDROP: u32 = 1 << 3;
+pub const SRT_OPT_NAKREPORT: u32 = 1 << 4;
+pub const SRT_OPT_REXMITFLG: u32 = 1 << 5;
+pub const SRT_OPT_STREAM: u32 = 1 << 6;
+pub const SRT_OPT_FILTERCAP: u32 = 1 << 7;
 
 // Packet size constants
 pub const SRTLA_ID_LEN: usize = 256;

@@ -43,6 +43,8 @@ fn base_conn() -> TelemetryConn {
         bytes_sent_total: 0,
         iface: None,
         link_id: None,
+        health: None,
+        priority: None,
     }
 }
 
@@ -60,6 +62,7 @@ fn doc(last_updated_ms: u64, conns: &[TelemetryConn], session_bytes_sent: u64) -
             conns,
             session_bytes_sent,
             bind_map: &BindMapReport::default(),
+            receiver_nak_report: None,
         },
     )
 }
@@ -80,10 +83,14 @@ fn link(connected: bool, bitrate_bytes_per_sec: u32, rtt_ms: u32, base_score: i3
         nak_count: 0,
         bitrate_bps: bitrate_bytes_per_sec,
         bytes_sent_total: 0,
+        rexmit_forwarded: 0,
         rtt_min_ms: 0.0,
         rtt_velocity: 0.0,
         base_score,
         quality_multiplier: 1.0,
+        health: None,
+        priority: None,
+        effective_multiplier: 1.0,
     }
 }
 
@@ -146,9 +153,7 @@ fn active_link_with_zero_traffic_reports_zero_bitrate() {
 
 #[test]
 fn zero_traffic_link_stays_active_in_projection() {
-    // Active link, no capacity signal yet (base_score 0, 0 B/s). conns_from_stats
-    // keeps it active with the equal-share fallback and a zero bitrate, rather
-    // than reporting the only uplink as all-zero weight.
+    // Given an active idle link without a measured selection weight.
     let snap = StatsSnapshot {
         links: vec![link(true, 0, 20, 0)],
         ..StatsSnapshot::default()
@@ -157,8 +162,8 @@ fn zero_traffic_link_stays_active_in_projection() {
     assert_eq!(conns.len(), 1);
     assert_eq!(conns[0].bitrate_bytes_per_sec, 0);
     assert_eq!(
-        conns[0].weight_percent, 100,
-        "sole active link gets full share"
+        conns[0].weight_percent, 0,
+        "shared admission must not invent equal-share weight without a capacity signal"
     );
     let json = json(FIXED_MS, &conns);
     assert!(json.contains("\"bitrate_bps\":0"), "got {json}");

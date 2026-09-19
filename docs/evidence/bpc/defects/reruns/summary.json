@@ -1,0 +1,11 @@
+{
+  "cells": [],
+  "runs": 0,
+  "schema_version": 1,
+  "bootstrap_resamples": 10000,
+  "bootstrap_seed": 20260913,
+  "bootstrap_statistic": "median; paired ratio of medians",
+  "groups": [],
+  "conformance": [],
+  "warnings": []
+}

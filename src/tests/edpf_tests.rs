@@ -30,8 +30,8 @@ mod tests {
     use crate::config::ConfigSnapshot;
     use crate::connection::SrtlaConnection;
     use crate::mode::SchedulingMode;
-    use crate::sender::selection::{EdpfSchedulerState, select_connection_idx};
-    use crate::test_helpers::create_test_connections;
+    use crate::sender::selection::{EdpfSchedulerState, edpf_pipeline_select};
+    use crate::test_helpers::create_selection_test_connections as create_test_connections;
 
     /// Build `n` loopback test connections (blocking on the async helper).
     fn make_conns(n: usize) -> SmallVec<SrtlaConnection, 4> {
@@ -43,7 +43,8 @@ mod tests {
     /// this pipeline but must be present.
     fn edpf_config() -> ConfigSnapshot {
         ConfigSnapshot {
-            mode: SchedulingMode::Edpf,
+            features: Default::default(),
+            mode: SchedulingMode::Enhanced,
             quality_enabled: false,
             exploration_enabled: false,
             rtt_delta_ms: 30,
@@ -69,7 +70,7 @@ mod tests {
         config: &ConfigSnapshot,
         state: &mut EdpfSchedulerState,
     ) -> Option<usize> {
-        select_connection_idx(conns, None, 0, 0, config, state)
+        edpf_pipeline_select(conns, config, state)
     }
 
     // ---------------------------------------------------------------------

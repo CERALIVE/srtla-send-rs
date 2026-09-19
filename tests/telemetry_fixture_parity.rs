@@ -49,7 +49,7 @@ const CURRENT_CONN_KEYS: [&str; 8] = [
 
 /// Every fixture in the cross-language matrix. `tests/telemetry_fixtures.rs`
 /// documents what each one proves.
-const FIXTURES: [&str; 8] = [
+const FIXTURES: [&str; 10] = [
     "telemetry-legacy-producer",
     "telemetry-golden",
     "telemetry-mapped",
@@ -58,7 +58,76 @@ const FIXTURES: [&str; 8] = [
     "telemetry-degraded-startup",
     "telemetry-degraded-reload",
     "telemetry-unknown-fields",
+    "telemetry-adaptive",
+    "telemetry-receiver-flags",
 ];
+
+#[test]
+fn receiver_flags_are_only_an_additive_top_level_tail() {
+    let mut receiver = parse(&rust_fixture_path("telemetry-receiver-flags"));
+    assert_eq!(
+        receiver
+            .as_object_mut()
+            .unwrap()
+            .remove("receiver_nak_report"),
+        Some(serde_json::json!(false))
+    );
+    assert_eq!(receiver, parse(&rust_fixture_path("telemetry-mapped")));
+    assert!(
+        parse(&rust_fixture_path("telemetry-legacy-producer"))
+            .get("receiver_nak_report")
+            .is_none()
+    );
+}
+
+const ADAPTIVE_CONN_KEYS: [&str; 12] = [
+    "bitrate_bps",
+    "bytes_sent_total",
+    "conn_id",
+    "health",
+    "iface",
+    "in_flight",
+    "link_id",
+    "nak_count",
+    "priority",
+    "rtt_ms",
+    "weight_percent",
+    "window",
+];
+
+#[test]
+fn adaptive_keys_are_exact_only_when_fully_populated() {
+    // Given the fully populated carrier and its partially populated neighbour.
+    let doc = parse(&rust_fixture_path("telemetry-adaptive"));
+    // When their key sets are projected.
+    let carrier = sorted_keys(&doc["connections"][0]);
+    let held = sorted_keys(&doc["connections"][1]);
+    // Then only the first requires every optional key; the second remains a valid subset.
+    assert_eq!(carrier, ADAPTIVE_CONN_KEYS);
+    assert!(
+        held.iter()
+            .all(|key| ADAPTIVE_CONN_KEYS.contains(&key.as_str()))
+    );
+    assert!(
+        CURRENT_CONN_KEYS
+            .iter()
+            .all(|key| held.iter().any(|present| present == key))
+    );
+    assert_eq!(doc["connections"][1]["health"], "stalled");
+    assert_eq!(doc["connections"][1]["weight_percent"], 0);
+    assert!(doc["connections"][1].get("priority").is_none());
+}
+
+#[test]
+fn golden_omits_scheduler_observations() {
+    // Given the frozen current legacy-mode golden.
+    let doc = parse(&rust_golden_path());
+    // When inspecting every connection, Then neither optional scheduler key appears.
+    for conn in doc["connections"].as_array().unwrap() {
+        assert!(conn.get("health").is_none());
+        assert!(conn.get("priority").is_none());
+    }
+}
 
 fn rust_fixture_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

@@ -73,7 +73,7 @@ below it passes `bytes_sent_total` through verbatim with a comment saying why.
 
 ### What is counted
 
-`bytes_sent_total` is incremented at **exactly the same call site** as the input
+For normal DATA, `bytes_sent_total` is incremented at **exactly the same call site** as the input
 to `bitrate_bps` — `SrtlaConnection::queue_data_packet()`
 (`src/connection/mod.rs`), which calls `BitrateTracker::update_on_send()`. The
 two therefore agree by construction rather than by convention:
@@ -92,6 +92,17 @@ two therefore agree by construction rather than by convention:
   `bitrate_bps`. A packet queued into a batch that then fails to flush is
   counted. The window is at most one 15 ms batch interval, and reporting at
   queue time is what makes the two fields consistent.
+
+**Duplicate DATA probes (scheduler-evaluation Todo 19):** production probe copies
+also consume the data plan and are included at full wire length in BOTH
+`bytes_sent_total` and `bitrate_bps`. Their separate accepted-prefix arm in
+`src/connection/transmit.rs` calls the same `BitrateTracker::update_on_send`:
+accepted copies count even before a later flush error, unsent suffixes do not.
+Normal DATA's existing queue-time accounting is unchanged. Probe ACKs do not add
+bytes again and do not enter original delivered-bitrate evidence. This adds no
+telemetry key or schema version; the `probes_sent` diagnostic is status-log-only.
+Selection does not yet invoke the mechanism. The original feature-only receiver
+spike still deliberately bypasses bitrate accounting, independent of production probes.
 
 ### Reset semantics
 

@@ -46,7 +46,6 @@ pub fn select_connection(
     last_idx: Option<usize>,
     last_switch_time_ms: u64,
     current_time_ms: u64,
-    enable_quality: bool,
     enable_explore: bool,
 ) -> Option<usize> {
     // Score connections by base score; apply quality multiplier if enabled
@@ -57,29 +56,23 @@ pub fn select_connection(
     let mut current_score: Option<f64> = None;
 
     for (i, c) in conns.iter_mut().enumerate() {
-        if c.is_timed_out() {
+        let Some(weight) = c.adaptive.weight else {
             continue;
-        }
-        let base = c.get_score() as f64;
-        let score = if !enable_quality {
-            base
-        } else {
-            // Use cached quality multiplier (recalculates every 50ms)
-            let quality_mult = c.get_cached_quality_multiplier(current_time_ms);
-            let final_score = base * quality_mult;
-
-            // Log quality issues and recoveries for debugging (cold path)
-            log_quality_state(c, quality_mult, base, final_score);
-
-            final_score
         };
+        let score = weight.score();
+        log_quality_state(
+            c,
+            weight.quality_multiplier,
+            f64::from(weight.base_score),
+            score,
+        );
 
         // Track current connection's score for hysteresis
         if Some(i) == last_idx {
             current_score = Some(score);
         }
 
-        if score > best_score {
+        if best_idx.is_none() || score > best_score {
             second_score = best_score;
             second_idx = best_idx;
             best_score = score;
@@ -99,8 +92,7 @@ pub fn select_connection(
         // If proposing a different connection
         if best_idx != Some(last) {
             // Check if last connection is still valid
-            let last_still_valid =
-                last < conns.len() && !conns[last].is_timed_out() && conns[last].connected;
+            let last_still_valid = last < conns.len() && conns[last].adaptive.weight.is_some();
 
             // If in cooldown period and last connection is still valid, keep it
             if in_switch_cooldown && last_still_valid {

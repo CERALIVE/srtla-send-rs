@@ -195,3 +195,99 @@ fn a_sha256_that_is_not_64_lowercase_hex_is_malformed() {
         assert_matches!(err, BindMapError::InvalidHeader { .. });
     }
 }
+
+#[test]
+fn priority_is_optional_bounded_and_carried_through_resolution() {
+    use crate::bind_map::{Priority, ResolvePhase, resolve};
+    // Given: all boundaries plus an absent priority and an unrelated future key.
+    for value in [None, Some(-0.2), Some(0.0), Some(0.05), Some(0.2)] {
+        let mut body: serde_json::Value =
+            serde_json::from_str(&twin_sidecar(1, &twin_sha())).unwrap();
+        if let Some(value) = value {
+            body["links"][0]["priority"] = serde_json::json!(value);
+        }
+        body["links"][0]["future_key"] = serde_json::json!(true);
+        // When: the real boundary, resolver and spec projection run.
+        let pool = validate_twin(&body.to_string(), None).unwrap();
+        assert_eq!(pool.rows[0].priority.map(Priority::get), value);
+        assert_eq!(pool.rows[1].priority, None);
+        let ips = IpsFile::from_bytes(TWIN_IPS).unwrap();
+        let resolution = resolve(Ok(pool), &ips, ResolvePhase::Startup);
+        let specs = crate::sender::specs_from_effective_links(&resolution.links);
+        // Then: preference survives both projections without becoming identity.
+        assert_eq!(resolution.links[0].priority.map(Priority::get), value);
+        assert_eq!(specs[0].priority.map(Priority::get), value);
+        assert_eq!(specs[1].priority, None);
+    }
+}
+
+#[test]
+fn priority_rejects_nonfinite_and_out_of_range_values() {
+    // Given: values outside the finite closed domain, including non-JSON floats.
+    for value in [
+        f64::NAN,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        -0.200001,
+        0.200001,
+    ] {
+        // When/Then: the typed boundary refuses every one.
+        assert!(crate::bind_map::Priority::try_from(value).is_err());
+    }
+}
+
+#[test]
+fn invalid_priority_uses_existing_startup_exclusion_and_reload_retention() {
+    use crate::bind_map::{BindMapDisposition, BindMapStatus, ResolvePhase, resolve};
+    // Given: one malformed second row in a duplicate-IP pair.
+    let ips = IpsFile::from_bytes(TWIN_IPS).unwrap();
+    let prior_body =
+        twin_sidecar(1, &twin_sha()).replace("\"wwan0\"", "\"wwan0\",\"priority\":0.05");
+    let prior = validate_twin(&prior_body, None).unwrap();
+    let body = twin_sidecar(2, &twin_sha()).replace("\"wwan1\"", "\"wwan1\",\"priority\":0.5");
+    let error = validate_twin(&body, Some(&prior)).unwrap_err();
+    assert_matches!(
+        error,
+        BindMapError::InvalidRow {
+            index: 1,
+            field: "priority",
+            ..
+        }
+    );
+    // When: resolve the same error on each side of the startup/reload boundary.
+    let startup = resolve(Err(error.clone()), &ips, ResolvePhase::Startup);
+    let reload = resolve(
+        Err(error),
+        &ips,
+        ResolvePhase::Reload { last_valid: &prior },
+    );
+    // Then: the frozen degradation semantics still apply to the entire map.
+    assert_eq!(
+        startup.status,
+        BindMapStatus::Degraded(DegradedReason::Malformed)
+    );
+    assert_eq!(
+        startup.disposition,
+        BindMapDisposition::StartupCollisionExcluded
+    );
+    assert_eq!(startup.links.len(), 1);
+    assert_eq!(startup.links[0].priority, None);
+    assert_eq!(startup.excluded[0].excluded_indices, [1]);
+    assert_eq!(reload.status, startup.status);
+    assert_eq!(reload.disposition, BindMapDisposition::RetainedLastValid);
+    assert_eq!(reload.links.len(), 2);
+    assert_eq!(reload.links[0].priority, prior.rows[0].priority);
+}
+
+#[test]
+fn priority_change_without_generation_change_is_stale() {
+    // Given: the same generation and IP digest with a different row preference.
+    let body = twin_sidecar(1, &twin_sha());
+    let prior = validate_twin(&body, None).unwrap();
+    let changed = body.replace("\"wwan0\"", "\"wwan0\",\"priority\":0.05");
+    // When/Then: priority participates in existing row-content ordering.
+    assert_matches!(
+        validate_twin(&changed, Some(&prior)).unwrap_err(),
+        BindMapError::StaleGeneration { generation: 1 }
+    );
+}

@@ -1,0 +1,56 @@
+{
+  "historical": true,
+  "campaign": "smoke",
+  "seed": 1,
+  "scenarios": ["A", "D"],
+  "srt_profiles": ["production"],
+  "runs": 2,
+  "candidates": [
+    {
+      "label": "classic",
+      "bin": "target/smoke-baseline-bins/srtla_send-d168aa6-b8763976a36134ec",
+      "args": ["--mode", "classic"],
+      "env": {},
+      "stats_file": true,
+      "effective_config": {
+        "adaptive_features": ["stall", "loss", "queue", "deadline", "rejoin", "sole", "pref", "ratecap"],
+        "adaptive_tuning": {"stall_attempts": 32, "loss_enter": 0.1, "deadline_hold_fraction": 0.5, "ratecap_loss_backoff": 0.85}
+      }
+    },
+    {
+      "label": "enhanced",
+      "bin": "target/smoke-baseline-bins/srtla_send-d168aa6-b8763976a36134ec",
+      "args": ["--mode", "enhanced"],
+      "env": {},
+      "stats_file": true,
+      "effective_config": {
+        "adaptive_features": ["stall", "loss", "queue", "deadline", "rejoin", "sole", "pref", "ratecap"],
+        "adaptive_tuning": {"stall_attempts": 32, "loss_enter": 0.1, "deadline_hold_fraction": 0.5, "ratecap_loss_backoff": 0.85}
+      }
+    },
+    {
+      "label": "adaptive",
+      "bin": "target/smoke-baseline-bins/srtla_send-d168aa6-b8763976a36134ec",
+      "args": ["--mode", "adaptive"],
+      "env": {},
+      "stats_file": true,
+      "effective_config": {
+        "adaptive_features": ["stall", "loss", "queue", "deadline", "rejoin", "sole", "pref", "ratecap"],
+        "adaptive_tuning": {"stall_attempts": 32, "loss_enter": 0.1, "deadline_hold_fraction": 0.5, "ratecap_loss_backoff": 0.85}
+      }
+    }
+  ],
+  "receivers": [
+    {"name": "ceralive", "kind": "ceralive", "bin": "target/smoke-baseline-bins/srtla_rec-38b7b76c6e8f8e88"},
+    {"label": "ours-new", "lineage": "ours-new", "srtla_rec_kind": "ceralive", "srtla_rec_bin": "target/smoke-baseline-bins/srtla_rec-38b7b76c6e8f8e88", "listener_uri_extra": "&periodicnakgate=1&lossmaxttl=200"}
+  ],
+  "cells": [
+    {"cell_id": "ceralive@--A@--production--slt:4001--fec:off", "covering": true, "candidate": "classic", "scenario": "A", "receiver": "ceralive", "srt_profile": "production", "runs": 2},
+    {"cell_id": "ceralive@--D@--production--slt:4001--fec:off", "covering": true, "candidate": "classic", "scenario": "D", "receiver": "ceralive", "srt_profile": "production", "runs": 2},
+    {"cell_id": "ceralive@--A@--production--slt:4001--fec:off", "covering": true, "candidate": "enhanced", "scenario": "A", "receiver": "ceralive", "srt_profile": "production", "runs": 2},
+    {"cell_id": "ceralive@--D@--production--slt:4001--fec:off", "covering": true, "candidate": "enhanced", "scenario": "D", "receiver": "ceralive", "srt_profile": "production", "runs": 2},
+    {"cell_id": "ceralive@--A@--production--slt:4001--fec:off", "covering": true, "candidate": "adaptive", "scenario": "A", "receiver": "ceralive", "srt_profile": "production", "runs": 2},
+    {"cell_id": "ceralive@--D@--production--slt:4001--fec:off", "covering": true, "candidate": "adaptive", "scenario": "D", "receiver": "ceralive", "srt_profile": "production", "runs": 2},
+    {"cell_id": "ours-new@%26periodicnakgate%3D1%26lossmaxttl%3D200--A@--production--slt:4001--fec:off", "covering": false, "candidate": "classic", "scenario": "A", "receiver": "ours-new", "srt_profile": "production", "runs": 1}
+  ]
+}

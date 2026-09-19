@@ -81,6 +81,7 @@ mod tests {
                 false,
                 false,
                 Some(incoming),
+                &crate::stats::SharedStats::new(),
             )
             .await
             .unwrap();
@@ -399,3 +400,4 @@ mod tests {
         assert!(parsed.iter().all(|s| s & 0x8000_0000 == 0));
     }
 }
+// allow: SIZE_OK — retained ACK ownership regression suite; only the required shared-stats argument changes.

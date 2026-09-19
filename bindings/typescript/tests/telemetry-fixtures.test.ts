@@ -23,6 +23,20 @@ async function read(name: string): Promise<Telemetry> {
 }
 
 describe('old producer, new consumer', () => {
+	test.each(['telemetry-legacy-producer', 'telemetry-golden'])(
+		'%s leaves scheduler observations undefined without materializing keys',
+		async (name) => {
+			// Given an older producer's committed bytes, When read through the binding.
+			const snapshot = await read(name);
+			// Then absence is unknown, never a fabricated health state or priority zero.
+			for (const conn of snapshot.connections) {
+				expect(conn.health).toBeUndefined();
+				expect(conn.priority).toBeUndefined();
+				expect(Object.hasOwn(conn, 'health')).toBe(false);
+				expect(Object.hasOwn(conn, 'priority')).toBe(false);
+			}
+		},
+	);
 	test('a pre-ADR-003 document parses with every added field undefined', async () => {
 		// Given: the byte-exact document the shipped 3.2.0 producer wrote, which
 		// predates all four fields this schema gained.
@@ -53,6 +67,15 @@ describe('old producer, new consumer', () => {
 });
 
 describe('new producer, current consumer', () => {
+	test('adaptive observations preserve preference and a zero-weight stalled link', async () => {
+		// Given the Rust adaptive fixture, When parsed from its actual file.
+		const snapshot = await read('telemetry-adaptive');
+		// Then both health states survive, with priority omitted only on the second link.
+		expect(snapshot.connections.map((conn) => conn.health)).toEqual(['healthy', 'stalled']);
+		expect(snapshot.connections.map((conn) => conn.priority)).toEqual([0.2, undefined]);
+		expect(snapshot.connections.map((conn) => conn.weight_percent)).toEqual([100, 0]);
+		expect(snapshot.schema_version).toBe(1);
+	});
 	test('an unmapped run reports absent + legacy_unique_only', async () => {
 		const snapshot = await read('telemetry-golden');
 

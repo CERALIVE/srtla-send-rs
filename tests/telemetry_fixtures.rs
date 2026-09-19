@@ -30,6 +30,7 @@
 //! | `telemetry-degraded-startup` | `startup_collision_excluded` names the group it broke up. |
 //! | `telemetry-degraded-reload` | `retained_last_valid` says degraded AND still pinned. |
 //! | `telemetry-unknown-fields` | A FUTURE producer's extra keys do not break today's reader. |
+//! | `telemetry-adaptive` | Healthy preferred carrier and a zero-weight stalled neighbour. |
 
 use std::path::PathBuf;
 
@@ -83,6 +84,7 @@ fn assert_fixture(name: &str, produced: &str) {
     );
 }
 
+// allow: SIZE_OK — the nine-case producer matrix shares one regeneration protocol and fixed inputs.
 fn conn(conn_id: u32, link_id: Option<&str>, iface: Option<&str>) -> TelemetryConn {
     TelemetryConn {
         conn_id,
@@ -95,6 +97,8 @@ fn conn(conn_id: u32, link_id: Option<&str>, iface: Option<&str>) -> TelemetryCo
         bytes_sent_total: 812_000_000,
         iface: iface.map(ToString::to_string),
         link_id: link_id.map(ToString::to_string),
+        health: None,
+        priority: None,
     }
 }
 
@@ -105,6 +109,7 @@ fn document(conns: &[TelemetryConn], bind_map: &BindMapReport) -> String {
             conns,
             session_bytes_sent: 1_620_000_000,
             bind_map,
+            receiver_nak_report: None,
         },
     )
 }
@@ -136,6 +141,44 @@ fn mapped_conns() -> [TelemetryConn; 2] {
         conn(0, Some("modem-a"), Some("wwan0")),
         conn(1, Some("modem-b"), Some("wwan1")),
     ]
+}
+
+#[test]
+fn adaptive_fixture_reports_health_priority_and_held_weight() {
+    // Given mapped links, one preferred/healthy and one stalled without a priority.
+    let conns = [
+        TelemetryConn {
+            health: Some("healthy"),
+            priority: Some(0.2),
+            weight_percent: 100,
+            ..conn(0, Some("modem-a"), Some("wwan0"))
+        },
+        TelemetryConn {
+            health: Some("stalled"),
+            weight_percent: 0,
+            ..conn(1, Some("modem-b"), Some("wwan1"))
+        },
+    ];
+    // When the real producer serializes the optional tail.
+    let produced = document(&conns, &active());
+    // Then both committed copies are those exact bytes; all older fixtures stay unchanged.
+    assert_fixture("telemetry-adaptive", &produced);
+}
+
+#[test]
+fn receiver_flags_fixture_preserves_explicit_nak_off() {
+    let produced = build_telemetry_json(
+        FIXED_MS,
+        &TelemetryInputs {
+            conns: &mapped_conns(),
+            session_bytes_sent: 1_620_000_000,
+            bind_map: &active(),
+            receiver_nak_report: Some(false),
+        },
+    );
+    assert_fixture("telemetry-receiver-flags", &produced);
+    assert_eq!(value(&produced)["receiver_nak_report"], false);
+    assert!(produced.ends_with(",\"receiver_nak_report\":false}"));
 }
 
 // ---- The legacy fixture: an OLD producer's bytes ---------------------------

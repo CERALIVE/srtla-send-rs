@@ -91,6 +91,7 @@ fn predicted_arrival(conn: &SrtlaConnection, pkt_size: usize) -> Option<f64> {
     if !conn.connected {
         return None;
     }
+    let weight = conn.adaptive.weight?;
 
     let measured_bps = conn.bitrate.current_bitrate_bps;
     let bitrate_bps = if measured_bps > 0.0 {
@@ -101,7 +102,7 @@ fn predicted_arrival(conn: &SrtlaConnection, pkt_size: usize) -> Option<f64> {
     let capacity_bytes_per_sec = bitrate_bps / 8.0;
 
     // Loss from quality multiplier
-    let loss = (1.0 - conn.quality_cache.multiplier).clamp(0.0, 0.99);
+    let loss = (1.0 - weight.effective_multiplier).clamp(0.0, 0.99);
     let effective_capacity = capacity_bytes_per_sec * (1.0 - loss);
     if !effective_capacity.is_finite() || effective_capacity <= 0.0 {
         // Rank last, but stay selectable.
@@ -188,7 +189,7 @@ pub fn arrival_time(conn: &SrtlaConnection, pkt_size: usize) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::create_test_connections;
+    use crate::test_helpers::create_selection_test_connections as create_test_connections;
 
     #[test]
     fn test_select_prefers_lower_arrival() {
@@ -470,7 +471,12 @@ mod tests {
             conn.bitrate.current_bitrate_bps = 1_000_000.0;
             conn.rtt.rtt_min_ms = 30.0;
         }
-        conns[0].quality_cache.multiplier = f64::NAN;
+        conns[0]
+            .adaptive
+            .weight
+            .as_mut()
+            .unwrap()
+            .effective_multiplier = f64::NAN;
 
         assert_eq!(
             predicted_arrival(&conns[0], SRT_PKT_SIZE),
@@ -491,7 +497,7 @@ mod tests {
 
         for conn in conns.iter_mut() {
             conn.connected = true;
-            conn.quality_cache.multiplier = f64::NAN;
+            conn.adaptive.weight.as_mut().unwrap().effective_multiplier = f64::NAN;
         }
 
         assert_eq!(

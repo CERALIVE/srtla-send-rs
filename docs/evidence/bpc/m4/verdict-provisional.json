@@ -1,0 +1,1293 @@
+{
+  "ship_set": [
+    "enhanced"
+  ],
+  "base_mode": "enhanced",
+  "covered_by_base_pct": 0.0,
+  "sacrificed_cells": [
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--A@--production--slt:4001--fec:off",
+      "scenario": "A",
+      "lineage": "ours-new",
+      "winner": "rtt-threshold",
+      "base_mode_ratio": 0.9123851383170123,
+      "base_mode_ci_lower": 0.5150455692902093,
+      "failing_gates": [
+        "settled_rate",
+        "post_settle_zero_drop_belated_rate",
+        "goodput_ci_lower",
+        "loss"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off",
+      "scenario": "B1",
+      "lineage": "ours-new",
+      "winner": "enhanced",
+      "base_mode_ratio": 1.0,
+      "base_mode_ci_lower": 1.0,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B2@--production--slt:4001--fec:off",
+      "scenario": "B2",
+      "lineage": "ours-new",
+      "winner": "enhanced",
+      "base_mode_ratio": 1.0,
+      "base_mode_ci_lower": 1.0,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--C@--production--slt:4001--fec:off",
+      "scenario": "C",
+      "lineage": "ours-new",
+      "winner": "classic",
+      "base_mode_ratio": 0.9760301349289019,
+      "base_mode_ci_lower": 0.7579542497575285,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate",
+        "goodput_ci_lower",
+        "loss",
+        "recovery_ratio"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--E@--production--slt:4001--fec:off",
+      "scenario": "E",
+      "lineage": "ours-new",
+      "winner": "rtt-threshold",
+      "base_mode_ratio": 0.9908816846607363,
+      "base_mode_ci_lower": 0.9820933165195462,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate",
+        "loss",
+        "recovery_ratio"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--F@--production--slt:4001--fec:off",
+      "scenario": "F",
+      "lineage": "ours-new",
+      "winner": "rtt-threshold",
+      "base_mode_ratio": 0.9999817284852913,
+      "base_mode_ci_lower": 0.9998720923858425,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--G@--production--slt:4001--fec:off",
+      "scenario": "G",
+      "lineage": "ours-new",
+      "winner": "classic",
+      "base_mode_ratio": 0.9997990280264553,
+      "base_mode_ci_lower": 0.9996346297886333,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--H@--production--slt:4001--fec:off",
+      "scenario": "H",
+      "lineage": "ours-new",
+      "winner": "classic",
+      "base_mode_ratio": 0.9839556352745644,
+      "base_mode_ci_lower": 0.9660534924627247,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate",
+        "loss",
+        "recovery_ratio"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--I@--production--slt:4001--fec:off",
+      "scenario": "I",
+      "lineage": "ours-new",
+      "winner": "adaptive",
+      "base_mode_ratio": 0.9998275928125357,
+      "base_mode_ci_lower": 0.8085312008489509,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate",
+        "goodput_ci_lower"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--J@--production--slt:4001--fec:off",
+      "scenario": "J",
+      "lineage": "ours-new",
+      "winner": "enhanced",
+      "base_mode_ratio": 1.0,
+      "base_mode_ci_lower": 1.0,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate",
+        "post_settle_starvation_floor_rate"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--K@--production--slt:4001--fec:off",
+      "scenario": "K",
+      "lineage": "ours-new",
+      "winner": "classic",
+      "base_mode_ratio": 0.9998684287468568,
+      "base_mode_ci_lower": 0.9995615124895859,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--L@--production--slt:4001--fec:off",
+      "scenario": "L",
+      "lineage": "ours-new",
+      "winner": "adaptive",
+      "base_mode_ratio": 0.8975811723687077,
+      "base_mode_ci_lower": 0.7349529906517024,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate",
+        "post_settle_starvation_floor_rate",
+        "goodput_ci_lower",
+        "loss"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--M1@--production--slt:4001--fec:off",
+      "scenario": "M1",
+      "lineage": "ours-new",
+      "winner": "classic",
+      "base_mode_ratio": 0.9851087757397138,
+      "base_mode_ci_lower": 0.9612375305733056,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate",
+        "loss"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--M2@--production--slt:4001--fec:off",
+      "scenario": "M2",
+      "lineage": "ours-new",
+      "winner": "rtt-threshold",
+      "base_mode_ratio": 0.9825306266861263,
+      "base_mode_ci_lower": 0.9804809114796087,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate",
+        "loss"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--M3@--production--slt:4001--fec:off",
+      "scenario": "M3",
+      "lineage": "ours-new",
+      "winner": "adaptive",
+      "base_mode_ratio": 0.9999122691582225,
+      "base_mode_ci_lower": 0.9993858975764885,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--M4@--production--slt:4001--fec:off",
+      "scenario": "M4",
+      "lineage": "ours-new",
+      "winner": "classic",
+      "base_mode_ratio": 0.9998245690978466,
+      "base_mode_ci_lower": 0.9996051852339278,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--M5@--production--slt:4001--fec:off",
+      "scenario": "M5",
+      "lineage": "ours-new",
+      "winner": "classic",
+      "base_mode_ratio": 0.9953415036192933,
+      "base_mode_ci_lower": 0.982396122870786,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--M6@--production--slt:4001--fec:off",
+      "scenario": "M6",
+      "lineage": "ours-new",
+      "winner": "adaptive",
+      "base_mode_ratio": 0.9999817284852913,
+      "base_mode_ci_lower": 0.9997990170104695,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate"
+      ],
+      "reason": "uncovered"
+    },
+    {
+      "cell_id": "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--M7@--production--slt:4001--fec:off",
+      "scenario": "M7",
+      "lineage": "ours-new",
+      "winner": "rtt-threshold",
+      "base_mode_ratio": 0.9753639846743296,
+      "base_mode_ci_lower": 0.9669588030645806,
+      "failing_gates": [
+        "post_settle_zero_drop_belated_rate",
+        "loss",
+        "recovery_ratio"
+      ],
+      "reason": "uncovered"
+    }
+  ],
+  "cells": {
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--A@--production--slt:4001--fec:off": {
+      "scenario": "A",
+      "lineage": "ours-new",
+      "winner": "rtt-threshold",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 0.7493147542171293,
+          "ci_lower": 0.5584547785637893,
+          "failing_gates": [
+            "settled_rate",
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 0.9123851383170123,
+          "ci_lower": 0.5150455692902093,
+          "failing_gates": [
+            "settled_rate",
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.8152311723438425,
+          "ci_lower": 0.609120311312124,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 0.6657932550080298,
+          "ci_lower": 0.4607562386768746,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B1@--production--slt:4001--fec:off": {
+      "scenario": "B1",
+      "lineage": "ours-new",
+      "winner": "enhanced",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 0.48444661140906875,
+          "ci_lower": 0.45505302937949527,
+          "failing_gates": [
+            "settled_rate",
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 0.4800097513408094,
+          "ci_lower": 0.46656590526803343,
+          "failing_gates": [
+            "settled_rate",
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.4846903949293028,
+          "ci_lower": 0.4782905482825032,
+          "failing_gates": [
+            "settled_rate",
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 0.9996830891494601,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--B2@--production--slt:4001--fec:off": {
+      "scenario": "B2",
+      "lineage": "ours-new",
+      "winner": "enhanced",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 0.8504441607835986,
+          "ci_lower": 0.7311065748446578,
+          "failing_gates": [
+            "settled_rate",
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 0.8659441998593275,
+          "ci_lower": 0.7754575982594712,
+          "failing_gates": [
+            "settled_rate",
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.9334670591606534,
+          "ci_lower": 0.732317907534938,
+          "failing_gates": [
+            "settled_rate",
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 0.9405267408237163,
+          "ci_lower": 0.8538050418578252,
+          "failing_gates": [
+            "settled_rate",
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--C@--production--slt:4001--fec:off": {
+      "scenario": "C",
+      "lineage": "ours-new",
+      "winner": "classic",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "recovery_ratio"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 0.9760301349289019,
+          "ci_lower": 0.7579542497575285,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss",
+            "recovery_ratio"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 0.9528233327681016,
+          "ci_lower": 0.8062297467098737,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss",
+            "recovery_ratio"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.7485162665633098,
+          "ci_lower": 0.7020258801225668,
+          "failing_gates": [
+            "settled_rate",
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss",
+            "recovery_ratio",
+            "nonrecovery_rate"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 0.8282866209636395,
+          "ci_lower": 0.7594656137205978,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss",
+            "recovery_ratio"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--D@--production--slt:4001--fec:off": {
+      "scenario": "D",
+      "lineage": "ours-new",
+      "winner": "classic",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 0.9511664990808169,
+          "ci_lower": 0.7438324023443252,
+          "failing_gates": [
+            "settled_rate",
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss",
+            "recovery_ratio",
+            "nonrecovery_rate"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 0.9870298709081121,
+          "ci_lower": 0.8887636226982336,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss",
+            "recovery_ratio"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.7597428318961578,
+          "ci_lower": 0.7597428318961578,
+          "failing_gates": [
+            "settled_rate",
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss",
+            "recovery_ratio"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 0.9760809287303087,
+          "ci_lower": 0.8822045296133043,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss",
+            "recovery_ratio"
+          ]
+        }
+      },
+      "exempt": true,
+      "exemption_reason": "all_cli_candidates_fail"
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--E@--production--slt:4001--fec:off": {
+      "scenario": "E",
+      "lineage": "ours-new",
+      "winner": "rtt-threshold",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 0.9969853126809926,
+          "ci_lower": 0.9897098714471045,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "recovery_ratio"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 0.9908816846607363,
+          "ci_lower": 0.9820933165195462,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss",
+            "recovery_ratio"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "recovery_ratio"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.9865749884907259,
+          "ci_lower": 0.8721163118463024,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss",
+            "recovery_ratio"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 0.9957824078886792,
+          "ci_lower": 0.9843141879938672,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss",
+            "recovery_ratio"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--F@--production--slt:4001--fec:off": {
+      "scenario": "F",
+      "lineage": "ours-new",
+      "winner": "rtt-threshold",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 0.9999269139411656,
+          "ci_lower": 0.999817288191336,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 0.9999817284852913,
+          "ci_lower": 0.9998720923858425,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.9999451854558743,
+          "ci_lower": 0.9998720923858425,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 0.9999086424264572,
+          "ci_lower": 0.999817288191336,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--G@--production--slt:4001--fec:off": {
+      "scenario": "G",
+      "lineage": "ours-new",
+      "winner": "classic",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "post_settle_starvation_floor_rate"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 0.9997990280264553,
+          "ci_lower": 0.9996346297886333,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 0.8253736251689993,
+          "ci_lower": 0.7083896663865239,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.3559944458654584,
+          "ci_lower": 0.32034932583037967,
+          "failing_gates": [
+            "settled_rate",
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 0.9998355683852815,
+          "ci_lower": 0.9997077038309067,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--H@--production--slt:4001--fec:off": {
+      "scenario": "H",
+      "lineage": "ours-new",
+      "winner": "classic",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 0.9839556352745644,
+          "ci_lower": 0.9660534924627247,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss",
+            "recovery_ratio"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 0.9822771478879034,
+          "ci_lower": 0.9317631771298628,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.8102980137899257,
+          "ci_lower": 0.7725980670835702,
+          "failing_gates": [
+            "settled_rate",
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 0.984235383172341,
+          "ci_lower": 0.9715097864046129,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss",
+            "recovery_ratio"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--I@--production--slt:4001--fec:off": {
+      "scenario": "I",
+      "lineage": "ours-new",
+      "winner": "adaptive",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 0.9996934983333974,
+          "ci_lower": 0.9830020276288112,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 0.9998275928125357,
+          "ci_lower": 0.8085312008489509,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 0.9995785602084211,
+          "ci_lower": 0.9888006670330293,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.9995019347917705,
+          "ci_lower": 0.9372964481397754,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--J@--production--slt:4001--fec:off": {
+      "scenario": "J",
+      "lineage": "ours-new",
+      "winner": "enhanced",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 0.9943443770415307,
+          "ci_lower": 0.981997570224202,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "post_settle_starvation_floor_rate"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 0.9999626691553896,
+          "ci_lower": 0.9857174737781744,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.9948296780214654,
+          "ci_lower": 0.8100909325184995,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 0.9932244517032199,
+          "ci_lower": 0.9725545779184922,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--K@--production--slt:4001--fec:off": {
+      "scenario": "K",
+      "lineage": "ours-new",
+      "winner": "classic",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 0.9998684287468568,
+          "ci_lower": 0.9995615124895859,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 0.9997514765218408,
+          "ci_lower": 0.9995615124895859,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.8225834746506052,
+          "ci_lower": 0.7598128791754988,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss",
+            "recovery_ratio",
+            "nonrecovery_rate"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 0.999985380971873,
+          "ci_lower": 0.9998245254876728,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--L@--production--slt:4001--fec:off": {
+      "scenario": "L",
+      "lineage": "ours-new",
+      "winner": "adaptive",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 0.7588526912181303,
+          "ci_lower": 0.6554415878513388,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 0.8975811723687077,
+          "ci_lower": 0.7349529906517024,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "post_settle_starvation_floor_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 0.8239540204837655,
+          "ci_lower": 0.7145064606367391,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.7302789278709958,
+          "ci_lower": 0.5957108816521048,
+          "failing_gates": [
+            "settled_rate",
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--M1@--production--slt:4001--fec:off": {
+      "scenario": "M1",
+      "lineage": "ours-new",
+      "winner": "classic",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 0.9851087757397138,
+          "ci_lower": 0.9612375305733056,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 0.9772236656713331,
+          "ci_lower": 0.9664622043513338,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.9866211657036491,
+          "ci_lower": 0.9760791896633416,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 0.9906800584273728,
+          "ci_lower": 0.9761637000555835,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--M2@--production--slt:4001--fec:off": {
+      "scenario": "M2",
+      "lineage": "ours-new",
+      "winner": "rtt-threshold",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 0.9831276812171067,
+          "ci_lower": 0.9819102589619407,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 0.9825306266861263,
+          "ci_lower": 0.9804809114796087,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.9991154747689178,
+          "ci_lower": 0.9806430228704011,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 0.9998452080845606,
+          "ci_lower": 0.9799730618914085,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--M3@--production--slt:4001--fec:off": {
+      "scenario": "M3",
+      "lineage": "ours-new",
+      "winner": "adaptive",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 0.9951528709917972,
+          "ci_lower": 0.9939027064964688,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 0.9999122691582225,
+          "ci_lower": 0.9993858975764885,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 0.9788568671316401,
+          "ci_lower": 0.9701050599872788,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.9799973680747466,
+          "ci_lower": 0.9702153792165635,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--M4@--production--slt:4001--fec:off": {
+      "scenario": "M4",
+      "lineage": "ours-new",
+      "winner": "classic",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 0.9998245690978466,
+          "ci_lower": 0.9996051852339278,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 0.9622384983114775,
+          "ci_lower": 0.9221776227764251,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss",
+            "recovery_ratio"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.939849129424148,
+          "ci_lower": 0.9253354968862381,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "goodput_ci_lower",
+            "loss",
+            "recovery_ratio",
+            "nonrecovery_rate"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 0.9996929959212315,
+          "ci_lower": 0.9996710670584623,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--M5@--production--slt:4001--fec:off": {
+      "scenario": "M5",
+      "lineage": "ours-new",
+      "winner": "classic",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 0.9953415036192933,
+          "ci_lower": 0.982396122870786,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 0.9881506963854846,
+          "ci_lower": 0.9801867293849333,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.9918297140399913,
+          "ci_lower": 0.9771220868077827,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 0.9951026063690006,
+          "ci_lower": 0.9909467765759756,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--M6@--production--slt:4001--fec:off": {
+      "scenario": "M6",
+      "lineage": "ours-new",
+      "winner": "adaptive",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 0.9998355563676229,
+          "ci_lower": 0.9996528412205372,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 0.9999817284852913,
+          "ci_lower": 0.9997990170104695,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 0.9998172848529143,
+          "ci_lower": 0.9997442034678702,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.9998903709117485,
+          "ci_lower": 0.999817288191336,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    },
+    "m4a-ours-new/ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--M7@--production--slt:4001--fec:off": {
+      "scenario": "M7",
+      "lineage": "ours-new",
+      "winner": "rtt-threshold",
+      "covered_by": [],
+      "candidates": {
+        "classic": {
+          "goodput_ratio": 0.9982758620689656,
+          "ci_lower": 0.9881371076595503,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "recovery_ratio"
+          ]
+        },
+        "enhanced": {
+          "goodput_ratio": 0.9753639846743296,
+          "ci_lower": 0.9669588030645806,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss",
+            "recovery_ratio"
+          ]
+        },
+        "rtt-threshold": {
+          "goodput_ratio": 1.0,
+          "ci_lower": 1.0,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "recovery_ratio"
+          ]
+        },
+        "edpf": {
+          "goodput_ratio": 0.9810153256704981,
+          "ci_lower": 0.9527334087553452,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss",
+            "recovery_ratio"
+          ]
+        },
+        "adaptive": {
+          "goodput_ratio": 0.9909770114942528,
+          "ci_lower": 0.9646653861514178,
+          "failing_gates": [
+            "post_settle_zero_drop_belated_rate",
+            "loss",
+            "recovery_ratio"
+          ]
+        }
+      },
+      "exempt": false,
+      "exemption_reason": null
+    }
+  },
+  "refold": false,
+  "gate": null
+}

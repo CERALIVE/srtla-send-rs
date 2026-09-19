@@ -1,3 +1,8 @@
+// allow: SIZE_OK — legacy RTT code and in-file tests are byte-frozen; new window logic lives in queue_delay.
+#[cfg(test)]
+mod ack_frame_tests;
+mod queue_delay;
+
 use std::collections::VecDeque;
 
 use tracing::debug;
@@ -46,6 +51,9 @@ pub struct RttTracker {
     rtt_min_slow_window: VecDeque<f64>,
     /// 15-sample min filter applied before feeding dual-window baseline.
     rtt_sample_filter: VecDeque<f64>,
+    /// Independent time-window minima candidates; never feed the legacy baseline.
+    rtt_obs_fast: VecDeque<(u64, f64)>,
+    rtt_obs_slow: VecDeque<(u64, f64)>,
 }
 
 impl Default for RttTracker {
@@ -63,6 +71,8 @@ impl Default for RttTracker {
             rtt_min_fast_window: VecDeque::with_capacity(FAST_WINDOW_SAMPLES),
             rtt_min_slow_window: VecDeque::with_capacity(SLOW_WINDOW_SAMPLES),
             rtt_sample_filter: VecDeque::with_capacity(RTT_SAMPLE_FILTER_SIZE),
+            rtt_obs_fast: VecDeque::new(),
+            rtt_obs_slow: VecDeque::new(),
         }
     }
 }
@@ -83,6 +93,8 @@ impl RttTracker {
         self.rtt_min_fast_window.clear();
         self.rtt_min_slow_window.clear();
         self.rtt_sample_filter.clear();
+        self.rtt_obs_fast.clear();
+        self.rtt_obs_slow.clear();
     }
 
     /// Feed one measured round trip, gated by the shared plausibility rule.
@@ -109,6 +121,7 @@ impl RttTracker {
 
     pub fn update_estimate(&mut self, rtt_ms: u64) {
         let current_rtt = rtt_ms as f64;
+        self.record_observation(now_ms(), current_rtt);
 
         // Min-RTT sample filter: smooth jitter before feeding baseline tracker.
         self.rtt_sample_filter.push_back(current_rtt);
@@ -174,6 +187,19 @@ impl RttTracker {
         // Smoothed RTT from Kalman
         self.estimated_rtt_ms = self.kalman_rtt.value();
         self.last_rtt_measurement_ms = now_ms();
+    }
+
+    /// One-way queue estimate from raw RTT minima in (now-1s, now] / (now-30s, now].
+    /// No live fast-window observation means no queue evidence (0), not infinity.
+    pub fn queue_delay_ms(&self) -> f64 {
+        let now = now_ms();
+        match (
+            queue_delay::window_min(&self.rtt_obs_fast, now, queue_delay::FAST_MS),
+            queue_delay::window_min(&self.rtt_obs_slow, now, queue_delay::SLOW_MS),
+        ) {
+            (Some(fast), Some(slow)) => ((fast - slow) / 2.0).max(0.0),
+            _ => 0.0,
+        }
     }
 
     pub fn is_stable(&self) -> bool {

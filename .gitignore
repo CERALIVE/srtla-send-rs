@@ -34,3 +34,6 @@ test-results/
 __pycache__/
 /dist/
 /target-xbuild/
+
+# uv-managed Python environment for the scripts/bench regression suite
+/.venv/

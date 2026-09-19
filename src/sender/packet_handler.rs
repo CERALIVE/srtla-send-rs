@@ -1,3 +1,5 @@
+// allow: SIZE_OK — existing packet-dispatch façade; retain shared receive/forward/error ordering.
+// Wire policy is extracted into wire_admission; this façade only reports deferred input to its owner.
 use std::net::SocketAddr;
 
 use anyhow::Result;
@@ -6,63 +8,36 @@ use tokio::net::UdpSocket;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tracing::{debug, warn};
 
-use super::selection::{EdpfSchedulerState, select_connection_idx};
+#[cfg(test)]
+pub(crate) use super::ack::apply_srtla_ack;
+use super::ack::apply_srtla_ack_frame;
+pub(crate) use super::ack::{AckContext, AckPolicy};
+use super::selection::{SchedulerShared, select_connection_idx_with_state};
 use super::sequence::SequenceTracker;
 use super::uplink::UplinkPacket;
 use crate::config::ConfigSnapshot;
+use crate::connection::probe::ProbeOpportunity;
 use crate::connection::{SrtlaConnection, SrtlaIncoming};
 use crate::protocol;
 use crate::registration::SrtlaRegistrationManager;
+use crate::stats::SharedStats;
 
 /// Type alias for instant ACK forwarding: (client_addr, packet_data)
 pub type InstantForwarder = UnboundedSender<(SocketAddr, SmallVec<u8, 64>)>;
 
-/// Apply one broadcast SRTLA ACK across the link pool.
-///
-/// The earner index is captured at the point of packet-log removal (returned by
-/// `handle_srtla_ack_specific`): after removal the sequence is gone and can no
-/// longer be attributed. With `earned_ack_window` off (default) every eligible
-/// link takes the baseline global `+1`, byte-for-byte as before the valve
-/// existed; on, only the earner keeps the full `+1` (`now_ms` is read on that
-/// branch alone, keeping the default path unchanged).
-pub(crate) fn apply_srtla_ack(
-    connections: &mut [SrtlaConnection],
-    srtla_ack: i32,
-    classic: bool,
-    earned_ack_window: bool,
-) {
-    let mut earned_idx: Option<usize> = None;
-    for (i, c) in connections.iter_mut().enumerate() {
-        if c.handle_srtla_ack_specific(srtla_ack, classic) {
-            earned_idx = Some(i);
-            break;
-        }
-    }
-    if earned_ack_window {
-        let now_ms = crate::utils::now_ms();
-        for (i, c) in connections.iter_mut().enumerate() {
-            c.handle_srtla_ack_earned(Some(i) == earned_idx, now_ms);
-        }
-    } else {
-        for c in connections.iter_mut() {
-            c.handle_srtla_ack_global();
-        }
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
-pub async fn process_connection_events(
-    idx: usize,
+pub async fn process_connection_events_at(
+    context: AckContext,
     connections: &mut [SrtlaConnection],
     reg: &mut SrtlaRegistrationManager,
     instant_tx: &InstantForwarder,
     last_client_addr: Option<SocketAddr>,
     local_listener: &UdpSocket,
     seq_tracker: &SequenceTracker,
-    classic: bool,
-    earned_ack_window: bool,
     incoming_override: Option<SrtlaIncoming>,
+    stats: &SharedStats,
 ) -> Result<()> {
+    let idx = context.arrival_idx;
     if idx >= connections.len() {
         return Ok(());
     }
@@ -71,14 +46,21 @@ pub async fn process_connection_events(
         overridden
     } else {
         connections[idx]
-            .drain_incoming(idx, reg, local_listener, instant_tx, last_client_addr)
+            .drain_incoming(
+                idx,
+                reg,
+                local_listener,
+                instant_tx,
+                last_client_addr,
+                stats,
+            )
             .await?
     };
 
     if !incoming.read_any
         && incoming.ack_numbers.is_empty()
         && incoming.nak_numbers.is_empty()
-        && incoming.srtla_ack_numbers.is_empty()
+        && incoming.srtla_ack_frames.is_empty()
         && incoming.forward_to_client.is_empty()
     {
         return Ok(());
@@ -93,18 +75,41 @@ pub async fn process_connection_events(
     // collision, or sent by a link that has since gone — yields no sample on any
     // link rather than a guess.
     for ack in incoming.ack_numbers.iter() {
+        #[cfg(test)]
         let owner = seq_tracker.get(*ack, current_time_ms);
         for c in connections.iter_mut() {
-            let owns_acked_seq = owner == Some(c.conn_id);
+            // SRT cumulative ACKs name the next expected sequence and may return
+            // on another uplink. Adaptive path timing uses link-specific ACKs instead.
+            let owns_acked_seq = match context.policy {
+                AckPolicy::Adaptive => false,
+                #[cfg(test)]
+                AckPolicy::Legacy { .. } => owner == Some(c.conn_id),
+            };
             c.handle_srt_ack(*ack as i32, current_time_ms, owns_acked_seq);
         }
     }
 
-    for srtla_ack in incoming.srtla_ack_numbers.iter() {
-        apply_srtla_ack(connections, *srtla_ack as i32, classic, earned_ack_window);
+    for frame in &incoming.srtla_ack_frames {
+        apply_srtla_ack_frame(connections, frame, context);
     }
 
     for nak in incoming.nak_numbers.iter() {
+        match context.policy {
+            AckPolicy::Adaptive => {
+                let seq = *nak as i32;
+                if connections
+                    .iter()
+                    .any(|c| c.probes.probe_log.contains_key(&seq))
+                    && !connections
+                        .iter()
+                        .any(|c| c.packet_log.contains_key(&seq) || c.delivery.contains(seq))
+                {
+                    continue;
+                }
+            }
+            #[cfg(test)]
+            AckPolicy::Legacy { .. } => {}
+        }
         // Deliberately not the per-connection nak_count: that one is reset by
         // the congestion controller, so a window delta across it is not a count.
         crate::ab_metrics::record_nak();
@@ -146,6 +151,7 @@ pub async fn handle_uplink_packet(
     local_listener: &UdpSocket,
     seq_tracker: &SequenceTracker,
     config_snap: &ConfigSnapshot,
+    stats: &SharedStats,
 ) {
     if packet.bytes.is_empty() {
         return;
@@ -159,21 +165,25 @@ pub async fn handle_uplink_packet(
                 instant_tx,
                 last_client_addr,
                 &packet.bytes,
+                stats,
             )
             .await
         {
             Ok(incoming) => {
-                if let Err(err) = process_connection_events(
-                    idx,
+                if let Err(err) = process_connection_events_at(
+                    AckContext {
+                        arrival_idx: idx,
+                        reader_generation: packet.reader_generation,
+                        policy: AckPolicy::from_config(config_snap),
+                    },
                     connections,
                     reg,
                     instant_tx,
                     last_client_addr,
                     local_listener,
                     seq_tracker,
-                    config_snap.mode.is_classic(),
-                    config_snap.earned_ack_window,
                     Some(incoming),
+                    stats,
                 )
                 .await
                 {
@@ -186,6 +196,39 @@ pub async fn handle_uplink_packet(
             ),
         }
     }
+}
+
+// Preserve the original drain-test surface; production carries captured reader tokens.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub async fn process_connection_events(
+    idx: usize,
+    connections: &mut [SrtlaConnection],
+    reg: &mut SrtlaRegistrationManager,
+    instant_tx: &InstantForwarder,
+    last_client_addr: Option<SocketAddr>,
+    local_listener: &UdpSocket,
+    seq_tracker: &SequenceTracker,
+    classic: bool,
+    earned_ack_window: bool,
+    incoming_override: Option<SrtlaIncoming>,
+    stats: &SharedStats,
+) -> Result<()> {
+    let generation = connections
+        .get(idx)
+        .map_or(0, |conn| conn.delivery.socket_generation);
+    process_connection_events_at(
+        AckContext::legacy((idx, generation), classic, earned_ack_window),
+        connections,
+        reg,
+        instant_tx,
+        last_client_addr,
+        local_listener,
+        seq_tracker,
+        incoming_override,
+        stats,
+    )
+    .await
 }
 
 /// Maximum number of packets to process per drain call.
@@ -203,6 +246,7 @@ pub async fn drain_packet_queue(
     local_listener: &UdpSocket,
     seq_tracker: &SequenceTracker,
     config_snap: &ConfigSnapshot,
+    stats: &SharedStats,
 ) {
     // Process up to MAX_DRAIN_PACKETS to prevent CPU spikes from large queue bursts.
     // Remaining packets will be processed on the next event loop iteration.
@@ -219,6 +263,7 @@ pub async fn drain_packet_queue(
                     local_listener,
                     seq_tracker,
                     config_snap,
+                    stats,
                 )
                 .await;
                 processed += 1;
@@ -270,21 +315,29 @@ pub async fn handle_srt_packet(
     last_client_addr: &mut Option<SocketAddr>,
     registration_complete: bool,
     config_snap: &ConfigSnapshot,
-    edpf_state: &mut EdpfSchedulerState,
-) {
+    adaptive_state: &mut SchedulerShared,
+) -> SrtPacketOutcome {
     match res {
         Ok((n, src)) => {
             if n == 0 {
-                return;
+                return SrtPacketOutcome::Consumed;
             }
             // Capture timestamp once at packet entry - reduces syscalls from 3-5 to 1 per packet
             let packet_time_ms = crate::utils::now_ms();
+            super::wire_admission::configure(connections, config_snap.mode);
+            *last_client_addr = Some(src);
 
             let pkt = &recv_buf[..n];
             let seq = protocol::get_srt_sequence_number(pkt);
             if !registration_complete {
                 let sel_idx = select_pre_registration_connection(connections, *last_selected_idx);
                 if let Some(sel_idx) = sel_idx {
+                    if !connections[sel_idx]
+                        .batch_sender
+                        .can_queue_wire(n, packet_time_ms)
+                    {
+                        return SrtPacketOutcome::Backpressured;
+                    }
                     forward_via_connection(
                         sel_idx,
                         pkt,
@@ -298,18 +351,22 @@ pub async fn handle_srt_packet(
                     .await;
                 }
                 *last_client_addr = Some(src);
-                return;
+                return SrtPacketOutcome::Consumed;
             }
 
-            let sel_idx = select_connection_idx(
+            let sel_idx = select_connection_idx_with_state(
                 connections,
                 *last_selected_idx,
                 *last_switch_time_ms,
                 packet_time_ms,
                 config_snap,
-                edpf_state,
+                adaptive_state,
             );
             if let Some(sel_idx) = sel_idx {
+                let Some(sel_idx) = super::wire_admission::funded_link(connections, sel_idx, n)
+                else {
+                    return SrtPacketOutcome::Backpressured;
+                };
                 forward_via_connection(
                     sel_idx,
                     pkt,
@@ -321,6 +378,26 @@ pub async fn handle_srt_packet(
                     packet_time_ms,
                 )
                 .await;
+                {
+                    let offer = ProbeOpportunity {
+                        primary_conn_id: connections[sel_idx].conn_id,
+                        packet: pkt,
+                        targets: &adaptive_state.targets,
+                    };
+                    if let Some(emission) =
+                        adaptive_state.probe.maybe_emit(connections, offer).await
+                        && let Err(error) = emission.outcome
+                    {
+                        warn!(conn_id = emission.conn_id, %error, "adaptive probe flush failed, marking for recovery");
+                        if let Some(conn) = connections
+                            .iter_mut()
+                            .find(|c| c.conn_id == emission.conn_id)
+                        {
+                            conn.mark_for_recovery();
+                        }
+                        seq_tracker.remove_connection(emission.conn_id);
+                    }
+                }
             } else {
                 warn!("no available connection to forward packet from {}", src);
             }
@@ -328,6 +405,13 @@ pub async fn handle_srt_packet(
         }
         Err(e) => warn!("error reading local SRT: {}", e),
     }
+    SrtPacketOutcome::Consumed
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SrtPacketOutcome {
+    Consumed,
+    Backpressured,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -382,6 +466,11 @@ pub async fn forward_via_connection(
     // Get conn_id before mutable borrow for seq_tracker
     let conn_id = connections[sel_idx].conn_id;
 
+    // Check for SRT retransmit flag (R bit) and count forwarded retransmissions
+    if let Some(true) = protocol::get_srt_rexmit_flag(pkt) {
+        connections[sel_idx].rexmit_forwarded += 1;
+    }
+
     // Queue the packet for batched sending
     let needs_flush = connections[sel_idx].queue_data_packet(pkt, seq, packet_time_ms);
 
@@ -390,6 +479,11 @@ pub async fn forward_via_connection(
     if let Some(s) = seq {
         seq_tracker.insert(s, conn_id, packet_time_ms);
     }
+
+    #[cfg(feature = "test-internals")]
+    let duplicate = super::duplicate_data::target(connections, sel_idx, pkt);
+    #[cfg(feature = "test-internals")]
+    let needs_flush = needs_flush || duplicate.is_some();
 
     // Flush if batch threshold reached
     if needs_flush {
@@ -401,7 +495,17 @@ pub async fn forward_via_connection(
             );
             conn.mark_for_recovery();
             seq_tracker.remove_connection(conn_id);
+            #[cfg(feature = "test-internals")]
+            return;
         }
+    }
+    #[cfg(feature = "test-internals")]
+    if let Some((idx, retransmit)) = duplicate
+        && !connections[sel_idx].has_queued_packets()
+        && let Err(error) =
+            super::duplicate_data::send_copy(&connections[idx], pkt, retransmit).await
+    {
+        warn!(%error, "test duplicate DATA send failed");
     }
 }
 

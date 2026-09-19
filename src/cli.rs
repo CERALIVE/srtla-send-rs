@@ -90,35 +90,33 @@ pub struct Cli {
     #[arg(long = "control-socket")]
     pub control_socket: Option<String>,
 
-    /// Scheduling mode: classic, enhanced (default), rtt-threshold, edpf
-    #[arg(long = "mode", value_enum, default_value = "enhanced")]
+    /// Scheduling mode: enhanced only in 4.0.0 (see docs/release-notes-4.0.0.md)
+    #[arg(long = "mode", value_parser = crate::mode::ModeParser, default_value = "enhanced")]
     pub mode: SchedulingMode,
-    /// Disable quality scoring (enhanced/rtt-threshold only)
+    /// Retired: accepted and ignored, with one startup warning
     #[arg(long = "no-quality")]
     pub no_quality: bool,
-    /// Enable connection exploration (enhanced only)
+    /// Retired: accepted and ignored, with one startup warning
     #[arg(long = "exploration")]
     pub exploration: bool,
-    /// RTT delta threshold in ms (rtt-threshold only, links within min_rtt + delta are "fast")
+    /// Retired: accepted and ignored, with one startup warning
     #[arg(long = "rtt-delta-ms", default_value = "30")]
     pub rtt_delta_ms: u32,
-    /// [EXPERIMENTAL] Gate broadcast-ACK window growth to the earning link, with
-    /// rate-limited probe growth for the rest (default OFF; unvalidated on hardware)
+    /// [EXPERIMENTAL, retired] Accepted for compatibility; shared arrival-scoped
+    /// ACK handling always applies and this flag is ignored
     #[arg(long = "earned-ack-window")]
     pub earned_ack_window: bool,
-    /// [EXPERIMENTAL] Deselect a stalled link (high in-flight + no earned ACK/RTT
-    /// sample) so healthy links carry traffic, re-probing so a recovered link
-    /// re-enters (default OFF; unvalidated on hardware)
+    /// [EXPERIMENTAL, retired] Accepted and ignored (one warning); shared health
+    /// admission replaces the old stall mask in every mode
     #[arg(long = "stall-deselect")]
     pub stall_deselect: bool,
-    /// [EXPERIMENTAL] In-flight threshold that marks a link stall-eligible for
-    /// --stall-deselect
+    /// [EXPERIMENTAL, retired] Ignored compatibility setting for --stall-deselect
     #[arg(long = "stall-min-in-flight", default_value_t = config::STALL_MIN_IN_FLIGHT_PACKETS)]
     pub stall_min_in_flight: i32,
-    /// [EXPERIMENTAL] Earned-ACK/RTT staleness window in ms for --stall-deselect
+    /// [EXPERIMENTAL, retired] Ignored compatibility setting for --stall-deselect
     #[arg(long = "stall-ack-stale-ms", default_value_t = config::STALL_ACK_STALE_MS)]
     pub stall_ack_stale_ms: u64,
-    /// [EXPERIMENTAL] Re-probe interval in ms for --stall-deselect
+    /// [EXPERIMENTAL, retired] Ignored compatibility setting for --stall-deselect
     #[arg(long = "stall-reprobe-ms", default_value_t = config::STALL_REPROBE_INTERVAL_MS)]
     pub stall_reprobe_ms: u64,
 }
@@ -470,7 +468,7 @@ mod tests {
             "5001",
             "/tmp/srtla_ips",
             "--mode",
-            "classic",
+            "enhanced",
             "--no-quality",
             "--exploration",
             "--rtt-delta-ms",
@@ -479,7 +477,7 @@ mod tests {
             "/tmp/srtla.sock",
         ])
         .expect("upstream flags should still parse");
-        assert_eq!(cli.mode, SchedulingMode::Classic);
+        assert_eq!(cli.mode, SchedulingMode::Enhanced);
         assert!(cli.no_quality);
         assert!(cli.exploration);
         assert_eq!(cli.rtt_delta_ms, 50);

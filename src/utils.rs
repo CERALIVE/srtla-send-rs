@@ -5,6 +5,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::time::Instant;
 
+#[cfg(test)]
+#[path = "test_helpers/clock.rs"]
+pub(crate) mod test_clock;
+
 /// Static startup instant for stable epoch-based timing calculations
 /// This is initialized once at program startup and used for periodic operations
 /// that need to be based on a stable reference point.
@@ -54,6 +58,10 @@ pub(crate) fn compose_now_ms(base_ms: u64, elapsed_ms: u64) -> u64 {
 ///   against another process's `Date.now()`) must use [`wall_clock_ms`]. The
 ///   telemetry `last_updated_ms` field is exactly that case.
 pub fn now_ms() -> u64 {
+    #[cfg(test)]
+    if let Some(now) = test_clock::current() {
+        return now;
+    }
     let clock = CLOCK.get_or_init(|| Clock {
         anchor: std::time::Instant::now(),
         base_ms: wall_clock_ms(),

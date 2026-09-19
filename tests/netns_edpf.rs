@@ -18,6 +18,9 @@
 
 mod common;
 
+#[path = "support/locked_sender.rs"]
+mod locked_sender;
+
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::thread::sleep;
@@ -79,8 +82,7 @@ struct Stack {
     _send: NamespaceProcess,
 }
 
-fn start_stack(name: &str) -> Stack {
-    common::build_srtla_send();
+fn start_stack(name: &str, binary: &std::path::Path) -> Stack {
     let topo = SrtlaTestTopology::new(name, 2).expect("create topology");
 
     let recv_ip = topo.receiver_ip.clone();
@@ -152,7 +154,7 @@ fn start_stack(name: &str) -> Stack {
         .expect("srtla_rec listener");
 
     let ips = topo.write_ip_list().expect("write ip list");
-    let bin = env!("CARGO_BIN_EXE_srtla_send");
+    let bin = binary.to_str().expect("historical binary path");
     let local = LOCAL_SRT_PORT.to_string();
     let send = NamespaceProcess::spawn_with_env(
         &topo.sender_ns,
@@ -308,7 +310,25 @@ fn edpf_bonds_heterogeneous_rtt_links_without_starvation() {
     if !deps_ok() {
         return;
     }
-    let stack = start_stack("edpfhet");
+    let lock = locked_sender::LockedSenders::read(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/bench/receivers.lock.json"),
+    )
+    .expect("read historical EDPF lock");
+    let binary = match lock.verified("m4a-ours-new", "edpf") {
+        Ok(binary) => binary,
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            eprintln!(
+                "Skipping netns_edpf: locked pre-deletion sender artifact is unavailable: {error}"
+            );
+            return;
+        }
+        Err(error) => panic!("historical EDPF artifact verification failed: {error:#}"),
+    };
+    let stack = start_stack("edpfhet", &binary);
 
     // Heterogeneous RTT + mild loss, both capped below the offered rate so the
     // EDPF scheduler must spill onto the slow link (genuine bonding).

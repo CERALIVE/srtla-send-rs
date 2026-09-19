@@ -1,6 +1,7 @@
 mod builders;
 mod constants;
 mod parsers;
+pub mod srt_handshake;
 mod srt_seq;
 mod types;
 
@@ -27,8 +28,8 @@ pub use srt_seq::{SRT_SEQ_BITS, SRT_SEQ_MASK, SrtSeq};
 // Types and helpers
 #[allow(unused_imports)]
 pub use types::{
-    ConnectionInfo, get_packet_type, get_srt_sequence_number, is_srt_ack, is_srtla_keepalive,
-    is_srtla_reg1, is_srtla_reg2, is_srtla_reg3,
+    ConnectionInfo, get_packet_type, get_srt_rexmit_flag, get_srt_sequence_number, is_srt_ack,
+    is_srtla_keepalive, is_srtla_reg1, is_srtla_reg2, is_srtla_reg3,
 };
 
 #[cfg(test)]

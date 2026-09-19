@@ -1,6 +1,6 @@
 {
 	"name": "@ceralive/srtla-send",
-	"version": "2026.8.0",
+	"version": "2026.9.0",
 	"packageManager": "bun@1.4.2",
 	"description": "Type-safe helpers for the srtla-send-rs sender (args, validation, telemetry reader).",
 	"type": "module",

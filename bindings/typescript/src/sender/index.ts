@@ -10,6 +10,14 @@ import { z } from 'zod';
 const DEFAULT_BINARY = 'srtla_send';
 const DEFAULT_SYSTEM_PATH = '/usr/bin/srtla_send';
 
+/**
+ * Scheduling algorithm accepted by `--mode` (`src/mode.rs`). Spellings are the
+ * exact 4.0.0 spelling. Omitting `mode` leaves the binary on `enhanced`.
+ */
+export type SchedulingMode = 'enhanced';
+
+const SCHEDULING_MODES = ['enhanced'] as const;
+
 export const srtlaSendOptionsSchema = z.object({
 	listenPort: z
 		.number()
@@ -34,6 +42,10 @@ export const srtlaSendOptionsSchema = z.object({
 		.min(1)
 		.default('/tmp/srtla_ips')
 		.describe('Path to the newline-separated local source-IP (uplink) list (positional arg 4).'),
+	mode: z
+		.enum(SCHEDULING_MODES)
+		.optional()
+		.describe('Scheduling mode (--mode). Omitted leaves the binary on its own default (enhanced).'),
 	verbose: z.boolean().optional(),
 	statsFile: z.string().min(1).optional(),
 	statsFileInterval: z.number().int().min(1).optional(),
@@ -61,6 +73,9 @@ export function buildSrtlaSendArgs(input: SrtlaSendOptionsInput): Array<string> 
 		String(options.srtlaPort),
 		options.ipsFile,
 	];
+	if (options.mode) {
+		args.push('--mode', options.mode);
+	}
 	if (options.verbose) {
 		args.push('--verbose');
 	}

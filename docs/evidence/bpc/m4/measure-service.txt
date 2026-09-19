@@ -1,0 +1,24 @@
+scripts/bench/decide.py: OK
+scripts/bench/lineage_rule.py: OK
+scripts/bench/manifests/m4a-ours-new.json: OK
+scripts/bench/manifests/m4-soak.json: OK
+target/m4-srtla_send: OK
+target/m4-bench_scheduler: OK
+metric_cells=110 (cap 150; lineage gate + reserved block ≤ 36 reserved for todo 34)
+primary_groups=20 cli_cells=100 baseline_cells=8 fec_cells=2 metric_runs=546 soak_runs=2
++ taskset -c 4-27 timeout --foreground --kill-after=30s 108000s target/m4-bench_scheduler --ignored --exact --nocapture campaign
++ code=101
++ set +x
++ taskset -c 4-27 timeout --foreground --kill-after=30s 1800s target/m4-bench_scheduler --ignored --exact --nocapture campaign
++ code=0
++ set +x
+scripts/bench/decide.py: OK
+scripts/bench/lineage_rule.py: OK
+scripts/bench/manifests/m4a-ours-new.json: OK
+scripts/bench/manifests/m4-soak.json: OK
+target/m4-srtla_send: OK
+target/m4-bench_scheduler: OK
+b47ee5d6165f369df4859be6c33b6d5d923203c55ca3f6c0dc2da8cce943f4a0  docs/evidence/bpc/m4/verdict-provisional.json
+b47ee5d6165f369df4859be6c33b6d5d923203c55ca3f6c0dc2da8cce943f4a0  docs/evidence/bpc/m4/verdict-repeat.json
+Installed 6 packages in 92ms
+FEC pass=True; M8 pass=False; stderr pass=True

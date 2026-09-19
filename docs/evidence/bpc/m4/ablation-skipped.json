@@ -1,0 +1,28 @@
+{
+  "reason": "base mode has no switchable ingredients",
+  "base_mode": "enhanced",
+  "ablation_sweep_set": [
+    "stall",
+    "loss",
+    "queue",
+    "deadline",
+    "rejoin",
+    "sole",
+    "pref",
+    "ratecap"
+  ],
+  "verification": {
+    "enhanced_rs_checked": true,
+    "enhanced_rs_lines": 174,
+    "scheduler_features_usage": "none",
+    "adaptive_features_usage": "none",
+    "call_path_parameters": [
+      "conns",
+      "last_idx",
+      "last_switch_time_ms",
+      "current_time_ms",
+      "config.effective_exploration_enabled()"
+    ],
+    "note": "Enhanced's ranking formula is quality-multiplier × capacity score with switch-hold hysteresis. No ablation-sweep bits are switchable ingredients of enhanced's own ranking. The ablation-sweep-set bits are adaptive-mode-only mechanisms."
+  }
+}

@@ -19,7 +19,7 @@
 
 use std::net::IpAddr;
 
-use crate::bind_map::{IfaceName, LinkId};
+use crate::bind_map::{IfaceName, LinkId, Priority};
 
 /// The identity of the socket an uplink currently owns.
 ///
@@ -38,6 +38,7 @@ pub struct UplinkSpec {
     pub ip: IpAddr,
     pub iface: Option<IfaceName>,
     pub link_id: Option<LinkId>,
+    pub priority: Option<Priority>,
 }
 
 impl UplinkSpec {
@@ -48,6 +49,7 @@ impl UplinkSpec {
             ip,
             iface: None,
             link_id: None,
+            priority: None,
         }
     }
 
@@ -126,11 +128,13 @@ mod tests {
             ip: ip(100),
             iface: Some(IfaceName::parse("wwan0").unwrap()),
             link_id: Some(LinkId::parse("modem-a").unwrap()),
+            priority: None,
         };
         let b = UplinkSpec {
             ip: ip(100),
             iface: Some(IfaceName::parse("wwan1").unwrap()),
             link_id: Some(LinkId::parse("modem-b").unwrap()),
+            priority: None,
         };
 
         // When/Then: the dedup key separates them.
@@ -145,11 +149,13 @@ mod tests {
             ip: ip(100),
             iface: Some(IfaceName::parse("wwan0").unwrap()),
             link_id: Some(link_id.clone()),
+            priority: None,
         };
         let after = UplinkSpec {
             ip: ip(101),
             iface: Some(IfaceName::parse("wwan3").unwrap()),
             link_id: Some(link_id),
+            priority: None,
         };
 
         // When/Then: the socket key moved but the identity did not.

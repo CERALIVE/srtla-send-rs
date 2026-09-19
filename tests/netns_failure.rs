@@ -8,6 +8,7 @@ mod common;
 use std::thread::sleep;
 use std::time::Duration;
 
+use network_sim::harness::SrtProfile;
 use network_sim::{ImpairmentConfig, SrtlaTestStack};
 
 #[test]
@@ -17,7 +18,8 @@ fn test_link_failure_failover() {
     }
     common::build_srtla_send();
 
-    let mut stack = SrtlaTestStack::start("fail", 2, &[]).expect("start stack");
+    let mut stack = SrtlaTestStack::start("fail", 2, &[], SrtProfile::LEGACY_DEFAULT, None)
+        .expect("start stack");
 
     common::wait_until_ready(&stack);
 
@@ -59,7 +61,8 @@ fn test_link_recovery() {
     }
     common::build_srtla_send();
 
-    let mut stack = SrtlaTestStack::start("recv", 2, &[]).expect("start stack");
+    let mut stack = SrtlaTestStack::start("recv", 2, &[], SrtProfile::LEGACY_DEFAULT, None)
+        .expect("start stack");
 
     common::wait_until_ready(&stack);
 

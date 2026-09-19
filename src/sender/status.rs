@@ -5,6 +5,10 @@ use crate::connection::SrtlaConnection;
 use crate::protocol::PKT_LOG_SIZE;
 use crate::utils::now_ms;
 
+#[cfg(test)]
+#[path = "premature_nak_status_tests.rs"]
+mod premature_nak_tests;
+
 /// Comprehensive status monitoring for connections
 ///
 /// Optimized to reduce CPU overhead:
@@ -47,12 +51,16 @@ pub(crate) fn log_connection_status(
         0.0
     };
 
+    // Bond-level retransmit counter
+    let total_rexmit_forwarded: u64 = connections.iter().map(|c| c.rexmit_forwarded).sum();
+
     // Get current config snapshot
     let snap = config.snapshot();
 
     info!("Connection Status Report:");
     info!("  Total connections: {}", total_connections);
     info!("  Total bitrate: {:.2} Mbps", total_bitrate_mbps);
+    info!("  Retransmits forwarded: {}", total_rexmit_forwarded);
     info!(
         "  Active connections: {} ({:.1}%)",
         active_connections,
@@ -67,9 +75,6 @@ pub(crate) fn log_connection_status(
     // Show mode and relevant settings
     info!("  Mode: {}", snap.mode);
     match snap.mode {
-        crate::mode::SchedulingMode::Classic => {
-            info!("    (quality/exploration/rtt-delta not applicable)");
-        }
         crate::mode::SchedulingMode::Enhanced => {
             info!(
                 "    Quality: {}, Exploration: {}",
@@ -80,16 +85,6 @@ pub(crate) fn log_connection_status(
                     "OFF"
                 }
             );
-        }
-        crate::mode::SchedulingMode::RttThreshold => {
-            info!(
-                "    Quality: {}, RTT delta: {}ms",
-                if snap.quality_enabled { "ON" } else { "OFF" },
-                snap.rtt_delta_ms
-            );
-        }
-        crate::mode::SchedulingMode::Edpf => {
-            info!("    EDPF pipeline: BLEST + IoDS + EDPF");
         }
     }
 
@@ -151,6 +146,18 @@ pub(crate) fn log_connection_status(
             conn.current_bitrate_mbps()
         );
 
+        {
+            info!(
+                premature_naks = conn.premature_nak_count,
+                rexmit_fwd = conn.rexmit_forwarded,
+                "        health={} pref={:.2} cap={:.0}",
+                conn.health.state().as_str(),
+                conn.effective_priority()
+                    .map_or(0.0, |priority| priority.get()),
+                conn.rate_cap.target_bps()
+            );
+        }
+
         // Egress health is reported SEPARATELY from the ACTIVE/TIMED_OUT line
         // above, because they answer different questions: that line is ACK
         // liveness, this one is whether the interface can still carry traffic
@@ -169,6 +176,13 @@ pub(crate) fn log_connection_status(
         }
 
         let foreign = conn.foreign_source_datagrams();
+        if conn.probes.probes_sent > 0 {
+            info!(
+                conn_id = conn.conn_id,
+                probes_sent = conn.probes.probes_sent,
+                "Duplicate DATA probe status"
+            );
+        }
         if foreign > 0 {
             info!(
                 "        Foreign-source datagrams: {} (processed, not dropped)",
@@ -229,8 +243,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn status_renders_rtt_velocity_in_milliseconds_per_sample() {
+    pub(super) fn capture_logs(run: impl FnOnce()) -> String {
         let logs = CapturedLogs::default();
         let output = logs.0.clone();
         let subscriber = tracing_subscriber::fmt()
@@ -239,15 +252,47 @@ mod tests {
             .with_max_level(tracing::Level::INFO)
             .with_writer(logs)
             .finish();
+        tracing::subscriber::with_default(subscriber, run);
+        String::from_utf8(output.lock().unwrap().clone()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn status_renders_rtt_velocity_in_milliseconds_per_sample() {
         let mut conn = create_test_connection().await;
         conn.rtt.estimated_rtt_ms = 42.0;
 
-        tracing::subscriber::with_default(subscriber, || {
+        let rendered = capture_logs(|| {
             log_connection_status(&[conn], None, &DynamicConfig::new());
         });
 
-        let rendered = String::from_utf8(output.lock().unwrap().clone()).unwrap();
         assert!(rendered.contains("velocity=0.00ms/sample"));
         assert!(!rendered.contains("velocity=0.00ms/s,"));
+    }
+
+    #[tokio::test]
+    async fn adaptive_status_reports_health_preference_and_target_cap() {
+        let mut conn = create_test_connection().await;
+        conn.priority_baseline = Some(crate::bind_map::Priority::try_from(0.1).unwrap());
+        let config = DynamicConfig::new();
+        config.set_mode(crate::mode::SchedulingMode::Enhanced);
+        let rendered = capture_logs(|| {
+            log_connection_status(&[conn], None, &config);
+        });
+        assert!(rendered.contains("health=down pref=0.10 cap=1000000"));
+    }
+
+    #[tokio::test]
+    async fn health_transitions_log_first_event_and_rate_limit_followups() {
+        let mut conn = create_test_connection().await;
+        let mut ticker = crate::sender::housekeeping::HealthTicker::default();
+        let rendered = capture_logs(|| {
+            ticker.tick(std::slice::from_mut(&mut conn), &[], 1000);
+            conn.route_health = crate::connection::RouteHealth::NoDefaultRoute;
+            ticker.tick(std::slice::from_mut(&mut conn), &[], 1001);
+            ticker.tick(std::slice::from_mut(&mut conn), &[], 2000);
+        });
+        assert_eq!(rendered.matches("link test-connection health").count(), 2);
+        assert!(rendered.contains("health down→rejoining (registered)"));
+        assert!(rendered.contains("health rejoining→degraded (no default route)"));
     }
 }

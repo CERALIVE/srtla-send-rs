@@ -1,0 +1,77 @@
+{
+  "spike": "PARALLEL",
+  "parallel_lanes": 1,
+  "core_map": [
+    {
+      "lane": 0,
+      "cpus": [4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27],
+      "port_range": [20000,20099],
+      "netns_prefix": "bpc0-",
+      "artifact_directory": "lane-0"
+    }
+  ],
+  "isolation": {
+    "status": "terminal_fallback",
+    "parallel_isolation_proven": false,
+    "reason": "Real P=1 diagnostic completed, but unrelated host load violates the quiet-host prerequisite and the existing runner has no lane dispatcher. P=2/4/6/8 were not run. Use the authorized conservative sequential fallback, not a fabricated CI failure.",
+    "outcome_interpretation": "The required fallback outcome string names failed P=2 certification; it does not assert an observed P=2 goodput or drop regression.",
+    "passwordless_sudo": true,
+    "privileged_netns_probe": "sudo -n unshare --net -- ip link show: exit 0",
+    "quiet_host": false,
+    "affinity": {
+      "launch": "taskset -c 4-27 timeout --foreground --kill-after=30s 420s cargo test --features test-internals --test bench_scheduler -- --ignored --nocapture --exact campaign",
+      "inheritance_probe": "taskset -c 4-27 sudo -n sh -c 'taskset -pc $$': reported 4-27",
+      "per_process_affinity_observed": false,
+      "exclusive_cpu_reservation": false
+    },
+    "allocation_status": "CPU mask used; bpc0- prefix and 20000-20099 range reserved for future wiring, not used by the legacy diagnostic",
+    "actual_diagnostic_ports": {
+      "srt_listener": 4001,
+      "srtla_rec": 5000,
+      "sender_srt": 5555,
+      "encoder_feed": 6000,
+      "sink": 9999,
+      "stats_http": null
+    },
+    "actual_control_socket": "unique bench-ctl- temporary directory/c.sock (Unix socket, not a TCP port)",
+    "actual_namespace_scheme": "legacy PID plus atomic-counter suffix; no bpc prefix",
+    "p1": {
+      "campaign": "task36-p1-diagnostic",
+      "cell_id": "ours-new@%26periodicnakgate%3D1%26lossmaxttl%3D200--A@--production--slt:4001--fec:off",
+      "candidate": "enhanced",
+      "runs": 3,
+      "successful_runs": 3,
+      "attempts_per_index": 1,
+      "measurement_window_ms": 45000,
+      "offered_bps": 24000000,
+      "campaign_exit": 0,
+      "campaign_elapsed_seconds": 189.62,
+      "report_exit": 0,
+      "observations": [
+        {"run_index": 0, "run_id": "ac7c5d71-e29a-4603-ba0b-fbccd5669278", "started_at": "2026-09-17T07:56:53.904Z", "status": "ok", "useful_goodput_bps": 12510071.466666669, "pkt_rcv_drop": 47541, "loadavg_1m": 8.69, "record_sha256": "9211441ddfcd1c1c0bf900d41511a9055f661c52d28681b8f02f15a8e91d5792"},
+        {"run_index": 1, "run_id": "64018958-5bcd-4b22-9a8c-37bdcb3a2651", "started_at": "2026-09-17T07:57:57.036Z", "status": "ok", "useful_goodput_bps": 23837497.6, "pkt_rcv_drop": 718, "loadavg_1m": 10.4, "record_sha256": "39710b6ebdc58bd863e9b7eb74433063aad39d05784089dfb339e9feeb5a3419"},
+        {"run_index": 2, "run_id": "ca02bad3-f1e6-405d-83a7-1500c7c07a09", "started_at": "2026-09-17T07:59:00.258Z", "status": "ok", "useful_goodput_bps": 16867259.733333334, "pkt_rcv_drop": 29705, "loadavg_1m": 10.63, "record_sha256": "891f9e6c4791ca188d17b10f19a5809c0218a9812cccd0e3f219d67534d6961c"}
+      ],
+      "median_goodput_bps": 16867259.733333334,
+      "median_goodput_ci95_bps": [12510071.466666669,23837497.6],
+      "median_pkt_rcv_drop": 29705,
+      "bootstrap_resamples": 10000,
+      "bootstrap_seed": 20260913,
+      "ci_kind": "percentile median CI from report.py; not a P>1 paired comparison",
+      "fingerprint": "0c8f97e591f57fd750adae5e95f3c6f215385118cf17b78b288adfa88a383ab0",
+      "sender_sha256": "bd8bb7a25037b613026fc222612ffda2710fa2985355bbd82b201530e1c0fe57",
+      "receiver_sha256": "cee2c4c1a681bb7558d8cf7b5e0437963fdc5aa5acff47205cab02fa90f698e6",
+      "srt_live_transmit_sha256": "e34c3571d7222d44deb45114f57912591e60caa65cfeac69c0a2b39fcfaf1e76",
+      "summary_sha256": "a87f090ff99ad57a056c67cd555f84005d8a1015f4769700dc1d90d21a286953",
+      "raw_root": "/home/andres/.cache/opencode/tmp/opencode/bpc-task36-p1"
+    },
+    "comparisons": [
+      {"parallelism": 2, "status": "not_run", "paired_ci95": null, "pkt_rcv_drop_not_worse": null},
+      {"parallelism": 4, "status": "not_run", "paired_ci95": null, "pkt_rcv_drop_not_worse": null},
+      {"parallelism": 6, "status": "not_run", "paired_ci95": null, "pkt_rcv_drop_not_worse": null},
+      {"parallelism": 8, "status": "not_run", "paired_ci95": null, "pkt_rcv_drop_not_worse": null}
+    ]
+  },
+  "outcome": "isolation failed at P=2; sequential",
+  "selected_alternative": "campaigns run sequentially on one lane"
+}

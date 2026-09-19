@@ -227,6 +227,7 @@ impl Drop for TelemetryWriter {
     }
 }
 
+// allow: SIZE_OK — retain the existing atomic-writer suite; this foundation only initializes optional fields in two exhaustive literals.
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -251,6 +252,8 @@ mod tests {
             bytes_sent_total: 812_000_000,
             iface: None,
             link_id: None,
+            health: None,
+            priority: None,
         }
     }
 
@@ -261,6 +264,7 @@ mod tests {
                 conns,
                 session_bytes_sent: 0,
                 bind_map: &BindMapReport::default(),
+                receiver_nak_report: None,
             },
         )
     }
@@ -320,6 +324,8 @@ mod tests {
                 bytes_sent_total: u64::from(i) * 1_000_000,
                 iface: None,
                 link_id: None,
+                health: None,
+                priority: None,
             })
             .collect();
 

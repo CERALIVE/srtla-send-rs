@@ -15,11 +15,15 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::time::{Duration, Instant};
 
-use serde_json::Value;
+use serde_json::{Value, json};
+use smallvec::SmallVec;
 
+use crate::bind_map::{LinkId, Priority};
 use crate::config::{DynamicConfig, prepare_control_socket_path, spawn_config_listener};
+use crate::connection::SrtlaConnection;
 use crate::jsonrpc::dispatch_jsonrpc;
 use crate::mode::SchedulingMode;
+use crate::sender::pool_control::PoolControlReceiver;
 use crate::stats::SharedStats;
 use crate::subscription::SubscriptionManager;
 
@@ -56,6 +60,9 @@ impl Client {
         loop {
             match UnixStream::connect(path) {
                 Ok(write) => {
+                    write
+                        .set_read_timeout(Some(Duration::from_secs(5)))
+                        .unwrap();
                     let read = BufReader::new(write.try_clone().expect("clone stream"));
                     return Self { write, read };
                 }
@@ -150,10 +157,10 @@ fn set_mode_changes_dynamic_config() {
     let mut client = Client::connect(&path);
 
     let resp =
-        client.call(r#"{"jsonrpc":"2.0","method":"set-mode","params":{"mode":"classic"},"id":2}"#);
+        client.call(r#"{"jsonrpc":"2.0","method":"set-mode","params":{"mode":"enhanced"},"id":2}"#);
     assert_eq!(resp["result"]["ok"], Value::Bool(true));
     assert_eq!(resp["id"], Value::from(2));
-    wait_for(|| config.mode() == SchedulingMode::Classic);
+    wait_for(|| config.mode() == SchedulingMode::Enhanced);
 
     // Legacy text `mode enhanced` on the SAME socket still applies.
     client.send_no_reply("mode enhanced");
@@ -173,7 +180,7 @@ fn set_rtt_delta_changes_config() {
     let resp: Value = serde_json::from_str(&resp_str).expect("valid JSON");
     assert_eq!(resp["result"]["ok"], Value::Bool(true));
     assert_eq!(resp["id"], Value::from(3));
-    assert_eq!(config.snapshot().rtt_delta_ms, 75);
+    assert_eq!(config.snapshot().rtt_delta_ms, 30);
 }
 
 // ---- The full loopback roundtrip the checklist requires --------------------
@@ -188,14 +195,15 @@ fn loopback_roundtrip_hello_setmode_setrttdelta() {
     assert_eq!(hello["result"]["engine"], Value::from("srtla_send"));
 
     let set_mode =
-        client.call(r#"{"jsonrpc":"2.0","method":"set-mode","params":{"mode":"classic"},"id":2}"#);
+        client.call(r#"{"jsonrpc":"2.0","method":"set-mode","params":{"mode":"enhanced"},"id":2}"#);
     assert_eq!(set_mode["result"]["ok"], Value::Bool(true));
-    wait_for(|| config.mode() == SchedulingMode::Classic);
+    wait_for(|| config.mode() == SchedulingMode::Enhanced);
 
     let set_rtt =
         client.call(r#"{"jsonrpc":"2.0","method":"set-rtt-delta","params":{"ms":75},"id":3}"#);
     assert_eq!(set_rtt["result"]["ok"], Value::Bool(true));
-    wait_for(|| config.snapshot().rtt_delta_ms == 75);
+    assert_eq!(set_rtt["result"]["deprecated"], true);
+    assert_eq!(config.snapshot().rtt_delta_ms, 30);
 }
 
 // ---- 4. whitespace + key-order variants parse to a valid response ----------
@@ -294,8 +302,8 @@ fn legacy_text_protocol_still_works() {
 
     // A plain-text command (no leading `{`) on the same socket that serves
     // JSON-RPC routes to the legacy parser and mutates config.
-    client.send_no_reply("mode classic");
-    wait_for(|| config.mode() == SchedulingMode::Classic);
+    client.send_no_reply("mode enhanced");
+    wait_for(|| config.mode() == SchedulingMode::Enhanced);
 }
 
 // ---- 10. hello matches ADR-001 §Methods (additive superset) ----------------
@@ -352,7 +360,7 @@ fn set_rtt_delta_accepts_delta_ms() {
         &SharedStats::new(),
     );
     let status: Value = serde_json::from_str(&status_str).expect("valid JSON");
-    assert_eq!(status["result"]["rtt_delta_ms"], Value::from(50));
+    assert_eq!(status["result"]["rtt_delta_ms"], Value::from(30));
 }
 
 // ---- 12. set-rtt-delta accepts the `ms` back-compat alias -------------------
@@ -374,7 +382,7 @@ fn set_rtt_delta_accepts_ms_alias() {
         &SharedStats::new(),
     );
     let status: Value = serde_json::from_str(&status_str).expect("valid JSON");
-    assert_eq!(status["result"]["rtt_delta_ms"], Value::from(50));
+    assert_eq!(status["result"]["rtt_delta_ms"], Value::from(30));
 }
 
 // ---- 13. set-rtt-delta with no usable param -> -32602 invalid params --------
@@ -403,9 +411,9 @@ fn set_mode_accepts_edpf() {
         &SharedStats::new(),
     );
     let resp: Value = serde_json::from_str(&resp_str).expect("valid JSON");
-    assert_eq!(resp["result"]["ok"], Value::Bool(true));
+    assert_eq!(resp["error"]["data"]["kind"], "retired_mode");
     assert_eq!(resp["id"], Value::from(1));
-    assert_eq!(config.mode(), SchedulingMode::Edpf);
+    assert_eq!(config.mode(), SchedulingMode::Enhanced);
 }
 
 // ---- 15. a valid-JSON array is an Invalid Request, NOT a panic --------------
@@ -639,6 +647,9 @@ fn get_capabilities_still_enumerates_the_control_methods() {
         .expect("methods must be enumerated");
     assert!(methods.iter().any(|m| m == "get-status"));
     assert!(methods.iter().any(|m| m == "stats-subscription"));
+    assert!(methods.iter().any(|m| m == "set-link-priority"));
+    assert_eq!(resp["result"]["capabilities"]["adaptive_scheduler"], true);
+    assert_eq!(resp["result"]["capabilities"]["link_priority"], true);
 }
 
 #[test]
@@ -656,7 +667,289 @@ fn hello_keeps_capabilities_as_the_frozen_method_array() {
     let caps = resp["result"]["capabilities"]
         .as_array()
         .expect("hello.capabilities must remain an array");
-    assert!(caps.iter().any(|c| c == "stats-subscription"));
+    assert_eq!(caps, EXPECTED_CAPABILITIES.map(Value::from).as_slice());
+}
+
+#[test]
+fn adaptive_jsonrpc_mode_round_trips() {
+    // Given a real control socket, When setting adaptive, Then get-status echoes it.
+    let config = DynamicConfig::new();
+    let (path, _dir) = spawn_listener(&config);
+    let mut client = Client::connect(&path);
+    let response = client.call(r#"{"method":"set-mode","params":{"mode":"adaptive"},"id":1}"#);
+    assert_eq!(response["error"]["data"]["kind"], "retired_mode");
+    let status = client.call(r#"{"method":"get-status","id":2}"#);
+    assert_eq!(status["result"]["mode"], "enhanced");
+}
+
+#[test]
+fn set_link_priority_bad_params_are_invalid_params() {
+    // Given malformed key/value combinations, When dispatched, Then reject before enqueue.
+    for params in [
+        serde_json::json!({"link_id":"modem-a","conn_id":"0","priority":0.1}),
+        serde_json::json!({"link_id":null,"conn_id":"0","priority":0.1}),
+        serde_json::json!({"priority":0.1}),
+        serde_json::json!({"conn_id":"0"}),
+        serde_json::json!({"conn_id":"0","priority":0.20001}),
+        serde_json::json!({"conn_id":"0","priority":-0.20001}),
+        serde_json::json!({"conn_id":"0","priority":"0.1"}),
+        serde_json::json!({"conn_id":0,"priority":null}),
+        serde_json::json!({"conn_id":"-1","priority":null}),
+        serde_json::json!({"conn_id":"184467440737095516160","priority":null}),
+        serde_json::json!({"link_id":"","priority":null}),
+        serde_json::json!(null),
+    ] {
+        let frame = serde_json::json!({"method":"set-link-priority","params":params,"id":"bad"});
+        let response: Value = serde_json::from_str(&dispatch_jsonrpc(
+            &frame.to_string(),
+            &DynamicConfig::new(),
+            &SharedStats::new(),
+        ))
+        .unwrap();
+        assert_eq!(response["error"]["code"], -32602, "{frame}: {response}");
+        assert_eq!(response["id"], "bad");
+    }
+}
+
+#[test]
+fn set_link_priority_without_live_sender_returns_unavailable() {
+    // Given no sender owner, When priority is requested, Then never report applied.
+    let response: Value = serde_json::from_str(&dispatch_jsonrpc(
+        r#"{"method":"set-link-priority","params":{"conn_id":"0","priority":0.2},"id":1}"#,
+        &DynamicConfig::new(),
+        &SharedStats::new(),
+    ))
+    .unwrap();
+    assert_eq!(response["error"]["code"], -32002);
+    assert!(response.get("result").is_none());
+}
+
+struct PriorityPool {
+    stats: SharedStats,
+    receiver: PoolControlReceiver,
+    connections: SmallVec<SrtlaConnection, 4>,
+}
+
+impl PriorityPool {
+    async fn new() -> Self {
+        let stats = SharedStats::new();
+        let receiver = stats.attach_pool_control();
+        let mut conn = crate::test_helpers::create_test_connection().await;
+        conn.link_id = Some(LinkId::parse("modem-a").unwrap());
+        conn.priority_baseline = Some(Priority::try_from(-0.1).unwrap());
+        Self {
+            stats,
+            receiver,
+            connections: smallvec::smallvec![conn],
+        }
+    }
+
+    async fn call(&mut self, params: Value) -> Value {
+        let stats = self.stats.clone();
+        let mut response = tokio::task::spawn_blocking(move || {
+            dispatch_jsonrpc(
+                &json!({"method":"set-link-priority","params":params,"id":24}).to_string(),
+                &DynamicConfig::new(),
+                &stats,
+            )
+        });
+        let body = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::select! {
+                body = &mut response => body.unwrap(),
+                message = self.receiver.recv() => {
+                    message.unwrap().apply(&mut self.connections);
+                    response.await.unwrap()
+                }
+            }
+        })
+        .await
+        .unwrap();
+        serde_json::from_str(&body).unwrap()
+    }
+
+    async fn reload(&mut self) {
+        self.receiver.close_for_reload();
+        let specs: Vec<_> = self.connections.iter().map(SrtlaConnection::spec).collect();
+        crate::sender::apply_link_changes(
+            &mut self.connections,
+            &specs,
+            "127.0.0.1",
+            5000,
+            &mut None,
+            &mut crate::sender::SequenceTracker::new(),
+            &mut crate::registration::SrtlaRegistrationManager::new(),
+        )
+        .await;
+        self.receiver = self.stats.attach_pool_control();
+    }
+}
+
+#[tokio::test]
+async fn set_link_priority_replies_after_live_application() {
+    // Given real sockets and the production consumer, When addressed, Then echo actual state.
+    let mut pool = PriorityPool::new().await;
+    let reply = pool.call(json!({"link_id":"modem-a","priority":0.2})).await;
+    assert_eq!(
+        reply["result"],
+        json!({
+            "applied":true,"key":"link_id","link_id":"modem-a","conn_id":"0",
+            "priority":0.2,"effective_priority":0.2,
+        })
+    );
+    assert_eq!(pool.connections[0].effective_priority().unwrap().get(), 0.2);
+}
+
+#[tokio::test]
+async fn unknown_link_returns_domain_error_without_mutation() {
+    // Given an existing pool, When either key misses, Then return typed errors without mutation.
+    let mut pool = PriorityPool::new().await;
+    for params in [
+        json!({"link_id":"absent","priority":0.1}),
+        json!({"conn_id":"9","priority":0.1}),
+    ] {
+        let reply = pool.call(params).await;
+        assert_eq!(reply["error"]["code"], -32001);
+        assert_eq!(reply["error"]["data"]["kind"], "unknown_link");
+        assert!(reply.get("result").is_none());
+        assert_eq!(
+            pool.connections[0].effective_priority().unwrap().get(),
+            -0.1
+        );
+    }
+}
+
+#[tokio::test]
+async fn null_clears_only_the_addressed_layer() {
+    // Given distinct baseline/link/conn values, When cleared in order, Then expose the next layer.
+    let mut pool = PriorityPool::new().await;
+    for (params, expected) in [
+        (json!({"link_id":"modem-a","priority":0.2}), 0.2),
+        (json!({"conn_id":"0","priority":-0.2}), -0.2),
+        (json!({"conn_id":"0","priority":null}), 0.2),
+        (json!({"link_id":"modem-a","priority":null}), -0.1),
+    ] {
+        let reply = pool.call(params.clone()).await;
+        assert_eq!(reply["result"]["priority"], params["priority"]);
+        assert_eq!(reply["result"]["effective_priority"], expected);
+        assert_eq!(
+            pool.connections[0].effective_priority().unwrap().get(),
+            expected
+        );
+    }
+}
+
+#[tokio::test]
+async fn link_id_layer_survives_sighup_pool_rebuild() {
+    // Given an RPC link override, When the SIGHUP rebuild runs, Then it survives by identity.
+    let mut pool = PriorityPool::new().await;
+    assert_eq!(
+        pool.call(json!({"link_id":"modem-a","priority":0.2})).await["result"]["applied"],
+        true
+    );
+    pool.reload().await;
+    let reply = pool.call(json!({"conn_id":"0","priority":null})).await;
+    assert_eq!(reply["result"]["effective_priority"], 0.2);
+}
+
+#[tokio::test]
+async fn conn_id_layer_dropped_on_sighup_pool_rebuild() {
+    // Given an RPC positional override, When SIGHUP keeps the same pool, Then baseline returns.
+    let mut pool = PriorityPool::new().await;
+    assert_eq!(
+        pool.call(json!({"conn_id":"0","priority":-0.2})).await["result"]["applied"],
+        true
+    );
+    pool.reload().await;
+    let reply = pool
+        .call(json!({"link_id":"modem-a","priority":null}))
+        .await;
+    assert_eq!(reply["result"]["effective_priority"], -0.1);
+    assert!(pool.connections[0].priority_override_conn.is_none());
+}
+
+#[tokio::test]
+async fn real_control_socket_changes_running_sender_priority() {
+    // Given the real sender loop and control transport, When RPC sets priority, Then the owner replies.
+    let dir = tempfile::tempdir().unwrap();
+    let ips = dir.path().join("ips");
+    std::fs::write(&ips, "127.0.0.1\n").unwrap();
+    let path = dir.path().join("control.sock").to_str().unwrap().to_owned();
+    let stats = SharedStats::new();
+    let config = DynamicConfig::new();
+    let subscriptions = SubscriptionManager::new();
+    let snapshots = subscriptions.subscribe();
+    spawn_config_listener(
+        config.clone(),
+        Some(path.clone()),
+        stats.clone(),
+        subscriptions.clone(),
+    );
+    let peer = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let sender = crate::sender::run_sender_with_config(
+        0,
+        "127.0.0.1",
+        peer.local_addr().unwrap().port(),
+        crate::sender::SenderPaths {
+            ips_file: ips.to_str().unwrap(),
+            bind_map: None,
+        },
+        config,
+        stats,
+        crate::sender::TelemetrySinks {
+            file: None,
+            subscriptions,
+        },
+    );
+    let control = tokio::task::spawn_blocking(move || {
+        snapshots.recv_timeout(Duration::from_secs(3)).unwrap();
+        let mut client = Client::connect(&path);
+        let reply = client.call(
+            r#"{"method":"set-link-priority","params":{"conn_id":"0","priority":0.15},"id":24}"#,
+        );
+        assert_eq!(
+            reply["result"],
+            json!({"applied":true,"key":"conn_id","conn_id":"0","priority":0.15,"effective_priority":0.15})
+        );
+        let failed = client.call(r#"{"method":"set-link-priority","params":{"conn_id":"0","link_id":"both","priority":0.2},"id":25}"#);
+        assert_eq!(failed["error"]["code"], -32602);
+        eprintln!("real sender socket priority reply: {reply}; both-keys reply: {failed}");
+    });
+    tokio::select! {
+        result = sender => panic!("sender exited before control: {result:?}"),
+        result = control => result.unwrap(),
+    }
+}
+
+#[tokio::test]
+async fn priority_reply_deadline_cancels_unapplied_work() {
+    // Given a stalled owner, When the real reply deadline expires, Then no late write is applied.
+    let mut pool = PriorityPool::new().await;
+    let stats = pool.stats.clone();
+    let response = tokio::task::spawn_blocking(move || {
+        dispatch_jsonrpc(
+            r#"{"method":"set-link-priority","params":{"conn_id":"0","priority":0.2},"id":24}"#,
+            &DynamicConfig::new(),
+            &stats,
+        )
+    });
+    let response: Value = serde_json::from_str(
+        &tokio::time::timeout(Duration::from_secs(5), response)
+            .await
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(response["error"]["code"], -32005);
+    assert!(response.get("result").is_none());
+    pool.receiver
+        .recv()
+        .await
+        .unwrap()
+        .apply(&mut pool.connections);
+    assert_eq!(
+        pool.connections[0].effective_priority().unwrap().get(),
+        -0.1
+    );
 }
 
 // ---- 17. get-status carries the ADR-003 operating mode + identity -----------

@@ -1,12 +1,12 @@
 #[cfg(not(loom))]
 use anyhow::{Context, Result};
 #[cfg(not(loom))]
-use clap::Parser;
 #[cfg(not(loom))]
 use srtla_send::cli::{Cli, dry_run_resolve};
 #[cfg(not(loom))]
 use srtla_send::{
-    bind_map, capabilities, config, sender, stats, subscription, telemetry_file, version,
+    adaptive_env, bind_map, capabilities, config, sender, stats, subscription, telemetry_file,
+    version,
 };
 #[cfg(not(loom))]
 use tracing::{info, warn};
@@ -26,7 +26,13 @@ fn main() {}
 #[cfg(not(loom))]
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
-    let args = Cli::parse();
+    // MUST stay the first statement: an unusable ablation request has to fail the
+    // process before any feature bit or scheduler constant is read, or the run
+    // reports an `effective_config` it never used. No-op without `test-internals`.
+    adaptive_env::init_from_env()?;
+
+    let matches = srtla_send::cli::cli_command().get_matches();
+    let args = <Cli as clap::FromArgMatches>::from_arg_matches(&matches)?;
 
     if args.print_version {
         println!("{}", version::version_line());
@@ -51,6 +57,23 @@ async fn main() -> Result<()> {
         .with_env_filter(env_filter)
         .with_target(false)
         .init();
+
+    for (id, flag) in [
+        ("no_quality", "--no-quality"),
+        ("exploration", "--exploration"),
+        ("rtt_delta_ms", "--rtt-delta-ms"),
+        ("stall_deselect", "--stall-deselect"),
+        ("stall_min_in_flight", "--stall-min-in-flight"),
+        ("stall_ack_stale_ms", "--stall-ack-stale-ms"),
+        ("stall_reprobe_ms", "--stall-reprobe-ms"),
+    ] {
+        if matches.value_source(id) == Some(clap::parser::ValueSource::CommandLine) {
+            warn!(
+                flag,
+                "retired scheduler option is accepted and ignored in 4.0.0"
+            );
+        }
+    }
 
     let local_srt_port = args.local_srt_port.expect("required");
     let receiver_host = args.receiver_host.as_deref().expect("required");

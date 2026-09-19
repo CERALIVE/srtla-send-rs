@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "rule": "m3-frozen",
+  "retransmit": "unavailable",
+  "provenance_source": "summary.input_sha256 (m3-interop/provenance.json absent)",
+  "spike_verified": true,
+  "rows": [
+    {
+      "sender": "belabox-c",
+      "scenario": "C",
+      "m3_disposition": "known_limitation",
+      "m3_goodput_ratio": 1.157876457454726,
+      "rescore_passes_without_retransmit": true,
+      "failing_predicates_remaining": [],
+      "provisional_verdict": "measurement_artefact",
+      "raw_verified": true
+    },
+    {
+      "sender": "irlserver-rust-enhanced",
+      "scenario": "C",
+      "m3_disposition": "known_limitation",
+      "m3_goodput_ratio": 1.4589242199108472,
+      "rescore_passes_without_retransmit": true,
+      "failing_predicates_remaining": [],
+      "provisional_verdict": "measurement_artefact",
+      "raw_verified": true
+    },
+    {
+      "sender": "ours-3.3.0",
+      "scenario": "C",
+      "m3_disposition": "receiver_pr_blocker",
+      "m3_goodput_ratio": 1.7513674648818143,
+      "rescore_passes_without_retransmit": true,
+      "failing_predicates_remaining": [],
+      "provisional_verdict": "measurement_artefact",
+      "raw_verified": true
+    },
+    {
+      "sender": "ours-new",
+      "scenario": "C",
+      "m3_disposition": "new_sender_failure",
+      "m3_goodput_ratio": 1.016397770607216,
+      "rescore_passes_without_retransmit": true,
+      "failing_predicates_remaining": [],
+      "provisional_verdict": "measurement_artefact",
+      "raw_verified": true
+    },
+    {
+      "sender": "ours-new",
+      "scenario": "M1",
+      "m3_disposition": "new_sender_failure",
+      "m3_goodput_ratio": 1.1514806205083792,
+      "rescore_passes_without_retransmit": true,
+      "failing_predicates_remaining": [],
+      "provisional_verdict": "measurement_artefact",
+      "raw_verified": true
+    }
+  ],
+  "m3_comparisons": [
+    {
+      "sender": "belabox-c",
+      "scenario": "C",
+      "settled_runs": 3,
+      "passing_runs": 0,
+      "new_median_bps": 16379462.4,
+      "old_median_bps": 14146122.666666666,
+      "goodput_ratio": 1.157876457454726,
+      "passed": false,
+      "disposition": "known_limitation"
+    },
+    {
+      "sender": "irlserver-rust-enhanced",
+      "scenario": "C",
+      "settled_runs": 3,
+      "passing_runs": 1,
+      "new_median_bps": 21535374.933333337,
+      "old_median_bps": 14761133.333333334,
+      "goodput_ratio": 1.4589242199108472,
+      "passed": false,
+      "disposition": "known_limitation"
+    },
+    {
+      "sender": "ours-3.3.0",
+      "scenario": "C",
+      "settled_runs": 3,
+      "passing_runs": 0,
+      "new_median_bps": 21854724.266666666,
+      "old_median_bps": 12478662.933333334,
+      "goodput_ratio": 1.7513674648818143,
+      "passed": false,
+      "disposition": "receiver_pr_blocker"
+    },
+    {
+      "sender": "ours-new",
+      "scenario": "C",
+      "settled_runs": 3,
+      "passing_runs": 0,
+      "new_median_bps": 12159489.066666666,
+      "old_median_bps": 11963317.333333334,
+      "goodput_ratio": 1.016397770607216,
+      "passed": false,
+      "disposition": "new_sender_failure"
+    },
+    {
+      "sender": "ours-new",
+      "scenario": "M1",
+      "settled_runs": 3,
+      "passing_runs": 0,
+      "new_median_bps": 8865394.844444444,
+      "old_median_bps": 7699126.4,
+      "goodput_ratio": 1.1514806205083792,
+      "passed": false,
+      "disposition": "new_sender_failure"
+    }
+  ]
+}

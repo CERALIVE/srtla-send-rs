@@ -4,6 +4,22 @@ mod tests {
     use crate::mode::SchedulingMode;
 
     #[test]
+    #[cfg(all(unix, not(loom)))]
+    fn adaptive_text_mode_round_trips_through_status() {
+        // Given the unchanged default, When text selects adaptive, Then status agrees.
+        let config = DynamicConfig::new();
+        apply_cmd(&config, "mode adaptive", None);
+        let response = crate::jsonrpc::dispatch_jsonrpc(
+            r#"{"method":"get-status","id":1}"#,
+            &config,
+            &crate::stats::SharedStats::new(),
+        );
+        let status: serde_json::Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(status["result"]["mode"], "enhanced");
+        assert_eq!(config.mode(), SchedulingMode::Enhanced);
+    }
+
+    #[test]
     fn test_config_new() {
         let config = DynamicConfig::new();
         let snap = config.snapshot();
@@ -35,7 +51,7 @@ mod tests {
         assert!(!snap.stall_deselect);
 
         let config = DynamicConfig::from_cli(
-            SchedulingMode::Classic,
+            SchedulingMode::Enhanced,
             true,
             true,
             50,
@@ -46,10 +62,10 @@ mod tests {
             1000,
         );
         let snap = config.snapshot();
-        assert_eq!(snap.mode, SchedulingMode::Classic);
-        assert!(!snap.quality_enabled);
-        assert!(snap.exploration_enabled);
-        assert_eq!(snap.rtt_delta_ms, 50);
+        assert_eq!(snap.mode, SchedulingMode::Enhanced);
+        assert!(snap.quality_enabled);
+        assert!(!snap.exploration_enabled);
+        assert_eq!(snap.rtt_delta_ms, 30);
     }
 
     #[test]
@@ -57,13 +73,13 @@ mod tests {
         let config = DynamicConfig::new();
 
         apply_cmd(&config, "mode classic", None);
-        assert_eq!(config.mode(), SchedulingMode::Classic);
+        assert_eq!(config.mode(), SchedulingMode::Enhanced);
 
         apply_cmd(&config, "mode enhanced", None);
         assert_eq!(config.mode(), SchedulingMode::Enhanced);
 
         apply_cmd(&config, "mode rtt-threshold", None);
-        assert_eq!(config.mode(), SchedulingMode::RttThreshold);
+        assert_eq!(config.mode(), SchedulingMode::Enhanced);
     }
 
     #[test]
@@ -71,7 +87,7 @@ mod tests {
         let config = DynamicConfig::new();
 
         apply_cmd(&config, "quality off", None);
-        assert!(!config.snapshot().quality_enabled);
+        assert!(config.snapshot().quality_enabled);
 
         apply_cmd(&config, "quality on", None);
         assert!(config.snapshot().quality_enabled);
@@ -82,7 +98,7 @@ mod tests {
         let config = DynamicConfig::new();
 
         apply_cmd(&config, "explore on", None);
-        assert!(config.snapshot().exploration_enabled);
+        assert!(!config.snapshot().exploration_enabled);
 
         apply_cmd(&config, "explore off", None);
         assert!(!config.snapshot().exploration_enabled);
@@ -94,14 +110,14 @@ mod tests {
         assert_eq!(config.snapshot().rtt_delta_ms, 30);
 
         apply_cmd(&config, "rtt-delta 50", None);
-        assert_eq!(config.snapshot().rtt_delta_ms, 50);
+        assert_eq!(config.snapshot().rtt_delta_ms, 30);
 
         apply_cmd(&config, "rtt-delta 100", None);
-        assert_eq!(config.snapshot().rtt_delta_ms, 100);
+        assert_eq!(config.snapshot().rtt_delta_ms, 30);
 
         // invalid value should not change
         apply_cmd(&config, "rtt-delta invalid", None);
-        assert_eq!(config.snapshot().rtt_delta_ms, 100);
+        assert_eq!(config.snapshot().rtt_delta_ms, 30);
     }
 
     #[test]
@@ -139,8 +155,8 @@ mod tests {
     fn test_apply_cmd_whitespace_handling() {
         let config = DynamicConfig::new();
 
-        apply_cmd(&config, "  mode classic  ", None);
-        assert_eq!(config.mode(), SchedulingMode::Classic);
+        apply_cmd(&config, "  mode enhanced  ", None);
+        assert_eq!(config.mode(), SchedulingMode::Enhanced);
     }
 
     #[test]
@@ -170,23 +186,9 @@ mod tests {
     fn test_effective_quality_enabled() {
         use crate::config::ConfigSnapshot;
 
-        // classic mode - quality never effective
+        // Direct snapshots exercise internal feature seams, not retired CLI controls.
         let snap = ConfigSnapshot {
-            mode: SchedulingMode::Classic,
-            quality_enabled: true,
-            exploration_enabled: true,
-            rtt_delta_ms: 30,
-            earned_ack_window: false,
-            stall_deselect: false,
-            stall_min_in_flight: 32,
-            stall_ack_stale_ms: 3000,
-            stall_reprobe_ms: 1000,
-        };
-        assert!(!snap.effective_quality_enabled());
-        assert!(!snap.effective_exploration_enabled());
-
-        // enhanced mode - both can be effective
-        let snap = ConfigSnapshot {
+            features: Default::default(),
             mode: SchedulingMode::Enhanced,
             quality_enabled: true,
             exploration_enabled: true,
@@ -200,11 +202,28 @@ mod tests {
         assert!(snap.effective_quality_enabled());
         assert!(snap.effective_exploration_enabled());
 
-        // rtt-threshold mode - quality effective, exploration not
+        // enhanced mode - both can be effective
         let snap = ConfigSnapshot {
-            mode: SchedulingMode::RttThreshold,
+            features: Default::default(),
+            mode: SchedulingMode::Enhanced,
             quality_enabled: true,
             exploration_enabled: true,
+            rtt_delta_ms: 30,
+            earned_ack_window: false,
+            stall_deselect: false,
+            stall_min_in_flight: 32,
+            stall_ack_stale_ms: 3000,
+            stall_reprobe_ms: 1000,
+        };
+        assert!(snap.effective_quality_enabled());
+        assert!(snap.effective_exploration_enabled());
+
+        // Internal snapshots can disable exploration.
+        let snap = ConfigSnapshot {
+            features: Default::default(),
+            mode: SchedulingMode::Enhanced,
+            quality_enabled: true,
+            exploration_enabled: false,
             rtt_delta_ms: 30,
             earned_ack_window: false,
             stall_deselect: false,

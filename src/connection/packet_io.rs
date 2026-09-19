@@ -8,8 +8,10 @@ use tracing::{debug, warn};
 
 use super::SrtlaConnection;
 use super::incoming::SrtlaIncoming;
+use crate::protocol::srt_handshake::parse_hsrsp;
 use crate::protocol::*;
 use crate::registration::{RegistrationEvent, SrtlaRegistrationManager};
+use crate::stats::SharedStats;
 
 /// Minimum on-wire size for SRTLA **control** packets (keepalive, REG1/REG2).
 ///
@@ -38,6 +40,7 @@ impl SrtlaConnection {
         }
     }
 
+    #[allow(clippy::too_many_arguments)] // Independent transport endpoints and registration state retain the existing receive API.
     pub async fn drain_incoming(
         &mut self,
         conn_idx: usize,
@@ -45,6 +48,7 @@ impl SrtlaConnection {
         local_listener: &UdpSocket,
         instant_forwarder: &tokio::sync::mpsc::UnboundedSender<(SocketAddr, SmallVec<u8, 64>)>,
         client_addr: Option<SocketAddr>,
+        stats: &SharedStats,
     ) -> Result<SrtlaIncoming> {
         let mut buf = [0u8; MTU];
         let mut incoming = SrtlaIncoming::default();
@@ -62,6 +66,7 @@ impl SrtlaConnection {
                         client_addr,
                         &buf[..n],
                         &mut incoming,
+                        stats,
                     )
                     .await?;
                 }
@@ -75,6 +80,7 @@ impl SrtlaConnection {
         Ok(incoming)
     }
 
+    #[allow(clippy::too_many_arguments)] // Shared observation is borrowed separately from the packet and transport endpoints.
     pub async fn process_packet(
         &mut self,
         conn_idx: usize,
@@ -83,6 +89,7 @@ impl SrtlaConnection {
         instant_forwarder: &tokio::sync::mpsc::UnboundedSender<(SocketAddr, SmallVec<u8, 64>)>,
         client_addr: Option<SocketAddr>,
         data: &[u8],
+        stats: &SharedStats,
     ) -> Result<SrtlaIncoming> {
         let mut incoming = SrtlaIncoming::default();
         self.process_packet_internal(
@@ -93,6 +100,7 @@ impl SrtlaConnection {
             client_addr,
             data,
             &mut incoming,
+            stats,
         )
         .await?;
         Ok(incoming)
@@ -108,6 +116,7 @@ impl SrtlaConnection {
         client_addr: Option<SocketAddr>,
         data: &[u8],
         incoming: &mut SrtlaIncoming,
+        stats: &SharedStats,
     ) -> Result<()> {
         incoming.read_any = true;
         let recv_time = Instant::now();
@@ -196,16 +205,17 @@ impl SrtlaConnection {
                         self.label,
                         ack_list.len()
                     );
-                    for seq in ack_list {
-                        incoming.srtla_ack_numbers.push(seq);
-                    }
+                    incoming.srtla_ack_frames.push(ack_list);
                 }
             } else if pt == SRTLA_TYPE_KEEPALIVE {
+                self.keepalive_liveness
+                    .record_reply(data, crate::utils::now_ms());
                 if self
                     .rtt
                     .handle_keepalive_response(data, &self.label)
                     .is_some()
                 {
+                    self.premature_streak = 0;
                     // Stall signal (EXPERIMENTAL `stall_deselect`): a real
                     // keepalive RTT measurement is a genuine live-return-path
                     // sample. The second (and only other) stamp site besides the
@@ -214,6 +224,11 @@ impl SrtlaConnection {
                     self.last_ack_or_rtt_sample_ms = crate::utils::now_ms();
                 }
             } else {
+                if pt == SRT_TYPE_HANDSHAKE
+                    && let Some(info) = parse_hsrsp(data)
+                {
+                    stats.set_receiver_handshake(info);
+                }
                 incoming
                     .forward_to_client
                     .push(SmallVec::from_slice_copy(data));

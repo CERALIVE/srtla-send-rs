@@ -1,0 +1,9 @@
+{
+  "spike": "CIWIDTH",
+  "half_width_pct": 1.149465312464062,
+  "n_required": 5,
+  "coverage_threshold": 0.95,
+  "terminal_fallback": false,
+  "outcome": "threshold 0.95 at N=5",
+  "selected_alternative": "threshold 0.95 at N=5"
+}

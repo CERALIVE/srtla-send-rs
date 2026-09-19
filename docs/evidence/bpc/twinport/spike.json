@@ -1,0 +1,8 @@
+{
+  "spike": "TWINPORT",
+  "alias_equivalent": false,
+  "d_goodput_pct": null,
+  "d_loss_pp": null,
+  "outcome": "distinct",
+  "selected_alternative": "run the reserved 4003 block in M4"
+}

@@ -15,12 +15,17 @@ use tracing::debug;
 use tracing::{info, warn};
 
 use crate::mode::SchedulingMode;
+use crate::sender::SchedulerFeatures;
 use crate::stats::SharedStats;
 use crate::subscription::SubscriptionManager;
 
 /// Default RTT delta threshold in milliseconds.
 /// Links within min_rtt + delta are considered "fast" and preferred.
 pub const DEFAULT_RTT_DELTA_MS: u32 = 30;
+
+pub(crate) fn deprecated_result() -> serde_json::Value {
+    serde_json::json!({"ok": true, "deprecated": true, "effect": "none"})
+}
 
 /// Min interval (ms) between rate-limited PROBE window `+1` steps on a
 /// non-earning link under the EXPERIMENTAL `earned_ack_window` valve
@@ -52,6 +57,7 @@ pub const STALL_REPROBE_INTERVAL_MS: u64 = 1000;
 /// multiple atomic loads per packet in the hot path.
 #[derive(Clone, Copy, Debug)]
 pub struct ConfigSnapshot {
+    pub features: SchedulerFeatures,
     pub mode: SchedulingMode,
     pub quality_enabled: bool,
     pub exploration_enabled: bool,
@@ -73,11 +79,19 @@ pub struct ConfigSnapshot {
 }
 
 impl ConfigSnapshot {
-    /// Check if quality scoring is effective for the current mode.
-    /// Quality scoring only applies to enhanced and rtt-threshold modes.
+    /// Compatibility query backed by the shared QUALITY bit, independent of mode.
     #[inline]
     pub fn effective_quality_enabled(&self) -> bool {
-        self.quality_enabled && !self.mode.is_classic()
+        self.scheduler_features()
+            .contains(SchedulerFeatures::QUALITY)
+    }
+
+    pub fn scheduler_features(&self) -> SchedulerFeatures {
+        if self.quality_enabled {
+            self.features
+        } else {
+            self.features - SchedulerFeatures::QUALITY
+        }
     }
 
     /// Check if exploration is effective for the current mode.
@@ -128,26 +142,19 @@ impl DynamicConfig {
     #[allow(clippy::too_many_arguments)]
     pub fn from_cli(
         mode: SchedulingMode,
-        no_quality: bool,
-        exploration: bool,
-        rtt_delta_ms: u32,
+        _no_quality: bool,
+        _exploration: bool,
+        _rtt_delta_ms: u32,
         earned_ack_window: bool,
-        stall_deselect: bool,
-        stall_min_in_flight: i32,
-        stall_ack_stale_ms: u64,
-        stall_reprobe_ms: u64,
+        _stall_deselect: bool,
+        _stall_min_in_flight: i32,
+        _stall_ack_stale_ms: u64,
+        _stall_reprobe_ms: u64,
     ) -> Self {
-        Self {
-            mode: Arc::new(AtomicU8::new(mode.as_u8())),
-            quality_enabled: Arc::new(AtomicBool::new(!no_quality)),
-            exploration_enabled: Arc::new(AtomicBool::new(exploration)),
-            rtt_delta_ms: Arc::new(AtomicU32::new(rtt_delta_ms)),
-            earned_ack_window: Arc::new(AtomicBool::new(earned_ack_window)),
-            stall_deselect: Arc::new(AtomicBool::new(stall_deselect)),
-            stall_min_in_flight: Arc::new(AtomicI32::new(stall_min_in_flight)),
-            stall_ack_stale_ms: Arc::new(AtomicU64::new(stall_ack_stale_ms)),
-            stall_reprobe_ms: Arc::new(AtomicU64::new(stall_reprobe_ms)),
-        }
+        let config = Self::new();
+        config.set_mode(mode);
+        config.set_earned_ack_window(earned_ack_window);
+        config
     }
 
     /// Create a snapshot of current configuration.
@@ -156,6 +163,7 @@ impl DynamicConfig {
     #[inline]
     pub fn snapshot(&self) -> ConfigSnapshot {
         ConfigSnapshot {
+            features: crate::adaptive_env::features(),
             mode: SchedulingMode::from_u8(self.mode.load(Ordering::Acquire)),
             quality_enabled: self.quality_enabled.load(Ordering::Acquire),
             exploration_enabled: self.exploration_enabled.load(Ordering::Acquire),
@@ -180,19 +188,13 @@ impl DynamicConfig {
     }
 
     /// Set whether quality scoring is enabled.
-    pub fn set_quality_enabled(&self, enabled: bool) {
-        self.quality_enabled.store(enabled, Ordering::Release);
-    }
+    pub fn set_quality_enabled(&self, _enabled: bool) {}
 
     /// Set whether exploration is enabled.
-    pub fn set_exploration_enabled(&self, enabled: bool) {
-        self.exploration_enabled.store(enabled, Ordering::Release);
-    }
+    pub fn set_exploration_enabled(&self, _enabled: bool) {}
 
     /// Set the RTT delta threshold in milliseconds.
-    pub fn set_rtt_delta_ms(&self, delta: u32) {
-        self.rtt_delta_ms.store(delta, Ordering::Release);
-    }
+    pub fn set_rtt_delta_ms(&self, _delta: u32) {}
 
     /// Toggle the EXPERIMENTAL earned-ACK window valve (default OFF).
     pub fn set_earned_ack_window(&self, enabled: bool) {
@@ -200,9 +202,7 @@ impl DynamicConfig {
     }
 
     /// Toggle the EXPERIMENTAL stalled-link deselect (default OFF).
-    pub fn set_stall_deselect(&self, enabled: bool) {
-        self.stall_deselect.store(enabled, Ordering::Release);
-    }
+    pub fn set_stall_deselect(&self, _enabled: bool) {}
 
     /// Set the in-flight threshold for stalled-link deselect.
     pub fn set_stall_min_in_flight(&self, packets: i32) {
@@ -283,7 +283,7 @@ pub enum CmdResponse {
 /// Apply a runtime command to the configuration.
 ///
 /// Commands:
-/// - `mode classic|enhanced|rtt-threshold|edpf` - switch scheduling mode
+/// - `mode classic|enhanced|rtt-threshold|edpf|adaptive` - switch scheduling mode
 /// - `quality on|off` - toggle quality scoring
 /// - `explore on|off` - toggle exploration
 /// - `rtt-delta <ms>` - set RTT delta threshold
@@ -294,7 +294,9 @@ pub enum CmdResponse {
 /// - `stall-reprobe-ms <ms>` - set the stall re-probe interval
 /// - `status` - show current configuration
 /// - `stats` - get per-link telemetry as JSON
-/// - `metrics` - (`test-internals` only) A/B evaluation counters as JSON
+/// - `metrics` - (`test-internals` only) A/B evaluation counters as JSON, plus
+///   this build's `effective_config` (`adaptive_features`, `adaptive_tuning`)
+///   for the bench runner to check against its manifest
 pub fn apply_cmd(config: &DynamicConfig, cmd: &str, stats: Option<&SharedStats>) -> CmdResponse {
     let cmd = cmd.trim();
     if cmd.is_empty() {
@@ -309,30 +311,14 @@ pub fn apply_cmd(config: &DynamicConfig, cmd: &str, stats: Option<&SharedStats>)
     match parts[0] {
         "mode" => {
             if parts.len() != 2 {
-                warn!("usage: mode classic|enhanced|rtt-threshold|edpf");
+                warn!("usage: mode enhanced");
                 return CmdResponse::None;
             }
-            match parts[1] {
-                "classic" => {
-                    config.set_mode(SchedulingMode::Classic);
-                    info!("mode: classic");
-                }
-                "enhanced" => {
-                    config.set_mode(SchedulingMode::Enhanced);
-                    info!("mode: enhanced");
-                }
-                "rtt-threshold" => {
-                    config.set_mode(SchedulingMode::RttThreshold);
-                    info!("mode: rtt-threshold");
-                }
-                "edpf" => {
-                    config.set_mode(SchedulingMode::Edpf);
-                    info!("mode: edpf");
-                }
-                other => {
-                    warn!(
-                        "unknown mode '{}': use classic, enhanced, rtt-threshold, or edpf",
-                        other
+            match parts[1].parse::<SchedulingMode>() {
+                Ok(mode) => config.set_mode(mode),
+                Err(error) => {
+                    return CmdResponse::Json(
+                        serde_json::json!({"error": error.to_string()}).to_string(),
                     );
                 }
             }
@@ -344,13 +330,8 @@ pub fn apply_cmd(config: &DynamicConfig, cmd: &str, stats: Option<&SharedStats>)
                 return CmdResponse::None;
             }
             match parts[1] {
-                "on" => {
-                    config.set_quality_enabled(true);
-                    info!("quality: on");
-                }
-                "off" => {
-                    config.set_quality_enabled(false);
-                    info!("quality: off");
+                "on" | "off" => {
+                    return CmdResponse::Json(crate::config::deprecated_result().to_string());
                 }
                 other => {
                     warn!("invalid value '{}': use on or off", other);
@@ -364,13 +345,8 @@ pub fn apply_cmd(config: &DynamicConfig, cmd: &str, stats: Option<&SharedStats>)
                 return CmdResponse::None;
             }
             match parts[1] {
-                "on" => {
-                    config.set_exploration_enabled(true);
-                    info!("explore: on");
-                }
-                "off" => {
-                    config.set_exploration_enabled(false);
-                    info!("explore: off");
+                "on" | "off" => {
+                    return CmdResponse::Json(crate::config::deprecated_result().to_string());
                 }
                 other => {
                     warn!("invalid value '{}': use on or off", other);
@@ -384,10 +360,7 @@ pub fn apply_cmd(config: &DynamicConfig, cmd: &str, stats: Option<&SharedStats>)
                 return CmdResponse::None;
             }
             match parts[1].parse::<u32>() {
-                Ok(delta) => {
-                    config.set_rtt_delta_ms(delta);
-                    info!("rtt-delta: {}ms", delta);
-                }
+                Ok(_) => return CmdResponse::Json(crate::config::deprecated_result().to_string()),
                 Err(_) => {
                     warn!("invalid rtt-delta value: {}", parts[1]);
                 }
@@ -503,6 +476,14 @@ pub fn apply_cmd(config: &DynamicConfig, cmd: &str, stats: Option<&SharedStats>)
             info!("  stall-min-in-flight: {}", snap.stall_min_in_flight);
             info!("  stall-ack-stale-ms: {}", snap.stall_ack_stale_ms);
             info!("  stall-reprobe-ms: {}", snap.stall_reprobe_ms);
+            #[cfg(feature = "test-internals")]
+            {
+                info!(
+                    "  adaptive-features: {}",
+                    crate::adaptive_env::features_csv()
+                );
+                info!("  adaptive-tuning: {}", crate::adaptive_env::tuning_csv());
+            }
         }
 
         // Query-time truth for the A/B evaluation runner: process-lifetime
@@ -510,7 +491,8 @@ pub fn apply_cmd(config: &DynamicConfig, cmd: &str, stats: Option<&SharedStats>)
         // delta. Absent from a production build (`test-internals` only).
         #[cfg(feature = "test-internals")]
         "metrics" => {
-            return CmdResponse::Json(crate::ab_metrics::metrics().to_json());
+            let counters = crate::ab_metrics::metrics().to_json();
+            return CmdResponse::Json(crate::adaptive_env::with_effective_config(&counters));
         }
 
         "stats" => {
@@ -711,7 +693,7 @@ mod tests {
     #[test]
     fn test_config_from_cli() {
         let config = DynamicConfig::from_cli(
-            SchedulingMode::Classic,
+            SchedulingMode::Enhanced,
             true,
             true,
             50,
@@ -722,10 +704,10 @@ mod tests {
             STALL_REPROBE_INTERVAL_MS,
         );
         let snap = config.snapshot();
-        assert_eq!(snap.mode, SchedulingMode::Classic);
-        assert!(!snap.quality_enabled); // no_quality=true means disabled
-        assert!(snap.exploration_enabled);
-        assert_eq!(snap.rtt_delta_ms, 50);
+        assert_eq!(snap.mode, SchedulingMode::Enhanced);
+        assert!(snap.quality_enabled);
+        assert!(!snap.exploration_enabled);
+        assert_eq!(snap.rtt_delta_ms, 30);
         assert!(!snap.earned_ack_window);
         assert!(!snap.stall_deselect);
     }
@@ -736,7 +718,7 @@ mod tests {
         assert!(!config.snapshot().stall_deselect);
 
         apply_cmd(&config, "stall-deselect on", None);
-        assert!(config.snapshot().stall_deselect);
+        assert!(!config.snapshot().stall_deselect);
 
         apply_cmd(&config, "stall-deselect off", None);
         assert!(!config.snapshot().stall_deselect);
@@ -770,10 +752,10 @@ mod tests {
             1500,
         );
         let snap = config.snapshot();
-        assert!(snap.stall_deselect);
-        assert_eq!(snap.stall_min_in_flight, 48);
-        assert_eq!(snap.stall_ack_stale_ms, 4000);
-        assert_eq!(snap.stall_reprobe_ms, 1500);
+        assert!(!snap.stall_deselect);
+        assert_eq!(snap.stall_min_in_flight, 32);
+        assert_eq!(snap.stall_ack_stale_ms, 3000);
+        assert_eq!(snap.stall_reprobe_ms, 1000);
     }
 
     #[test]
@@ -809,13 +791,13 @@ mod tests {
         let config = DynamicConfig::new();
 
         apply_cmd(&config, "mode classic", None);
-        assert_eq!(config.mode(), SchedulingMode::Classic);
+        assert_eq!(config.mode(), SchedulingMode::Enhanced);
 
         apply_cmd(&config, "mode enhanced", None);
         assert_eq!(config.mode(), SchedulingMode::Enhanced);
 
         apply_cmd(&config, "mode rtt-threshold", None);
-        assert_eq!(config.mode(), SchedulingMode::RttThreshold);
+        assert_eq!(config.mode(), SchedulingMode::Enhanced);
     }
 
     #[test]
@@ -823,7 +805,7 @@ mod tests {
         let config = DynamicConfig::new();
 
         apply_cmd(&config, "quality off", None);
-        assert!(!config.snapshot().quality_enabled);
+        assert!(config.snapshot().quality_enabled);
 
         apply_cmd(&config, "quality on", None);
         assert!(config.snapshot().quality_enabled);
@@ -834,7 +816,7 @@ mod tests {
         let config = DynamicConfig::new();
 
         apply_cmd(&config, "explore on", None);
-        assert!(config.snapshot().exploration_enabled);
+        assert!(!config.snapshot().exploration_enabled);
 
         apply_cmd(&config, "explore off", None);
         assert!(!config.snapshot().exploration_enabled);
@@ -845,31 +827,17 @@ mod tests {
         let config = DynamicConfig::new();
 
         apply_cmd(&config, "rtt-delta 50", None);
-        assert_eq!(config.snapshot().rtt_delta_ms, 50);
+        assert_eq!(config.snapshot().rtt_delta_ms, 30);
 
         apply_cmd(&config, "rtt-delta 100", None);
-        assert_eq!(config.snapshot().rtt_delta_ms, 100);
+        assert_eq!(config.snapshot().rtt_delta_ms, 30);
     }
 
     #[test]
     fn test_effective_quality() {
-        // Classic mode - quality never effective
+        // A directly constructed snapshot is an internal test seam, not a CLI setting.
         let snap = ConfigSnapshot {
-            mode: SchedulingMode::Classic,
-            quality_enabled: true,
-            exploration_enabled: true,
-            rtt_delta_ms: 30,
-            earned_ack_window: false,
-            stall_deselect: false,
-            stall_min_in_flight: 32,
-            stall_ack_stale_ms: 3000,
-            stall_reprobe_ms: 1000,
-        };
-        assert!(!snap.effective_quality_enabled());
-        assert!(!snap.effective_exploration_enabled());
-
-        // Enhanced mode - both can be effective
-        let snap = ConfigSnapshot {
+            features: SchedulerFeatures::default(),
             mode: SchedulingMode::Enhanced,
             quality_enabled: true,
             exploration_enabled: true,
@@ -883,11 +851,28 @@ mod tests {
         assert!(snap.effective_quality_enabled());
         assert!(snap.effective_exploration_enabled());
 
-        // RTT-threshold mode - quality effective, exploration not
+        // Enhanced mode - both can be effective
         let snap = ConfigSnapshot {
-            mode: SchedulingMode::RttThreshold,
+            features: SchedulerFeatures::default(),
+            mode: SchedulingMode::Enhanced,
             quality_enabled: true,
             exploration_enabled: true,
+            rtt_delta_ms: 30,
+            earned_ack_window: false,
+            stall_deselect: false,
+            stall_min_in_flight: 32,
+            stall_ack_stale_ms: 3000,
+            stall_reprobe_ms: 1000,
+        };
+        assert!(snap.effective_quality_enabled());
+        assert!(snap.effective_exploration_enabled());
+
+        // Internal snapshots can exercise the disabled exploration path.
+        let snap = ConfigSnapshot {
+            features: SchedulerFeatures::default(),
+            mode: SchedulingMode::Enhanced,
+            quality_enabled: true,
+            exploration_enabled: false,
             rtt_delta_ms: 30,
             earned_ack_window: false,
             stall_deselect: false,
@@ -908,9 +893,7 @@ mod tests {
 
         let writer = thread::spawn(move || {
             for _ in 0..100 {
-                config_clone.set_mode(SchedulingMode::Classic);
                 config_clone.set_mode(SchedulingMode::Enhanced);
-                config_clone.set_mode(SchedulingMode::RttThreshold);
             }
         });
 

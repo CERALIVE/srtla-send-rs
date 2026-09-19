@@ -1,8 +1,19 @@
+// allow: SIZE_OK — existing cross-platform select-loop façade; keep pending-input ownership,
+// ACK/control/signal arms and pacing wakeups visible together. Budget policy lives in wire_admission.
+pub mod ack;
 mod connections;
+pub(crate) mod duplicate_data;
 mod egress_tick;
 pub(crate) mod housekeeping;
 mod links;
 pub(crate) mod packet_handler;
+pub mod pool_control;
+#[cfg(test)]
+mod pool_control_runtime_tests;
+#[cfg(test)]
+mod pool_control_tests;
+#[cfg(test)]
+mod probe_reader_tests;
 #[cfg(unix)]
 mod reload;
 #[cfg(any(test, feature = "test-internals"))]
@@ -19,6 +30,9 @@ use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use ack::legacy_test_ack as apply_srtla_ack;
 use anyhow::{Context, Result};
 // Re-export connection management functions for tests
 #[allow(unused_imports)]
@@ -30,16 +44,17 @@ pub use connections::{
 // Re-export public items used by tests
 #[allow(unused_imports)]
 pub use housekeeping::GLOBAL_TIMEOUT_MS;
-use housekeeping::handle_housekeeping;
+use housekeeping::{HealthTicker, handle_housekeeping_with_targets as handle_housekeeping};
 pub use links::{LinkSource, SenderPaths};
-#[cfg(any(test, feature = "test-internals"))]
-#[allow(unused_imports)]
-pub(crate) use packet_handler::apply_srtla_ack;
 use packet_handler::{
     drain_packet_queue, flush_all_batches, handle_srt_packet, handle_uplink_packet,
 };
+pub use selection::adaptive::{AdaptiveState, preference_multiplier};
+#[cfg(test)]
+pub use selection::select_connection_idx_with_state as select_connection_idx;
 #[allow(unused_imports)]
-pub use selection::{EdpfSchedulerState, calculate_quality_multiplier, select_connection_idx};
+pub use selection::{EdpfSchedulerState, calculate_quality_multiplier, edpf_pipeline_select};
+pub use selection::{SchedulerFeatures, SchedulerShared};
 #[allow(unused_imports)]
 pub use sequence::{SEQ_TRACKING_SIZE, SEQUENCE_TRACKING_MAX_AGE_MS, SequenceTracker};
 use smallvec::SmallVec;
@@ -58,6 +73,8 @@ use crate::stats::SharedStats;
 use crate::subscription::SubscriptionManager;
 use crate::telemetry_file::{TelemetryWriter, build_telemetry_json_from_stats};
 use crate::utils::wall_clock_ms;
+
+mod wire_admission;
 
 pub const HOUSEKEEPING_INTERVAL_MS: u64 = 1000;
 const STATUS_LOG_INTERVAL_MS: u64 = 30_000;
@@ -168,6 +185,10 @@ pub async fn run_sender_with_config(
     }
 
     let mut recv_buf = vec![0u8; crate::protocol::MTU];
+    // One retained datagram bounds user-space backpressure without blocking ACKs/signals.
+    let mut pending_local = None;
+    let mut wire_timer = time::interval(Duration::from_millis(1));
+    wire_timer.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
     let mut housekeeping_timer = time::interval_at(
         Instant::now() + Duration::from_millis(HOUSEKEEPING_INTERVAL_MS),
         Duration::from_millis(HOUSEKEEPING_INTERVAL_MS),
@@ -199,7 +220,8 @@ pub async fn run_sender_with_config(
     let mut seq_tracker = SequenceTracker::new();
     let mut last_selected_idx: Option<usize> = None;
     let mut last_switch_time_ms: u64 = 0; // Track time of last connection switch
-    let mut edpf_state = EdpfSchedulerState::default();
+    let mut adaptive_state = SchedulerShared::new(shared_stats.clone());
+    let mut health_ticks = HealthTicker::default();
     let mut all_failed_at: Option<Instant> = None;
     let mut pending_changes: Option<PendingConnectionChanges> = None;
 
@@ -223,15 +245,16 @@ pub async fn run_sender_with_config(
     // Main loop - run housekeeping frequently like C version
     // Run housekeeping once before entering the main event loop so we start in a clean state.
     {
-        let classic = config.mode().is_classic();
         if let Err(err) = handle_housekeeping(
             &mut connections,
             &mut reg,
-            classic,
+            false,
             &mut all_failed_at,
             &mut reader_handles,
             &packet_tx,
             &mut seq_tracker,
+            &adaptive_state.targets,
+            &mut health_ticks,
         )
         .await
         {
@@ -239,12 +262,14 @@ pub async fn run_sender_with_config(
         }
     }
 
+    let mut pool_control = shared_stats.attach_pool_control();
+
     // Emit an initial snapshot immediately so a consumer (stats file or event
     // subscriber) sees fresh state well before the first cadence tick. Build it
     // once and hand the identical bytes to both sinks.
     {
         shared_stats.set_bind_map(link_source.report());
-        shared_stats.update(&connections, &config.snapshot());
+        adaptive_state.update_stats(&mut connections, &config.snapshot());
         // `last_updated_ms` is compared against `Date.now()` by the TS watcher,
         // so it must be a real wall-clock reading, not the monotonic `now_ms()`.
         let snapshot_json = build_telemetry_json_from_stats(wall_clock_ms(), &shared_stats.get());
@@ -260,9 +285,18 @@ pub async fn run_sender_with_config(
         ($($sighup_branch:tt)*) => {
             loop {
                 tokio::select! {
-                    res = local_listener.recv_from(&mut recv_buf) => {
+                    Some(request) = pool_control.recv() => {
+                        request.apply(&mut connections);
+                        // Refresh the telemetry snapshot immediately so the next
+                        // published snapshot reflects the applied change (e.g., priority
+                        // set via RPC). Without this, the snapshot lags until the next
+                        // housekeeping tick.
+                        adaptive_state.update_stats(&mut connections, &config.snapshot());
+                    }
+                    res = local_listener.recv_from(&mut recv_buf), if pending_local.is_none() => {
                         let config_snap = config.snapshot();
-                        handle_srt_packet(
+                        let received = res.as_ref().ok().copied();
+                        let outcome = handle_srt_packet(
                             res,
                             &mut recv_buf,
                             &mut connections,
@@ -272,9 +306,13 @@ pub async fn run_sender_with_config(
                             &mut last_client_addr,
                             reg.has_connected,
                             &config_snap,
-                            &mut edpf_state,
+                            &mut adaptive_state,
                         )
                         .await;
+                        pending_local = match outcome {
+                            packet_handler::SrtPacketOutcome::Consumed => None,
+                            packet_handler::SrtPacketOutcome::Backpressured => received,
+                        };
                         drain_packet_queue(
                             &mut packet_rx,
                             &mut connections,
@@ -284,6 +322,7 @@ pub async fn run_sender_with_config(
                             &local_listener,
                             &seq_tracker,
                             &config_snap,
+                            &shared_stats,
                         )
                         .await;
                     }
@@ -299,6 +338,7 @@ pub async fn run_sender_with_config(
                                 &local_listener,
                                 &seq_tracker,
                                 &config_snap,
+                                &shared_stats,
                             ).await;
                             drain_packet_queue(
                                 &mut packet_rx,
@@ -309,21 +349,23 @@ pub async fn run_sender_with_config(
                                 &local_listener,
                                 &seq_tracker,
                                 &config_snap,
+                                &shared_stats,
                             ).await;
                         } else {
                             return Ok(());
                         }
                     }
                     _ = housekeeping_timer.tick() => {
-                        let classic = config.mode().is_classic();
                         if let Err(err) = handle_housekeeping(
                             &mut connections,
                             &mut reg,
-                            classic,
+                            false,
                             &mut all_failed_at,
                             &mut reader_handles,
                             &packet_tx,
                             &mut seq_tracker,
+                            &adaptive_state.targets,
+                            &mut health_ticks,
                         ).await {
                             warn!("housekeeping failed: {err}");
                         }
@@ -332,12 +374,13 @@ pub async fn run_sender_with_config(
                         // report is refreshed alongside it so a reload's new
                         // operating mode reaches the next published snapshot.
                         shared_stats.set_bind_map(link_source.report());
-                        shared_stats.update(&connections, &config.snapshot());
+                        adaptive_state.update_stats(&mut connections, &config.snapshot());
 
                         if let Some(changes) = pending_changes.take()
                             && let Some(new_links) = changes.new_links
                         {
                             info!("applying queued connection changes: {} IPs", new_links.len());
+                            pool_control.close_for_reload();
                             apply_link_changes(
                                 &mut connections,
                                 &new_links,
@@ -347,6 +390,7 @@ pub async fn run_sender_with_config(
                                 &mut seq_tracker,
                                 &mut reg,
                             ).await;
+                            pool_control = shared_stats.attach_pool_control();
                             info!("connection changes applied successfully");
                             sync_readers(&connections, &mut reader_handles, &packet_tx);
                             // Bootstrap registration if we empty-started: start_probing
@@ -359,6 +403,8 @@ pub async fn run_sender_with_config(
 
                         status_elapsed_ms = status_elapsed_ms.saturating_add(HOUSEKEEPING_INTERVAL_MS);
                         if status_elapsed_ms >= STATUS_LOG_INTERVAL_MS {
+                            info!(negotiated_latency_ms = ?shared_stats.negotiated_latency_ms(), "SRT handshake status");
+                            info!("{}", shared_stats.receiver_handshake());
                             log_connection_status(&connections, last_selected_idx, &config);
                             status_elapsed_ms = status_elapsed_ms.saturating_sub(STATUS_LOG_INTERVAL_MS);
                         }
@@ -374,6 +420,7 @@ pub async fn run_sender_with_config(
                             &local_listener,
                             &seq_tracker,
                             &config_snap,
+                            &shared_stats,
                         )
                         .await;
                     }
@@ -388,6 +435,23 @@ pub async fn run_sender_with_config(
                         subscriptions.broadcast(&snapshot_json);
                     }
                     $($sighup_branch)*
+                    _ = wire_timer.tick(), if pending_local.is_some() || wire_admission::queued(&connections) => {
+                        let config_snap = config.snapshot();
+                        wire_admission::configure(&mut connections, config_snap.mode);
+                        flush_all_batches(&mut connections, &mut seq_tracker).await;
+                        if let Some(received) = pending_local.take() {
+                            let outcome = handle_srt_packet(
+                                Ok(received), &mut recv_buf, &mut connections,
+                                &mut last_selected_idx, &mut last_switch_time_ms,
+                                &mut seq_tracker, &mut last_client_addr, reg.has_connected,
+                            &config_snap, &mut adaptive_state,
+                            ).await;
+                            pending_local = match outcome {
+                                packet_handler::SrtPacketOutcome::Consumed => None,
+                                packet_handler::SrtPacketOutcome::Backpressured => Some(received),
+                            };
+                        }
+                    }
                     _ = batch_flush_timer.tick() => {
                         flush_all_batches(&mut connections, &mut seq_tracker).await;
                     }
@@ -458,6 +522,7 @@ pub async fn run_sender_with_config(
                 &local_listener,
                 &seq_tracker,
                 &config_snap,
+                &shared_stats,
             )
             .await;
         }

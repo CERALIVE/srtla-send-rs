@@ -1,0 +1,7 @@
+Id=bpc-m4b-lineages.service
+ActiveState=active
+SubState=running
+InvocationID=0a01ab8ef88c4e2ca31af873d891ecdc
+MainPID=3592329
+ExecMainStartTimestamp=Fri 2026-09-18 07:31:07 -05
+ControlGroup=/user.slice/user-1000.slice/user@1000.service/app.slice/bpc-m4b-lineages.service

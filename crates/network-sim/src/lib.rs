@@ -11,9 +11,13 @@
 //! - [`test_util`]: Privilege checks and unique name generation for tests
 //! - [`twin`]: Duplicate-IP twin-modem topology, bind-map publication, and stack
 
+pub mod bond;
 pub mod harness;
 pub mod impairment;
+pub mod metrics;
+pub mod profile;
 pub mod scenario;
+pub mod scenarios;
 pub mod test_util;
 pub mod topology;
 pub mod twin;

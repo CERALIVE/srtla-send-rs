@@ -1,16 +1,39 @@
+// allow: SIZE_OK — existing connection façade; tracker field/init/reset stay beside the delivery lifecycle.
 mod ack_nak;
+pub mod adaptive;
 pub mod batch_recv;
 pub mod batch_send;
 mod bitrate;
 mod congestion;
+pub mod delivery;
 pub mod egress;
+pub mod health;
 mod incoming;
+mod keepalive;
+#[cfg(test)]
+mod keepalive_health_tests;
+pub mod loss;
 mod packet_io;
+#[cfg(test)]
+mod packet_io_tests;
+pub mod probe;
+#[cfg(test)]
+mod probe_ack_tests;
+#[cfg(test)]
+mod probe_io_tests;
+#[cfg(test)]
+mod probe_log_tests;
+#[cfg(test)]
+mod probe_tests;
+pub mod rate_cap;
+#[cfg(test)]
+mod rate_cap_tests;
 mod reconnection;
 pub mod route;
 mod rtt;
 mod socket;
 mod spec;
+mod transmit;
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
@@ -19,6 +42,8 @@ use anyhow::Result;
 pub use batch_recv::BatchUdpSocket;
 pub use batch_send::BatchSender;
 pub use bitrate::BitrateTracker;
+mod wire_budget;
+pub mod wire_rate;
 pub use congestion::CongestionControl;
 pub use egress::{EgressFault, EgressLifecycle, EgressPoll, IfaceResolver, LinkState};
 use egress::{SystemIfaceResolver, classify_egress_fault};
@@ -31,9 +56,9 @@ use socket::spawn_receiver_dns_drift_check;
 pub use socket::{bind_for_link, bind_from_ip, resolve_remote, resolve_remote_all};
 pub use spec::{SocketKey, UplinkSpec};
 use tokio::time::Instant;
-use tracing::{debug, warn};
+use tracing::debug;
 
-use crate::bind_map::{IfaceName, LinkId};
+use crate::bind_map::{IfaceName, LinkId, Priority};
 use crate::protocol::*;
 use crate::utils::now_ms;
 
@@ -92,6 +117,10 @@ pub struct SrtlaConnection {
     /// for an unmapped link. Registration, stats, and telemetry state belong to
     /// this — never to `local_ip`, which is only the current socket key.
     pub link_id: Option<LinkId>,
+    /// Sidecar baseline < persistent link override < reload-volatile conn override.
+    pub priority_baseline: Option<Priority>,
+    pub priority_override_link: Option<Priority>,
+    pub priority_override_conn: Option<Priority>,
     /// Egress-interface binding lifecycle. Inert for an unmapped link.
     pub egress: EgressLifecycle,
     /// Per-interface default-route observation, refreshed by housekeeping.
@@ -116,6 +145,19 @@ pub struct SrtlaConnection {
     pub packet_log: FxHashMap<i32, u64>,
     #[cfg(not(feature = "test-internals"))]
     pub(crate) packet_log: FxHashMap<i32, u64>,
+    pub(crate) delivery: delivery::DeliveryLedger,
+    pub(crate) premature_streak: u8,
+    /// Lifetime diagnostic, status logs only; never part of telemetry JSON.
+    pub(crate) premature_nak_count: u64,
+    /// Count of SRT retransmitted packets forwarded via this link (R bit set).
+    /// Diagnostic only; never affects scheduling or window calculations.
+    pub(crate) rexmit_forwarded: u64,
+    pub(crate) loss: loss::LossTracker,
+    pub(crate) probes: probe::ProbeLog,
+    pub(crate) health: health::HealthMachine,
+    pub(crate) rate_cap: rate_cap::RateCap,
+    pub(crate) wire_rate: wire_rate::WireRateEstimator,
+    pub(crate) adaptive: adaptive::AdaptiveLinkState,
     /// Highest sequence number that has been cumulatively ACKed, under 31-bit
     /// serial (wrap-aware) ordering. `None` = nothing ACKed yet on this link.
     ///
@@ -137,6 +179,7 @@ pub struct SrtlaConnection {
     pub(crate) last_sent: Option<Instant>,
     /// Timestamp of the last keepalive sent (for periodic telemetry)
     pub(crate) last_keepalive_sent: Option<Instant>,
+    pub(crate) keepalive_liveness: keepalive::KeepaliveLiveness,
     /// `now_ms()` of this link's last rate-limited PROBE growth under the
     /// EXPERIMENTAL `earned_ack_window` valve. `0` = eligible now; updated ONLY
     /// on probe growth (never by the earner's full growth). Inert while the flag
@@ -152,6 +195,7 @@ pub struct SrtlaConnection {
     /// deselected stalled link back into selection once per `stall_reprobe_ms` so
     /// a recovered link re-enters. `0` = eligible for an immediate probe. Inert
     /// while `stall_deselect` is off (default).
+    #[cfg(test)]
     pub(crate) last_stall_reprobe_ms: u64,
     /// `now_ms()` of the last emitted NAK-truncation warning for this link.
     /// A receiver under heavy loss can NAK-truncate on every frame, so the warn
@@ -223,6 +267,9 @@ impl SrtlaConnection {
             port,
             local_ip: ip,
             link_id: spec.link_id.clone(),
+            priority_baseline: spec.priority,
+            priority_override_link: None,
+            priority_override_conn: None,
             egress,
             route_health: RouteHealth::Unknown,
             label: spec.label(host, port),
@@ -230,12 +277,24 @@ impl SrtlaConnection {
             window: WINDOW_DEF * WINDOW_MULT,
             in_flight_packets: 0,
             packet_log: FxHashMap::with_capacity_and_hasher(PKT_LOG_SIZE, Default::default()),
+            delivery: delivery::DeliveryLedger::default(),
+            premature_streak: 0,
+            premature_nak_count: 0,
+            rexmit_forwarded: 0,
+            loss: loss::LossTracker::new(now_ms()),
+            probes: probe::ProbeLog::default(),
+            health: health::HealthMachine::new(health::HealthState::Down, now_ms()),
+            rate_cap: rate_cap::RateCap::default(),
+            wire_rate: wire_rate::WireRateEstimator::default(),
+            adaptive: adaptive::AdaptiveLinkState::default(),
             highest_acked_seq: None,
             last_received: None,
             last_sent: None,
             last_keepalive_sent: None,
+            keepalive_liveness: keepalive::KeepaliveLiveness::default(),
             last_probe_growth_ms: 0,
             last_ack_or_rtt_sample_ms: 0,
+            #[cfg(test)]
             last_stall_reprobe_ms: 0,
             last_trunc_warn_ms: 0,
             rtt: RttTracker::default(),
@@ -248,6 +307,23 @@ impl SrtlaConnection {
             quality_cache: CachedQuality::default(),
             batch_sender: BatchSender::new(),
         })
+    }
+
+    #[must_use]
+    pub fn effective_priority(&self) -> Option<Priority> {
+        self.priority_override_conn
+            .or(self.priority_override_link)
+            .or(self.priority_baseline)
+    }
+
+    /// Clear only the temporary layer, exposing a link override before the baseline.
+    pub const fn clear_priority_override_conn(&mut self) {
+        self.priority_override_conn = None;
+    }
+
+    /// Clear only the persistent layer; an active temporary override still wins.
+    pub const fn clear_priority_override_link(&mut self) {
+        self.priority_override_link = None;
     }
 
     #[inline(always)]
@@ -273,6 +349,7 @@ impl SrtlaConnection {
     /// penalty input ONLY — it is NOT a liveness check and never affects
     /// `is_timed_out()` / re-registration / CONN_TIMEOUT.
     #[inline]
+    #[cfg(test)]
     pub(crate) fn is_stall_penalized(
         &self,
         now_ms: u64,
@@ -308,51 +385,13 @@ impl SrtlaConnection {
         self.batch_sender.has_queued_packets()
     }
 
-    /// Flush the batch queue, committing exactly the datagrams that went out.
-    ///
-    /// The accepted prefix is registered for in-flight tracking even when the
-    /// transmit ended in a hard error — those packets are genuinely on the wire.
-    /// An `Err` return means the caller must recover the link (mark it for
-    /// recovery and drop its sequence-tracker entries); the unsent suffix stays
-    /// queued and is discarded by that reset.
-    pub async fn flush_batch(&mut self) -> Result<()> {
-        if !self.batch_sender.has_queued_packets() {
-            return Ok(());
-        }
-
-        let outcome = self.batch_sender.flush(&self.socket).await;
-        let transmitted = !outcome.accepted.is_empty();
-        for (seq, send_time_ms) in outcome.accepted {
-            if let Some(s) = seq {
-                self.register_packet(s, send_time_ms);
-            }
-        }
-        if transmitted {
-            self.last_sent = Some(Instant::now());
-        }
-        match outcome.error {
-            Some(e) => {
-                if let Some(fault) = self.egress.note_send_error(&e) {
-                    warn!(
-                        "{}: egress fault {} on {}; the socket's interface binding is dead and \
-                         will not be reused",
-                        self.label,
-                        fault.as_str(),
-                        self.egress.iface().map_or("-", IfaceName::as_str)
-                    );
-                }
-                Err(anyhow::anyhow!("batch flush failed: {}", e))
-            }
-            None => Ok(()),
-        }
-    }
-
     /// The uplink this connection currently is: its identity plus its socket key.
     pub fn spec(&self) -> UplinkSpec {
         UplinkSpec {
             ip: self.local_ip,
             iface: self.egress.iface().cloned(),
             link_id: self.link_id.clone(),
+            priority: self.priority_baseline,
         }
     }
 
@@ -405,6 +444,9 @@ impl SrtlaConnection {
         };
         let pkt = create_keepalive_packet_ext(info);
         self.send_control_padded(&pkt).await?;
+        if let Some(sent_ms) = extract_keepalive_timestamp(&pkt) {
+            self.keepalive_liveness.record_sent(sent_ms);
+        }
         let now_instant = Instant::now();
         let now = now_ms();
         self.last_sent = Some(now_instant);
@@ -560,6 +602,15 @@ impl SrtlaConnection {
     /// Reset core connection state (window, packet tracking, batch queue).
     /// Used by both mark_for_recovery and reset_state.
     fn reset_core_state(&mut self) {
+        let now = now_ms();
+        self.keepalive_liveness = keepalive::KeepaliveLiveness::default();
+        self.delivery.reset();
+        self.probes.reset();
+        self.loss = loss::LossTracker::new(now);
+        self.rate_cap = rate_cap::RateCap::default();
+        // Retain wire_rate; the next observation revalidates it against delivery's new generation.
+        self.health = health::HealthMachine::new(health::HealthState::Down, now);
+        self.adaptive = adaptive::AdaptiveLinkState::default();
         self.connected = false;
         self.window = WINDOW_DEF * WINDOW_MULT;
         self.in_flight_packets = 0;
@@ -649,6 +700,7 @@ impl SrtlaConnection {
     /// Full reset: clears all state including congestion/bitrate stats.
     fn reset_state(&mut self) {
         self.last_received = None;
+        self.last_keepalive_sent = None;
         self.reset_core_state();
 
         // Reset submodule state

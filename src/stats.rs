@@ -19,6 +19,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use serde::Serialize;
@@ -27,7 +28,12 @@ use crate::bind_map::BindMapReport;
 use crate::config::ConfigSnapshot;
 use crate::connection::SrtlaConnection;
 use crate::sender::calculate_quality_multiplier;
+use crate::sender::pool_control::{PoolControlHandle, PoolControlReceiver};
 use crate::utils::now_ms;
+
+#[path = "receiver_handshake.rs"]
+mod receiver_handshake;
+pub use receiver_handshake::ReceiverHandshake;
 
 /// Per-link statistics.
 ///
@@ -48,6 +54,10 @@ pub struct LinkStats {
     /// ADDITIVE, never required.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub link_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub health: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub priority: Option<f64>,
     /// True if SRTLA registration completed (REG3 received)
     pub connected: bool,
     /// True if no packets received within timeout period
@@ -68,6 +78,9 @@ pub struct LinkStats {
     /// Wire bytes this link has sent for the whole process lifetime (ADR-002).
     /// Survives a socket replacement; restarts only when the process does.
     pub bytes_sent_total: u64,
+    /// Count of SRT retransmitted packets forwarded via this link (R bit set).
+    /// Diagnostic only; never affects scheduling. Status log and control only.
+    pub rexmit_forwarded: u64,
 
     // --- RTT baseline tracking ---
     /// Dual-window minimum RTT baseline in milliseconds.
@@ -88,6 +101,9 @@ pub struct LinkStats {
     /// This is the EXACT multiplier used in `select_connection_idx()`.
     /// In classic mode, this is always 1.0 (quality scoring disabled).
     pub quality_multiplier: f64,
+    /// Scheduler-published quality × ramp × preference × soft cap in adaptive,
+    /// zero for held links. Legacy modes retain the quality multiplier.
+    pub effective_multiplier: f64,
 }
 
 /// Aggregate statistics snapshot.
@@ -118,6 +134,9 @@ pub struct StatsSnapshot {
     /// a reload would take its bytes out of that sum and the operator's "total
     /// transferred" would go backwards.
     pub session_bytes_sent: u64,
+    /// Sum of retransmitted packets forwarded across all links (R bit set).
+    /// Diagnostic only; never affects scheduling. Status log and control only.
+    pub rexmit_forwarded_total: u64,
 
     /// The sender's bind-map operating mode (ADR-003 §6.4), flattened to the
     /// top-level `bind_map_status` + `disposition` pair so a consumer reads the
@@ -127,6 +146,7 @@ pub struct StatsSnapshot {
 
     /// Per-link details
     pub links: Vec<LinkStats>,
+    pub receiver: ReceiverHandshake,
 }
 
 impl Default for StatsSnapshot {
@@ -140,8 +160,10 @@ impl Default for StatsSnapshot {
             total_window: 0,
             total_in_flight: 0,
             session_bytes_sent: 0,
+            rexmit_forwarded_total: 0,
             bind_map: BindMapReport::default(),
             links: Vec::new(),
+            receiver: ReceiverHandshake::default(),
         }
     }
 }
@@ -196,6 +218,9 @@ pub struct SharedStats {
     inner: Arc<RwLock<StatsSnapshot>>,
     session_bytes: Arc<Mutex<SessionBytes>>,
     bind_map: Arc<RwLock<BindMapReport>>,
+    negotiated_latency_ms: Arc<AtomicU32>,
+    receiver: Arc<RwLock<ReceiverHandshake>>,
+    pool_control: Arc<RwLock<Option<PoolControlHandle>>>,
 }
 
 impl SharedStats {
@@ -204,7 +229,54 @@ impl SharedStats {
             inner: Arc::new(RwLock::new(StatsSnapshot::default())),
             session_bytes: Arc::new(Mutex::new(SessionBytes::default())),
             bind_map: Arc::new(RwLock::new(BindMapReport::default())),
+            negotiated_latency_ms: Arc::new(AtomicU32::new(0)),
+            receiver: Arc::default(),
+            pool_control: Arc::default(),
         }
+    }
+
+    pub fn pool_control(&self) -> Option<PoolControlHandle> {
+        self.pool_control
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    pub(crate) fn attach_pool_control(&self) -> PoolControlReceiver {
+        let (handle, receiver) = PoolControlReceiver::channel();
+        *self
+            .pool_control
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = Some(handle);
+        receiver
+    }
+
+    /// Last observed receiver TSBPD delay; zero denotes unknown. Never takes a snapshot lock.
+    pub fn negotiated_latency_ms(&self) -> Option<u32> {
+        let ms = self.negotiated_latency_ms.load(Ordering::Relaxed);
+        (ms != 0).then_some(ms)
+    }
+
+    pub fn receiver_handshake(&self) -> ReceiverHandshake {
+        self.receiver
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Bond-scoped: pool rebuilds never clear this; a new encoder HSRSP replaces it.
+    pub fn set_receiver_handshake(&self, info: crate::protocol::srt_handshake::HsrspInfo) {
+        self.set_negotiated_latency_ms(info.tsbpd_delay_ms);
+        *self
+            .receiver
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = info.into();
+    }
+
+    /// Publish from the receive path without coupling to housekeeping or configuration.
+    pub(crate) fn set_negotiated_latency_ms(&self, ms: u32) {
+        // The atomic is the entire observation; no other memory is published with it.
+        self.negotiated_latency_ms.store(ms, Ordering::Relaxed);
     }
 
     /// Record the sender's current bind-map operating mode.
@@ -221,7 +293,7 @@ impl SharedStats {
     /// Update stats from current connection state.
     pub fn update(&self, connections: &[SrtlaConnection], config: &ConfigSnapshot) {
         let current_time_ms = now_ms();
-        let quality_enabled = config.quality_enabled && !config.mode.is_classic();
+        let quality_enabled = config.effective_quality_enabled();
 
         let session_bytes_sent = self
             .session_bytes
@@ -249,6 +321,16 @@ impl SharedStats {
             } else {
                 1.0
             };
+            let (base_score, quality_multiplier, effective_multiplier) = conn
+                .adaptive
+                .weight
+                .map_or((conn.get_score(), quality_multiplier, 0.0), |weight| {
+                    (
+                        weight.base_score,
+                        weight.quality_multiplier,
+                        weight.effective_multiplier,
+                    )
+                });
 
             let link = LinkStats {
                 ip: conn.local_ip,
@@ -263,10 +345,16 @@ impl SharedStats {
                 nak_count: conn.total_nak_count(),
                 bitrate_bps: (conn.current_bitrate_mbps() * 1_000_000.0 / 8.0) as u32,
                 bytes_sent_total: conn.session_bytes_sent(),
+                rexmit_forwarded: conn.rexmit_forwarded,
                 rtt_min_ms: conn.get_rtt_min_ms(),
                 rtt_velocity: conn.get_rtt_velocity(),
-                base_score: conn.get_score(),
+                base_score,
                 quality_multiplier,
+                health: Some(conn.health.state().as_str()),
+                priority: conn
+                    .effective_priority()
+                    .map(crate::bind_map::Priority::get),
+                effective_multiplier,
             };
 
             if is_active {
@@ -275,6 +363,7 @@ impl SharedStats {
                 snapshot.total_in_flight += conn.in_flight_packets;
             }
 
+            snapshot.rexmit_forwarded_total += conn.rexmit_forwarded;
             snapshot.links.push(link);
         }
 
@@ -300,6 +389,7 @@ impl SharedStats {
             .read()
             .map(|guard| guard.clone())
             .unwrap_or_default();
+        snapshot.receiver = self.receiver_handshake();
         snapshot
     }
 
@@ -310,129 +400,9 @@ impl SharedStats {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::mode::SchedulingMode;
+#[path = "stats_tests.rs"]
+mod tests;
 
-    #[test]
-    fn test_shared_stats_new() {
-        let stats = SharedStats::new();
-        let snapshot = stats.get();
-        assert_eq!(snapshot.active_links, 0);
-        assert_eq!(snapshot.total_links, 0);
-    }
-
-    #[test]
-    fn test_shared_stats_empty_update() {
-        let stats = SharedStats::new();
-        let config = ConfigSnapshot {
-            mode: SchedulingMode::Enhanced,
-            quality_enabled: true,
-            exploration_enabled: false,
-            rtt_delta_ms: 30,
-            earned_ack_window: false,
-            stall_deselect: false,
-            stall_min_in_flight: 32,
-            stall_ack_stale_ms: 3000,
-            stall_reprobe_ms: 1000,
-        };
-        stats.update(&[], &config);
-        let snapshot = stats.get();
-        assert_eq!(snapshot.mode, "enhanced");
-        assert!(snapshot.quality_enabled);
-    }
-
-    #[test]
-    fn test_to_json_contains_expected_fields() {
-        let stats = SharedStats::new();
-        let json = stats.to_json();
-        assert!(json.contains("\"mode\""));
-        assert!(json.contains("\"active_links\""));
-        assert!(json.contains("\"total_window\""));
-        assert!(json.contains("\"links\""));
-        assert!(json.contains("\"session_bytes_sent\""));
-    }
-
-    // ---- ADR-002 session-bytes accumulator --------------------------------
-
-    #[test]
-    fn session_bytes_sums_live_links() {
-        let mut acc = SessionBytes::default();
-        assert_eq!(acc.observe_totals([(7, 1_000), (9, 500)]), 1_500);
-    }
-
-    #[test]
-    fn session_bytes_banks_only_the_delta_between_observations() {
-        let mut acc = SessionBytes::default();
-        acc.observe_totals([(7, 1_000)]);
-        assert_eq!(
-            acc.observe_totals([(7, 1_600)]),
-            1_600,
-            "a link's own counter is cumulative, so re-observing it must add 600, not 1600"
-        );
-    }
-
-    #[test]
-    fn session_bytes_survives_a_link_teardown() {
-        // A SIGHUP reload that drops an uplink must not take its bytes with it —
-        // this is the regression a naive `links.map(total).sum()` would ship.
-        let mut acc = SessionBytes::default();
-        acc.observe_totals([(7, 1_000), (9, 500)]);
-
-        assert_eq!(acc.observe_totals([(7, 1_000)]), 1_500);
-    }
-
-    #[test]
-    fn session_bytes_counts_a_readded_link_from_zero() {
-        // A re-added IP comes back as a NEW connection (fresh conn_id, counter at
-        // 0). Its bytes must accrue on top of the banked total, never replace it.
-        let mut acc = SessionBytes::default();
-        acc.observe_totals([(7, 1_000)]);
-        acc.observe_totals([]);
-
-        assert_eq!(acc.observe_totals([(11, 300)]), 1_300);
-    }
-
-    #[test]
-    fn session_bytes_never_regresses_on_a_backwards_link_counter() {
-        // Per-link counters are monotonic by construction; if one ever went
-        // backwards the bond total must still refuse to shrink.
-        let mut acc = SessionBytes::default();
-        acc.observe_totals([(7, 1_000)]);
-
-        assert_eq!(acc.observe_totals([(7, 400)]), 1_000);
-    }
-
-    #[test]
-    fn session_bytes_forgets_departed_links() {
-        // Bookkeeping for a link that is gone must not accumulate across a long
-        // session of SIGHUP churn.
-        let mut acc = SessionBytes::default();
-        acc.observe_totals([(1, 10), (2, 10), (3, 10)]);
-        acc.observe_totals([(3, 10)]);
-
-        assert_eq!(acc.last_seen.len(), 1);
-        assert_eq!(acc.total, 30);
-    }
-
-    #[test]
-    fn empty_update_reports_zero_session_bytes() {
-        let stats = SharedStats::new();
-        stats.update(&[], &test_config());
-        assert_eq!(stats.get().session_bytes_sent, 0);
-    }
-
-    fn test_config() -> ConfigSnapshot {
-        ConfigSnapshot {
-            mode: SchedulingMode::Enhanced,
-            quality_enabled: true,
-            exploration_enabled: false,
-            rtt_delta_ms: 30,
-            earned_ack_window: false,
-            stall_deselect: false,
-            stall_min_in_flight: 32,
-            stall_ack_stale_ms: 3000,
-            stall_reprobe_ms: 1000,
-        }
-    }
-}
+#[cfg(test)]
+#[path = "receiver_handshake_tests.rs"]
+mod receiver_handshake_tests;

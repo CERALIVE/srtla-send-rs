@@ -1,0 +1,473 @@
+{
+  "spike": "M1",
+  "outcome": "core_failure_upstream_parity: TTL*=200",
+  "ttl_star": 200,
+  "controller": false,
+  "freeze_penalty_ms": 644.64892578125,
+  "selected_alternative": "static TTL 200; periodic NAK gate on; freeze decided jointly; upstream-parity fallback; Todo 8 in-flight-aware NAK protection is the compensating mechanism, not a proven cure",
+  "rule_branch": "core_failure_upstream_parity",
+  "sweep_ttl": 200,
+  "passing_cells": {
+    "40": 3,
+    "200": 8,
+    "500": 8
+  },
+  "passing_core_cells": {
+    "40": 0,
+    "200": 3,
+    "500": 2
+  },
+  "failing_cells": [
+    {
+      "candidate": "classic",
+      "scenario": "A",
+      "ttl": 40,
+      "passing_runs": 0,
+      "settled_runs": 0,
+      "retransmit_percent": [
+        30.878249701049647,
+        31.870110241820772,
+        32.92866351525569
+      ],
+      "goodput_mbit": [
+        9.777470577777777,
+        9.740505599999999,
+        9.831748266666667
+      ]
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "A",
+      "ttl": 40,
+      "passing_runs": 0,
+      "settled_runs": 0,
+      "retransmit_percent": [
+        40.1759037158608,
+        29.779990087702284,
+        38.11589174184594
+      ],
+      "goodput_mbit": [
+        9.72833991111111,
+        9.729743644444444,
+        9.778874311111112
+      ]
+    },
+    {
+      "candidate": "classic",
+      "scenario": "B1",
+      "ttl": 40,
+      "passing_runs": 0,
+      "settled_runs": 0,
+      "retransmit_percent": [
+        23.83267590129346,
+        25.00574052812859,
+        24.247948951686414
+      ],
+      "goodput_mbit": [
+        4.374500977777778,
+        4.390409955555556,
+        4.403745422222222
+      ]
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "B1",
+      "ttl": 40,
+      "passing_runs": 0,
+      "settled_runs": 0,
+      "retransmit_percent": [
+        27.468324169256515,
+        19.83670439784747,
+        21.01879327398615
+      ],
+      "goodput_mbit": [
+        4.377308444444444,
+        4.387602488888889,
+        4.552541155555556
+      ]
+    },
+    {
+      "candidate": "classic",
+      "scenario": "C",
+      "ttl": 40,
+      "passing_runs": 0,
+      "settled_runs": 0,
+      "retransmit_percent": [
+        30.98721638444549,
+        28.653872144884446,
+        29.333064322913383
+      ],
+      "goodput_mbit": [
+        10.864018666666666,
+        11.035625066666666,
+        11.861722133333332
+      ]
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "C",
+      "ttl": 40,
+      "passing_runs": 0,
+      "settled_runs": 0,
+      "retransmit_percent": [
+        26.563937758367324,
+        29.197137896564424,
+        29.535277897240004
+      ],
+      "goodput_mbit": [
+        10.880337066666666,
+        11.196528,
+        11.500962666666666
+      ]
+    },
+    {
+      "candidate": "classic",
+      "scenario": "G",
+      "ttl": 40,
+      "passing_runs": 2,
+      "settled_runs": 3,
+      "retransmit_percent": [
+        11.633221607974578,
+        0.614174940213059,
+        0.3341748242857921
+      ],
+      "goodput_mbit": [
+        10.204439466666669,
+        12.8041536,
+        12.802281955555557
+      ]
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "G",
+      "ttl": 40,
+      "passing_runs": 0,
+      "settled_runs": 1,
+      "retransmit_percent": [
+        25.592998181895055,
+        28.5441379003954,
+        31.133694074171835
+      ],
+      "goodput_mbit": [
+        4.538035911111111,
+        4.261734400000001,
+        4.460830577777778
+      ]
+    },
+    {
+      "candidate": "classic",
+      "scenario": "A",
+      "ttl": 200,
+      "passing_runs": 0,
+      "settled_runs": 3,
+      "retransmit_percent": [
+        7.776161838502155,
+        17.317620834904037,
+        5.613715351360515
+      ],
+      "goodput_mbit": [
+        18.090145422222225,
+        14.235259733333333,
+        22.233498311111113
+      ]
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "A",
+      "ttl": 200,
+      "passing_runs": 0,
+      "settled_runs": 2,
+      "retransmit_percent": [
+        24.830490174908224,
+        25.018863856850277,
+        7.188547420101024
+      ],
+      "goodput_mbit": [
+        10.060088888888888,
+        10.280007111111113,
+        20.0305728
+      ]
+    },
+    {
+      "candidate": "classic",
+      "scenario": "B1",
+      "ttl": 200,
+      "passing_runs": 0,
+      "settled_runs": 0,
+      "retransmit_percent": [
+        28.635841941301855,
+        31.12051681889062,
+        27.829020411649157
+      ],
+      "goodput_mbit": [
+        4.813869511111111,
+        4.589974044444444,
+        4.532888888888889
+      ]
+    },
+    {
+      "candidate": "classic",
+      "scenario": "C",
+      "ttl": 200,
+      "passing_runs": 0,
+      "settled_runs": 3,
+      "retransmit_percent": [
+        35.33172234794727,
+        19.82249134230554,
+        22.527298218324344
+      ],
+      "goodput_mbit": [
+        10.867177066666667,
+        15.3324528,
+        14.7565712
+      ]
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "C",
+      "ttl": 200,
+      "passing_runs": 0,
+      "settled_runs": 3,
+      "retransmit_percent": [
+        29.168863318587114,
+        6.626567586901616,
+        37.13160029356097
+      ],
+      "goodput_mbit": [
+        11.723103466666668,
+        22.39902186666667,
+        10.621523733333332
+      ]
+    },
+    {
+      "candidate": "classic",
+      "scenario": "A",
+      "ttl": 500,
+      "passing_runs": 0,
+      "settled_runs": 3,
+      "retransmit_percent": [
+        35.50211083306271,
+        19.460984017549357,
+        28.480420055444384
+      ],
+      "goodput_mbit": [
+        12.07304248888889,
+        16.503926755555554,
+        12.837375288888888
+      ]
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "A",
+      "ttl": 500,
+      "passing_runs": 0,
+      "settled_runs": 3,
+      "retransmit_percent": [
+        15.562576148244695,
+        23.565268358033993,
+        30.6389792685212
+      ],
+      "goodput_mbit": [
+        16.792861866666666,
+        14.038269155555556,
+        13.6000704
+      ]
+    },
+    {
+      "candidate": "classic",
+      "scenario": "B1",
+      "ttl": 500,
+      "passing_runs": 0,
+      "settled_runs": 0,
+      "retransmit_percent": [
+        24.266845757779272,
+        25.161430119176597,
+        23.511147526844624
+      ],
+      "goodput_mbit": [
+        4.589740088888889,
+        4.414975288888888,
+        4.7544448
+      ]
+    },
+    {
+      "candidate": "classic",
+      "scenario": "C",
+      "ttl": 500,
+      "passing_runs": 0,
+      "settled_runs": 3,
+      "retransmit_percent": [
+        13.180326614176241,
+        17.09232576835075,
+        8.430592437888052
+      ],
+      "goodput_mbit": [
+        16.80181066666667,
+        16.1810096,
+        18.21414186666667
+      ]
+    },
+    {
+      "candidate": "enhanced",
+      "scenario": "C",
+      "ttl": 500,
+      "passing_runs": 0,
+      "settled_runs": 3,
+      "retransmit_percent": [
+        17.872886273631487,
+        19.493806169540928,
+        15.603366856597233
+      ],
+      "goodput_mbit": [
+        15.8599056,
+        16.497376,
+        15.817091733333333
+      ]
+    },
+    {
+      "candidate": "classic",
+      "scenario": "G",
+      "ttl": 500,
+      "passing_runs": 2,
+      "settled_runs": 3,
+      "retransmit_percent": [
+        0.2668167132537118,
+        0.2469180631456635,
+        6.044678055190539
+      ],
+      "goodput_mbit": [
+        12.805323377777778,
+        12.8041536,
+        10.942335288888888
+      ]
+    },
+    {
+      "candidate": "belabox-c",
+      "scenario": "C",
+      "ttl": 40,
+      "passing_runs": 0,
+      "settled_runs": 0,
+      "retransmit_percent": [
+        57.367208540186255,
+        57.193645443113816,
+        57.73006577523625
+      ],
+      "goodput_mbit": [
+        14.7723632,
+        14.2938656,
+        14.101905066666667
+      ]
+    },
+    {
+      "candidate": "belabox-c",
+      "scenario": "C",
+      "ttl": 200,
+      "passing_runs": 0,
+      "settled_runs": 3,
+      "retransmit_percent": [
+        26.5893853355468,
+        28.561657012162538,
+        41.21049738939269
+      ],
+      "goodput_mbit": [
+        18.8298544,
+        17.684057066666668,
+        16.08748586666667
+      ]
+    },
+    {
+      "candidate": "irlserver-rust",
+      "scenario": "B1",
+      "ttl": 40,
+      "passing_runs": 0,
+      "settled_runs": 1,
+      "retransmit_percent": [
+        29.99696448446828,
+        30.3877094296256,
+        29.75231635680979
+      ],
+      "goodput_mbit": [
+        8.122001066666666,
+        8.06070471111111,
+        8.099307377777778
+      ]
+    },
+    {
+      "candidate": "irlserver-rust",
+      "scenario": "C",
+      "ttl": 40,
+      "passing_runs": 0,
+      "settled_runs": 0,
+      "retransmit_percent": [
+        56.78466076696165,
+        57.44420484462025,
+        56.99240867617619
+      ],
+      "goodput_mbit": [
+        12.231781333333334,
+        12.339868800000001,
+        12.383209066666666
+      ]
+    }
+  ],
+  "best_24_mbit_ttl": 200,
+  "goodput_gap_percent": 0.0,
+  "controller_nonoverlapping_ci": false,
+  "freeze_comparisons": [
+    {
+      "ttl": 40,
+      "offered_mbit": 2,
+      "enabled_ms": 285.45751953125,
+      "disabled_ms": 75.238037109375,
+      "penalty_ms": 210.219482421875,
+      "censored": 4
+    },
+    {
+      "ttl": 40,
+      "offered_mbit": 6,
+      "enabled_ms": 149.576171875,
+      "disabled_ms": 74.907470703125,
+      "penalty_ms": 74.668701171875,
+      "censored": 2
+    },
+    {
+      "ttl": 200,
+      "offered_mbit": 2,
+      "enabled_ms": 1125.18505859375,
+      "disabled_ms": 480.5361328125,
+      "penalty_ms": 644.64892578125,
+      "censored": 5
+    },
+    {
+      "ttl": 200,
+      "offered_mbit": 6,
+      "enabled_ms": 420.560791015625,
+      "disabled_ms": 75.14501953125,
+      "penalty_ms": 345.415771484375,
+      "censored": 15
+    },
+    {
+      "ttl": 500,
+      "offered_mbit": 2,
+      "enabled_ms": 26482.7041015625,
+      "disabled_ms": null,
+      "penalty_ms": null,
+      "censored": 522
+    },
+    {
+      "ttl": 500,
+      "offered_mbit": 6,
+      "enabled_ms": 945.6314697265625,
+      "disabled_ms": 390.044921875,
+      "penalty_ms": 555.5865478515625,
+      "censored": 10
+    }
+  ],
+  "freeze_cap_applied": true,
+  "freeze_penalty_interpretation": "Maximum identifiable lower bound on median penalty; unresolved censored comparisons remain null, never zero",
+  "consequences": [
+    "L3 keeps freeze OFF: justified by the measured recovery penalty",
+    "A one-link bond inherits the penalty: accepted",
+    "Freeze and TTL are coupled and must be decided jointly"
+  ]
+}

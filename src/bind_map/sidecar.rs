@@ -16,7 +16,7 @@ pub const BIND_MAP_SCHEMA_VERSION: u32 = 1;
 const SHA256_HEX_LEN: usize = 64;
 
 /// A parsed sidecar with a validated header and still-raw rows.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BindMapDoc {
     pub generation: u64,
     pub ips_file_sha256: String,
@@ -31,13 +31,15 @@ impl BindMapDoc {
 }
 
 /// One row before its fields have been parsed into typed values.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub(super) struct RawRow {
     pub(super) link_id: String,
     pub(super) ip: String,
     pub(super) iface: String,
     #[serde(default)]
     pub(super) id_path: Option<String>,
+    #[serde(default)]
+    pub(super) priority: Option<f64>,
 }
 
 /// The wire shape. Unknown keys are ignored so an additive field within the same

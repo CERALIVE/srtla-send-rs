@@ -51,11 +51,13 @@
 
 #![cfg(unix)]
 
+// allow: SIZE_OK — this frozen A/B experiment is unchanged except for extracting its routing helper;
+// splitting its measurement/control machinery is outside the topology change.
+
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::thread::sleep;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -63,6 +65,10 @@ use network_sim::{
     ImpairmentConfig, NamespaceProcess, SrtlaTestTopology, check_binary, check_privileges,
     wait_for_registered_uplinks, wait_for_udp_listener,
 };
+
+#[path = "support/measurement_lock.rs"]
+mod measurement;
+use measurement::measurement_lock;
 
 const LINKS: usize = 3;
 const DELAYS_MS: [u32; LINKS] = [20, 60, 120];
@@ -79,8 +85,8 @@ const SRTLA_PORT: u16 = 5000;
 const SRT_PORT: u16 = 4003;
 const SINK_PORT: u16 = 9999;
 
-const STEP_A_MODES: [&str; 4] = ["enhanced", "classic", "rtt-threshold", "edpf"];
-const STEP_B_MODES: [&str; 2] = ["enhanced", "rtt-threshold"];
+const STEP_A_MODES: [&str; 1] = ["enhanced"];
+const STEP_B_MODES: [&str; 1] = ["enhanced"];
 
 /// Adoption rule, pre-committed and applied mechanically per mode.
 const GOODPUT_FLOOR_RATIO: f64 = 0.99;
@@ -97,16 +103,6 @@ fn now() -> f64 {
         .duration_since(UNIX_EPOCH)
         .expect("system clock before epoch")
         .as_secs_f64()
-}
-
-/// Measurement runs must never overlap: CPU contention between two live
-/// namespaces silently corrupts throughput numbers while both runs still
-/// "succeed".
-fn measurement_lock() -> MutexGuard<'static, ()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 fn deps_ok(step: &str) -> bool {
@@ -235,52 +231,9 @@ fn kill_netns_pids(ns_name: &str) {
     }
 }
 
-/// Give every uplink beyond link 0 its own egress path and a symmetric reply
-/// route. Without this, all three bound source IPs resolve the receiver through
-/// link 0's subnet and only one link ever carries traffic — the bond would be
-/// nominal and the A/B comparison meaningless.
-fn configure_bond_routing(topo: &SrtlaTestTopology) {
-    for iface in ["all", "default"]
-        .into_iter()
-        .chain(topo.sender_ifaces.iter().map(String::as_str))
-    {
-        let _ = topo.sender_ns.exec(
-            "sysctl",
-            &["-w", &format!("net.ipv4.conf.{iface}.rp_filter=0")],
-        );
-    }
-    for iface in ["all", "default"]
-        .into_iter()
-        .chain(topo.receiver_ifaces.iter().map(String::as_str))
-    {
-        let _ = topo.receiver_ns.exec(
-            "sysctl",
-            &["-w", &format!("net.ipv4.conf.{iface}.rp_filter=0")],
-        );
-    }
-
-    let recv_ip = topo.receiver_ip.clone();
-    for idx in 1..topo.sender_ips.len() {
-        let table = (101 + idx).to_string();
-        let src = topo.sender_ips[idx].as_str();
-        let sif = topo.sender_ifaces[idx].as_str();
-        let rif = topo.receiver_ifaces[idx].as_str();
-        let _ = topo.sender_ns.exec(
-            "ip",
-            &["route", "add", &recv_ip, "dev", sif, "table", &table],
-        );
-        let _ = topo
-            .sender_ns
-            .exec("ip", &["rule", "add", "from", src, "lookup", &table]);
-        let _ = topo
-            .receiver_ns
-            .exec("ip", &["route", "add", src, "dev", rif, "src", &recv_ip]);
-    }
-}
-
 fn start_stack(name: &str, bin: &str, mode: &str) -> Stack {
     let topo = SrtlaTestTopology::new(name, LINKS).expect("create topology");
-    configure_bond_routing(&topo);
+    network_sim::bond::configure_bond_routing(&topo).expect("configure bond routing");
 
     for (idx, delay_ms) in DELAYS_MS.iter().enumerate() {
         topo.impair_link(

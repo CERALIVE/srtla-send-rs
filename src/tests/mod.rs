@@ -29,6 +29,12 @@ pub mod config_tests;
 pub mod sender_tests;
 
 #[cfg(test)]
+mod enhanced_cooldown_tests;
+
+#[cfg(test)]
+mod selection_mode_traces;
+
+#[cfg(test)]
 pub mod ack_rtt_tests;
 
 #[cfg(test)]
@@ -36,6 +42,18 @@ pub mod earned_ack_tests;
 
 #[cfg(test)]
 pub mod stall_deselect_tests;
+
+#[cfg(test)]
+pub mod health_delivery_tests;
+
+#[cfg(test)]
+pub mod adaptive_tests;
+
+#[cfg(test)]
+pub mod adaptive_ablation_tests;
+
+#[cfg(test)]
+pub mod health_delivery_batch_tests;
 
 #[cfg(test)]
 pub mod protocol_tests;
@@ -51,9 +69,6 @@ pub mod integration_tests;
 
 #[cfg(test)]
 pub mod end_to_end_tests;
-
-#[cfg(test)]
-pub mod rtt_threshold_tests;
 
 #[cfg(test)]
 pub mod edpf_tests;

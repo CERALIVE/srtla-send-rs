@@ -1,5 +1,374 @@
 # srtla-send-rs
 
+## BONDED-PATH CONVERGENCE (2026-09)
+
+Decision record: [`docs/adr/ADR-004-bonded-path-convergence.md`](docs/adr/ADR-004-bonded-path-convergence.md)
+(Accepted). This section is the summary; the ADR carries the numbers and the
+rejected alternatives. The per-todo sections that follow are the working history.
+
+**Root cause (receiver-side, source-verified).** Stock libsrt inserts a sequence gap
+into the loss list immediately and `LOSSMAXTTL` only defers the FIRST report; the
+periodic NAK timer (`checkNAKTimer`, every `max((SRTT+4·RTTVar)/2, 20 ms)` under
+LiveCC) re-reports the WHOLE loss list and never consults the reorder tolerance, so a
+late packet on a slow bonded link is NAKed within one tick and its link is
+window-decremented (B1/C starvation under NAK-on). Under NAK-off the encoder's
+LiveCC FASTREXMIT retransmits every packet since the last ACK on each RTO (A/G:
+44–46% retransmissions). The receiver-side fix is the fresh-loss-gated periodic NAK
+(`SRTO_PERIODICNAKGATE`, CeraLive SRT fork, TTL200 + freeze). **Per-sender-lineage
+negotiation at the receiver is structurally impossible**: `srtla_rec` is
+libsrt-free and the SRT handshake terminates at the encoder, not the bonding sender.
+
+**Sender mechanisms (all landed, all mode-independent).**
+- HSRSP flag read (`src/protocol/srt_handshake.rs`, `src/receiver_handshake.rs`):
+  NAKREPORT bit 4 / REXMITFLG bit 5 / version, cached ONCE PER BOND under its own
+  lock in `SharedStats`; `nak_report_enabled()` is **fail-safe `None ⇒ NAK-on`**;
+  unknown is omitted on every public surface, never `null`/`false`.
+- In-flight NAK rule (`src/connection/ack_nak.rs`): threshold
+  `clamp(rtt_min/2, 5, 500)` ms from KERNEL-ACCEPT time (`DeliveryLedger::sent_ms`),
+  K-cap 3 consecutive suppressions per link, **inactive without a real RTT sample**
+  (threshold 0.0). No flag, no telemetry; `premature_naks` status-log-only. M2 kept
+  K=3: B1/C settle deltas 0.000, A/G no `>5%` disjoint-CI regression.
+- Retransmit counters (`rexmit_forwarded`, R-bit) are **observability only**:
+  status log + `get-status.links[].rexmit_forwarded`, never telemetry, never
+  scheduling. R-bit loss ATTRIBUTION was rejected because a NAK-off receiver still
+  sends the first gap-triggered loss report — the sender already gets one NAK per
+  genuine loss on either policy, and a retransmit on link X does not name the link
+  that lost the original.
+- Shared signal layer (`selection/admission.rs`, `signals.rs`, `shared.rs`): every
+  mode consumed every signal; modes were reduced to ranking formulas.
+
+**Matrix and sequence.** M1 receiver TTL spike → M2 sender-mechanism spike → M3
+four-quadrant interop → CI-width spike (N=5, 0.95) → M4 `ours-new` matrix (20
+scenarios × 5 CLI modes × N=5, frozen `lineage-d1` rule with blocking metrics-v2
+zero-drop/belated gates) → bounded defect round (five-predicate admission: **0
+admitted**) → fold-in (**skipped**, single member) → ablation pins (**skipped**,
+Enhanced has no switchable ingredient; all nine feature bits ON) → M4b lineage gate
+(Enhanced **0/18**) → M5 (**skipped**, base already Enhanced) → hardware canary
+(**pending**, no rig) → 4.0.0 retirement.
+
+**Verdict.** `ship_set=["enhanced"]`, `base_mode=enhanced`,
+`covered_by_base_pct=0.0` — the rule's pre-declared EMPTY-SET TERMINAL, not genuine
+coverage. 100/100 primary cells fail the zero-drop/belated gate; **37 sacrificed
+cells** (19 primary `uncovered` + 18 `lineage gate`); D exempt (all five fail).
+**Deleted in 4.0.0: classic, rtt-threshold, edpf, adaptive.** Per-cell goodput
+medians: Enhanced is the only mode at `1.000` on both B1 and B2 and has the best
+worst-cell (`0.898`, L); classic/rtt-threshold win more cells (8/5) but drop to
+`0.484`/`0.480` on B1; edpf's worst is G `0.356`; adaptive's is A `0.666`. Full
+pros/cons table: ADR-004 §11. **`src/sender/selection/` is fork-owned from 4.0.0** —
+upstream scheduler changes are triaged in the sync note, never merged in.
+Rollback is reinstalling released `3.3.0`.
+
+## 4.0.0 SCHEDULER RETIREMENT (bonded-path convergence, Todo 21)
+
+This section supersedes the historical five-mode descriptions below. Enhanced
+is the ONLY `SchedulingMode` variant and CLI value, and remains the default.
+Classic/RTT-threshold/EDPF/Adaptive spellings are clap errors naming 4.0.0 and
+`docs/release-notes-4.0.0.md`; RPC rejects them with `-32602` and typed
+`error.data.kind = retired_mode`. No warning-and-remap compatibility window.
+The frozen verdict selected Enhanced by empty-covering-set fallback, not genuine
+coverage. M5 skipped for Enhanced; hardware canary remains pending, not pass.
+
+Quality/exploration/RTT-delta and the four stall CLI inputs are present, accepted,
+no effect, with exactly one startup WARN per explicitly supplied option (clap
+ValueSource distinguishes supplied numeric defaults). Quality/explore/RTT control
+writes return success plus `{deprecated:true,effect:"none"}` without mutation.
+Discovery arrays remain byte-identical. `--earned-ack-window` is untouched.
+Shared admission, weighting, sole election, probes and ACK policy remain active;
+Adaptive's separate selector is gone, not the shared machinery it donated in Todo32.
+
+**EDPF exception:** keep `selection/edpf.rs`, BLEST/IoDS support and both EDPF
+test files because Todo34 skipped fold-in and ported no E1/E2 pins. Unit tests
+call the retained pipeline directly. `netns_edpf` runs the hash-verified
+pre-deletion `m4a-ours-new/edpf` artifact; absent artifacts explicitly skip,
+hash mismatches fail. No production selector dispatches to EDPF. Adaptive-only
+CLI/netns tests retire with the mode; previous G/twin failures are history, NOT
+fixed behavior. Shared mechanism tests now call the real Enhanced dispatcher.
+Both pre-shared-layer and five-arm pre-deletion trace fixtures stay frozen;
+the surviving Enhanced trace must remain byte-identical.
+
+Historical manifests require `bash scripts/bench/run_campaign.sh
+--historical-from-lock MANIFEST`. Parent and worker verify locked candidate
+SHA-256s, use locked paths and never rewrite historical locks. Missing lock
+entries fail closed. The owner C1 file remains byte-untouched; retired mode
+arguments force historical classification even without a marker. Do not narrow
+frozen statistical rules or historical matrices to the current CLI set.
+
+Capability comparison permits the mandatory `version` value change to4.0.0;
+all other differences from released3.3.0 are additive (`adaptive_scheduler`,
+`link_priority`, introduced earlier). `adaptive_scheduler` describes shared
+health adaptation, not acceptance of the removed mode. Probe/live docs agree.
+Package epoch and cutover2026.6.2 stay unchanged; published3.3.0 and the external
+versions.yaml pin remain rollback inputs. Binding spawn union is BREAKING;
+control status `mode` is `string`. No release/tag/push is part of this task.
+
+## AUTHORITATIVE VERDICT / LINEAGE GATE (Todo 34)
+
+The primary authoritative verdict is byte-identical to Todo20's provisional
+empty-set fallback: enhanced only, zero coverage; Todo33 contributes no reruns.
+`m4/foldin.json` skips code fold-in. The verdict-derived `m4b-lineages.json`
+contains18 noncovering cells/66 one-attempt runs, including the DISTINCT SLS4003
+block; M4a+M4b=128≤150. `m4b_manifest.py` validates exact scope. The runner retains
+full-window negative settling outcomes and captures SLS settling without adopting
+TWINPORT's retry/equivalence policy. `m4b_gate.py` records joint settle/retransmit
+quotas, all-runs applicable metrics-v2 gates and explicit lineage sacrifices;
+it can swap the base but never enlarge the ship set. Missing SLS retransmission
+denominator remains unknown/failing, not a fabricated zero. `decide.py`,
+`lineage_rule.py`, `report.py` and production scheduler sources are unchanged.
+Launch `run_m4b.sh` only through the durable systemd user-service recipe.
+Method: `docs/evidence/bpc/m4/lineage-method.md`; measurements are separate from
+shipping acceptance and do not waive the existing full-feature G/twin failures.
+Completed66/66indices (65settled) in5417s active service time,5579s elapsed,
+across original48indices and a checkpoint continuation18indices. First launcher
+omittedSLS_BIN; continuation resolved the locked server and preserved every prior
+receipt byte. Checker-only corrections matched catalogG45s and SLS actual elapsed
+windows; no measurement, scenario or gate was changed. Final enhanced0/18passes,
+swapnull,37sacrifices (19primary+18lineage). All15SLTcells fail zero-drop/belated;
+SLS9/9conformance passes but retransmit fraction remainsunknown. Full result and
+retained failure exits: `docs/evidence/bpc/m4/README.md`, `m4/b/` receipts.
+
+## BOUNDED DEFECT ROUND (Todo 33)
+
+No scheduler correction was admitted after the M4 investigation. Passing claim
+probes are not failing-first proof; the strict empty-covering-set outcome remains.
+`docs/evidence/bpc/defects/none.json` records per-mode predicates, provenance gaps
+and the unadmitted EDPF allocation-claim backlog. Zero superseding runs are recorded
+in `defects/reruns/summary.json`, including the native empty reporter envelope for
+the unchanged Todo34 reader. `uv run scripts/bench/pr_description.py --check-defects
+docs/evidence/bpc/defects/` checks structural evidence and caps only, not causality.
+No M1-rule rerun was triggered, no source policy/constant or locked artifact changed,
+and no full-green or shipping acceptance follows. See the defects README for limits.
+
+## M4 PROVISIONAL MATRIX (Todo 20)
+
+`m4a-ours-new.json` declares110 metric cells/546 indices:100 five-CLI primary
+cells atN5,8 upstream reference cells atN5,2 enhanced FEC pair cells atN3.
+Separate `m4-soak.json` has two600s non-metric M8 runs under BENCH_SOAK=1.
+The exact matrix validator runs before measurement. `lineage-d1` is now the
+frozen base-agnostic CLI-only rule, not an alias for adaptive-preferring `d1`.
+Full-window settle-timeout outcomes remain failed and cannot cover; required
+metrics-v2 gates are blocking. D's all-five-fail exemption is explicit, never
+pre-applied. FEC is wired on both SRT ends only for the noncovering M4 pair.
+Process stderr counts survive64KiB log-tail truncation. Frozen method:
+`docs/evidence/bpc/m4/method.md`; measured results: `docs/evidence/bpc/m4/README.md`.
+Completed548 planned indices including soaks in12h43m28s, no cell reruns.
+The provisional rule returns enhanced only by the EMPTY-SET terminal:0% coverage,
+19 sacrificed scenarios and D explicitly exempt because all five fail coverage.
+Every primary mode/scenario cell fails the zero-drop/belated all-runs gate.
+FEC passes narrowly (ratio0.951794); both M8 soaks fail final link health (three
+Degraded each), despite zero crashes and no monotonic decline. This is NOT shipping
+acceptance. Both full feature suites retain known G/twin failures; no waiver added.
+**Scope correction:** Todo34, not Todo20, owns m4b and the DISTINCT4003 block;
+older Todo19 assignments below are superseded by the owner's Todo20 directive.
+
+## SLS TWIN-PORT CAMPAIGN (Todo 19)
+
+`scripts/bench/manifests/twinport-{default,legacy-l2}.json` each runs enhanced/M1
+three times per bonded port plus one separate synthetic SLS conformance cell per
+port. The four conformance configurations are two ports times two profiles, not
+six. Default leaves `SLS_BONDED_PROFILE_OVERRIDE` unset; explicit rollback is
+forwarded into the SLS namespace rather than silently replaced by converged.
+The attached loopback player uses200ms latency and retains its own receive CSV.
+
+Only these campaigns add real settling, sender-total edge snapshots and the
+strict zero-player-loss/drop plus98%-of-offered receive-rate gate. Invalid legs
+are `player_leg_invalid` and rerun once; other failures get no retry. Invalid or
+unsettled observations remain diagnostic, never valid paired samples. Existing
+ordinary/SLS smoke semantics are otherwise unchanged. Same-index ports are
+interleaved; M1 remains90s at9.6Mbit, with no catalog or sender-policy changes.
+
+`uv run scripts/bench/twinport_report.py RAW_ROOT docs/evidence/bpc/twinport`
+validates actual player CSV, publisher latency, both listener policy logs and
+locked identities before reduction. Only valid N=3 pairs supply delivered-fraction
+inference. Missing publisher drop/received pairs force DISTINCT; neither NAK
+counts nor player received packets can fill that publisher denominator. Unknown
+deltas stay null. Method/results: `docs/evidence/bpc/twinport/`.
+
+Measured: **DISTINCT**. Live publisher stats lack a received-packet denominator;
+strict valid M1coverage is2/3 vs1/3 on default4002/4003,0/3 on both rollback
+ports after the permitted reruns. No valid N=3delta; both spike deltas are null.
+All four synthetic conformance configurations pass, but legacy M1carry fails
+11/12attempts. Todo20 must run its reserved4003 block; do not promote discarded
+player-leg diagnostics into equivalence evidence.
+
+## M3 FOUR-QUADRANT INTEROP (Todo 18)
+
+`scripts/bench/manifests/m3-interop.json` measures five sender configurations:
+BELABOX C, irlserver Rust classic/enhanced, the actual released 3.3.0 amd64
+Debian binary, and current enhanced. Each runs B1/G/C/M1 against genuine old
+TTL40/freeze-off and new TTL200/gate-on/freeze-on receivers, N=3. Three separate
+foreign scenario-I cells retain bidirectional full-control captures for REG1/2/3,
+literal keepalive echo and receiver-restart conformance. No catalog/source tuning.
+M1/M2/M3 alone retain full-window settle-timeout measurements with one attempt;
+ordinary campaigns still require success. Candidate labels may carry dotted
+release versions; lock serialization preserves historical provenance metadata.
+`report.py --m3-outcomes` requires the exact matrix and receiver policies, rejects
+infrastructure failures, and writes separate M3 evidence, never D-1 groups.
+Any released-sender failure blocks the receiver PR pending Todo24's M1-rule rerun;
+foreign failures become known limitations without reverting policy. Method and
+results live under `docs/evidence/bpc/m3-interop/`.
+
+Measured M3 result: released3.3.0 fails C (settled3/3, retransmit13.568/14.301/
+51.453%, joint0/3), so Todo24 is BLOCKED on its required M1-rule rerun. Foreign
+BELABOX/C and irlserver-enhanced/C are known limitations; irlserver-classic
+passes all four scenarios. Current enhanced fails C/M1. All same-sender median
+goodput ratios clear0.95. Registration/restart conformance passes for all foreign
+arms. BELABOX's two-byte keepalive receives a32-byte zero-padded reply: literal
+echo parity FAIL, not demonstrated operational failure (the pinned C receive
+path tolerates trailing bytes). Preserve the NAT-padding floor and the distinction.
+
+## M1 RECEIVER TTL CAMPAIGN (Todo 16)
+
+`scripts/bench/manifests/m1-ttl.json` declares 65 cells / 195 one-attempt runs:
+32 core cells (A/B1/C/G, classic/enhanced, old40/new40/new200/new500), three
+B1 enhanced 24Mbit diagnostics, twelve one-link freeze diagnostics (2/6Mbit,
+three TTLs, freeze on/off), and eighteen pinned BELABOX/irlserver foreign-sender
+cells. `offered_mbit_override` requires a named, noncovering variant and changes
+only measurement load; the freeze fixture additionally uses that rate for warmup.
+The reference scenario catalog is unchanged. Freeze uses one 60ms/8Mbit link,
+no jitter, 1% netem loss seeded with 42+run_index, and receiver-loopback capture.
+The netem delay is verbatim; the decision's 60ms penalty threshold is task-defined,
+not a claim that bidirectional measured RTT equals that configured one-way delay.
+
+Candidate `control_socket` defaults true; explicit false omits the unsupported
+flag and uses BELABOX registration logs. No foreign sender binary is emulated.
+The old SRT lineage genuinely lacks the freeze URI row and remains default-off;
+its manifest says freeze0 rather than falsely claiming freeze-on.
+
+M1, M2 and M3 measure the full window after a settling timeout, retaining failed status
+and reason. It requires `BENCH_MAX_RETRIES=1`. The M1 reporter requires every
+declared outcome, preserves measured failures, and refuses infrastructure failures;
+ordinary reporting still requires successful records. M1 summaries have empty D-1
+`groups` and a separate `cells` collection. `decide.py --rule m1-ttl` validates the
+complete matrix before applying the joint core/foreign rule, explicit core-failure
+TTL200 fallback, freeze cap, and 24Mbit controller trigger. No production default is
+changed by this benchmark plumbing. See `docs/evidence/bpc/m1-ttl/` for results.
+
+## SHARED SCHEDULER ADMISSION (bonded-path convergence, Todo 32)
+
+**Current contract; supersedes older adaptive-only/legacy-unchanged implementation
+notes below.** Every mode enters `selection::admission::admit` once before dispatch.
+`signals.rs` lifts the former adaptive snapshot unchanged; weights are lazy and
+candidate-scoped: quality × rejoin ramp × Healthy-only preference × soft rate cap,
+in that exact order. Held links do not advance the 50ms quality cache. Down is
+excluded normally; Degraded/Stalled and deadline-held links are probe targets.
+No normal candidate triggers the unchanged sole election, then the connected-only,
+base-ranked escape (including Down-but-connected links). Only zero connected links
+can produce no selection. `sole.rs` and its call remain unchanged; `AdaptiveState`
+is a compatibility type alias for loop-owned `SchedulerShared`, not a second store.
+Shared probe pacing, target refresh, wire-estimator observation and stats publication
+apply to all modes. No hard wire budget is introduced.
+
+`SchedulerFeatures` lives on `ConfigSnapshot`: the original eight bits plus QUALITY,
+all ON by default, u16 storage. Existing `--no-quality`/quality control gates QUALITY
+for every mode; no new CLI/control keys. Test-build env names remain
+`SRTLA_ADAPTIVE_FEATURES` and `SRTLA_ADAPTIVE_TUNING`; `quality` is the ninth token.
+Feature bits never appear in get-status, hello, capabilities-json or telemetry.
+Historical ablation tests retain a test-only `AdaptiveFeatures` name alias.
+
+Before/after by mode:
+- Classic: formerly unweighted C-like capacity rank; now admitted capacity × shared
+  multiplier, without cooldown. Classic also receives the adaptive time-based window
+  recovery used by the other modes; it is no longer an exact C-sender behavior mode.
+- Enhanced: retains 15ms cooldown, 10% hysteresis and exploration; its former private
+  quality multiplication is replaced by the shared product, never applied twice.
+- RTT-threshold: retains fast/slow grouping and cooldown over admitted links; group
+  ranks consume the product rather than private quality. No-capacity escape remains usable.
+- EDPF: substitutes effective_multiplier for the raw quality-cache read inside the
+  unchanged loss-clamped capacity formula. BLEST → IoDS → argmin, E1 flat bootstrap,
+  E2 congestion escape and velocity/BDP penalties remain; no fallback revives held links.
+- Adaptive: same rank, hysteresis, sole inputs and ordered product as before the lift.
+
+All four legacy modes now use adaptive's ACK policy: arrival-link/socket-generation
+attribution; no cross-link first-match or broadcast window growth; only acknowledged
+originals clear congestion accounting; probe ACKs prove health, not original rate or
+window growth. Only the final unambiguous original in an SRTLA ACK frame supplies RTT;
+cumulative SRT ACKs still prune all logs but never sample RTT. Probe-only NAKs are
+excluded. Todo 8 additionally gates premature normal-DATA NAK penalties as described below.
+Historical legacy ACK adapters are compiled only for unit tests, not shipped.
+
+### In-flight-aware NAK penalty (bonded-path convergence, Todo 8)
+
+`handle_nak` peeks before removing an owned packet-log entry. With a real RTT sample
+(`has_rtt_sample()`, never the default RTT baseline), the protection threshold is
+`clamp(rtt_min_ms / 2, 5, 500)` ms. Age uses `DeliveryLedger::sent_ms`, the separate
+kernel-accept timestamp already recorded by `transmit.rs` after the batch flush returns,
+NOT the packet log's queue timestamp. Only the accepted prefix has ledger entries;
+retransmission replaces its acceptance time, recovery clears the ledger, and missing
+or evicted acceptance evidence disables protection. No second timestamp map is added.
+
+An owned NAK younger than the threshold is suppressed only while the per-link
+`premature_streak < 3`: retain its packet-log entry and in-flight count, skip congestion
+and loss-cohort accounting, increment the streak and lifetime `premature_nak_count`,
+and return handled so fallback attribution stops. The fourth consecutive premature
+NAK takes the unchanged normal penalty path. Every normal penalty and every accepted
+ACK/keepalive RTT sample resets the streak; rejected RTT samples do not. The counter
+is retained across reconnects of the same connection object and appears only as
+`premature_naks=<n>` in each link's status log, never in telemetry JSON.
+
+All NAK frames still reach the encoder byte-for-byte, independently of this gate.
+There is no flag, configuration key, ACK penalty change, or congestion-constant change.
+Tests cover actual UDP batch acceptance (queue+15ms, NAK+18ms), partial/fail-safe
+evidence semantics, cap/reset/forwarding behavior, and mature-window equivalence to
+the pre-change handler. Selection-mode golden bytes remain frozen. This is not a
+bonded-hardware performance claim or a waiver of the existing adaptive gate failures.
+
+`--stall-deselect` is accepted/ignored with one WARN per process; its tunables and
+`--earned-ack-window` are inert compatibility inputs. Shared admission replaces the
+old mask. Stats/status use one weight path, with health in every mode; zero-total
+telemetry never invents equal shares. Existing schema/version/units are unchanged.
+
+Original four 80-byte traces are frozen in
+`tests/fixtures/selection-traces-pre-shared-layer.txt` and must never be regenerated.
+The trace matrix adds Enhanced. Original neutral traces remain unchanged: every live
+link has the SAME startup quality 1.1 and other factors 1.0 (relative weight 1.0);
+EDPF clamps that bonus to capacity factor 1.0. Tests assert actual multiplier bits,
+relative neutrality and cache-refresh timestamps through the real dispatcher.
+Do not falsely describe the raw effective multiplier as 1.0. Differentiating health,
+feature, cache and fallback replays separately prove the new wiring.
+
+This is the deliberate pre-campaign behavior change, not a throughput acceptance or
+hardware-performance claim. Existing historical G/twin limitations are not waived.
+No benchmark campaign is part of this change.
+
+Todo 17's M2 campaign subsequently compared K=3 against a test-only bypass over
+all three full-window outcomes per arm, including settle timeouts. B1/C settle-rate
+deltas were both zero; neither A nor G met the frozen >5%, disjoint-CI regression
+predicate, so production keeps K=3 and no confirmation run was triggered. The bypass
+environment variable is compiled only with `test-internals`; release binaries cannot
+disable this rule. The same campaign established R-bit observability for the locked
+caller build (69,278 DATA, 639 repeats, zero misclassified flags), retained NAK-off
+blindness as a known G limitation, and decoded irlserver-prod HSRSP as unknown/None
+under the fail-safe rule. Portable evidence: `docs/evidence/bpc/m2-sender/`.
+
+### Todo 32 gate disposition — baseline-reproduced privileged failures
+
+On 2026-09-17 both blocking signatures were reproduced from a clean detached
+`37725986b13068f0c4bafba0bdf22d9c72d2051a` checkout, built with the pinned nightly,
+using the SAME real netns harness and `/usr/local/bin/srtla_rec`. Individual
+`cargo test --features test-internals --test netns_adaptive <test> -- --nocapture
+--test-threads=1` invocations were bounded at180s; neither timed out or self-skipped.
+
+| Assertion | Clean pre-lift3772598 | Shared-layer runs |
+|---|---|---|
+| `marginal_link_is_not_starved`, demotion≤10% | **42/61** demoted, FAIL | **51/61**, **40/61**, FAIL |
+| `twins_on_one_ip_bond_under_adaptive`, final sustained Healthy | **FAIL**, initially Healthy at+5.88s | **FAIL**, initially Healthy at+5.75/+5.54s |
+| Twin final preferred share (diagnostic, not failed assertion) |48.13% |46.32% /47.08% |
+
+The owner authorized committing the lift with these **pre-existing failures recorded**.
+This is a scoped acceptance of the refactor, NOT a green privileged suite or a fix
+for G/twins. Assertions, ignores, scenario loads, and thresholds remain unchanged.
+One baseline sample establishes reproduction, not statistical equality of rates.
+Release build, lib+bin Clippy, formatting,907 default library tests and932 feature
+library tests passed. Both full feature commands still exited101 at netns_adaptive;
+later fail-fast targets were not reached. The separate bounded netns_edpf test passed
+with4183/4241 packets on30/150ms links. No campaign or real-hardware claim follows.
+
+The startup/grace/cache timing concern was checked without speculative tuning:
+the quality function,30s grace and50ms cache implementation are unchanged; the old
+private-product IEEE-754 oracle and held-cache/readmission/boundary replays pass.
+The live failures reproduce WITHOUT the lift, so they cannot require its new
+admission path. Their underlying pre-existing cause remains an independent issue.
+
 Parent: [`../AGENTS.md`](../AGENTS.md)
 
 ## ROLE IN THE GROUP
@@ -12,7 +381,7 @@ RTT). On the device it is driven by CeraUI and feeds the bonded path into
 `irl-srt-server`. Canonical branch `main`; sibling checkout under the workspace root
 (see CRITICAL CONSTRAINTS below).
 
-> **Status:** current source v3.3.0; CeraLive parity milestone v1.0.0 complete. Fork created from upstream HEAD;
+> **Status:** current source v4.0.0 (breaking mode retirement, not yet released); CeraLive parity milestone v1.0.0 complete. Fork created from upstream HEAD;
 > nightly pinned; full gate green on the pinned toolchain. Landed: CLI parity contract
 > (Task 9: `--verbose`/`--dry-run`/`--stats-file`/`--stats-file-interval`), the opt-in
 > ADR-001 telemetry sink (Task 10: `src/telemetry_file.rs`), signal/startup parity
@@ -57,6 +426,13 @@ RTT). On the device it is driven by CeraUI and feeds the bonded path into
 > Upstream's default-on whole-bond receiver re-home remains DEFERRED after review found
 > socket-coherence and stale-reader-generation gaps, and its `4.0.1` bump was not imported:
 > the published fork release stays `3.3.0`.
+> **Bonded-path convergence landed (2026-09, ADR-004):** source `4.0.0` retires
+> classic/rtt-threshold/edpf/adaptive (Enhanced is the sole scheduler, by the frozen
+> `lineage-d1` rule's empty-set terminal, NOT genuine coverage); the sender reads the
+> receiver's HSRSP NAK policy (fail-safe NAK-on), gates premature NAKs on kernel-accept
+> age (K=3), and exposes `receiver_nak_report` / `get-status.receiver` /
+> `rexmit_forwarded` additively. Hardware canary PENDING; `3.3.0` remains the
+> published release and rollback artifact. See BONDED-PATH CONVERGENCE (2026-09).
 > CeraUI integration lands in follow-up tasks.
 
 **Relationship to `srtla/`:** this is the **sender** engine (Rust). The existing
@@ -192,9 +568,12 @@ CeraUI and the device integration depend on these staying stable:
   a specific error), `--stats-file <path>` and `--stats-file-interval <ms>` (default
   `1000`). The `--stats-file` telemetry sink is **implemented** (`src/telemetry_file.rs`)
   and opt-in — absent means no file is ever written.
-- **Upstream scheduler/control-socket flags** (`--mode`, `--no-quality`, `--exploration`,
-  `--rtt-delta-ms`, `--control-socket`) stay present and functional but are **not**
-  surfaced in CeraUI.
+- **Legacy scheduler controls** (`--no-quality`, `--exploration`, `--rtt-delta-ms`
+  and all four stall options) are **present, accepted, no effect** in4.0.0;
+  each explicitly supplied CLI option warns once. Runtime quality/exploration/RTT
+  writes return additive deprecation success without mutation. `--mode` accepts
+  only `enhanced`; `--control-socket` remains functional. `--earned-ack-window`
+  remains unchanged. These scheduler controls are not surfaced in CeraUI.
 - **Optional bind-map sidecar (`--bind-map <path>`, ADR-003) — ADDITIVE, never required.**
   `BIND_IPS_FILE` stays **byte-unchanged**; the mapping rides a *separate* versioned JSON
   sidecar that describes it **positionally** (the Nth row describes the Nth accepted IP
@@ -216,6 +595,16 @@ CeraUI and the device integration depend on these staying stable:
   so egress leaves the named interface *and* the wire source address is deterministic —
   neither half substitutes for the other, and an unmapped link still takes the
   `SourceIpBinder` path verbatim.
+- **Per-link `priority` is a ranking bias, never an eligibility override.** Range is
+  `−0.20..=+0.20` (`src/bind_map/types.rs`), and **a lower value means LESS preferred**:
+  `−0.20` scales a link's weight to at most `0.8×`, `+0.20` to at most `1.2×`
+  (`1.0 + priority × clamp((window − 10000) / 10000, 0, 1)`). It applies to **Healthy
+  links only** and ramps in with the congestion window, so it is `1.0` at or below
+  10000 in flight. It is set by a bind-map row's `priority` or at runtime via the
+  JSON-RPC `set-link-priority` method (`src/jsonrpc.rs`, addressed by `link_id` or
+  `conn_id`; `null` clears it). **There is no CLI flag.** The formula lives in
+  `src/sender/selection/adaptive/preference.rs` and is applied by
+  `admission::compute_weight`, so it is live, not dormant.
 - **Link identity is the sidecar's `link_id`; `(ip, iface)` is only the current socket
   key.** Registration, stats, and telemetry state attach to `link_id`, which is stable
   across reloads, reconnects, and interface changes; dedup runs on the socket key, which
@@ -266,7 +655,25 @@ CeraUI and the device integration depend on these staying stable:
   stays a string array** — the TS control binding feature-detects with
   `hello.capabilities.includes(...)`, so that field is frozen.
   `get-status` additionally returns `bind_map_status`, `disposition`, and a `links` array
-  of `{conn_id, iface?, link_id?}` in telemetry order.
+  of `{conn_id, iface?, link_id?, health?, priority?, rexmit_forwarded}` in telemetry
+  order, plus `receiver` and optional `negotiated_latency_ms` (next bullet).
+- **Receiver observation (ADR-004) — additive on THREE surfaces, `schema_version`
+  STAYS 1.** (a) Telemetry file/event: optional top-level `receiver_nak_report:
+  bool`, serialized AFTER `disposition` (it is the final key when present); omitted
+  when no HSRSP has been observed — never `null`, never `false`-by-default. (b)
+  `get-status.receiver`: `{nak_report?: bool, srt_version?: "M.m.p", rexmit_flag?:
+  bool}` — `{}` before any HSRSP, each key omitted when unknown; the object is the
+  serde projection of `ReceiverHandshake` (`src/receiver_handshake.rs`), do NOT
+  introduce a parallel type. (c) `get-status.links[].rexmit_forwarded: u64` — count
+  of SRT DATA forwarded on that link with the R bit set; REQUIRED in `links[]`
+  (always present, starts at 0), status-log-only otherwise and NEVER in the telemetry
+  file. Policy consumers MUST read unknown as NAK-on (`nak_report_enabled()` in Rust,
+  `value ?? true` in TS) while keeping unknown visibly distinct from `true` on every
+  rendered surface. The bond-scoped cache survives SIGHUP/re-registration; a later
+  valid HSRSP replaces it; a malformed handshake never clears it. Pinned by the
+  `telemetry-receiver-flags` fixture on both sides and `tests/negotiated_latency.rs`.
+  The TS control binding types these in `controlStatusSchema` (passthrough, so a
+  newer binary's extra keys survive).
 - **`-v/--version` IS operator-visible, and its build metadata is OPTIONAL.** CeraUI
   shells out to `srtla_send -v` and renders the raw stdout in Settings → Versions
   (`apps/backend/src/modules/system/revisions.ts`), so this line is read by humans, not
@@ -331,7 +738,8 @@ CeraUI and the device integration depend on these staying stable:
   distinguishable only by it. Pinned by the `telemetry-reordered` / `telemetry-reconnect`
   fixtures on both sides.
 - **Cross-language fixture matrix — Rust writes, TypeScript parses THE SAME BYTES.**
-  Eight fixtures, each committed twice (`tests/fixtures/<name>.json` and
+  Ten fixtures (the tenth, `telemetry-receiver-flags`, pins explicit
+  `receiver_nak_report:false`), each committed twice (`tests/fixtures/<name>.json` and
   `bindings/typescript/tests/fixtures/<name>.json`) and asserted byte-identical by
   `tests/telemetry_fixture_parity.rs`. The producer half is `tests/telemetry_fixtures.rs`
   (regenerate deliberately with `UPDATE_GOLDEN=1 cargo test --test telemetry_fixtures`,
@@ -344,8 +752,9 @@ CeraUI and the device integration depend on these staying stable:
   top-level (whole bond) and per-connection. **Unit is BYTES, and no ×8 is applied** —
   it is a count, not a rate, and it sits directly beside `bitrate_bps` (bits/s), which
   is the one place a consumer is most likely to introduce a factor-of-8 bug. Counted at
-  the same call site as `bitrate_bps` (`queue_data_packet`), so DATA and SRT-level
-  retransmits are IN and control frames are OUT, by construction. **Monotonic for the
+  the same call site as `bitrate_bps` (`queue_data_packet` for originals and SRT-level
+  retransmits; accepted-prefix processing for duplicate probes). Both DATA forms are
+  IN and control frames are OUT, by construction. **Monotonic for the
   process lifetime:** it does NOT reset on a per-link socket replacement
   (`BitrateTracker::reset` rebases the rate window instead of zeroing the total) and
   does NOT regress when a SIGHUP reload drops a link — the bond figure is a delta-banking
@@ -421,6 +830,80 @@ CeraUI and the device integration depend on these staying stable:
 
 ## BUILD / GATE
 
+**Hard-admission correction (2026-09-15), live acceptance still blocked:**
+`sender/wire_admission.rs::configure` now returns `None` for Adaptive's hard
+budget, retaining the estimator update but never installing `WireBudget`.
+`RateCap`'s soft BDP ranking multiplier is unchanged and does not read
+`WireRateEstimator::rate_bps`. Without the budget, `wire_sample()` is absent and
+the retained estimator update rebases instead of actively searching; do not claim
+continued attempted-wire measurement. The four frozen wire-rate/queue/search/budget
+implementation files remain byte-identical. The new fixed-clock regression first
+failed with `funded_link == None` after a queue-induced 500 kbit/s estimate and
+two-MTU reservation; it now admits and actually flushes three MTUs. Existing
+learned-rate/reconnect and forwarding tests assert the new no-hard-gate contract.
+Three isolated A indices (two attempts each, unchanged criteria) still fail
+`settle_timeout`; this correction is not sufficient for Scenario-A acceptance.
+Both full feature-suite invocations fail G's demotion and Twins sustained-health
+checks, while I passes; D remains ignored in those invocations. Build, Clippy and
+library tests pass. Formatting still reports the two pre-existing spans in unchanged
+`tests/netns_adaptive.rs`. No all-green gate, no C1 restart, and no scheduler
+acceptance is claimed. Historical hard-admission descriptions below are superseded.
+
+**ACK-frame RTT correction (2026-09-15), also insufficient for Scenario A:**
+Adaptive credits every valid link-local original/probe ACK as before, but supplies
+at most one RTT sample per SRTLA ACK frame, from its final receiver-order entry.
+A final probe, missing/expired original, replay, or Karn-ambiguous retransmission
+supplies none; never substitute an earlier entry that includes coalescing delay.
+`SrtlaIncoming` retains frame boundaries even when draining multiple datagrams.
+Legacy per-sequence RTT/window behavior is unchanged. `rtt.rs` adds only a test
+module, not an estimator change. The real-dispatch staggered-ten-original regression
+first recorded ten samples (870 down to 60 ms), Kalman 112.40 ms/jitter 170 ms; it now
+records only 60 ms, Kalman 60 ms/jitter 0. Seven tests cover mixed/probe-only frames,
+Karn exclusion, receiver order, replay, separate frames, and legacy behavior.
+
+The admission isolation comparison stashed only the three inherited Rust changes:
+HEAD `5d54052` failed G (30/61 demoted); baseline Twins passed once and failed a
+second run, including both sustained-health assertions. Restored admission-only
+Twins passed. Thus both failure signatures predate admission removal; this does
+not establish equal failure rates or waive either blocking assertion.
+The combined immutable candidate's isolated A smoke still failed all six attempts
+(three indices, unchanged two-attempt budget) with `settle_timeout`. Sink data
+shows transient 23.78–24.20 Mbps one-second peaks but only 7.02–11.07 Mbps in final
+one-second buckets. Admission-only evidence likewise had transient ~24 Mbps peaks,
+so neither zero-goodput failure placeholders nor peaks establish sustained delivery.
+Retained sender log tails contain NAK floods but no health/RTT status lines and no
+literal 1000-sequence truncation warnings; truncated logs cannot prove their absence
+throughout a run. Stable health and RTT improvement are unverified live. No C1
+restart, active-search redesign, telemetry expansion, or acceptance-criteria change.
+Final gate: release build, Clippy, changed-file formatting, nine changed Rust files'
+LSP diagnostics, and library tests (883 passed, one ignored) pass. Both feature
+suites pass 908 library tests (one ignored), then fail G (34/61 and 49/61 demoted)
+and Twins sustained health; I passes. Later integration targets are not reached.
+Whole-tree formatting still reports only the unchanged `netns_adaptive.rs` spans.
+Both fixes remain uncommitted pending the owner's decision on the failed live gate.
+
+**Scenario-A limitation and owner decision:** the estimator retains the exact `d168aa6`
+wire-rate implementation. Post-Todo-28 provisional-learning, DemandLimited-utilization and
+repeat-reset experiments passed deterministic tests but failed live A acceptance and
+have been reverted. Their mechanisms, full provisional test source, measured limits,
+and the C1/C2 follow-up are archived in
+[`docs/notes/scheduler-evaluation-2026-09.md`](docs/notes/scheduler-evaluation-2026-09.md#known-limitation-adaptive-mode-baseline-topology-throughput-instability-scenario-a-discovered-post-todo-28).
+Do not reintroduce them as accepted fixes or describe an unidentified fourth gate as
+proven. Todo 28's acceptance remains scoped, including D's accepted4/5 residual.
+For Todo29 only, the final owner calibration makes all D cells and adaptive/A informational
+and requires at least one of two successful planned indices in each of classic/A and
+enhanced/A. All twelve index outcomes and provenance are validated; failures are never
+relabelled. `report.py --smoke-coverage` accepts only the two canonical required smoke
+cells and preserves actual indices/counts; default complete-manifest reporting remains
+unchanged. This is coverage, not a strict majority or performance proof. C1/C2 remain
+strict; no settling predicate, scheduler constant or runtime source has changed.
+The existing final campaign was retrospectively rescored without new live runs:
+classic/A2/2 and enhanced/A1/2 pass this final scope. All D cells and adaptive/A
+remain0/2; the original full-matrix exit101 remains a failure. The
+[portable report](docs/notes/smoke-final-report-2026-09.md) and
+[receipt](docs/notes/smoke-final-receipt-2026-09.json) preserve that distinction.
+Todo29's measurement-path acceptance does not accept an adaptive scheduler fix.
+
 Run the **full gate green on the pinned nightly** before every PR (it auto-selects via
 `rust-toolchain.toml`):
 
@@ -447,14 +930,326 @@ without privileges and covers repeated teardown calls. Both namespace and veth n
 the shared PID+atomic-counter uniqueness suffix; do not replace the veth suffix with the
 test-binary PID alone because scenarios inside one integration target run in parallel.
 Never run the privileged targets unbounded: use `scripts/netns_test_gate.sh`, which caps
-each target at 90 s by default. **`netns_twin` is the one exception, at 420 s
+each target at 90 s by default. **`netns_bond` gets 120 s; `netns_twin` gets 420 s
 (`NETNS_TWIN_TEST_TIMEOUT_SECONDS`)**: its scenarios wait out real sender timers no other
 target touches — the 15 s `CONN_TIMEOUT` and the 30 s status-log interval — so a shared
 budget would make it flake at exit 124. Separately,
 `stall_deselect_real_starlink_repro` is one intentionally ignored hardware-only test; run
 it with `--ignored` only on the bonded Starlink/cellular validation rig.
 
-**`tests/netns_twin.rs` — duplicate-IP twin-modem scenarios (8 tests).** The only target
+**Adaptive integration target:** `tests/netns_adaptive.rs` uses generic
+`BondTopology`/temporal profiles, the real FIFO-controlled SRT source, and the shared
+host measurement lock. Four privileged scenarios pin D, G (60s), I, and duplicate-IP
+twins including the legacy falsifiability control and both in-blackhole priority
+mutations. Two existing unprivileged helper tests are included through shared modules.
+`NETNS_ADAPTIVE_TEST_TIMEOUT_SECONDS` defaults to 360s in the bounded gate. Set
+`SRTLA_REC_BIN` explicitly for CeraLive receiver provenance;
+`NETNS_ADAPTIVE_ARTIFACT_DIR` optionally preserves observations/sink/log evidence.
+The protected legacy twin suite is unchanged. **Todo 30 closes only as a scoped
+evaluation with documented findings, not a green adaptive gate.** Nine non-adaptive
+targets have historical privileged-pass evidence (27 tests); no fresh ten-target
+pass is claimed. I passes with its blocking precondition restored. D remains
+explicitly ignored, Twins-share informational, Twins-health unresolved, and G's
+wide reliability variance deferred to Wave 6 / Todo 32's N=5+ C2 campaign.
+G and Twins-health assertions stay blocking. No self-skip is integration validation.
+
+**Oracle consult #16 / Todo 30: scoped completion; unconditional success claim withdrawn.**
+The priority-snapshot fix is retained. Removing I's blocking precondition in
+`58e7207` was unauthorized: the required wire-budget attribution had not been done.
+The final correction restores that commit's parent version of the test, including
+the legitimate settling window, in a separate restoration commit. The owner ended
+single-run investigation after the baseline Twins comparison. Accepted D and
+Twins-share dispositions do not waive G or Twins-health, and the literal
+every-target-passes bar remains unmet. Final findings are under KNOWN LIMITATION
+in `docs/notes/scheduler-evaluation-2026-09.md`; later round narratives are historical.
+
+1. **Twins preferred-share assertion removed as blocking.** The priority mechanism is a
+   bounded RANKING bias (max 1.2x multiplier via `score × (1 + p·clamp(...))`), not a
+   share allocator. Theoretical best case: `1.2/(1+1.2) = 54.545%`, which is BELOW the
+   old 55% floor. The consistent ~50% result across 3 isolated runs does NOT demonstrate
+   a priority-plumbing bug — it demonstrates the test's target range was never guaranteed
+   by the implemented contract. The `(0.55..0.70).contains(&preferred)` assertion is
+   removed as a blocking requirement; the observed share is logged for informational
+   purposes only. The rest of the twins test (mapping, dual REG3, legacy falsifiability
+   control, priority set/clear snapshots, feasible-load recovery, final health) remains
+   blocking.
+
+2. **D's obstruction-recovery test marked `#[ignore]` with explicit reason.** The
+   wire-rate/stall-detector coupling issue (documented in rounds 8, 14, 17, 18) produces
+   a 4/5 historical pass rate on isolated runs. A single hard `assert!` cannot honestly
+   represent that behavior. The test is marked ignored with the reason string
+   `"wire-rate/stall-detector coupling: 4/5 historical pass rate; N-run statistical
+   evaluation deferred to Todo 32"`, moving its N-run statistical evaluation into the
+   planned scheduler-redesign scope.
+
+3. **I's receiver-restart precondition is BLOCKING again.** The legitimate settling
+   window (`t >= 17.0 && t < 20.0`) remains; every sampled sink rate in that window
+   must reach 90% of 12.8 Mbit/s. The 70% sample-fraction rule and informational-only
+   treatment are removed. Rolling-window measurement alone is not evidence of a
+   brittle assertion. The fresh isolated run passed all 15 settling samples
+   (12.738880–12.886272 Mbit/s), with REG3 recovery in 17.455938485s and sink recovery
+   in 19.773828501s. Both links' final-five-second wire-budget events report
+   11,313,708.49898476 bps and `DemandLimited`, not low/Draining. This run does not
+   reproduce or explain the earlier precondition failures; it does not justify
+   extending scenario A's known limitation to I. Exact event counters and measurement
+   semantics are recorded in `docs/notes/scheduler-evaluation-2026-09.md`. The owner
+   closes I as resolved/non-issue for Todo 30 on this restored-check evidence,
+   not as a claim of permanent reliability or a reason to remove the precondition.
+
+**Priority-snapshot bug fix (commit 361d644):** After applying a pool control RPC request
+(e.g., `set-link-priority`), the telemetry snapshot was not refreshed immediately. The
+snapshot was only updated at the next housekeeping tick, causing it to lag behind the RPC
+application by up to one housekeeping interval. Fix: call `adaptive_state.update_stats()`
+immediately after applying a pool control request in the event loop. The priority snapshot
+now correctly reflects the applied value immediately after the RPC.
+
+**G's wide-variance reliability characteristic:** identical current source produced
+29/61, 44/61 and 0/61 demoted snapshots; exact `d168aa6` produced 4/61 in the endpoint
+comparison. All met 3MB carriage, but the first two failed the unchanged ≤10% demotion
+condition. No test namespace/process contamination was observed. The earlier 0–13%
+band and 0/61 ×3 sampled too little to characterize the now-observed 72.13% tail.
+The owner assigns this to deeper scheduler reliability, not an assertion defect or
+an identified commit regression. Both endpoints passed; that is not causal proof
+excluding all code or host effects. Wave 6 / Todo 32 must characterize it with N=5+
+statistical runs; more single-run diagnostic cycles are out of scope. No new waiver.
+
+**Final Twins baseline comparison:** exact `d168aa6` failed overall, but full-rate
+health PASSED (all 93 final-window samples Healthy; recovery at restore+4.854316s).
+Failures were the old clear-RPC snapshot staleness (`Some(0.2)` after clear) and
+50.105526% preferred share versus the old 55% floor. The harness accumulates failures,
+so those failures did not hide the health assertions. This does NOT confirm a
+pre-existing full-rate health failure. Earlier current-state health failures remain
+unresolved; a single baseline pass identifies no causal mechanism. The owner ended
+diagnosis here, not by ignoring or loosening health checks. `361d644` stays; all
+`src/connection/wire_rate*` files remain at `d168aa6`. Scoped completion records the
+findings and future work honestly; it is not scheduler acceptance or a full-gate pass.
+
+**Recovery-load scope and new evidence (Todo 28 round 8):** four oracle consults
+justify testing recovery under feasible load, not assuming aggregate admission that
+does not exist. D now holds 6.4 Mbit/s from t=20 to t=46 (28s restoration +17s
+deadline +1 telemetry tick), then restores its actual 22.4 Mbit/s offered rate;
+twins hold 6.4 Mbit/s until t=38 (28+9+1), then restore 12.8 Mbit/s. Bounded
+Healthy recovery, no relapse, and separate full-rate health/share assertions remain
+blocking. The ignored `immediate_full_rate_restoration_stress` records the old
+schedules without a health/share pass gate. The test launcher suppresses the
+per-NAK congestion log flood so the bounded process tail retains health/RTT lines.
+No production mechanism or threshold changed in round 8.
+
+**This correction is NOT yet sufficient:** final real runs still fail D/G/twins;
+I passes. D reaches Healthy at restore+15.5916s, but misses Stalled/0 and loses
+Healthy after full load. Twins do not rejoin until restore+15.2844s (>9s), and the
+first priority-set snapshot again omits the applied key. Instrumented feasible-load
+twins have two successful probe rounds and zero queue/loss on the probe path, yet
+the oldest round's age (e.g. 2697ms) exceeds the 2060.24ms freshness allowance;
+this is a separately exposed recovery timing problem, not overload during that
+low-load interval. Do not widen the gate without a separately verified correction.
+
+G remains an independent failure, NOT an approved threshold-expectation exemption.
+The installed GE model is `5% 0.1% 0.8% 0.02%` (~0.7847% stationary loss), not
+5% aggregate loss or 80% bad-state loss. A real zero-loss marginal-link control
+still incurs 43,690 qdisc drops and 36/61 demoted snapshots. Final unchanged G
+carries 3,937,450B but is demoted 45/61; none of its three 5Mbit companions has a
+Healthy sample. Per-link allocation/recovery collapse needs investigation; the
+evidence does not justify relaxing ≤10%. See
+`docs/notes/scheduler-evaluation-2026-09.md`. Todo 28 remains open.
+
+**Sampled recovery freshness (Todo 28 round 9):** the acquisition formula was
+correct for ONE held/probed link in the two-link twin topology, but its consumer
+is a 1Hz housekeeping sampler, not an immediate ACK callback. `HealthSignals`
+now carries `observation_interval_ms`: runtime supplies the existing
+`HOUSEKEEPING_INTERVAL_MS`, immediate policy fixtures use zero. Only the Stalled
+recovery freshness limit adds that interval to `rejoin_span`; train ACK deadlines,
+epoch ordering, two qualified rounds, stall/queue/loss thresholds and the rejoin
+ramp are unchanged. This also covers sampled original-DATA recovery evidence.
+Do not substitute delayed wall-clock execution time or an unbounded allowance.
+The real scheduler/log regression (105ms opportunities, 60ms ACK RTT, oldest-start
+age2697ms, completion-to-observation642ms) first failed Stalled versus Rejoining;
+it now passes, with stale/pre-epoch and four-ACK negative guards. Final twins
+reach Rejoining+3.071572s and Healthy+5.086991s within9s, before full-rate restoration,
+without relapse. Later full-rate health/share remains red; this is a partial fix.
+
+G's original source load is12.8Mbit; actual original DATA is1332B for1316B payload
+(12.9556Mbit), below the companions'15Mbit total even without the marginal link.
+Round9 accepted-prefix captures show the marginal initially assigned2.2768Mbit
+of DATA, then companion original+retry rates6.0017/6.2453/5.9146Mbit before their
+health demotions. Early traffic is ranked admission, with zero pre-registration,
+sole or fallback bytes in those intervals; retransmissions and real queues grow.
+This falsifies the simple aggregate-rate explanation but is not yet a proven
+specific ranking-code defect or an approved startup-control redesign. G's scenario
+and≤10%assertion remain unchanged. Final I passes; D/G/twins remain failing targets.
+
+**Retransmission accounting audit (Todo28 round10):** no R-specific admission or
+accounting bypass was found. The sender forwards NAKs back to the local SRT caller;
+it does not generate payload retries. R-marked DATA re-enters `handle_srt_packet`
+and the normal adaptive selector/queue/accepted-prefix path. Every queued retry
+counts in BitrateTracker, every accepted retry in delivery attempts/loss-send
+accounting, and ACKed retry DATA in `DeliveryLedger::delivered_bps`. Karn exclusion
+affects RTT sampling only. Four new real-UDP/production-dispatch tests pass against
+unchanged production behavior (`retransmit_accounting_tests.rs`, adaptive forwarding).
+
+Keep the accounting distinctions explicit: queued count is per datagram; flight
+and the delivery ledger are keyed by sequence. Repeated same-sequence outstanding
+copies count all wire bytes but one unresolved sequence and one ambiguous ACK
+credit. `RateCap` intentionally consumes ACK-derived delivered throughput, NOT
+BitrateTracker's transmitted rate; its positive BDP multiplier is not a sent-byte
+pacer. This does not prove accurate physical queue occupancy or convergence under
+retry amplification. No speculative controller change, G scenario change or
+threshold relaxation was made. Latest real gates remain I PASS, D/G/Twins FAIL;
+round9's bounded twin recovery still passes. Todo28 remains unchecked.
+
+**Historical attempted-wire admission (Todo 28 round 11 — NOT acceptance-green;
+superseded by the hard-admission correction above):** adaptive
+mode acquired a separate hard gate, `connection/wire_budget.rs`, integrated at
+`BatchSender::flush` and `sender/wire_admission.rs`. Its input is the existing
+per-link `RateCap.target_bps()` estimate; RateCap's code and positive ranking
+multiplier are unchanged. This is an enforced estimate, NOT a configured or known
+physical link capacity. Monotonic credit has a two-MTU (3000-byte) burst bound;
+every kernel-accepted queued datagram debits it, including originals, R-marked
+retries and probes. Failed/unaccepted suffixes do not spend credit; an unfunded
+suffix remains queued and is not a socket error. Same-sequence copies each pay.
+SRTLA registration/keepalive control remains on its existing unpaced control path.
+
+Before enqueue, an exhausted preferred link yields to another funded link from
+the existing health/deadline-admitted set; budget pressure cannot reopen a held
+link or override sole-carrier retention. With none funded, the input returns
+`SrtPacketOutcome::Backpressured`, retaining ONE datagram and pausing local UDP
+reads. A 1ms timer drains funded prefixes/retries that datagram while ACKs,
+housekeeping, control and signals remain live. This bounds user-space backlog,
+not end-to-end UDP loss: kernel receive buffering is finite and the producer is
+not guaranteed lossless backpressure. Legacy modes disable the gate. No feature
+bit was added; adaptive wire enforcement is always on, including when the eight
+older ablation bits are disabled. Default feature bits themselves are unchanged.
+
+DEBUG housekeeping records `wire_budget_bps` and `attempted_wire_bytes` (UDP-payload
+bytes, not IP/link framing or confirmed goodput). This diagnostic counter is scoped
+to the enabled budget epoch, reset on socket/batch reset or leaving adaptive mode;
+it is NOT ADR-002 session bytes. Stats-file schema/weights remain unchanged.
+Optional netns artifacts now retain final qdisc JSON alongside these debug logs.
+
+**Known new limitation/regression:** enforcing the soft controller's target exposed
+its unsuitable bootstrap/capacity estimate. In the one round-11 G run all three
+companions stayed Healthy (61/61 each), their peak sampled attempted rates were
+2.908096/2.222816/2.855872 Mbit/s, and all four qdiscs had zero non-model drops.
+But marginal budget rose to 1.104081 Mbit/s against its 1Mbit capacity, and it
+remained Degraded in31/61 samples (all queue-labelled), despite4,369,830B carriage.
+I now FAILS throughput: pre-restart sink2,684,640bps and no90% recovery, although
+process/REG3 timing passes. D passes unchanged; twins pass recovery/final health
+but fail share and first-post-RPC snapshots. This experiment is NOT ready to merge
+or deploy. No G recalibration or round12 tuning is authorized; Todo28 stays open.
+
+**Queue investigation (Todo 28 round 6):** temporary explicit-now minima captures in
+G and twins found slow floors of 60–61 ms and elevated fast minima, not isolated low
+outliers. Twin kernel qdisc capture confirmed actual TBF backlog/drop growth after
+restoring 12.8 Mbit/s while only one 8 Mbit/s link was admitted, followed by overload of
+the recovering link. `RateCap` is a positive soft ranking penalty, NOT pacing;
+G also queued at Bootstrap and while Holding below 1 Mbit/s, so target-ramp growth
+alone does not explain it. No RTT filter, health threshold or rate policy was
+changed in this round. The new G diagnostic also had two loss-labelled demotions:
+the prior run's queue-only attribution must not be generalized to every run.
+
+**Integration correctness follow-up (still incomplete):** adaptive cumulative SRT
+ACKs retain congestion pruning but do not supply per-path RTT; specific ACKs sample
+from the delivery ledger's kernel-acceptance timestamp only when unambiguous.
+`FlushOutcome.retransmitted` is aligned one-for-one with the unchanged accepted
+tuple and marks the SRT R bit. Retransmitted/repeated outstanding sequences still
+credit DATA proof and delivered bytes, but cannot poison adaptive RTT minima.
+All legacy RTT paths and frozen traces are unchanged. A pending probe train does
+not erase preceding successful rounds, and Degraded/Stalled→Rejoining begins a new
+normal-loss epoch only after health policy has qualified recovery. A validated
+changed receiver full ID invalidates old-ID pending REG3 grants; connected links
+still skip the broadcast and REG_NGP acceptance is unchanged. These mechanisms have
+five failing-first regressions. D/G/twin live integration remains red; receiver
+restart passes after separating process respawn from its downstream-SRT preflight.
+`BondRuntime::receiver_restart_elapsed()` excludes UDP readiness; deadlines in the
+adaptive test are anchored at respawn, not at the later readiness observation.
+
+**Original-traffic recovery and temporal loss attribution:** the plan's prohibition
+on duplicate probes to the elected sole carrier is preserved. A separate bounded
+original-DATA witness in `connection/original_recovery.rs` observes accepted sends
+while Stalled and their arrival/generation-exact ACKs. It reuses two ten-packet,
+at-least-five-ACK train qualification with the existing one-link deadline and health
+freshness checks; zero/four-ACK controls stay Stalled. It emits nothing and does not
+alter ordinary delivery/window/byte accounting. Socket resets and new health epochs
+cannot reuse previous evidence. This fixes the missing original-traffic recovery
+path, but live D/twins can still relapse after reaching Rejoining; no all-green claim.
+
+**Generic bond topology (`crates/network-sim/src/bond.rs`).**
+`BondTopology::new(test_name, &[LinkSpec], MappingMode)` accepts 1–253 links;
+`LinkSpec` carries explicit `CarrierMode::{Direct,Nat}` and an optional zero-based
+`shared_ip_with` reference to an earlier link. Shared groups require NAT on every
+member, one carrier per link, and an explicit `BindMap { rows }` or `LegacyControl`
+policy. `MappingMode::None` with sharing returns typed `BondConfigError` before any
+namespace creation; distinct-IP users explicitly pass `None`. `BondRow` supplies
+`link_id`, `iface_index`, and optional finite `priority`; row order defines IP-file
+order. The priority is only an additive fixture field, not scheduler support.
+`TwinRow::new` stays unchanged; `with_priority` is additive, and absent priorities
+retain exact legacy sidecar bytes. Heterogeneous-IP publication extends the existing
+`BindMapPublisher` under `bond/publication.rs`, keeping the twin files independent.
+The bond owns namespaces and launch files, not process handles: drop every
+`NamespaceProcess` before dropping its topology. `sender_args`/`spawn_sender` apply
+the mapping policy; receiver/profile selection stays at the caller layer.
+
+NAT setup uses the proven `100.64.N.0/24` transit, carrier MASQUERADE, receiver
+loopback `10.99.0.1` and source-hinted return routes. Distinct links all get source
+tables (including link 0); shared links use the twin-style per-device defaults.
+Both namespace and per-device `rp_filter` are cleared. No asymmetric fault routes
+or packet marks are installed. All names use the shared PID+counter helper.
+`replug(i)` deletes/recreates the access veth (new ifindex, shaping resets);
+`delete_default_route`/`restore_default_route` operate on the link's source-table
+and main-table defaults. `tx_bytes` is raw netdev traffic, including the ARP probes
+that continue without DATA in a route blackhole. `tests/netns_bond.rs` has its own
+**120 s** gate budget (`NETNS_BOND_TEST_TIMEOUT_SECONDS`), separate from the twin
+budget; it covers mixed and shared-IP carriage, the legacy control, route failure
+and restoration, and replug. The A/B runner's routing helper is now exported from
+`network_sim::bond`; its legacy topology and measurement protocol are unchanged.
+
+**Temporal profiles (`crates/network-sim/src/profile.rs`, Todo 10).** Model,
+expansion, monotonic scheduler, qdisc commands, runtime adapter and cross-traffic
+live in separate `profile/` modules. `Periodic.until` is the inclusive last onset,
+not an observation endpoint; each actual onset + hold + horizon must fit the run.
+Defaults: 30s recovery tail, 5s periodic tail, zero for load edges. One-shot holds
+end at an explicit restoration of the previous property value; otherwise they are
+instantaneous. `graded=false` never disables horizon validation. Periodic restores
+use the pre-onset state, not blindly the initial base. Nested periodic events and
+overlapping writes to held properties are rejected. Equal-time restores execute
+first, then stable declaration order. The synchronous `Scheduler` anchors a
+monotonic clock on first run, records successful actual timestamps, waits through
+the observation tail, and never retries a failed/partially applied event.
+
+**Generic bonds exclusively use `LinkQdisc`, NEVER the legacy root-clearing API.**
+Root `prio` handle `1:` has sixteen zero priomap entries; band `1:1` is netem `10:`
+or TBF `10:` → netem `11:`, band `1:2` is netem `20:` loss 100%. Blackhole toggles
+only `tc filter add/del ... parent 1: protocol ip prio 10`, using exactly
+`u32 match u16 0x0400 0xfc00 at 2 flowid 1:2` on add. That is IPv4 length
+1024–2047. An update replaces only band one, including while DATA is blackholed;
+kind changes detach only band one. `ImpairmentConfig.queue_limit` is a netem packet
+limit; `delay_distribution` supports Normal/Pareto; `tbf_latency_ms` defaults to
+1s. With a netem child, its packet limit owns the backlog (TBF latency is not an
+additional total-delay bound). Legacy `apply_impairment` retains root deletion for
+legacy/twin callers; never pass a generic bond interface to it.
+
+`BondRuntime` borrows the topology and exact sender/receiver handles and requires
+an offered-rate callback that changes the real source. It uses receiver port 5000.
+Replug restores the current impairment/filter and explicit route/link state;
+link-up restores source routes the kernel removed on link-down. Reorder publishes
+topology indices with stable link IDs, a coherent sidecar/hash and increasing
+generation before HUP. Cross-traffic uses iperf3 when present, otherwise paced
+Python UDP; both bind source IP AND device and use a server in the receiver ns.
+
+**Process-only restart is distinct from final teardown.** NamespaceProcess now
+stores argv/env and discovers the exact inner PID using before/after namespace PID
+sets plus wrapper ancestry (serialized harness spawns), with a process start-time
+identity check before signaling. `pid()` never returns the sudo wrapper in its
+place. `restart_process_only()` rejects an exited child with downcastable
+`ProcessControlError::AlreadyExited` before signaling anyone; it stops only the
+inner PID and respawns identical argv/env. Auxiliary cross-traffic uses
+`spawn_process_only` so error/drop cleanup cannot invoke namespace-wide kill.
+The existing `kill()` and ordinary handle Drop remain namespace-wide teardown.
+The original stack exposes `restart_receiver()`. The `netns_bond` 120s target now
+also covers mid-blackhole impairment updates (plain and TBF), keepalive RTT while
+DATA stalls, listener/sink PID preservation, both load backends and event dispatch.
+
+**`tests/netns_twin.rs` — duplicate-IP twin-modem scenarios (8 tests).** This target
 that reproduces two uplinks sharing ONE source address, which is what the bind-map exists
 for. It needs a topology no other target has, built by `crates/network-sim/src/twin/`:
 each twin sits behind its **own NAT carrier namespace**, because a plain veth pair would
@@ -471,6 +1266,26 @@ degraded reload retaining the mapped pool; a file-order swap that recreates no s
 well-formed but unorderable republication refused as `stale-generation`; an
 unplug/replug recovering on a genuinely new ifindex; and a route-removal blackhole
 reported on the route axis, confirmed by ACK timeout, never reading healthy.
+
+**`tests/netns_hsrsp_spike.rs` — live HSRSP visibility spike.** The latency tests are ignored and require
+an explicit `SRTLA_REC_BIN` pointing at an out-of-tree CeraLive receiver build,
+unattended sudo, `srt-live-transmit`, `tcpdump`, and `tshark`; explicit execution
+fails on absent prerequisites. Run under a 90-second outer timeout with `--ignored`.
+Fresh one-link pairs at listener `latency=2000` and `latency=500` yield matching
+HSRSP delays, with identical UDP payloads captured on the sender uplink and loopback.
+The spike's clean-room decoder stays test-only (`tests/support/hsrsp.rs`); Todo 18
+adds the separate production parser below. The committed 80-byte raw-payload fixture
+`tests/fixtures/srt-hsrsp-latency2000.bin` is regenerated only with `UPDATE_GOLDEN=1`.
+Offsets are zero-based from the SRT/UDP-payload start: extension type `[64,66)` = 2,
+body length `[66,68)` = 3 words, latency `[76,80)` = `07 d0 07 d0`.
+The high half `[76,78)` and low half `[78,80)` both decode to 2000 here; the
+500ms control changes both to 500. This symmetric capture alone does not distinguish
+directional half semantics. Extension lengths are walked, not assumed fixed by
+the decoder. `HSRSP_CAPTURE_DIR` optionally preserves unique pcap/log directories.
+The additive `hsrsp_reports_listener_nak_off` test self-skips without these
+prerequisites and `SRTLA_REC_BIN`. With `UPDATE_GOLDEN=1` it writes the separate
+`srt-hsrsp-nak-off.bin` capture; it does not rewrite the original NAK-on fixture.
+Both 80-byte captures report SRT 1.5.5: flags `0xBF` on and `0xAF` off.
 
 **Production subscription-concurrency invariant (BLOCKING, separate target).**
 `tests/subscription_loom.rs` uses Loom to enumerate schedules while racing the real
@@ -648,7 +1463,7 @@ workflows. It pins the contract the device image depends on:
 `srtla-send-rs` is the one first-party component that does NOT follow the CeraLive
 CalVer (`YYYY.MINOR.PATCH`) scheme. Its `.deb` version comes directly from
 `Cargo.toml` `[package] version`, which tracks upstream irlserver semver.
-Current source package version: `3.3.0`. The workspace `versions.yaml` and the latest
+Current source package version: `4.0.0`. The workspace `versions.yaml` and the latest
 published GitHub release are both pinned at `v3.3.0`.
 
 Rationale: this repo is a fork of `irlserver/srtla_send`; keeping the upstream semver
@@ -658,7 +1473,7 @@ version-only commit is still a deliberate fork release decision, not an automati
 The GitHub release **tag** namespace is `v<package-version>`. A tag-triggered package
 build must match the committed `Cargo.toml` version; `ci/build-deb.sh` rejects a tag ref
 whose `GITHUB_REF_NAME` differs from `v<package-version>`. For this source version, the
-only valid release tag is `v3.3.0`.
+only valid release tag is `v4.0.0`; this task does not create it.
 
 The `@ceralive/srtla-send` npm binding ships on its own `bindings-vYYYY.M.P` tag
 namespace and uses CalVer independently of the Rust crate version.
@@ -671,35 +1486,970 @@ aarch64 cross-build env (mirrors the PINNED TOOLCHAIN note): linker
 `gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross binutils-aarch64-linux-gnu pkg-config`,
 `PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig`.
 
-## CODEBASE (inherited from upstream)
+## BENCH RECEIVER-PROFILE DEPENDENCY (CeraLive SRT fork)
+
+**SLS conformance exception (Todo15):** metric cells still select SLT. Explicit
+`sink:sls` cells require `metrics:none`, `covering:false`, port4002 or4003,
+an explicit latency preset, FEC off and no listener URI overrides. The campaign
+launcher uses `SrtSink::Sls` plus an attached SLT player; player-file growth feeds
+the existing SinkSeries goodput formula. Three checks are blocking: registered
+publisher, ≥90% offered bytes carried, negotiated `max(device preset,100ms)`.
+The normal RunRecord adds optional `sls_stats`, `sls_conformance`, `sls_identity`;
+legacy fingerprints remain unchanged, SLS hashes bind server/template/libsrt.
+All23 captured publisher keys are typed; five pre-ring counters preserve native
+`-1` unknown sentinels. Belated/occupancy stay null with not_applicable gates.
+`harness/sls_runtime.rs` shares listener/player lifecycle with the older stack.
+`SLS_BIN=<locked server> cargo test --test bench_scheduler conformance_smoke -- --nocapture`
+runs two20s cells (ports4002/4003) on the synthetic SLS profile (two10Mbit links,
+5ms delay,1Mbit offered); it self-skips only without SLS_BIN or privileges and
+otherwise fails on missing/mismatched locked artifacts. Report-ready results and
+raw artifacts are retained separately in its printed directory. report.py puts
+SLS only in summary.conformance, never groups/comparisons; decide.py additionally
+excludes SLS tags/canonical IDs from D-1 (`lineage-d1` alias) and ablation regardless
+of covering. Later alias/non-inferiority decisions remain separate tasks.
+
+The bench harness (`crates/network-sim`, `tests/bench_scheduler.rs`, every
+`netns_*` target that spawns an SRT listener) needs an `srt-live-transmit` built from
+**CeraLive's own SRT fork** (`github.com/CERALIVE/srt`, sibling checkout `../srt`) on
+the receiver side. Nothing enforces that: `find_srt_live_transmit_binary()` resolves
+`SRT_LIVE_TRANSMIT_BIN` and otherwise falls back to whatever `srt-live-transmit` is on
+`PATH` (`crates/network-sim/src/harness.rs`, `resolve_external_binary`), the same
+convention `SRTLA_REC_BIN`/`SRTLA_REPO` follow for the SRTLA receiver. Set it per
+invocation to the fork build. Never hardcode the path in a tracked file (Rule D).
+
+**Why the fork and not a vanilla libsrt.** `SrtProfile::PRODUCTION::listener_uri()`
+(`harness.rs`) emits
+`mode=listener&latency=2000&lossmaxttl=40&reorderfreeze=1`.
+This is the **provisional C1 baseline: freeze on, NAK reports on by default**.
+The `nakreport=0` suffix introduced by `1c4679d` is removed, not replaced with a
+caller-side option. It caused a factorial-proven real-loss regression (below).
+`reorderfreeze` is `SRTO_REORDERFREEZE`, a CeraLive-only socket option (see
+`../srt/AGENTS.md` → SANCTIONED CERALIVE PATCH); Haivision/srt has no such concept, so a
+vanilla `srt-live-transmit` neither knows the option nor sets it. The stray host binary
+Campaign C1 fell back to (`/usr/bin/srt-live-transmit`, not dpkg-tracked, loading
+`/usr/local/lib/libsrt.so.1.5.5`) was exactly that. Build per the fork's `AGENTS.md`
+BUILD section with the apps enabled (`cmake -B build -DENABLE_APPS=ON ...`, shared not
+static). **One extra prerequisite:** the fork's `apps/socketoptions.hpp` URI-option
+table needs a `reorderfreeze` row beside `nakreport`
+(`{"reorderfreeze",0,SRTO_REORDERFREEZE,SocketOption::PRE,SocketOption::BOOL,nullptr}`).
+Without it the listener never applies the option ("reorderfreeze=1 was not applied
+before listen") and the bench silently runs unfrozen. As of 2026-09-16 that row is a
+local, uncommitted edit, not yet upstreamed to `CERALIVE/srt`; check the fork before
+assuming a fresh checkout carries it. `STRICT`, `LEGACY_DEFAULT`, and the
+`mode=caller&latency=2000&lossmaxttl=40` caller URI do not carry the option and are
+unchanged. The one env var selects BOTH endpoint executables, so a fork build also puts
+the caller on fork libsrt 1.5.6 (with no new options on its side).
+
+**The three axes are distinct concepts — matching names do not couple them. They
+are NOT independently choosable.**
+
+- **Receiver preset** (`balanced` / `low-latency` / `resilient` /
+  `low-latency-fec` / `classic`) expresses latency and FEC intent.
+- **Sender scheduling mode** (`classic` / `enhanced` / `rtt-threshold` / `edpf` /
+  `adaptive`) selects a local per-packet path across bonded links.
+- **Receiver policy** (freeze / NAK reports / `lossmaxttl`) handles loss and
+  reordering. It is set on the receiver alone, but it is **consumed by the
+  sender's scheduler**: `handle_nak` (`src/connection/congestion/mod.rs`, "common
+  to both classic and enhanced") decrements the carrying link's window by
+  `WINDOW_DECR` on every NAK, `classic.rs` selects on that window via
+  `get_score()`, and `quality.rs`/`enhanced.rs` also read `total_nak_count()`.
+  The receiver's NAK policy therefore shapes sender scheduling on every mode.
+  The correction record and the resulting (unconfirmed) two-factor model are in
+  the evaluation note below, sections 7 and 8.
+
+The receiver cannot observe which scheduling mode produced its traffic; the
+coupling runs one way, sender reading receiver. Sender `--mode classic`
+therefore does **not** imply receiver `classic`/L2 or NAK-off.
+Both L1 and L2 have freeze **on**; their policy distinction is NAK **on** (L1)
+versus **off** (L2). The corrected bench uses **L1's policy shape**, retaining its
+existing 2000 ms latency rather than copying `balanced`/L1's 1500 ms preset.
+No receiver deployment, preset routing, FEC negotiation, or sender default changes
+are implemented here; `adaptive` remains experimental and unaccepted.
+
+**Why NAK-off was removed (2026-09-16).** A four-condition, fixed-fork-build
+`classic`/G factorial isolated the listener options: bare and freeze-only each
+settled **3/3** with **zero non-model queue drops on every link**; NAK-off alone
+and freeze+NAK-off each settled **0/3**, with roughly **44–46% received
+retransmissions** and thousands of non-model queue drops on **all four links**.
+The freeze-only revalidation also settled **3/3**, with **1.43–1.70% received
+retransmissions** and zero non-model queue drops. G exercises real Gilbert-Elliott
+burst loss. NAK-off, not freeze or the fork build alone, is the isolated regression
+trigger under these conditions. The same catastrophic signature occurs with both
+`classic` and `enhanced` senders: the earlier claim that this G regression was a
+separate enhanced-cooldown defect is retired. The unaccepted cooldown candidate is
+not a receiver-independent G solution; sender divergence remains a separate open
+question, not something this URI correction resolves.
+
+**Known trade-off — B1/C are UNRESOLVED again, not fixed.** Removing NAK-off gives
+back its jitter/reorder gains: in controlled revalidation, `classic`/B1 went
+**2/3→0/3** settled and `classic`/C **3/3→0/3**, with useful goodput **−21% on B1**
+and **−46% on C** versus freeze+NAK-off. Freeze alone did not preserve those gains.
+The earlier vanilla-listener failures involved premature NAKs for late originals,
+retransmission amplification and real queue overflow; merely installing the fork
+and enabling freeze does not clear them. This is a deliberate real-loss versus
+reorder trade-off, **not a pure improvement or full C1 acceptance**. Scenario loads,
+the 30 s settling gate and campaign criteria stay unchanged. These are targeted
+small-N netns observations, not hardware validation or a new campaign.
+
+**Retired rationale: upstream/BELABOX pedigree is not correctness evidence.**
+BELABOX and `irlserver/irl-srt-server` do ship freeze+NAK-off as their single receiver
+mode. The latter builds against `irlserver/srt`'s `belabox` branch and sets
+`SRTO_SRTLAPATCHES`, bundling both behaviors; CeraLive exposes them separately as
+`SRTO_REORDERFREEZE` and standard `SRTO_NAKREPORT`. This remains relevant to interop
+expectations, but matching upstream proves a configuration is **used**, not that it
+is **correct under our conditions**. The prior pedigree/BELABOX-parity justification
+for choosing `classic`/L2 is explicitly withdrawn; the G factorial outranks it.
+Preserve wire compatibility with third-party NAK-off receivers, with the documented
+real-loss performance caveat, rather than copying their policy locally. Freeze/NAK
+are set per side and never negotiated, unlike FEC, but they are **not** without
+effect on the peer: a third-party SRTLA sender's scheduler is shaped by our NAK
+policy exactly as ours is (above). Cross-pair validation remains separate from this
+code-and-docs correction and is a scheduling-behaviour test, not only an
+amplification check.
+
+**Root cause (source-verified, 2026-09-17).** Stock SRT inserts a detected gap into
+`m_pRcvLossList` at once; `LOSSMAXTTL` delays only the FIRST report via `m_FreshLoss`
+(CERALIVE/srt `srtcore/core.cpp:11107-11114`, `:11221-11261`). Under `NAKREPORT=1` the
+periodic timer re-reports the WHOLE loss list every `max((SRTT+4·RTTVar)/2, 20 ms)`
+consulting neither `m_FreshLoss` nor the tolerance (`core.cpp:11984-12024`, `:8195-8232`,
+`congctl.cpp:87`), so a late-not-lost packet is NAKed within one tick: that is B1/C.
+Under `NAKREPORT=0` the encoder's LiveCC FASTREXMIT retransmits everything since the
+last ACK on RTO (`core.cpp:12157-12177`): that is A/G. The sender's NAK penalty is
+already once per (link, send event) via `packet_log` removal, identical to BELABOX C
+(`src/connection/ack_nak.rs:81-99`, BELABOX/srtla `srtla_send.c:258-276` @`37862da`),
+so the "no dedup" and "mis-tuned constants" hypotheses are RETRACTED; the belabox SRT
+branch itself moved to NAK-on gated by fresh-loss membership (onsmith/srt `b5690bc`,
+2026-07-05) while production irlserver still pins pre-gate `f2297192` (NAK-off). Full
+record: §11 of the evaluation note below. No scheduler constant changes on this evidence.
+
+The full investigation record (factorial tables, the B1/C trade-off, the falsified
+cross-link-delay-spread hypothesis, the unresolved upstream comparison, and the
+NAK-to-scheduler coupling correction) is
+[`docs/notes/receiver-policy-evaluation-2026-09.md`](docs/notes/receiver-policy-evaluation-2026-09.md).
+
+Workspace-level receiver documentation for the full evidence chain:
+`../docs/RECEIVER-CONTROL-AUDIT.md`, `../docs/DEFERRED-WORK.md` §14,
+`../docs/receive-profile-coverage.md`.
+
+## BENCHMARK METRICS (network-sim)
+
+`SrtProfile::PRODUCTION` adds only `reorderfreeze=1` to the listener URI, leaving
+NAK reports on alongside the existing 2000ms latency and lossmaxttl 40. STRICT and
+LEGACY_DEFAULT remain unchanged, as do caller URIs. This receiver-profile correction does not
+change scenario loads, settling thresholds, or sender scheduling. The option only
+takes effect on a fork-built `srt-live-transmit`; see BENCH RECEIVER-PROFILE
+DEPENDENCY above for the `SRT_LIVE_TRANSMIT_BIN` requirement, the profile choice,
+and its measured limits: G's NAK-off regression is corrected, but B1/C are unresolved
+again under this provisional baseline.
+
+**Reference-backed scenarios (Todo 12):** `network_sim::scenarios::all()` returns
+13 profiles (A–L, B1/B2). `scenarios::Profile` wraps the unchanged temporal `Profile`
+in `timeline` with explicit offered/warm-up rates, production SRT settings and optional
+source-ramp/restart-budget metadata. Pass `timeline` to the scheduler/metrics, and
+the explicit aggregate capacity to `load_intervals::evaluate`. Definitions do not
+launch the runner: it must start the SRT source before settling (90% warm-up rate,
+three consecutive seconds, 30s deadline/`settle_timeout`), retain ten seconds of
+prehistory, apply the 400ms source ramp through live control, and enforce I's 2s
+receiver kill/respawn budget. `Profile::validate()` checks FULL periodic expansion.
+C/D use 215ms combined spike/half-rate + 285ms half-rate holds, every 15s with 5s
+tails and `until=duration−6s`; never overlap SetImpairment holds. D is 75s, not 60s.
+H is 90s with a 20s final reorder horizon. K preserves seeded random-walk samples
+while retaining TBF enforcement; samples are ungraded zero-tail diagnostics.
+L uses feasible warm-up, overload at t=0, ungraded idle, and ONE burst LoadInterval;
+do not log intermediate source ramp writes as additional load boundaries. Its
+explicit overload/burst targets are 14.4/9Mbit for the 16Mbit bond; a dead sink
+must have `reached_ms=None`, `recovered=false`. Catalog and citations:
+[`docs/notes/bench-scenarios.md`](docs/notes/bench-scenarios.md). Gate:
+`cargo test -p network-sim --lib scenarios` and
+`cargo clippy -p network-sim --all-targets -- -D warnings` (include test-module lints).
+No hardware validation is implied, and no production sender behavior changes.
+
+`crates/network-sim/src/metrics/` owns the dev-only benchmark collectors and serde
+`RunRecord` v1. The authoritative definitions and runner integration contract are
+[`docs/notes/bench-scenarios.md#metrics`](docs/notes/bench-scenarios.md#metrics).
+The JSON fixture includes BOTH `episodes` and `load_intervals`; its summaries are
+recomputed from embedded evidence by tests. Never omit load intervals from reports.
+
+- CSV wire names are `pktRecv`, `pktRecvUnique`, `pktRcvLoss`, `pktRcvDrop`,
+  `pktRcvRetrans`, `byteRecv`, and `pktRcvBelated`. Use the SECOND header-position
+  `Time` column, not SocketID. `pktReorderDistance` is genuinely absent on host
+  libsrt 1.5.5 and must stay optional.
+- Default `SrtStats::parse` implements the frozen cumulative-packet/interval-belated
+  contract. The later live smoke proved the current non-fullstats listener emits
+  interval counters; its runner MUST choose `CaptureSemantics::Interval` explicitly.
+  This normalizes packet counters before delta windowing while preserving raw rows.
+  No auto-detection, no saturating counter resets, no assumptions about outage cadence.
+- Sink and event clocks are aligned explicitly; signed ms retain warm-up. Episodes
+  use each originating event's horizon, 100 ms impact/outage detection, and complete
+  post-impact one-second recovery buckets. An unfinished, buffered-but-unimpacted
+  episode cannot report zero failover. A completed unimpacted episode can.
+- Source-load intervals have positive capacity-clamped targets, never an idle
+  baseline. Explicit ungraded fault holds/restart gaps are excluded from no-collapse;
+  zero-tail restores do not exclude the following healthy interval.
+- Optional control metrics skip unsupported candidates. Process-owned future
+  adaptive configuration is preserved opaquely as `effective_config`, included in
+  the fingerprint, and never guessed from flags. Telemetry health/priority remain
+  optional; existing producer JSON is not changed.
+- CPU uses proc ticks with explicit CLK_TCK, PID/start-time coherence and VmHWM.
+  Link counters retain ifindex generations; periodic sampling cannot recover bytes
+  lost with an unsampled destroyed netdev. Final-before-replug sampling is the
+  campaign runner's responsibility.
+- Gate: `cargo test -p network-sim --lib metrics` and
+  `cargo clippy -p network-sim -- -D warnings`. Tests are unprivileged; they include
+  real ephemeral UDP/Unix-socket boundaries. No packet capture or new unsafe code.
+
+Profile event/impairment types derive serde for the result's actual event log. Shared
+initial-state/channel helpers are crate-visible so restore inference uses the
+scheduler's definitions, not a duplicate set of defaults. Scenario C/D waveform
+fixtures include both the 215 ms delay spike and full 500 ms capacity dip; whole
+property holds cannot overlap, so their combined waveform uses adjacent updates.
+
+### Paired campaign runner
+
+C1 retains all seven arms: five fork modes and upstream `df0b393` classic/enhanced,
+across thirteen profiles, production SRT, five runs, seed 20260913 (455 successes
+required). Upstream's intentional 4.0.1/fork 3.3.0 version divergence is not an
+exclusion criterion. Set upstream `stats_file: false` and omit `effective_config`:
+the harness otherwise appends unsupported `--stats-file`, causing argument-parse
+exit disguised as a UDP-listener timeout. All five fork test-internals modes expose
+the complete adaptive configuration through metrics, even in legacy modes; declare
+that observed configuration without enabling adaptive mode or adding env overrides.
+`sender-startup.log` preserves captured child output before propagating listener
+readiness failure. The readiness timeout and all measurement criteria are unchanged.
+The C1 manifest contract tests pin these distinctions; successful startup alone is
+not warm-up settling or campaign acceptance.
+
+`tests/bench_scheduler.rs` and `tests/bench_support/` integrate the scenario, topology,
+profile and metric APIs. [Campaign contract](docs/notes/bench-campaign.md): required
+explicit cells, per-pair seeded candidate interleaving, atomic RunRecord checkpoints,
+fingerprint-based stale archival, and bounded retries (default **two total attempts**).
+Only matching `status: "ok"` records count; `.failed-N` and `.exhausted` never do.
+Records add `attempt`, optional `reason`/`detail` without changing RunRecord v1.
+Expected adaptive configuration is explicitly supplied by the manifest and compared
+against observed metrics, never synthesized as an observation.
+
+Source traffic starts after all-link REG3 and shaping initialization, at the scenario's
+warm-up rate. Settle at ≥90% for three consecutive seconds (30s bound), retain ten
+seconds of prehistory, then apply t=0 OfferedRate and run the temporal scheduler.
+Smoke forces A+D/two runs/full windows; never truncate D. CSV parsing explicitly uses
+`CaptureSemantics::Interval`, never fullstats. The first CSV-row clock bracket and
+its uncertainty are recorded; no report-cadence assumption. Ramps use real FIFO source
+control; pre-replug counters are sampled; receiver restart has its explicit budget.
+
+**Failed-record fields are placeholders until collection succeeds.** Always read
+`reason`/`detail`: zero goodput, `no_traffic: true`, and `events: []` do NOT establish
+zero warm-up traffic or failed topology setup. All-link registration and source start
+precede settling; the first timeline event follows settling. Raw sink `bytes` are
+the traffic evidence. Never use CSV file size as a delivered-byte count, and never
+count `.exhausted.json` as another attempt: it copies the last `.failed-N.json`.
+`BENCH_MAX_RETRIES=2` means two TOTAL attempts, not three.
+
+**Reconnect CSV clocks are per SocketID.** `tests/bench_support/csv_capture.rs`
+polls complete receiver CSV rows during measurement and brackets each new socket's
+first observation against the monotonic clock. Offsets/uncertainties are retained
+in `clocks.json` under `csv_socket_clocks`; the original scalar offset describes
+only the initial socket. `SrtStats::parse_intervals_with_clock` preserves raw rows,
+uses these independent epochs without compressing outage gaps, and normalizes
+explicit interval counters across sockets. `window` permits socket changes only
+for interval captures; cumulative resets and backwards aligned times still fail.
+The default parser contract and RunRecord v1 shape remain unchanged. The 2026-09 C1
+incident reproduced I's `invalid field Time ordering` after a successful restart;
+it was a collector bug, NOT a violation of the unchanged two-second restart budget.
+Fresh campaign output is required operationally; original failed evidence is immutable.
+
+The old A/B `measurement_lock` is extracted to `tests/support/measurement_lock.rs`.
+Its local mutex is retained and a kernel file lock serializes separate binaries and
+worktrees. The file-lock functions have a test-only Clippy MSRV of 1.89 under the
+pinned nightly (no production MSRV bump or new FFI/dependency). Each live run is a
+GNU-timeout worker (duration+60s, kill-after 10s), with PID-suffixed namespace cleanup.
+No pcap unless explicitly enabled; successful captures are removed, failures retained.
+
+Gate: `cargo test --features test-internals --test bench_scheduler` and
+`cargo clippy --test bench_scheduler --features test-internals -- -D warnings`.
+Live `campaign`/`smoke` are intentionally ignored and require separate privileged
+validation; the unit gate does not establish live performance or hardware behavior.
+
+Smoke tooling lives in `scripts/bench/`: `build_candidate.sh` rejects tracked and
+untracked dirt, builds release + `test-internals` in the artifact root’s `target-ti`,
+and publishes copied, read-only, SHA-addressed binaries without replacement.
+`manifests/smoke.json` is a concrete local artifact receipt for classic/enhanced/adaptive,
+A/D, CeraLive production, two runs, seed 1. Rebuild and update paths for later revisions.
+`assert_smoke.sh` validates all twelve terminal RunRecord outcomes and compares summary
+aggregates with the actual successful classic/A and enhanced/A records. CSV packet
+deltas live in raw records, not summary v1; all D and adaptive/A outcomes are informational.
+Config expectations apply to successful records in all three modes. Shell mutation tests use disposable evidence
+copies. See `scripts/bench/README.md` for invocation and actual retry semantics.
+
+### Statistical reporting and D-1 retention
+
+`scripts/bench/report.py` and `scripts/bench/decide.py` are executable, standalone uv
+scripts with inline `numpy==2.*`/`pydantic==2.*` dependencies and embedded unittest
+gates (`uv run scripts/bench/<script>.py --self-test`). The [operator/schema contract](README.md#statistical-reports-and-retention-decisions)
+defines their JSON artifacts. The explicit manifest cells and per-cell run counts
+are authoritative: no missing-cell pass, duplicate-success inflation, stale archive
+reuse, or campaign/receiver/profile pooling. Reporter failures invalidate the previous
+summary; successful publication puts the summary last. Bootstrap is exactly 10,000
+paired resamples at seed 20260913, with median-based percentile CIs. Failed episode
+durations remain +infinity, represented as `"+inf"`, not silently discarded.
+
+D-1 is fail-closed at 0.95 goodput CI lower / 0.1 pp viewer loss / 1.10 recovery ratio
+and no worse non-recovery rate. Any requested N-mismatched cell blocks a verdict;
+pair/configuration/episode defects block coverage. Insufficient evidence returns a
+nonzero exit with `verdict: null` and **no retirement/default fields**. J/L pass rates
+are reported separately; forced outage/idle cannot erase post-restore/burst failures.
+Ablation scoring requires each configuration's own A control (C2 lower-CI guard 0.98)
+and uses geometric target-median ratios. Target sets are explicit per invocation;
+campaign execution and feature/constant publication remain separate tasks. Neither
+script changes Rust code or proves that a scheduler should actually be retired.
+
+## ADAPTIVE SELECTION (scheduler evaluation, Todo 22) [PARTIAL]
+
+2026-09-18 — classic/rtt-threshold/edpf/adaptive modes removed in 4.0.0 — read as history.
+
+`SchedulingMode::Adaptive` is additive (`adaptive`, atomic value 4); Enhanced stays
+the default and existing encodings/spellings remain unchanged. The send loop owns
+`AdaptiveState::new(shared_stats.clone())` beside `EdpfSchedulerState`. Its six-argument
+`adaptive::select(conns, last_idx, last_switch_ms, now_ms, cfg, state)` mutates only
+admission/election history and quality caches, never health/rate ticks. The live
+dispatcher `select_connection_idx_with_state` takes both persistent stores. Test-only
+six-argument adapters keep the frozen legacy traces unmodified on that same dispatcher;
+the old inline selection tests now live in `selection/tests.rs` without changed assertions.
+
+`AdaptiveState` carries public `features`, `sole_carrier: Option<(usize,u64)>`,
+`probe: ProbeScheduler`, and reused `targets: SmallVec<ProbeTarget,4>`, plus private
+SharedStats and `(internal conn_id, socket_generation)` sole identity. The internal
+random u64 connection ID is NOT telemetry's positional conn_id. Resolve that identity
+after reorders; do not restart the incumbent's hold just because its index moved.
+`AdaptiveFeatures` is a u8 bitset with STALL/LOSS/QUEUE/DEADLINE/REJOIN/SOLE/PREF/RATECAP,
+ALL/NONE, `contains`, `bits`, subtraction and union; Default is ALL.
+
+Eligibility requires connected, not timed out, not Down. Stalled/Degraded are held;
+Rejoining is admitted with ramp. Loss ablation uses `HealthMachine::loss_latched()`,
+not stale EWMA inference. QUEUE also gates queue delay in the deadline prediction.
+The deadline reads the bond atomic directly (unknown →500ms), holds above 0.5L and
+releases only continuously below 0.4L for τ. Socket-owned `AdaptiveLinkState` keeps
+deadline dwell, failure mark, last election and observed proof; a generation change
+invalidates that history on its next observation. `latest_data_proof_ms()->Option<u64>`
+distinguishes real DATA proof at clock zero from the first-attempt age anchor.
+
+Rank = existing get_score × cached quality × ramp × Healthy-only preference × soft cap.
+Cooldown 15ms / hysteresis 1.10 apply ONLY to an admitted incumbent. Empty admission
+elects an eligible sole carrier by ascending measured sRTT (unknown last), holds ≥2000ms,
+and switches only for a measured ≤0.5× challenger, hard failure, or expired DATA proof.
+After max(2000,τ) without recent proof, mark `sole_failed_until_proof`, force another
+eligible link when possible, and rank failed incumbents last with oldest election first.
+Only new DATA proof clears the mark. Two unknown RTTs do NOT prove a faster challenger.
+No eligible links → highest base among connected, even timed-out/Down links.
+
+`ProbeTarget::eligible` is soft-health OR deadline hold, with hard/sole vetoes.
+The packet handler invokes `state.probe.maybe_emit` after selection/forwarding:
+only a due probe can force primary flushing; a failure or queued suffix prevents its
+copy. Primary and alternate flush errors both return the failed internal conn_id for
+normal recovery + SequenceTracker removal. Probes never alter switch history or probe
+the elected carrier. **`stall_deselect` is a strict no-op in adaptive**, and adaptive
+ACK attribution uses the existing generation-fenced arrival-scoped policy regardless
+of the legacy earned-ACK flag.
+
+Todos 23/24 are integrated: health/rate housekeeping, registration/recovery resets,
+lifecycle status, and the adaptive control surface now run in production. Health
+still initializes Down and enters Rejoining after registration. Todo 25's connector
+refreshes actual admission/ranking before the initial and every housekeeping stats
+snapshot, even without DATA. No default, wire format, frozen trace, or hardware
+performance claim changes here. Tests: `cargo test --lib adaptive` and the real-binary
+`cargo test --test adaptive_cli`, including the ALL−STALL scenario-D control.
+
+## PRIORITY PLUMBING (scheduler evaluation, Todo 21)
+
+### Wave-4 shared foundation
+
+- **Todo 23 seam:** `HealthSignals.route_health: connection::route::RouteHealth`
+  uses `Unknown | DefaultRoutePresent | NoDefaultRoute`, not a parallel enum or
+  synthetic loss/queue sample. `HealthMachine::route_latched()` is an independent
+  cause: NoDefaultRoute latches it, DefaultRoutePresent clears it, Unknown retains
+  it. A latched route blocks Degraded clearance; after restoration all causes must
+  clear continuously for the existing τ. Hard Down and stall precedence are intact.
+  `HealthConstants` is re-exported from `health_constants.rs` without API/default
+  changes. This foundation does NOT add housekeeping health ticks.
+- **Todo 25 seam:** `TelemetryConn` and `LinkStats` gain optional `health` and
+  `priority`. The document orders them after `link_id`, omitting None entirely;
+  `TelemetryConn` retains PartialEq but cannot derive Eq with raw optional f64.
+  `LinkStats.effective_multiplier` now reads the socket-scoped selection cache in
+  adaptive mode; legacy modes retain `quality_multiplier`. The single
+  `selection/adaptive/ranking.rs::refresh` pass owns admission, deadline hysteresis,
+  election, and the quality × ramp × preference × soft-cap product. Both packet
+  selection and `AdaptiveState::update_stats` consume that pass; stats never
+  reconstructs admission. The cache pairs the base score with its multiplier, is
+  cleared on socket reset, and follows the connection through reorder. Held links
+  publish zero; a sole carrier retains the product, while the last-resort connected
+  fallback retains its base-only rank. Adaptive zero-total snapshots stay zero,
+  never using the legacy equal-share fallback. Percentages describe ranking shares,
+  not packet counters or a one-hot representation of cooldown/hysteresis decisions.
+  Health is now populated only in adaptive mode (`healthy|degraded|stalled|rejoining|down`);
+  priority echoes `effective_priority()` whenever configured, including in legacy
+  modes where it has no scheduling effect. Absent values remain omitted. Schema
+  stays 1. `telemetry-adaptive` adds a mapped healthy +0.2 carrier and zero-weight
+  stalled neighbour without priority; all eight older fixture pairs are byte-unchanged.
+  TS declares both fields after `link_id` and byte-roundtrips the new fixture.
+  The fully populated record alone has the exact 12-key assertion; its neighbour
+  uses subset checks. Old golden key equality/additivity remain frozen. A stripped
+  health control falsifies byte parity. `tests/telemetry_adaptive.rs` also drives the
+  real binary over two loopback uplinks with DATA ACKs withheld on one while
+  keepalives continue, requiring that link's live stats-file weight to reach zero.
+  That test executes the exact Cargo artifact through a same-filesystem hard-link
+  alias `atel-<test-pid>` in a private target-directory temp folder. Never launch it
+  with the production process name: concurrent host control-plane tests can issue
+  `killall srtla_send` and terminate an unrelated test child. Linux checks the actual
+  kernel process name. Child logs accompany exit/deadline failures; the 15s deadline
+  and telemetry assertions are unchanged, with no spawn/test retries or signal masks.
+- **Todo 24 seam:** `SharedStats::pool_control() -> Option<PoolControlHandle>`
+  reaches `sender::pool_control`. `submit(PoolControlRequest::SetLinkPriority {
+  key: LinkKey::LinkId(LinkId) | LinkKey::ConnId(usize), priority: Option<Priority>
+  })` is synchronous/nonblocking and returns a Tokio oneshot receiver of
+  `PoolControlResult`. The sender owns/drains the bounded 64-message mpsc channel
+  in its cross-platform event loop. **ConnId is the telemetry position, never the
+  internal random connection ID.** Application changes only the addressed override,
+  calls the existing clear methods for None, and replies AFTER mutation with
+  `{applied, key, link_id, conn_id, priority, effective_priority}` (typed priorities).
+  Errors: `UnknownLink(LinkKey)`, `Busy`, `Unavailable`, `PoolReloaded`.
+  The RPC adapter must parse boundary types, bound its reply wait, and never report
+  enqueue success as `applied`. Do not block an async runtime on `blocking_recv`.
+- **Reload ordering:** close/reject the old channel BEFORE `apply_link_changes`'s
+  first await; publish a fresh handle afterward. Queued requests of either key kind
+  get PoolReloaded, all retained old handles stay closed, and requests during reload
+  fail Unavailable. This conservatively fences positional writes even on unchanged
+  order. Existing baseline/link/conn reload semantics are unchanged. Dropping a
+  reply cancels queued work observed before application; racing cancellation after
+  application cannot roll it back. Sender teardown disconnects waiting replies.
+- Tests: `health::route_tests` proves route-only and mixed-cause clearance;
+  `telemetry_doc::optional_tests` pins order/omission; `sender::pool_control_tests`
+  mutates actual connections, and `pool_control_runtime_tests` drives the real sender
+  loop using initial snapshot readiness. JSON-RPC, fixture expansion, live health
+  ticks, and scheduler-derived telemetry remain the later lanes' work.
+
+`bind_map::Priority` is a private-field `f64` newtype, constructed by
+`TryFrom<f64>` only for finite −0.20..=+0.20; `get()` exposes the numeric bias.
+Raw sidecar rows use `#[serde(default)] Option<f64>`; after hash coherence,
+`validate::parse_rows` maps conversion failure into the existing
+`BindMapError::InvalidRow { index, field: "priority", detail }`. No new degraded
+reason, retry rule, partial acceptance, or schema-version change. The validated
+`Option<Priority>` flows through `BindMapRow`, `EffectiveLink`, and `UplinkSpec`.
+
+`SrtlaConnection` owns THREE independent `Option<Priority>` fields:
+`priority_baseline`, `priority_override_link`, `priority_override_conn`.
+`effective_priority()` reads conn > link > baseline. The methods
+`clear_priority_override_conn()` and `clear_priority_override_link()` clear ONLY
+their own layer; a conn clear must expose a remaining link override, not jump to
+baseline. `connect` initializes baseline from the spec and both overrides to None;
+`spec()` projects the baseline, never an effective override back into a sidecar value.
+
+The pool rebuild refreshes survivors' baseline (including None) and clears only
+their conn layer, keeping the persistent link layer attached to identity through
+reorders. A fresh socket under the same `link_id` copies the old link override before
+retiring the old connection; transport history is still discarded. Ordinary
+recovery/reconnect resets do not clear priority fields. Runtime override commands
+remain Todo 24; do not merge the two override slots when implementing them.
+
+`sender::preference_multiplier(priority, window, health)` (implemented in
+`sender::selection::adaptive::preference`) is
+pure, allocation-free and called only by adaptive ranking.
+Healthy uses `1 + p * clamp((window−10000)/10000, 0, 1)`; all other health states
+return 1.0. Convert the signed window before subtraction to avoid integer overflow.
+No CLI, telemetry, capabilities, ADR document, or legacy-byte contract edits here.
+Tests remain in the existing bind-map parse/validate and link-identity homes, plus
+the pure multiplier's local table. README carries the matching integration boundary.
+
+## PURE LINK HEALTH (scheduler evaluation, Todo 15)
+
+`connection::health` is a production-compiled, allocation-free policy
+module. Todo 15 added only `pub mod health;` to the connection implementation;
+Todo 16 separately adds the DATA evidence ledger below, not runtime health calls,
+scheduling modes, flags or telemetry. Policy tests are test-only companion modules in
+`src/tests/health_*_tests.rs`, loaded
+by `health.rs` without changing `src/lib.rs` or its existing `not(loom)` gate.
+
+API: `HealthState::{Healthy, Degraded, Stalled, Rejoining, Down}` with lowercase
+`as_str()`, `HealthSignals`, `HealthConstants`, `HealthMachine::new(state, now_ms)`,
+`step(&signals, &constants) -> Option<Transition { from, to, at_ms }>`, and
+`ramp_multiplier(now_ms, held_links)`. State/timestamps/dwell have read-only getters;
+`step` delegates to `step_with_originals`, the production transition entry point;
+the latter owns transitions and maintains dwell in 1..=16.
+
+Defaults: stall_attempts=32; τ=clamp(4×sRTT,1000,3000) ms, unknown=3000;
+loss_enter=0.10, loss_clear=0.05, loss_cohort_min_sends=100,
+loss_stale_after_ms=10_000; queue enter=max(10,0.25×slow_min),
+clear=max(5,0.125×slow_min) ms; rejoin_rounds=2; probe_train_len=10;
+probe_max_pps=10 bond-wide; dwell_backoff_max=16. Formula-valued defaults are public
+methods `stall_tau`, `queue_enter`, `queue_clear`; `train_period_ms` and `rejoin_span`
+expose the cadence calculations to future probe consumers.
+
+**Round-8 keepalive detector (2026-09-15), uncommitted experiment / acceptance FAILED.**
+`HealthSignals.keepalive_silence_ms` comes from the socket-scoped
+`connection::keepalive::KeepaliveLiveness`, not RTT's intermittently armed waiting
+flag. The original attempts≥32 AND DATA-proof-age≥τ condition remains; an OR arm
+adds control silence≥3×IDLE_TIME (3000ms) with DATA proof unknown or ≥τ old.
+Healthy controls never veto DATA-stall detection; fresh DATA still proves liveness.
+Unknown control age means no accepted keepalive send, not expiry. First accepted
+send anchors the no-reply deadline; subsequent sends cannot postpone it. Pending
+timestamps use a fixed 16-slot ring, matched timestamped replies are one-shot and
+monotonic, and bare two-byte replies prove control liveness only. Zero-ms replies
+do not change the existing RTT rejection rule. Core recovery clears this evidence.
+No keepalive-only Stalled→Rejoining bypass is added: recovery still needs DATA.
+Keepalive sends remain independent of selection, checked every housekeeping tick;
+actual intervals include tick/I/O scheduling, not a hard real-time guarantee.
+
+This does **not** resolve D: its classifier deliberately passes small controls while
+dropping DATA. Ten unchanged sole-ON release trials give3/10 timely Stalled/0,
+versus fresh baseline2/10 and historical4/5; full D0/10. All nine logged Stalled
+transitions meet the original DATA condition. No substantial detector improvement
+is established, so admission/ranking/sole remain untouched and conditional A was
+not run. Dedicated G fails3/3; release Twins passes3/3, while both broader feature
+gates and the netns script fail G/Twins. No full-green or C1/Todo31 completion claim.
+Nine new tests include two behavioral failures before implementation, healthy idle
+controls, replay/interop/reset boundaries and preserved DATA-only failure handling.
+Details and per-run timings: [`docs/notes/adaptive-keepalive-round8.md`](docs/notes/adaptive-keepalive-round8.md).
+
+**Queue-entry persistence (Todo 28 round 7):** `step_with_originals` starts one
+private `queue_entry_pending: Option<QueueEntryPending>` episode on the first
+Healthy/Rejoining evaluation at or above `queue_enter`. It latches `since_ms` and
+`required_ms=τ`; later RTT changes do not move that deadline. Queue degradation
+requires continuous qualifying evidence for the latched duration. Below-entry
+observations and entry into Down/Stalled/Degraded clear the episode; the
+Rejoining→Healthy edge MUST preserve it if queue remains high. Hard failure wins,
+then stall, then immediate route/finalized-loss degradation, then matured queue.
+Starting the timer does not double dwell; only an actual soft rejoin relapse does.
+The Degraded `queue_clear`/`clear_since_ms` path is UNCHANGED and separate storage.
+
+This deliberately absorbs short full-load restoration transients from a source
+unaware of the rejoin ramp. It does not reinterpret round 6's proven kernel backlog
+as measurement noise, widen queue thresholds, or change HealthSignals/HealthConstants.
+Never use `ramp_span_effective` or `dwell_multiplier` for entry persistence: sustained
+evidence must mature in 1–3s from the first qualifying evaluation (design budget
+roughly 5s from physical onset including detector/housekeeping quantization, not
+a hard real-time guarantee). Remaining overload is an admission/sole-carrier
+coordination investigation, not permission to extend this window.
+
+The first round-7 live gate remains RED: I passes, D/G/twins fail unchanged
+assertions. G carries 3,727,772B but is demoted in 48/61 distinct snapshots
+(36Degraded/12Stalled). Twins' retained survivor and rejoining-link demotions both
+say **normal DATA loss**, not queue; no causal admission/qdisc capture was added
+this round. D/G transition causes are unretained and must not be guessed from NAK
+warnings. The gate is unit-proven (seven new tests), not a live-convergence fix.
+
+Integration obligations:
+- Pass normalized finite/nonnegative timing observations and loss fractions in [0,1]
+  in one monotonic-ms domain. `proof_age_ms=None` means unknown, not infinite;
+  before first DATA proof pass elapsed-since-registration/first-attempt instead.
+- `loss_cohort_ok` means a qualifying normal-DATA cohort, never a probe cohort.
+  `last_cohort_ms: Option<u64>` dates the last qualifying EWMA. Fresh retained EWMA
+  can clear loss even if this tick's cohort is below the floor. Stale (age ≥10s),
+  absent, or undated EWMA requires `probe_loss`; supply it only after the last two
+  complete trains. Loss demotion latches its cause; queue-only demotion with unknown
+  loss does not invent a loss requirement. Loss, queue, or the independent route
+  cause can reset clear dwell.
+- `probe_rounds_started_ms: Option<u64>` is the start of the oldest train counted
+  by `probe_rounds_ok`; expire the pair together. This additional timestamp is
+  necessary to enforce the plan's freshness requirement from a pure snapshot.
+  Stalled accepts two rounds only within max(2τ,rounds×train_period+sRTT), inclusive,
+  with a start not preceding this Stalled entry or lying in the future. This is a
+  rolling evidence window, NOT a deadline measured from initial failure.
+- Fresh runtime machines start Down; restored eligibility takes Down→Rejoining.
+  Explicit Degraded initialization conservatively requires loss clearance; normal
+  transitions record the actual loss cause. Direct Rejoining initialization uses
+  default unknown-RTT timing; runtime rejoin captures the supplied entry RTT/tuning.
+- Ramp multiplier and Healthy promotion share one effective-span calculation:
+  max(2τ,train_period)×dwell. Entry RTT/tuning stay fixed during a ramp, held count
+  stays live. Rejoining→Stalled/Degraded doubles dwell, never Down; Healthy resets
+  it. Do not substitute a shorter promotion timer after a relapse.
+
+Run `cargo test --lib health`, `cargo fmt --all -- --check`, and the real lib+bin
+`cargo clippy -- -D warnings`. This is policy coverage only; later delivery/probe
+tracking and housekeeping integration must establish the live behavior separately.
+
+## DATA DELIVERY LEDGER (scheduler evaluation, Todo 16)
+
+`SrtlaConnection::delivery` is `pub(crate)` and independent of `packet_log`.
+`connection::delivery::DeliveryLedger` owns a preallocated 4096-entry sequence map
+with O(1) linked LRU removal, 6000ms expiry (exactly 6000ms remains valid), saturating
+`attempts_since_proof: u32`, `last_data_proof_ms: u64`, a first-attempt/proof-age anchor,
+a two-second delivered-byte ring and `socket_generation: u32`. Retransmitting a
+sequence refreshes its timestamp/length/LRU position and adds one attempt; a hit is
+consumed once. Eviction never resets attempts or moves the proof-age anchor.
+
+`FlushOutcome.accepted` is now `SmallVec<(Option<i32>, u64, usize), 4>`:
+sequence, existing QUEUE timestamp, actual accepted datagram length. The touched
+`flush_batch` implementation was extracted from the oversized connection façade to
+`connection/transmit.rs`; its method name and callers are unchanged. It registers
+the accepted prefix in the legacy log using queue timestamps, and separately records
+`DataSend { sent_ms: acceptance_now_ms, len: checked_u16_length }` in the ledger.
+This also runs on a prefix followed by a hard error. Unsent suffixes, queue-only
+packets and sequence-less control packets do not enter the ledger. No telemetry
+accounting call was moved.
+
+`handle_srtla_ack_specific` consults the ledger FIRST. A valid `DeliveryAck { seq,
+socket_generation }` hit stamps proof, resets attempts and credits its length even
+if a cumulative ACK or NAK already pruned `packet_log`. Its existing bool return,
+RTT sampling, legacy stamp and window growth remain packet-log-dependent. Never
+make these legacy effects depend on the new ledger, or require a packet-log hit
+for DATA proof. Keepalive, cumulative ACK and NAK never stamp DATA proof. Duplicate
+probe hits must use the probe log rather than inserting copies into this ledger.
+
+`proof_age_ms(now_ms)` returns elapsed since first accepted attempt before first
+proof, then elapsed since proof; a fresh/reset idle ledger returns `None`. Zero is
+a valid clock timestamp, so absence is tracked separately from the public zero
+stamp. `delivered_bps(now_ms)` is a fixed 2s wire-bits/s signal over `(now−2000, now]`,
+not telemetry's queued-send rate or useful viewer goodput. Equal-ms credits aggregate,
+so the retained ring is bounded by 2000 buckets without losing high-PPS samples.
+
+`reset_core_state` clears all evidence and wrapping-increments generation for both
+`mark_for_recovery` and successful socket replacement. Ledger lookups check BOTH the
+caller token and entry generation. An old token cannot consume a reused current
+sequence. Todo 19 propagates captured reader generations through `UplinkPacket`
+and fences them in the adaptive ACK policy. The legacy sequence-only handler still
+supplies the current generation intentionally. SRTLA wire ACKs carry no generation:
+local reader fencing is not wire authentication.
+
+Tests: `cargo test --lib health_delivery` includes the seven required named cases,
+the permanent `legacy_stall_predicate_misses_scenario_d` control, expiry/LRU/rate/token
+boundaries, and real kernel prefix/partial-error sends. Scenario D uses 40 accepted
+sends, five real keepalive-handler replies at 10–14s, and three NAK frames removing
+40 packet-log entries. It remains Stalled with 40 attempts and zero in-flight packets.
+`utils::test_clock` is a cfg(test)-only, scoped, thread-local !Send override for these
+current-thread tests; production/test-internals-only builds retain the real monotonic
+clock. No sleeps or global clock replacement; existing frozen flag tests are unchanged.
+HealthMachine housekeeping wiring and hardware validation remain later work; adaptive
+selection/probe integration is described above.
+
+## LOSS / QUEUE EVIDENCE (scheduler evaluation, Todo 17)
+
+`connection::loss::LossTracker` owns normal-DATA loss independently of legacy
+congestion counters. `new(now_ms)` anchors 1000ms `[start, end)` cohorts;
+`record_send(now_ms)` runs beside the DeliveryLedger insertion in
+`connection/transmit.rs::flush_batch`, inside the accepted-prefix `Some(seq)` arm.
+Queue-only packets, failed suffixes, sequence-less control and direct probe copies
+never count. `record_data_nak_for_send(sent_ms, now_ms)` runs only after `handle_nak` successfully
+removes a normal `packet_log` entry; duplicate/missing NAKs do not count. Keep
+probe-log lookup outside this branch. Existing NAK/window effects stay intact.
+
+`advance(now_ms)` closes elapsed cohorts before counting a boundary event. It feeds
+`cohort_naks / cohort_sends` to the existing alpha-0.2 `Ewma` only at
+`LOSS_COHORT_MIN_SENDS = 100` or more. Below-floor cohorts are discarded, not pooled.
+`last_value() -> Option<f64>` and `last_cohort_ms() -> Option<u64>` retain the
+last qualifying estimate and its cohort END, even across long idle gaps. NAKs use the
+accepted-send timestamp from the delivery ledger (congestion-log timestamp fallback),
+never arrival time to select a denominator. A bounded ten-second closed-cohort history
+corrects older cohorts and recomputes EWMA chronologically from an evicted-prefix
+checkpoint. This does not redetermine the load floor, pool sub-floor cohorts, refresh
+old evidence dates, or clamp loss ratios. Pre-epoch/expired feedback is never charged
+to new traffic. `record_data_nak(now_ms)` remains a same-cohort convenience API.
+**Close and settle are distinct.** Closure freezes the accepted-send denominator;
+the closed cohort cannot feed EWMA until the latest of its accepted-send deadlines
+has elapsed. Adaptive admission supplies the SAME `negotiated_latency_ms` observation
+as its deadline gate (one shared 500ms unknown-fallback constant). Each accepted send
+captures an epoch/cohort/deadline `LossSend` token: deadline = acceptance time + that
+budget. A changed budget or a retry never extends an older debit's deadline.
+For adaptive normal ACKs, `LossDebit`s in the bounded delivery entry can be credited
+exactly once in either the open or closed-but-unsettled cohort, before EACH debit's
+deadline. Retries retain distinct cohort/deadline groups; only identical groups merge.
+At/after deadline, unresolved NAKs (including a first late observation) are final and
+cannot be forgiven. Probe/cross-link/stale-generation/old-epoch ACKs and missing
+ledger entries cannot receive credit. Socket replacement resets both ledgers.
+Expired debit groups are pruned on retry/NAK; the delivery ledger's 4096-entry/6s
+bound and ten-second cohort history still apply. An unsettled cohort expiring from
+history is discarded, never prematurely finalized for an exceptionally large budget.
+`last_settlement_ms` controls the one-second fresh-settlement qualification, while
+`last_cohort_ms` remains the ORIGINAL cohort end for the ten-second stale rule.
+Late final NAK revisions recompute retained EWMA without refreshing either date.
+Raw congestion NAK/window effects, legacy ACK behaviour, and ALL health transition
+thresholds/dwell logic remain unchanged. This is deadline-budget accounting, not a
+receiver playback timestamp measurement or blanket eventual-delivery forgiveness.
+The health sampler must call `advance(now)` even for idle links, then read
+`loss_cohort_ok(now, stale_after_ms)` (qualified fresh settlement, original evidence not stale)
+and `is_stale(now, stale_after_ms)` (unknown or age >= threshold). Discarding a
+cohort disables qualification without deleting a retained clearance estimate.
+Recovery/socket replacement reconstruct loss state at `reset_core_state`.
+`probe_loss() -> Option<f64>` reads the default-None `pub(crate)` field populated by
+Todo 19's `advance_probes(now_ms)` from the last two finished probe trains.
+
+`RttTracker` adds separate `rtt_obs_fast` / `rtt_obs_slow` time windows over raw RTT
+observations. `queue_delay_ms() -> f64` is `max(0, (fast_min - slow_min) / 2)`
+over `(now-1000, now]` / `(now-30000, now]`; no fast evidence returns 0.
+`slow_min_rtt_ms() -> f64` exposes the time-based floor (0 if absent) for future
+queue thresholds. Expiry is checked on reads as well as inserts. The child
+`rtt/queue_delay.rs` keeps monotonic minimum candidates, coalescing same-ms samples;
+at most one candidate per millisecond bounds retained entries without sample-count
+eviction. Reset clears both new windows. **The existing filtered sample-count
+windows, `rtt_min_ms` computation, and in-file RTT tests are byte-unchanged.**
+Do not substitute these time windows for the baseline consumed by BLEST/legacy EDPF.
+
+Run `cargo test --lib loss`, `cargo test --lib queue_delay`, and the unchanged
+legacy `cargo test --lib rtt` cases. Tests cover the 50-send/50-NAK guard, EWMA
+convergence, expiry, raw RTT ramp/jitter, real accepted-prefix errors, attribution,
+and lifecycle resets. No HealthMachine/HealthSignals runtime wiring, telemetry,
+CLI, probe production or scheduler-selection change is part of this tracker work.
+
+## NEGOTIATED SRT LATENCY (scheduler evaluation, Todo 18)
+
+`protocol::srt_handshake::parse_hsrsp_tsbpd_delay_ms(&[u8]) -> Option<u32>` is a
+clean-room, allocation-free passive decoder using the real committed 80-byte
+`tests/fixtures/srt-hsrsp-latency2000.bin`. Header checks: type `[0,2)` = 0x8000,
+version `[16,20)` = 5, extension flags `[22,24)` has HS bit 1, conclusion request
+`[36,40)` = 0xffffffff. Extensions start at 64; each advances `4+4*body_words`.
+Command 2 HSRSP requires at least three complete body words; receiver delay is the
+big-endian high half of the latency word at descriptor offset E+12 (not the low
+sender half). All descriptors/bodies must fit, including trailing extensions.
+Absent HSRSP, other types/versions/phases, and truncation silently return `None`.
+
+`process_packet_internal` sniffs ONLY the existing forwarding else-branch when
+type is `SRT_TYPE_HANDSHAKE`, then executes the original byte-copy push regardless
+of parse success. Both `process_packet` and `drain_incoming` borrow `&SharedStats`;
+the sender passes the same bond handle through every uplink/queue-drain entry,
+including SIGHUP. Do not attach this bond-wide state to individual connection
+lifecycles or alter registration, liveness, forwarding, or source acceptance.
+
+`SharedStats` owns a new private `Arc<AtomicU32>` with relaxed loads/stores: the
+single word is the whole observation and publishes no associated memory. Zero is
+unknown; the public `negotiated_latency_ms() -> Option<u32>` reads directly without
+any snapshot/configuration lock. Its crate-private setter is called on successful
+decode only. Housekeeping/reload/reconnect retain the last observation; a later
+valid handshake replaces it (including zero → unknown). There is no authentication,
+stream-identity binding or generation/freshness fencing: Todo 22 must not invent
+those guarantees. No adaptive deadline gate is enabled by this plumbing alone.
+
+`get-status` adds optional `negotiated_latency_ms`, omitted for unknown (not null).
+The 30-second status log prints the value or `None`. The flags extension below
+additionally exposes receiver observations; CLI and capabilities remain unchanged.
+Stats tests were extracted into
+`src/stats_tests.rs`; module/test names retain the `stats::tests` path.
+Gates: `cargo test --lib srt_handshake` (real fixture + byte-flip/truncation controls),
+`cargo test --lib packet_io` (byte-preserving receive paths), atomic/status tests,
+`cargo test --test parser_proptest` (arbitrary bytes and captured-header extensions),
+and `cargo clippy -- -D warnings`.
+
+`tests/negotiated_latency.rs` runs the actual binary without privileges, completing
+registration with a loopback UDP test peer, checking the returned datagram verbatim
+and querying the live Unix `get-status`. Both captured-HSRSP and flipped-type cases
+are bounded to ten seconds; temporary paths and ports are per test. This exercises
+production handle propagation, not a second live-libsrt capture or hardware gate.
+
+### Receiver handshake flags (bonded-path convergence, Todo 7)
+
+`parse_hsrsp` reuses the same complete extension walk and returns `HsrspInfo`:
+packed SRT version at E+4, flags at E+8, receiver TSBPD delay at E+12.
+`parse_hsrsp_tsbpd_delay_ms` is its compatibility projection; the original nine
+fixture tests remain unchanged. Flag constants follow SRT's `SrtOptions`:
+TSBPDSND bit 0, TSBPDRCV 1, TLPKTDROP 3, NAKREPORT 4, REXMITFLG 5,
+STREAM 6, FILTERCAP 7. Version is three bytes, major.minor.patch.
+
+`SharedStats::set_receiver_handshake` preserves the atomic latency observation and
+stores a single bond-level `ReceiverHandshake` under its own lock, independent
+of housekeeping snapshots. `receiver_handshake()` and `StatsSnapshot::receiver`
+expose optional `receiver_nak_report`, `receiver_srt_version`, and
+`receiver_rexmit_flag`. SIGHUP additions/reorders and uplink re-registration retain
+the cache; a later valid encoder HSRSP replaces it. Malformed packets never clear
+it and forwarding stays byte-identical. These are unauthenticated, last-observed
+claims, not peer authentication or freshness proof.
+
+The 30-second log adds `receiver: nak_report=on|off|unknown srt=<version|unknown>`.
+`get-status` adds `receiver: {nak_report?, srt_version?, rexmit_flag?}` (empty object
+before observation). File/event telemetry adds only optional top-level
+`receiver_nak_report`, after `disposition`; unknown is omitted, never null, and
+schema_version stays 1. TS declares it in that producer order. The tenth fixture,
+`telemetry-receiver-flags`, is generated in both directories by the existing
+UPDATE_GOLDEN command; every older fixture is unchanged. Frozen `@ceralive/srtla`
+Zod accepts and strips this unknown additive key, so emission needs no gate.
+
+Policy MUST treat unknown as NAK-on (`ReceiverHandshake::nak_report_enabled()` or
+TS `receiver_nak_report ?? true`), without turning unknown telemetry into true.
+This todo does not alter scheduler/NAK policy; later consumers must use that fallback.
+Tests cover both real captures, bit clearing, arbitrary bytes/extensions, malformed
+lengths, typed state, live binary reconnect/invalid forwarding, optional-field
+serialization and cross-language byte parity. `hello.capabilities` and the
+pre-spawn capabilities document are untouched.
+
+## DUPLICATE DATA PROBES (scheduler evaluation, Todo 19)
+
+`connection::probe::ProbeScheduler` is owned per adaptive send loop, never global.
+`next(targets, now_ms)` uses a one-token bucket capped at `PROBE_MAX_PPS=10`:
+no idle burst, `with_rate(0)` disables emission, overrides cannot exceed the cap.
+Ten-slot trains (`PROBE_TRAIN_LEN=10`) rotate by stable connection ID; a generation
+change or eligibility loss abandons the current train. `ProbeTarget` explicitly
+carries `{conn_id, socket_generation, health, deadline_held, sole_carrier, srtt_ms}`.
+Stalled/Degraded OR deadline-held targets are eligible, never Down or sole carrier.
+Adaptive calls `maybe_emit(connections, ProbeOpportunity { primary_conn_id,
+packet, targets })`, which establishes primary acceptance before invoking `emit`.
+Skipped opportunities
+consume pacing slots conservatively; incomplete trains never qualify for recovery.
+
+Production emission reuses the spike's wire-copy primitive in
+`sender/duplicate_data.rs`, clearing **SRT byte 4 mask 0x04** and changing no other
+byte. `queue_probe_packet` inserts a distinct probe kind into the normal unpadded
+BatchSender. It rejects stale dispatches and same-link original/probe sequence
+collisions. Queued probes do not enter `queued_count()`'s congestion load. Normal
+`FlushOutcome.accepted` stays unchanged; new `probes` metadata reports only the
+kernel-accepted probe prefix. Probe sends never call `register_packet`, insert
+into DeliveryLedger/SequenceTracker, or modify selector switch history. The emitter
+refuses a queued suffix and rebases pacing after I/O to avoid delayed-send bursts.
+`ProbeEmission { conn_id, outcome }` identifies the link the caller must recover
+and remove from SequenceTracker on an error, exactly as for normal flush errors.
+
+Each connection owns `probes: ProbeLog`, containing `probe_log: FxHashMap<i32,u64>`
+(sequence → acceptance ms), a bounded 256-entry LRU, and at most 32 train records
+with inline ten-sequence lists. A train's inclusive ACK deadline is its start plus
+`2000*m + srtt_ms`, with m captured from eligible held links. Only ten distinct
+accepted sequences with at least five ACKs qualify as OK; replays cannot re-credit
+a train. Expired trains fail when below that threshold. Loss is missing slots /20
+over the last two finished (all-ACKed or expired) trains; incomplete trains count
+their missing slots as losses. Dividing the integer loss count avoids rounding
+5% just above the clearance threshold. `rounds_ok()` returns the consecutive
+count and oldest contributing start. History expires after twice its train timeout;
+HealthSignals must still enforce its own rejoin-span age bound. Todo 23 must call
+`advance_probes(now)` on idle links before reading loss/rounds. Recovery and socket
+replacement clear logs/trains with the delivery generation; `probes_sent` remains
+cumulative for the connection lifetime.
+
+`UplinkPacket` is now `{conn_id, reader_generation: u32, bytes}`; both reader send
+sites capture the generation at spawn, and sync/restart pass it explicitly.
+`packet_handler::apply_srtla_ack` re-exports the implementation in `sender/ack.rs`:
+`AckContext { arrival_idx, reader_generation, policy: AckPolicy }`. Adaptive first
+rejects a stale token, then consumes ONLY the arrival link's probe log or original
+delivery ledger. Probe proof refreshes DATA health but never original delivered
+bitrate, window, packet_log or in-flight. No cross-link scan exists in this arm.
+`AckPolicy::from_config` now selects the arrival-scoped arm for every mode (Todo 32).
+Test-only adapters preserve the frozen ACK-RTT, batch-I/O and earned-ACK suites
+byte-for-byte while calling the same production implementations.
+
+Probe-only NAKs never enter normal loss accounting. Accepted probe bytes DO update
+BitrateTracker's total and rate, including an accepted prefix before a flush error
+(ADR-002); unsent probe suffixes do not. `probes_sent` appears only as a structured
+field in the existing 30s status log when nonzero. No telemetry JSON keys, schema
+version, runtime flags, selection policy or hardware-performance claim are added.
+Gate: `cargo test --lib probe`; separate `cargo test --lib ack_rtt` and
+`cargo test --lib batch_io`; `cargo clippy -- -D warnings`.
+
+## PURE DELIVERED-RATE CONTROLLER (scheduler evaluation, Todo 20)
+
+`connection::rate_cap::{RateCap, RateState, ClimbMode, RateSignals}` is a standalone
+policy module. Adaptive now owns a connection field and reads its ranking multiplier;
+housekeeping ticks/resets and telemetry remain pending. `connection/congestion/enhanced.rs` is untouched.
+`RateCap::default()` belongs to one socket lifetime. The later lifecycle owner must
+reconstruct it alongside that link's delivery ledger on recovery/socket replacement.
+
+`tick(&mut self, &DeliveryLedger, &RateSignals)` MUST run exactly once per 1s
+housekeeping tick, even when idle, never per packet or in a catch-up loop. It reads
+`delivery.delivered_bps(signals.now_ms)` internally: callers cannot substitute TX
+bitrate. Signals supply monotonic ledger time, finite nonnegative `srtt_ms`,
+`rtt_min_ms`, `queue_delay_ms`, `jitter_ms`, finite `velocity_ms_per_update`, and
+`loss_ewma: Option<f64>` (fraction, unknown is not zero). Integration should use
+the same link's RTT/queue trackers and advanced normal-loss tracker, not probe loss.
+
+States are exactly `Bootstrap | Climbing { sub } | Holding | BackingOff | Drain`;
+submodes are `Normal | Hai | FastRecovery { ticks_left }`. State/target/rate fields
+are private and exposed via read-only `state()`, `target_bps()`, `delivered_bps()`.
+The first positive observation seeds `max(1_000_000, delivered)` and enters normal
+Climbing without applying a growth increment on the same tick. Idle before that
+preserves Bootstrap, so the first later observation still seeds correctly.
+
+- Normal grows 2%; Hai grows 6% only with measured RTT, absolute velocity ≤0.1
+  ms/Kalman update, jitter ≤10% sRTT, and zero queue delay. The explicit 0.1
+  tolerance and queue veto resolve the plan's unspecified near-zero criterion.
+- BackingOff needs loss ≥0.015 AND delivered ≥0.3×target; the next target is exactly
+  `max(0.85*prev, min(delivered, prev))`. The first observation AFTER three completed
+  cuts tests efficacy; loss ≥0.8×entry starts a 30-tick cut-suppression latch, including
+  that observation tick. Strictly lower loss permits continued backoff. Efficacy is
+  tested once per uninterrupted backoff episode, not repeatedly against moving entry
+  loss. `is_uncongestive()` exposes the latch; it ages through idle as well.
+- Measured sRTT >1.5×baseline holds. At ≥2×baseline with `Some(0.0)` loss, Drain
+  applies ×0.75 only at episode entry AND with no cut in the preceding ten ticks.
+  Episode identity is separate from the guard: expiry cannot recut sustained Drain.
+  A guarded/suppressed episode is not cut later merely because the timer expires.
+- Backoff/Drain arm five recovery growth ticks. They survive Holding and idle.
+  Mode selection occurs before decrement: reported `ticks_left` is 4,3,2,1,0 after
+  the five full ×1.04 ticks. Only the next climbing tick can choose Normal/Hai.
+- Idle freezes target, active mode, Drain identity and recovery budget; it clears
+  incomplete backoff efficacy evidence. `stale_since` counts the first idle tick
+  inclusively, so `bdp_cap_suspended()` becomes true on tick ten, stays true through
+  indefinite idle, and clears on the next positive delivery without rebootstrap.
+
+`bdp_cap_packets(rtt_min_ms) -> u32` returns
+`max(32, floor(target_bps*rtt_min_ms/1000/8*1.5/1316))`, or `u32::MAX` when suspended.
+Packet conversion intentionally saturates overflow; growth saturates at finite f64
+maximum. `soft_cap_multiplier(in_flight: u32)` uses the last tick's cached baseline:
+1.0 at/below cap (including suspension), otherwise `cap/in_flight`, always positive.
+It is RANKING ONLY, never an eligibility predicate. There are no share-tier verdicts.
+
+Tests are split into `rate_cap_tests.rs` (growth/ledger/ranking),
+`rate_cap_backoff_tests.rs` (loss/latch) and `rate_cap_episode_tests.rs` (timing/idle).
+They populate a real DeliveryLedger with SRTLA ACK credits, not a mock send rate.
+The five audit-named regressions include an exhaustive wildcard-free match over
+both enums; adding any new verdict fails compilation. Gate:
+`cargo test --lib rate_cap` and `cargo clippy -- -D warnings`. This is pure policy
+coverage; no live-bond performance or runtime integration claim is implied.
+
+## CODEBASE (single scheduler + shared signal layer, 4.0.0)
 
 ```
 src/
   main.rs            CLI entry point (clap)
   lib.rs             library exports
-  config.rs / config/    runtime config (DynamicConfig, ConfigSnapshot); stdin + Unix-socket control
-  mode.rs            SchedulingMode (Classic | Enhanced | RttThreshold | Edpf)
+  config.rs / config/    runtime config (DynamicConfig, ConfigSnapshot, SchedulerFeatures);
+                     stdin + Unix-socket control; retired controls accepted + ignored
+  mode.rs            SchedulingMode — ONE variant, Enhanced; retired spellings are typed
+                     errors (`retired_mode`) naming docs/release-notes-4.0.0.md
+  adaptive_env.rs    test-build feature/tuning env (SRTLA_ADAPTIVE_FEATURES/_TUNING,
+                     premature-NAK bypass); release builds inline the shipped pins
+  receiver_handshake.rs  ReceiverHandshake: bond-scoped HSRSP observation
+                     (nak_report/srt_version/rexmit_flag), nak_report_enabled() fail-safe
   bind_map/          optional versioned bind-map sidecar (ADR-003): parser, coherence,
                      bounded retry, fail-open duplicate-safe resolution
     report.rs        telemetry projection of a Resolution (bind_map_status + disposition)
   capabilities.rs    --capabilities-json pre-spawn probe document
-  telemetry_doc.rs   ADR-001 document model + units + serializer (schema lives here)
+  jsonrpc.rs         JSON-RPC control methods: get-status (receiver, links[].rexmit_forwarded,
+                     negotiated_latency_ms), get-capabilities, set-link-priority, …
+  stats.rs           SharedStats / StatsSnapshot; SessionBytes; bind-map + receiver locks
+  telemetry_doc.rs   ADR-001 document model + units + serializer (schema lives here;
+                     optional receiver_nak_report tail)
   telemetry_file.rs  opt-in --stats-file publish mechanics (temp -> fsync -> rename)
   connection/        SrtlaConnection, bind/resolve, incoming packet handling, RTT (Kalman)
+    ack_nak.rs       ACK/NAK handling incl. the in-flight premature-NAK rule (K=3)
+    delivery.rs      DeliveryLedger — kernel-accept timestamps, DATA delivery proof
+    health.rs        HealthMachine (Down/Rejoining/Healthy/Degraded/Stalled), pure policy
+    loss.rs / rtt/   normal-DATA loss cohorts; Kalman RTT + 1s/30s minima queue detector
+    probe.rs         duplicate-DATA probe trains (bond-wide 10/s bucket)
+    rate_cap.rs      delivered-rate soft-cap controller (ranking multiplier)
+    transmit.rs / batch_send.rs  sendmmsg batch flush, accepted-prefix commit
     socket.rs        SourceIpBinder (legacy) + DeviceBinder (SO_BINDTODEVICE + source bind)
     spec.rs          UplinkSpec/SocketKey — link_id identity vs (ip, iface) socket key
     egress.rs        ifindex staleness: re-resolve, re-enumeration, ENODEV -> removed
     route.rs         read-only per-iface default-route observation (blackhole check)
-  protocol.rs        SRTLA protocol constants/structures
+  protocol/          SRTLA constants/structures, SrtSeq (31-bit modular),
+    srt_handshake.rs HSRSP parser (version, flags, TSBPD delay) — forwarding untouched
   registration.rs    REG1/REG2/REG3 flow + ID propagation
-  sender/            packet forwarding + selection/ (BLEST → IoDS → EDPF), status logging
+  sender/            packet forwarding, housekeeping, status logging
+    selection/       FORK-OWNED from 4.0.0 (upstream changes triaged, never merged)
+      mod.rs         dispatch: admission -> shared ranking -> Enhanced select
+      admission.rs   shared admission (Down excluded, held links = probe targets),
+                     lazy weight product quality × rejoin × preference × ratecap
+      signals.rs / shared.rs  per-link signal snapshot; loop-owned SchedulerShared
+      adaptive/      shared ranking/sole-election/preference machinery that Enhanced
+                     consumes (the retired Adaptive selector is gone; its layer is not)
+      enhanced.rs    the one production ranking formula (cooldown + 10% hysteresis)
+      quality.rs     NAK-decay quality multiplier
+      features.rs    SchedulerFeatures (9 bits, all ON; never on a public surface)
+      edpf.rs / blest.rs / iods.rs  RETAINED regression pipeline, no CLI dispatch
     links.rs         where the uplink set comes from (legacy ips file, or the bind-map pair)
     connections.rs   pool rebuild: dedup on socket key, survive on link_id
     egress_tick.rs   the per-tick egress re-resolution + route observation
+    packet_handler.rs  forward path; rexmit_forwarded (R-bit) counter; probe emission
   tests/             unit / integration / e2e / protocol / registration suites
 crates/network-sim/  dev-only network simulation harness (workspace member)
   twin/            duplicate-IP twin topology (NAT carrier per link), bind-map
                    sidecar publisher, and the twin process stack
+  bond/ profile/ scenarios/ metrics/  N-link bond fixtures, temporal profiles,
+                   the A–L + M1–M8 scenario catalog, RunRecord metrics schema
+scripts/bench/       campaign runner, report.py/decide.py/lineage_rule.py (frozen
+                     rules), manifests, canary kit
+docs/evidence/bpc/   portable bonded-path-convergence evidence (M1–M5, defects, verdict)
+docs/adr/ADR-004-bonded-path-convergence.md  the decision record for all of the above
 rust-toolchain.toml  pinned nightly (CERALIVE)
 rustfmt.toml         unstable nightly fmt config (edition 2024)
 ci/build-deb.sh      single-source .deb packager (control + filename + glob self-test)
@@ -717,12 +2467,10 @@ scripts/netns_test_gate.sh  bounded privileged network-namespace test runner
 
 Conventions (enforced by the gate): edition 2024, `anyhow::Result`, `tracing` macros,
 Tokio async, imports grouped std → external → crate (module granularity), constants
-`SCREAMING_SNAKE_CASE`. Four scheduling modes (classic, enhanced, rtt-threshold,
-edpf); enhanced (default) adds NAK-decay quality scoring + optional exploration.
-EDPF (`--mode edpf`) is Earliest Delivery Path First — a BLEST (static-OWD HoL
-guard) → IoDS (bounded in-order constraint) → EDPF (lowest predicted arrival)
-pipeline with per-loop owned scheduler state (no thread-local). See `README.md`
-for the full operator/runtime reference (modes, runtime commands, tuning constants).
+`SCREAMING_SNAKE_CASE`. One scheduling mode: Enhanced, with shared admission,
+NAK-decay quality weighting, cooldown and hysteresis. Exploration controls are
+retired no-ops. EDPF/BLEST/IoDS remain only as the explicitly retained regression
+pipeline, never CLI dispatch. See `README.md` and `docs/release-notes-4.0.0.md`.
 
 ## ANTI-PATTERNS
 
@@ -873,6 +2621,34 @@ is `ADOPTED: sendmmsg(2) batch send (was: DEFERRED)`), not a deferred-item point
 do not cite it as an example of an unimplemented/deferred feature. The triage row of
 record is `docs/notes/upstream-sync-2026-08-evaluation.md` → `673138d`.
 
+### Test-only duplicate-DATA receiver experiment
+
+`src/sender/duplicate_data.rs` and its forwarding call site are compiled ONLY with
+`test-internals`. `SRTLA_TEST_DUP_EVERY=<positive n>` plus
+`SRTLA_TEST_DUP_RETX_BIT=0|1` enable a per-process cadence; absent/invalid settings
+disable it. The hook selects every nth complete DATA header, flushes the original
+batch, and sends a copy only if that flush succeeded and left no unsent suffix.
+The alternate must be registered and not timed out. `send_copy` borrows the
+connection immutably and calls its existing bound socket directly: NO batch queue,
+packet-log, in-flight, bitrate or `SequenceTracker` insert. Preserve this bypass
+when reusing the primitive for future probe work; single-owner tracker semantics
+are unchanged. Only byte 4 bit 2 (`0x04`, second word bit 26) is changed on the copy,
+per `draft-sharabayko-srt-01` §3.1.
+
+`tests/netns_dup_spike.rs` is explicitly ignored and requires real sudo/netns,
+tcpdump, Python, libsrt's `srt-live-transmit`, and a built CeraLive receiver under
+`SRTLA_REPO` (never an ambient PATH receiver). Its A/B/control runs use classic mode,
+200 pps × 15 s, 1316-byte messages, latency 2000 ms and lossmaxttl 40. Loopback pcap
+duplicates prove libsrt admission; the fresh-port control separately proves 50
+replays arrived at SRTLA while none reached libsrt. Source/sink bytes must match.
+`-fullstats` disables counter clearing, so all four end-minus-zero counters,
+including belated, are cumulative even though CSV names omit `Total`. Wire choice
+minimizes the sum of belated and retransmitted events (tie → clear). Use the bounded
+command in README; `DUP_SPIKE_OUTPUT` retains artifacts. `DUP_SPIKE_EXPECT_DAMAGE=1`
+is solely for the scratch sequence-corruption falsifiability run and is not a
+passing substitute for the normal three-variant spike. Non-feature release binaries
+must contain no `SRTLA_TEST_DUP` strings. No CLI/telemetry contract changes.
+
 ## TS BINDING TOOLING
 
 The binding package manager is **Bun `1.4.2`**, pinned by `packageManager` and locked by
@@ -917,14 +2693,36 @@ The `bindings/typescript/` package uses Biome **2.5.9** via `@ceralive/biome-con
 
 **Golden fixtures are excluded from Biome** — `biome.json` sets `files.includes` to `["**", "!dist", "!**/tests/fixtures"]`. `tests/fixtures/telemetry-golden.json` is a deliberately byte-identical copy of the Rust producer golden (`tests/fixtures/telemetry-golden.json` at the crate root): the single-line, newline-free atomic-publish telemetry shape (ADR-001). If Biome pretty-prints it (multi-line + trailing newline), the cross-language parity test (`tests/telemetry_fixture_parity.rs` — `rust_and_ts_goldens_are_byte_identical` plus the newline-free assertion) fails every Rust test job in CI. **Do not remove this exclude, and never `biome check --write` the fixtures** — re-sync the two goldens by editing both byte-for-byte instead.
 
-## EXPERIMENTAL SCHEDULER-HARDENING FLAGS (consolidated-flows-and-satellite, Todos 14-15)
+## EXPERIMENTAL SCHEDULER-HARDENING FLAGS (consolidated-flows-and-satellite, Todos 14-15) — RETIRED, ACCEPTED-AND-IGNORED
 
-Two CLI flags harden the default `enhanced` mode against a satellite/LAN failure signature
-(a link that keeps a high scheduling weight while it silently degrades). Both are
-**`[EXPERIMENTAL]` in their `--help` text and default OFF everywhere** (CLI parse default,
-`DynamicConfig` atomic default, `ConfigSnapshot` default). Neither is validated against real
-bond hardware — see the HARDWARE-VALIDATION GATE below. Full operator-facing description:
-`README.md` → "Experimental Scheduler-Hardening Flags".
+**Current contract (4.0.0, ADR-004).** `--earned-ack-window`, `--stall-deselect`,
+`--stall-min-in-flight`, `--stall-ack-stale-ms` and `--stall-reprobe-ms` are all
+**parsed, accepted, and have NO effect.** The stall four warn exactly once at startup
+when explicitly supplied (a value equal to the old default still counts as supplied;
+omitted options do not warn); `--earned-ack-window` is parsed default OFF and inert.
+The mechanisms they toggled are superseded, not disabled: shared health admission owns
+stall handling for every link (a Stalled/Degraded link is held out and probed, never
+selected), and the arrival-scoped ACK policy already grows only the link that earned an
+ACK. There is no way to re-enable the old mechanisms, and `SchedulerFeatures` bits are
+test-build-only. Do NOT remove the flags from clap: CeraUI does not pass them, but a
+hand-run invocation from a 3.x runbook must keep starting.
+
+**Hardware gate status.** The original gate ("do not enable in production until run on
+a real Starlink + cellular bond") is **moot for the flags** — nothing to enable — and
+**pending for the successor**: the bonded-path canary (`docs/evidence/bpc/canary/canary.json`,
+Enhanced survivor vs released 3.3.0, 2×1800 s) has NOT been run because the bench host
+has no rig. The formerly `#[ignore]`d `stall_deselect_real_starlink_repro` hardware test
+no longer exists (`cargo test --all-features stall_deselect_real_starlink_repro --
+--ignored` selects zero tests); `src/tests/stall_deselect_tests.rs` now asserts the
+flags are inert. Do not cite the shared-admission stall handling as hardware-validated
+until the canary passes.
+
+**Enhanced cooldown candidate (2026-09-16):** See [`docs/notes/enhanced-cooldown-evaluation-2026-09.md`](docs/notes/enhanced-cooldown-evaluation-2026-09.md) — unaccepted, behaviour reverted, tests retained.
+
+**The following records the superseded mechanisms as they were designed (history, not
+current behaviour).** Two CLI flags hardened the then-default `enhanced` mode against a
+satellite/LAN failure signature (a link that keeps a high scheduling weight while it
+silently degrades). Both were `[EXPERIMENTAL]` in their `--help` text and default OFF.
 
 - **`earned_ack_window`** (`--earned-ack-window`, Todo 14) — gates broadcast-ACK window
   growth to the link that actually earned the ACK, with the rest growing at most once per
@@ -933,6 +2731,7 @@ bond hardware — see the HARDWARE-VALIDATION GATE below. Full operator-facing d
   shared by production and tests, so flag-off is byte-identical to pre-flag behavior (proven
   by a golden-trace test). Tests: `src/tests/earned_ack_tests.rs` (16 tests).
 - **`stall_deselect`** (`--stall-deselect`, Todo 15) — a selection-time-only penalty (never
+  applied in adaptive mode, which owns its stall handling; also never
   touches `CONN_TIMEOUT`/housekeeping/re-registration) that excludes a link from selection
   for one tick when its in-flight count exceeds `--stall-min-in-flight` (default 32,
   `STALL_MIN_IN_FLIGHT_PACKETS`) AND it has no earned ACK/RTT sample within
@@ -944,11 +2743,11 @@ bond hardware — see the HARDWARE-VALIDATION GATE below. Full operator-facing d
   normal selector so a link is always returned. Tests: `src/tests/stall_deselect_tests.rs`
   (11 tests + 1 `#[ignore]`d hardware-repro test).
 
-**HARDWARE-VALIDATION GATE (unrun):** both flags are unit- and golden-trace-tested for
-flag-off byte-identical behavior against the pre-flag code, but neither has been exercised
-against a real bonded link (e.g. Starlink + cellular) outside this repo's in-process test
-harness. Do not enable either flag in production, and do not cite either as a proven
-improvement, until validated on real bond hardware. Mirrors the hardware-validation-gate
+**HARDWARE-VALIDATION GATE (historical wording; see "Hardware gate status" above):** both
+flags were unit- and golden-trace-tested for flag-off byte-identical behavior against the
+pre-flag code, but neither was ever exercised against a real bonded link (e.g. Starlink +
+cellular) outside this repo's in-process test harness before they were retired. The
+same caveat now attaches to the shared-admission successor via the pending canary. Mirrors the hardware-validation-gate
 pattern used elsewhere in this workspace (see `docs/notes/sendmmsg-deferred.md` for how this
 repo tracks a deferred/unrun item, and the [workspace diagnosis](https://github.com/CERALIVE/ceralive/blob/master/docs/notes/srtla-starlink-lan-diagnosis.md)
 §6 for the mode-scoped mechanism analysis both flags address).
@@ -986,6 +2785,8 @@ rather than waiting for the liveness timeout. The hot path and `CONN_TIMEOUT`
 value are unchanged.
 
 ### S6 — Kalman RTT clamped to ≥0; RTT-threshold classifier uses has_rtt_sample()
+
+2026-09-18 — classic/rtt-threshold/edpf/adaptive modes removed in 4.0.0 — read as history.
 
 `get_smooth_rtt_ms()` (`connection/mod.rs`) now clamps the Kalman filter output
 to `0.0_f64.max(value)` before returning. A negative Kalman estimate (possible
@@ -1055,6 +2856,8 @@ emitted. The first two fail on the pre-fix ordering.
 
 ## ROBUSTNESS FIXES (EDPF bonding, 2026-08-15)
 
+2026-09-18 — classic/rtt-threshold/edpf/adaptive modes removed in 4.0.0 — read as history.
+
 `--mode edpf` did not work at all, and `tests/netns_edpf.rs` had been red since it
 was written. Two independent defects in the EDPF pipeline, both inherited from the
 upstream commits that introduced it (`27c6c00`, `80cd0c4`). Neither touches the
@@ -1062,6 +2865,8 @@ parity contract; the other three modes are unaffected (their selectors never cal
 the EDPF predictor).
 
 ### E1 — EDPF could never bootstrap (`src/sender/selection/edpf.rs`)
+
+2026-09-18 — classic/rtt-threshold/edpf/adaptive modes removed in 4.0.0 — read as history.
 
 `predicted_arrival` returned `None` when `conn.bitrate.current_bitrate_bps <= 0.0`.
 That field is a **measurement** of bytes this uplink has already sent, so it is
@@ -1079,6 +2884,8 @@ replaces it within one 2 s bitrate window. This also covers a link idle longer t
 that window, whose measurement decays back to `0.0`.
 
 ### E2 — BLEST permanently starved the high-latency uplink (`selection/mod.rs`)
+
+2026-09-18 — classic/rtt-threshold/edpf/adaptive modes removed in 4.0.0 — read as history.
 
 `BlestFilter` is a static, capacity-blind OWD guard: a link more than 50 ms of OWD
 behind the fastest is excluded on **every** tick regardless of congestion, and the
@@ -1174,6 +2981,8 @@ downward-bias regression on every real (non-sub-ms) link. `src/connection/rtt.rs
 `src/connection/ack_nak.rs`.
 
 ### EDPF velocity + BDP-overrun RANKING penalty (todo 11, ported from upstream `57525c7` + `d53d8bc`) — SIM-TESTED, NOT HARDWARE-VALIDATED
+
+2026-09-18 — classic/rtt-threshold/edpf/adaptive modes removed in 4.0.0 — read as history.
 
 Upstream's own shape (`DO-NOT-PORT-AS-IS` per the triage doc's frozen bug list) hard
 -excludes a link once its bandwidth-delay product is exceeded — if every candidate

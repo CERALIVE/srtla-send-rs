@@ -1,4 +1,5 @@
 //! The ADR-001 telemetry document: its model, its units, and its serializer.
+// allow: SIZE_OK — retain the single serializer and existing inline byte-parity suite during the shared-field migration; new optional-field tests are separate.
 //!
 //! Split from [`crate::telemetry_file`], which owns only the publish mechanics
 //! (temp sibling -> fsync -> `rename(2)`). Everything that decides what the
@@ -59,7 +60,7 @@ pub const TELEMETRY_SCHEMA_VERSION: u32 = 1;
 /// Field names / units mirror the C `TelemetrySnapshot` (`sender_telemetry.h`).
 /// `bitrate_bytes_per_sec` is the wire byte rate; the mandated x8 -> bits/s
 /// conversion happens only at serialization, in [`ConnRecord::from`].
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct TelemetryConn {
     pub conn_id: u32,
     pub rtt_ms: u32,
@@ -76,12 +77,14 @@ pub struct TelemetryConn {
     pub iface: Option<String>,
     /// The sidecar's writer-assigned identity, echoed; `None` when unmapped.
     pub link_id: Option<String>,
+    pub health: Option<&'static str>,
+    pub priority: Option<f64>,
 }
 
 /// Serialized per-connection record. `conn_id` is a string and `bitrate_bps` is
 /// bits/s (the x8 conversion), matching the ADR-001 schema and the Zod reader.
 /// Field order is fixed to mirror the C golden fixture; the two additive
-/// identity fields come last and are omitted entirely when absent.
+/// identity fields precede optional scheduler observations; absent keys are omitted.
 #[derive(Serialize)]
 struct ConnRecord {
     conn_id: String,
@@ -96,6 +99,10 @@ struct ConnRecord {
     iface: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     link_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    health: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    priority: Option<f64>,
 }
 
 impl From<&TelemetryConn> for ConnRecord {
@@ -113,6 +120,8 @@ impl From<&TelemetryConn> for ConnRecord {
             bytes_sent_total: c.bytes_sent_total,
             iface: c.iface.clone(),
             link_id: c.link_id.clone(),
+            health: c.health,
+            priority: c.priority,
         }
     }
 }
@@ -128,6 +137,8 @@ struct TelemetryDoc<'a> {
     bytes_sent_total: u64,
     #[serde(flatten)]
     bind_map: &'a BindMapReport,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    receiver_nak_report: Option<bool>,
 }
 
 /// Everything a snapshot document is built from, other than its timestamp.
@@ -139,6 +150,7 @@ pub struct TelemetryInputs<'a> {
     pub conns: &'a [TelemetryConn],
     pub session_bytes_sent: u64,
     pub bind_map: &'a BindMapReport,
+    pub receiver_nak_report: Option<bool>,
 }
 
 /// Serialize one snapshot to the exact ADR-001 JSON object (compact,
@@ -152,6 +164,7 @@ pub fn build_telemetry_json(last_updated_ms: u64, inputs: &TelemetryInputs<'_>) 
         connections: inputs.conns.iter().map(ConnRecord::from).collect(),
         bytes_sent_total: inputs.session_bytes_sent,
         bind_map: inputs.bind_map,
+        receiver_nak_report: inputs.receiver_nak_report,
     };
     // The doc is plain scalars / strings, so serialization cannot fail; fall back
     // to an empty object defensively rather than panicking on the hot path.
@@ -171,6 +184,7 @@ pub fn build_telemetry_json_from_stats(last_updated_ms: u64, stats: &StatsSnapsh
             conns: &conns_from_stats(stats),
             session_bytes_sent: stats.session_bytes_sent,
             bind_map: &stats.bind_map,
+            receiver_nak_report: stats.receiver.receiver_nak_report,
         },
     )
 }
@@ -178,10 +192,8 @@ pub fn build_telemetry_json_from_stats(last_updated_ms: u64, stats: &StatsSnapsh
 /// Project the shared stats snapshot into per-uplink telemetry records.
 ///
 /// `conn_id` is the link's 0-based position in IP-list order. `weight_percent`
-/// is the link's share of total selection weight (`base_score x quality`) among
-/// active links, normalized to 100; inactive links report 0. Active links with
-/// no capacity signal yet fall back to an equal share so a freshly-registered
-/// group is not reported as all-zero.
+/// is the link's share of total selection weight (`base_score x effective_multiplier`),
+/// normalized to 100; inactive or zero-total links report 0 in every mode.
 #[must_use]
 pub fn conns_from_stats(stats: &StatsSnapshot) -> Vec<TelemetryConn> {
     let weights: Vec<f64> = stats
@@ -189,18 +201,13 @@ pub fn conns_from_stats(stats: &StatsSnapshot) -> Vec<TelemetryConn> {
         .iter()
         .map(|l| {
             if l.connected && !l.timed_out {
-                f64::from(l.base_score.max(0)) * l.quality_multiplier
+                f64::from(l.base_score.max(0)) * l.effective_multiplier
             } else {
                 0.0
             }
         })
         .collect();
     let total: f64 = weights.iter().sum();
-    let active = stats
-        .links
-        .iter()
-        .filter(|l| l.connected && !l.timed_out)
-        .count();
 
     stats
         .links
@@ -208,12 +215,10 @@ pub fn conns_from_stats(stats: &StatsSnapshot) -> Vec<TelemetryConn> {
         .enumerate()
         .map(|(idx, l)| {
             let is_active = l.connected && !l.timed_out;
-            let weight_percent = if !is_active {
+            let weight_percent = if !is_active || total <= 0.0 {
                 0
-            } else if total > 0.0 {
-                weight_share_percent(weights[idx], total)
             } else {
-                equal_share_percent(active)
+                weight_share_percent(weights[idx], total)
             };
             TelemetryConn {
                 conn_id: idx as u32,
@@ -228,6 +233,8 @@ pub fn conns_from_stats(stats: &StatsSnapshot) -> Vec<TelemetryConn> {
                 bytes_sent_total: l.bytes_sent_total,
                 iface: l.iface.clone(),
                 link_id: l.link_id.clone(),
+                health: l.health,
+                priority: l.priority,
             }
         })
         .collect()
@@ -240,12 +247,9 @@ fn weight_share_percent(weight: f64, total: f64) -> u8 {
     pct.clamp(0.0, 100.0) as u8
 }
 
-/// Equal share among `active` links (the no-capacity-signal fallback).
-fn equal_share_percent(active: usize) -> u8 {
-    100usize
-        .checked_div(active)
-        .map_or(0, |share| share.min(100) as u8)
-}
+#[cfg(test)]
+#[path = "telemetry_optional_tests.rs"]
+mod optional_tests;
 
 #[cfg(test)]
 mod tests {
@@ -271,6 +275,8 @@ mod tests {
             bytes_sent_total: 812_000_000,
             iface: None,
             link_id: None,
+            health: None,
+            priority: None,
         }
     }
 
@@ -285,6 +291,7 @@ mod tests {
                 conns,
                 session_bytes_sent: session_bytes,
                 bind_map: &legacy(),
+                receiver_nak_report: None,
             },
         )
     }
@@ -303,10 +310,14 @@ mod tests {
             nak_count: 0,
             bitrate_bps: bytes_per_sec,
             bytes_sent_total: u64::from(bytes_per_sec) * 10,
+            rexmit_forwarded: 0,
             rtt_min_ms: 0.0,
             rtt_velocity: 0.0,
             base_score: score,
             quality_multiplier: 1.0,
+            health: None,
+            priority: None,
+            effective_multiplier: 1.0,
         }
     }
 
@@ -337,6 +348,7 @@ mod tests {
                 conns: &[],
                 session_bytes_sent: 0,
                 bind_map: &legacy(),
+                receiver_nak_report: None,
             },
         );
         assert!(doc.contains("\"connections\":[]"), "got {doc}");
@@ -495,6 +507,7 @@ mod tests {
                 conns: &[],
                 session_bytes_sent: 0,
                 bind_map: &report,
+                receiver_nak_report: None,
             },
         );
 
@@ -553,6 +566,7 @@ mod tests {
                 conns: &[sample_conn()],
                 session_bytes_sent: 0,
                 bind_map: &legacy(),
+                receiver_nak_report: None,
             },
         );
 
@@ -590,6 +604,7 @@ mod tests {
                 conns: &[],
                 session_bytes_sent: 0,
                 bind_map: &legacy(),
+                receiver_nak_report: None,
             },
         );
         assert!(doc.contains("\"connections\":[]"), "got {doc}");
@@ -613,11 +628,25 @@ mod tests {
     }
 
     #[test]
-    fn equal_share_fallback_distributes_evenly() {
-        assert_eq!(equal_share_percent(0), 0);
-        assert_eq!(equal_share_percent(1), 100);
-        assert_eq!(equal_share_percent(2), 50);
-        assert_eq!(equal_share_percent(4), 25);
+    fn admission_zero_capacity_never_resurrects_a_held_link_in_any_mode() {
+        // Given a zero-capacity admitted link and a held link with positive capacity.
+        for mode in ["classic", "enhanced", "rtt-threshold", "edpf", "adaptive"] {
+            let mut held = link(100, true, 0);
+            held.effective_multiplier = 0.0;
+            let snap = StatsSnapshot {
+                mode: mode.into(),
+                links: vec![link(0, true, 0), held],
+                ..Default::default()
+            };
+            // When the shared snapshot is normalized.
+            let conns = conns_from_stats(&snap);
+            // Then neither link receives an invented equal share.
+            assert_eq!(
+                conns.iter().map(|c| c.weight_percent).collect::<Vec<_>>(),
+                [0, 0],
+                "{mode}"
+            );
+        }
     }
 
     #[test]
@@ -643,15 +672,15 @@ mod tests {
     }
 
     #[test]
-    fn conns_from_stats_equal_share_when_no_capacity_signal() {
-        // Active links whose base_score is 0 still get a non-zero equal share.
+    fn conns_from_stats_zero_share_when_no_capacity_signal() {
+        // Given active links with no capacity signal.
         let snap = StatsSnapshot {
             links: vec![link(0, true, 0), link(0, true, 0)],
             ..Default::default()
         };
         let conns = conns_from_stats(&snap);
-        assert_eq!(conns[0].weight_percent, 50);
-        assert_eq!(conns[1].weight_percent, 50);
+        assert_eq!(conns[0].weight_percent, 0);
+        assert_eq!(conns[1].weight_percent, 0);
     }
 
     #[test]

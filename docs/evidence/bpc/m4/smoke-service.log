@@ -1,0 +1,8 @@
++ taskset -c 4-27 timeout --foreground --kill-after=30s 1200s target/m4-bench_scheduler --ignored --exact --nocapture campaign
++ code=0
++ set +x
+Installed 6 packages in 19ms
++ taskset -c 4-27 timeout --foreground --kill-after=30s 120s target/m4-bench_scheduler --ignored --exact --nocapture campaign
++ code=0
++ set +x
+resume PASS: three complete outcomes, identical checkpoint bytes, zero new attempts

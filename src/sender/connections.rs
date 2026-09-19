@@ -23,6 +23,7 @@ pub fn specs_from_effective_links(links: &[EffectiveLink]) -> SmallVec<UplinkSpe
             ip: link.ip,
             iface: link.iface.clone(),
             link_id: link.link_id.clone(),
+            priority: link.priority,
         })
         .collect()
 }
@@ -100,6 +101,17 @@ pub async fn apply_link_changes(
     let attempted_new = claimed.iter().filter(|c| c.is_none()).count();
 
     let mut fresh = create_missing(&desired, &claimed, receiver_host, receiver_port).await;
+    // A new socket discards transport history, not the stable identity's preference.
+    for conn in fresh.values_mut() {
+        if let Some(previous) = conn
+            .link_id
+            .as_ref()
+            .and_then(|id| survivors.by_link_id.get(id.as_str()))
+        {
+            conn.priority_override_link = previous.priority_override_link;
+            conn.delivery.socket_generation = previous.delivery.socket_generation.wrapping_add(1);
+        }
+    }
     let added = fresh.len();
 
     // Drop the leaving links' sequence entries so a stale NAK can't be
@@ -108,7 +120,11 @@ pub async fn apply_link_changes(
 
     for (spec, existing) in desired.iter().zip(claimed) {
         match existing {
-            Some(conn) => connections.push(conn),
+            Some(mut conn) => {
+                conn.priority_baseline = spec.priority;
+                conn.clear_priority_override_conn();
+                connections.push(conn);
+            }
             None => {
                 if let Some(conn) = fresh.remove(&spec.socket_key()) {
                     connections.push(conn);
@@ -181,7 +197,7 @@ impl Survivors {
             });
         };
         let existing = self.by_link_id.get(id.as_str())?;
-        (existing.spec().socket_key() == key)
+        (existing.spec().socket_key() == key && !existing.is_removed() && !existing.needs_rebind())
             .then(|| self.by_link_id.remove(id.as_str()))
             .flatten()
     }

@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 
 use super::error::{BindMapError, DegradedReason};
-use super::types::{IfaceName, IpsFile, LinkId, MappedPool};
+use super::types::{IfaceName, IpsFile, LinkId, MappedPool, Priority};
 
 /// Is a configured bind-map in force?
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,6 +84,7 @@ pub struct EffectiveLink {
     pub ip: IpAddr,
     pub iface: Option<IfaceName>,
     pub link_id: Option<LinkId>,
+    pub priority: Option<Priority>,
 }
 
 /// An ambiguous same-IP group that degraded startup could not disambiguate.
@@ -132,6 +133,7 @@ pub fn resolve_absent(ips: &IpsFile) -> Resolution {
                 ip: *ip,
                 iface: None,
                 link_id: None,
+                priority: None,
             })
             .collect(),
         excluded: Vec::new(),
@@ -157,6 +159,7 @@ pub fn resolve(
                     ip: row.ip,
                     iface: Some(row.iface.clone()),
                     link_id: Some(row.link_id.clone()),
+                    priority: row.priority,
                 })
                 .collect(),
             excluded: Vec::new(),
@@ -181,6 +184,7 @@ fn degrade(reason: DegradedReason, ips: &IpsFile, phase: ResolvePhase<'_>) -> Re
                     ip: row.ip,
                     iface: Some(row.iface.clone()),
                     link_id: Some(row.link_id.clone()),
+                    priority: row.priority,
                 })
                 .collect(),
             excluded: Vec::new(),
@@ -223,6 +227,7 @@ fn exclude_collisions(accepted: &[IpAddr]) -> (Vec<EffectiveLink>, Vec<Collision
                     ip: *ip,
                     iface: None,
                     link_id: None,
+                    priority: None,
                 });
             }
             Some(&effective_index) => match groups.iter_mut().find(|g| g.ip == *ip) {

@@ -9,8 +9,7 @@
 //! names say otherwise; those exist so a failure branch has something real to
 //! fail against.
 
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -22,6 +21,7 @@ use sha2::{Digest, Sha256};
 pub struct TwinRow {
     pub link_id: String,
     pub iface: String,
+    pub priority: Option<f64>,
 }
 
 impl TwinRow {
@@ -29,6 +29,14 @@ impl TwinRow {
         Self {
             link_id: link_id.to_string(),
             iface: iface.to_string(),
+            priority: None,
+        }
+    }
+
+    pub fn with_priority(link_id: &str, iface: &str, priority: f64) -> Self {
+        Self {
+            priority: Some(priority),
+            ..Self::new(link_id, iface)
         }
     }
 }
@@ -75,7 +83,23 @@ impl BindMapPublisher {
     /// Re-publishing *different* rows under an unchanged generation and digest
     /// is the `stale-generation` rejection, so a test needs to be able to pin it.
     pub fn publish_at(&self, ip: &str, rows: &[TwinRow], generation: u64) -> Result<()> {
-        let ips = std::iter::repeat_n(ip, rows.len())
+        self.publish_rows(
+            &rows.iter().map(|row| (ip, row)).collect::<Vec<_>>(),
+            generation,
+        )
+    }
+
+    pub(crate) fn publish_bond_at(&self, rows: &[(&str, TwinRow)], generation: u64) -> Result<()> {
+        self.publish_rows(
+            &rows.iter().map(|(ip, row)| (*ip, row)).collect::<Vec<_>>(),
+            generation,
+        )
+    }
+
+    fn publish_rows(&self, rows: &[(&str, &TwinRow)], generation: u64) -> Result<()> {
+        let ips = rows
+            .iter()
+            .map(|(ip, _)| *ip)
             .collect::<Vec<_>>()
             .join("\n")
             + "\n";
@@ -83,16 +107,17 @@ impl BindMapPublisher {
         let digest = hex_digest(ips.as_bytes());
         write_atomic(
             &self.sidecar_path(),
-            sidecar_json(generation, &digest, ip, rows).as_bytes(),
+            bond_sidecar_json(generation, &digest, rows).as_bytes(),
         )
     }
 
     /// Publish only the IP file — the legacy channel, byte-unchanged.
     pub fn publish_ips_only(&self, ip: &str, count: usize) -> Result<()> {
-        let ips = std::iter::repeat_n(ip, count)
-            .collect::<Vec<_>>()
-            .join("\n")
-            + "\n";
+        self.publish_ips(&std::iter::repeat_n(ip, count).collect::<Vec<_>>())
+    }
+
+    pub(crate) fn publish_ips(&self, ips: &[&str]) -> Result<()> {
+        let ips = ips.join("\n") + "\n";
         write_atomic(&self.ips_path(), ips.as_bytes())
     }
 
@@ -115,13 +140,26 @@ fn hex_digest(bytes: &[u8]) -> String {
         })
 }
 
+#[cfg(test)]
 fn sidecar_json(generation: u64, digest: &str, ip: &str, rows: &[TwinRow]) -> String {
+    bond_sidecar_json(
+        generation,
+        digest,
+        &rows.iter().map(|row| (ip, row)).collect::<Vec<_>>(),
+    )
+}
+
+fn bond_sidecar_json(generation: u64, digest: &str, rows: &[(&str, &TwinRow)]) -> String {
     let links = rows
         .iter()
-        .map(|row| {
+        .map(|(ip, row)| {
+            let priority = match row.priority {
+                Some(value) => format!(r#","priority":{value}"#),
+                None => String::new(),
+            };
             format!(
-                r#"{{"link_id":"{}","ip":"{}","iface":"{}"}}"#,
-                row.link_id, ip, row.iface
+                r#"{{"link_id":{:?},"ip":{ip:?},"iface":{:?}{priority}}}"#,
+                row.link_id, row.iface,
             )
         })
         .collect::<Vec<_>>()
@@ -137,19 +175,41 @@ fn sidecar_json(generation: u64, digest: &str, ip: &str, rows: &[TwinRow]) -> St
 /// publications racing on one fixed temp name would corrupt each other.
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path.parent().context("publication path has no parent")?;
-    let file_name = path
-        .file_name()
-        .context("publication path has no file name")?;
-    let temp = parent.join(format!(
-        "{}.{}.publishing",
-        file_name.to_string_lossy(),
-        std::process::id()
-    ));
-    std::fs::write(&temp, bytes).with_context(|| format!("stage {}", temp.display()))?;
-    // The sender refuses a group- or world-writable sidecar outright.
-    #[cfg(unix)]
-    std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o600))
-        .with_context(|| format!("tighten {}", temp.display()))?;
-    std::fs::rename(&temp, path).with_context(|| format!("commit {}", path.display()))?;
+    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+    temp.write_all(bytes)?;
+    temp.as_file().sync_all()?;
+    temp.persist(path)
+        .with_context(|| format!("commit {}", path.display()))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_sidecar_bytes_unchanged_without_priority() {
+        // Given: the legacy two-row publisher input.
+        let rows = [TwinRow::new("twin-a", "ts0"), TwinRow::new("twin-b", "ts1")];
+        // When: serializing without priorities.
+        let actual = sidecar_json(7, "digest", "10.30.9.1", &rows);
+        // Then: the exact pre-extension bytes, not just equivalent JSON.
+        assert_eq!(actual.as_bytes(), br#"{"schema_version":1,"generation":7,"ips_file_sha256":"digest","links":[{"link_id":"twin-a","ip":"10.30.9.1","iface":"ts0"},{"link_id":"twin-b","ip":"10.30.9.1","iface":"ts1"}]}"#);
+    }
+
+    #[test]
+    fn priority_is_emitted_only_for_the_row_that_supplies_it() {
+        // Given: one prioritized row and one legacy row.
+        let rows = [
+            TwinRow::with_priority("a", "ts0", 0.5),
+            TwinRow::new("b", "ts1"),
+        ];
+        // When: serializing the mixed pair.
+        let actual = sidecar_json(1, "digest", "10.30.9.1", &rows);
+        // Then: priority is additive and absent stays absent.
+        assert_eq!(
+            actual,
+            r#"{"schema_version":1,"generation":1,"ips_file_sha256":"digest","links":[{"link_id":"a","ip":"10.30.9.1","iface":"ts0","priority":0.5},{"link_id":"b","ip":"10.30.9.1","iface":"ts1"}]}"#
+        );
+    }
 }

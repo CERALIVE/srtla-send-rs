@@ -1,0 +1,110 @@
+{
+  "historical": true,
+  "campaign": "m4-soak",
+  "seed": 20260913,
+  "cells": [
+    {
+      "cell_id": "ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--M8@--production--slt:4001--fec:off",
+      "covering": false,
+      "variant": "",
+      "sink": "slt",
+      "metrics": "full",
+      "port": 4001,
+      "fec": false,
+      "candidate": "enhanced",
+      "scenario": "M8",
+      "receiver": "ours-new-200",
+      "srt_profile": "production",
+      "runs": 1
+    },
+    {
+      "cell_id": "ours-new-200@%26nakreport%3D1%26periodicnakgate%3D1%26lossmaxttl%3D200%26reorderfreeze%3D1--M8@--production--slt:4001--fec:off",
+      "covering": false,
+      "variant": "",
+      "sink": "slt",
+      "metrics": "full",
+      "port": 4001,
+      "fec": false,
+      "candidate": "adaptive",
+      "scenario": "M8",
+      "receiver": "ours-new-200",
+      "srt_profile": "production",
+      "runs": 1
+    }
+  ],
+  "candidates": [
+    {
+      "label": "enhanced",
+      "args": [
+        "--mode",
+        "enhanced"
+      ],
+      "env": {},
+      "effective_config": {
+        "adaptive_features": [
+          "stall",
+          "loss",
+          "queue",
+          "deadline",
+          "rejoin",
+          "sole",
+          "pref",
+          "ratecap",
+          "quality"
+        ],
+        "adaptive_tuning": {
+          "stall_attempts": 32,
+          "loss_enter": 0.1,
+          "deadline_hold_fraction": 0.5,
+          "ratecap_loss_backoff": 0.85
+        }
+      },
+      "bin": "target/m4-srtla_send",
+      "candidate_class": "cli",
+      "stats_file": true,
+      "control_socket": true
+    },
+    {
+      "label": "adaptive",
+      "args": [
+        "--mode",
+        "adaptive"
+      ],
+      "env": {},
+      "effective_config": {
+        "adaptive_features": [
+          "stall",
+          "loss",
+          "queue",
+          "deadline",
+          "rejoin",
+          "sole",
+          "pref",
+          "ratecap",
+          "quality"
+        ],
+        "adaptive_tuning": {
+          "stall_attempts": 32,
+          "loss_enter": 0.1,
+          "deadline_hold_fraction": 0.5,
+          "ratecap_loss_backoff": 0.85
+        }
+      },
+      "bin": "target/m4-srtla_send",
+      "candidate_class": "cli",
+      "stats_file": true,
+      "control_socket": true
+    }
+  ],
+  "receivers": [
+    {
+      "name": "ours-new-200",
+      "kind": "ceralive",
+      "lineage": "ours-new",
+      "listener_uri_extra": "&nakreport=1&periodicnakgate=1&lossmaxttl=200&reorderfreeze=1",
+      "bin": "lock:ours-new",
+      "srt_live_transmit_bin": "lock:ours-new"
+    }
+  ],
+  "caller_bin": "/home/andres/.cache/opencode/tmp/srtla-bench/lineage/ours-new/srt-live-transmit"
+}

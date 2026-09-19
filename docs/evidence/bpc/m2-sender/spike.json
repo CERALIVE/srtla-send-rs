@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "campaign": "m2-sender",
+  "manifest_sha256": "987769f6a4d70af52a065704ab0ddfe4d4c4f1f79d238ba9eb86f511600491e2",
+  "campaign_exit_code": 101,
+  "campaign_exit_interpretation": "The runner required successful settling for every index, while the frozen M2 protocol retains settle-timeout full-window measurements. All 47 declared one-attempt outcomes were present and reducible; 24 ours-old outcomes were measured settle timeouts.",
+  "records": [
+    {
+      "spike": "M2-INFLIGHT",
+      "outcome": "KEEP; B1 and C settle-rate deltas were both 0.000 (ON 0/3, OFF 0/3). Neither A nor G met the frozen >5% disjoint-CI regression predicate.",
+      "selected_alternative": "Keep the premature-NAK rule enabled with K=3; no confirmation campaign is triggered.",
+      "k_cap": 3,
+      "comparisons": {
+        "B1": {"on_median_bps": 4479780.977777778, "off_median_bps": 4423865.6, "settle_rate_delta": 0.0},
+        "C": {"on_median_bps": 11966651.2, "off_median_bps": 11561323.2, "settle_rate_delta": 0.0},
+        "A": {"on_median_bps": 9914334.577777777, "off_median_bps": 9999962.311111111, "regression": false},
+        "G": {"on_median_bps": 4341045.333333333, "off_median_bps": 4400704.0, "regression": false}
+      }
+    },
+    {
+      "spike": "M2-REXMIT",
+      "outcome": "PASS; 69,278 DATA packets included 639 independently identified retransmissions, with zero R=1 originals and zero R=0 retransmissions; the capture reported zero kernel drops.",
+      "selected_alternative": "Trust the sender retransmission observability counters for this encoder build.",
+      "data_packets": 69278,
+      "originals": 68639,
+      "retransmissions": 639,
+      "flagged_originals": 0,
+      "unflagged_retransmissions": 0,
+      "pcap_sha256": "80abefedb4f3e8a90969f40b79a9eed23fe490da97d6ad3b9a471812ff26b166"
+    },
+    {
+      "spike": "M2-NAK-OFF",
+      "outcome": "present; adaptive G CI lower was 12.803 Mbit/s versus the required 1.05 × enhanced lower bound (13.442 Mbit/s). F and A met their no-regression predicates, but G did not meet the compensation threshold.",
+      "selected_alternative": "Record NAK-off blindness as a known limitation and feed the six measured arms into the later ordinary-cell verdict.",
+      "comparisons": {
+        "G": {"enhanced_ci_lower_bps": 12801814.044444444, "adaptive_ci_lower_bps": 12803451.733333332, "required_adaptive_ci_lower_bps": 13441904.746666666, "passes": false},
+        "F": {"enhanced_median_bps": 12803451.733333332, "adaptive_median_bps": 12803451.733333332, "passes": true},
+        "A": {"enhanced_median_bps": 12664248.177777778, "adaptive_median_bps": 14506648.177777778, "passes": true}
+      }
+    },
+    {
+      "spike": "M2-HSRSP",
+      "outcome": "ours-old=on, ours-new=on, and irlserver-next=on matched. irlserver-prod produced no concrete off observation, so its decoded value is null by the frozen fail-safe rule.",
+      "selected_alternative": "Retain the three matching lineage decodes; record irlserver-prod as None and use fail-safe NAK-on policy without parser heuristics.",
+      "observations": {
+        "ours-old": true,
+        "ours-new": true,
+        "irlserver-prod": null,
+        "irlserver-next": true
+      }
+    }
+  ]
+}

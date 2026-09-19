@@ -41,7 +41,7 @@ pub use resolve::{
     resolve, resolve_absent,
 };
 pub use sidecar::{BIND_MAP_SCHEMA_VERSION, BindMapDoc, parse_sidecar};
-pub use types::{BindMapRow, IfaceName, IpsFile, LinkId, MappedPool};
+pub use types::{BindMapRow, IfaceName, IpsFile, LinkId, MappedPool, Priority};
 pub use validate::{ValidateCtx, validate_pair};
 
 /// Validate both files for `--dry-run`, returning the mapping that would apply.

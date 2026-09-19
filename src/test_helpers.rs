@@ -49,6 +49,9 @@ fn create_connection_from_socket(
         port: remote.port(),
         local_ip,
         link_id: None,
+        priority_baseline: None,
+        priority_override_link: None,
+        priority_override_conn: None,
         egress: EgressLifecycle::unmapped(),
         route_health: RouteHealth::Unknown,
         label,
@@ -56,12 +59,27 @@ fn create_connection_from_socket(
         window: WINDOW_DEF * WINDOW_MULT,
         in_flight_packets: 0,
         packet_log: FxHashMap::with_capacity_and_hasher(PKT_LOG_SIZE, Default::default()),
+        delivery: crate::connection::delivery::DeliveryLedger::default(),
+        premature_streak: 0,
+        premature_nak_count: 0,
+        rexmit_forwarded: 0,
+        loss: crate::connection::loss::LossTracker::new(now_ms()),
+        probes: crate::connection::probe::ProbeLog::default(),
+        health: crate::connection::health::HealthMachine::new(
+            crate::connection::health::HealthState::Down,
+            now_ms(),
+        ),
+        rate_cap: crate::connection::rate_cap::RateCap::default(),
+        wire_rate: crate::connection::wire_rate::WireRateEstimator::default(),
+        adaptive: crate::connection::adaptive::AdaptiveLinkState::default(),
         highest_acked_seq: None,
         last_received: Some(Instant::now()),
         last_sent: None,
         last_keepalive_sent: None,
+        keepalive_liveness: Default::default(),
         last_probe_growth_ms: 0,
         last_ack_or_rtt_sample_ms: 0,
+        #[cfg(test)]
         last_stall_reprobe_ms: 0,
         last_trunc_warn_ms: 0,
         rtt: RttTracker::default(),
@@ -78,8 +96,12 @@ fn create_connection_from_socket(
 }
 
 pub async fn create_test_connection() -> SrtlaConnection {
-    let socket = create_test_socket();
     let remote = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080);
+    create_test_connection_to(remote).await
+}
+
+pub async fn create_test_connection_to(remote: SocketAddr) -> SrtlaConnection {
+    let socket = create_test_socket();
     let local_ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
 
     create_connection_from_socket(socket, remote, local_ip, "test-connection".to_string())
@@ -113,6 +135,24 @@ pub async fn create_test_connections(count: usize) -> SmallVec<SrtlaConnection, 
     }
 
     connections
+}
+
+/// Ranking fixtures represent healthy links after shared admission, not startup Down links.
+#[cfg(test)]
+pub async fn create_selection_test_connections(count: usize) -> SmallVec<SrtlaConnection, 4> {
+    let mut conns = create_test_connections(count).await;
+    for conn in &mut conns {
+        conn.health = crate::connection::health::HealthMachine::new(
+            crate::connection::health::HealthState::Healthy,
+            now_ms(),
+        );
+    }
+    let config = crate::config::ConfigSnapshot {
+        quality_enabled: false,
+        ..crate::config::DynamicConfig::new().snapshot()
+    };
+    crate::sender::SchedulerShared::default().update_stats(&mut conns, &config);
+    conns
 }
 
 /// Advance the paused Tokio virtual clock by `by`.

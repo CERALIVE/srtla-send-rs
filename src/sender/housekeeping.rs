@@ -1,3 +1,4 @@
+// allow: SIZE_OK — existing housekeeping orchestrator plus its tests; lifecycle sampling stays in the lane-owned tick module.
 use std::collections::HashMap;
 
 use anyhow::{Result, anyhow};
@@ -8,17 +9,34 @@ use tracing::{debug, error, info, warn};
 use super::egress_tick::{TickFlow, handle_egress};
 use super::sequence::SequenceTracker;
 use super::uplink::{ConnectionId, ReaderHandle, UplinkPacket, restart_reader_for};
+use crate::connection::adaptive::DeadlineGate;
+use crate::connection::health::{HealthConstants, HealthSignals, HealthState};
+use crate::connection::probe::ProbeTarget;
+use crate::connection::rate_cap::RateSignals;
 use crate::connection::{STARTUP_GRACE_MS, SrtlaConnection};
 use crate::registration::SrtlaRegistrationManager;
 use crate::utils::now_ms;
 
 pub const GLOBAL_TIMEOUT_MS: u64 = 10_000;
 
+#[derive(Default)]
+pub(crate) struct HealthTicker {
+    observations: HashMap<ConnectionId, HealthObservation>,
+}
+
+struct HealthObservation {
+    generation: u32,
+    reported: HealthState,
+    last_log_ms: Option<u64>,
+    last_rate_tick_ms: Option<u64>,
+}
+
 /// Handle periodic housekeeping tasks.
 ///
 /// With the ring buffer sequence tracker, we no longer need periodic cleanup
 /// since old entries are naturally overwritten.
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub async fn handle_housekeeping(
     connections: &mut [SrtlaConnection],
     reg: &mut SrtlaRegistrationManager,
@@ -27,6 +45,32 @@ pub async fn handle_housekeeping(
     reader_handles: &mut HashMap<ConnectionId, ReaderHandle>,
     packet_tx: &UnboundedSender<UplinkPacket>,
     seq_tracker: &mut SequenceTracker,
+) -> Result<()> {
+    handle_housekeeping_with_targets(
+        connections,
+        reg,
+        classic,
+        all_failed_at,
+        reader_handles,
+        packet_tx,
+        seq_tracker,
+        &[],
+        &mut HealthTicker::default(),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn handle_housekeeping_with_targets(
+    connections: &mut [SrtlaConnection],
+    reg: &mut SrtlaRegistrationManager,
+    classic: bool,
+    all_failed_at: &mut Option<Instant>,
+    reader_handles: &mut HashMap<ConnectionId, ReaderHandle>,
+    packet_tx: &UnboundedSender<UplinkPacket>,
+    seq_tracker: &mut SequenceTracker,
+    targets: &[ProbeTarget],
+    health_ticks: &mut HealthTicker,
 ) -> Result<()> {
     // If we're waiting on a REG2 response past the timeout, proactively retry REG1
     let current_ms = now_ms();
@@ -70,8 +114,6 @@ pub async fn handle_housekeeping(
                     warn!("{} failed to reconnect: {}", label, e);
                     // Fall back to mark_for_recovery if reconnect fails
                     conn.mark_for_recovery();
-                } else {
-                    restart_reader_for(conn, reader_handles, packet_tx);
                 }
                 // Both arms discard this link's in-flight packet log, so any
                 // sequence it still owns in the tracker would misattribute a
@@ -97,6 +139,7 @@ pub async fn handle_housekeeping(
             } else {
                 debug!("{} timed out but in retry interval", conn.label);
             }
+            restart_reader_for(conn, reader_handles, packet_tx);
             continue;
         }
 
@@ -119,11 +162,20 @@ pub async fn handle_housekeeping(
         let reader_dead = reader_handles
             .get(&conn.conn_id)
             .is_some_and(|reader| reader.handle.is_finished());
-        if reader_dead {
-            warn!("{}: uplink reader task ended; restarting", conn.label);
+        let reader_stale = health_ticks
+            .observations
+            .get(&conn.conn_id)
+            .is_none_or(|observation| observation.generation != conn.delivery.socket_generation);
+        if reader_dead || reader_stale {
+            if reader_dead {
+                warn!("{}: uplink reader task ended; restarting", conn.label);
+            }
             restart_reader_for(conn, reader_handles, packet_tx);
         }
     }
+
+    // No early-exit link may skip expiry or a hard-failure health observation.
+    health_ticks.tick(connections, targets, now_ms());
 
     // Update active connections count (matches C implementation behavior)
     // C code resets active_connections=0 then counts non-timed-out connections
@@ -173,6 +225,165 @@ pub async fn handle_housekeeping(
     // Old entries are naturally overwritten when the buffer wraps around.
 
     Ok(())
+}
+
+#[cfg(test)]
+pub(crate) fn tick_health(connections: &mut [SrtlaConnection], targets: &[ProbeTarget], now: u64) {
+    HealthTicker::default().tick(connections, targets, now);
+}
+
+impl HealthTicker {
+    /// Once per housekeeping interval, including idle and unavailable links.
+    pub(crate) fn tick(
+        &mut self,
+        connections: &mut [SrtlaConnection],
+        targets: &[ProbeTarget],
+        now: u64,
+    ) {
+        self.observations
+            .retain(|id, _| connections.iter().any(|conn| conn.conn_id == *id));
+        let k = HealthConstants::default();
+        let held_links = connections
+            .iter()
+            .filter(|conn| {
+                let prior = targets.iter().find(|target| {
+                    target.conn_id == conn.conn_id
+                        && target.socket_generation == conn.delivery.socket_generation
+                });
+                ProbeTarget {
+                    conn_id: conn.conn_id,
+                    socket_generation: conn.delivery.socket_generation,
+                    health: if conn.connected
+                        && !conn.is_timed_out()
+                        && !conn.is_removed()
+                        && !conn.needs_rebind()
+                    {
+                        conn.health.state()
+                    } else {
+                        HealthState::Down
+                    },
+                    deadline_held: matches!(conn.adaptive.deadline, DeadlineGate::Held { .. }),
+                    sole_carrier: prior.is_some_and(|target| target.sole_carrier),
+                    srtt_ms: 0,
+                }
+                .eligible()
+            })
+            .fold(0_u32, |count, _| count.saturating_add(1));
+        for conn in connections {
+            let observation = self
+                .observations
+                .entry(conn.conn_id)
+                .or_insert(HealthObservation {
+                    generation: conn.delivery.socket_generation,
+                    reported: conn.health.state(),
+                    last_log_ms: None,
+                    last_rate_tick_ms: None,
+                });
+            let replaced = observation.generation != conn.delivery.socket_generation;
+            if replaced {
+                observation.generation = conn.delivery.socket_generation;
+                observation.last_rate_tick_ms = None;
+            }
+            conn.loss.advance(now);
+            conn.advance_probes(now);
+            let srtt_ms = conn.has_rtt_sample().then(|| conn.get_smooth_rtt_ms());
+            let queue_delay_ms = conn.rtt.queue_delay_ms();
+            let (probe_rounds_ok, probe_rounds_started_ms) = conn.probes.rounds_ok();
+            let signals = HealthSignals {
+                connected: conn.connected && !conn.is_timed_out(),
+                socket_valid: !conn.needs_rebind(),
+                iface_present: !conn.is_removed(),
+                route_health: conn.route_health,
+                attempts_since_proof: conn.delivery.attempts_since_proof,
+                proof_age_ms: conn.delivery.proof_age_ms(now),
+                keepalive_silence_ms: conn.keepalive_liveness.silence_age_ms(now),
+                srtt_ms,
+                loss_ewma: conn.loss.last_value(),
+                loss_cohort_ok: conn.loss.loss_cohort_ok(now, k.loss_stale_after_ms),
+                last_cohort_ms: conn.loss.last_cohort_ms(),
+                probe_loss: conn.loss.probe_loss(),
+                queue_delay_ms,
+                slow_min_rtt_ms: conn.rtt.slow_min_rtt_ms(),
+                probe_rounds_ok,
+                probe_rounds_started_ms,
+                held_links,
+                observation_interval_ms: super::HOUSEKEEPING_INTERVAL_MS,
+                now_ms: now,
+            };
+            let originals = conn.adaptive.original_recovery.rounds(now);
+            if let Some(transition) = conn.health.step_with_originals(&signals, &k, originals)
+                && matches!(
+                    transition.from,
+                    HealthState::Degraded | HealthState::Stalled
+                )
+                && transition.to == HealthState::Rejoining
+            {
+                conn.loss.begin_recovered_epoch(now);
+            }
+            let to = if replaced {
+                HealthState::Down
+            } else {
+                conn.health.state()
+            };
+            if observation.reported != to
+                && observation
+                    .last_log_ms
+                    .is_none_or(|last| now.saturating_sub(last) >= 1000)
+            {
+                let reason = match to {
+                    HealthState::Down => "socket or registration unavailable",
+                    HealthState::Stalled if signals.attempts_since_proof >= k.stall_attempts => {
+                        "DATA proof overdue"
+                    }
+                    HealthState::Stalled => "keepalive replies overdue",
+                    HealthState::Degraded if conn.health.route_latched() => "no default route",
+                    HealthState::Degraded if conn.health.loss_latched() => "normal DATA loss",
+                    HealthState::Degraded => "queue delay",
+                    HealthState::Rejoining if observation.reported == HealthState::Down => {
+                        "registered"
+                    }
+                    HealthState::Rejoining => "recovery evidence",
+                    HealthState::Healthy => "ramp complete",
+                };
+                info!(
+                    attempts_since_proof = signals.attempts_since_proof,
+                    proof_age_ms = ?signals.proof_age_ms,
+                    keepalive_silence_ms = ?signals.keepalive_silence_ms,
+                    "link {} health {}→{} ({reason})",
+                    conn.label,
+                    observation.reported.as_str(),
+                    to.as_str()
+                );
+                observation.reported = to;
+                observation.last_log_ms = Some(now);
+            }
+            if observation
+                .last_rate_tick_ms
+                .is_some_and(|last| now.saturating_sub(last) < 1000)
+            {
+                continue;
+            }
+            observation.last_rate_tick_ms = Some(now);
+            conn.rate_cap.tick(
+                &conn.delivery,
+                &RateSignals {
+                    now_ms: now,
+                    srtt_ms: srtt_ms.unwrap_or(0.0),
+                    rtt_min_ms: conn.rtt.slow_min_rtt_ms(),
+                    queue_delay_ms,
+                    velocity_ms_per_update: conn.get_rtt_velocity(),
+                    jitter_ms: conn.get_rtt_jitter_ms(),
+                    loss_ewma: conn.loss.last_value(),
+                },
+            );
+            if let Some(sample) = conn.batch_sender.wire_sample() {
+                tracing::debug!(link = %conn.label, generation = conn.delivery.socket_generation,
+                    now_ms = now, wire_budget_bps = sample.rate_bps, attempted_wire_bytes = sample.accepted_bytes,
+                    wire_rate_phase = ?conn.wire_rate.phase(),
+                    target_bps = conn.rate_cap.target_bps(), "adaptive wire budget");
+            }
+        }
+    }
 }
 
 #[cfg(test)]

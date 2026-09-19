@@ -5,7 +5,7 @@ use std::net::{IpAddr, Ipv4Addr};
 
 use smallvec::SmallVec;
 
-use crate::bind_map::{IfaceName, LinkId};
+use crate::bind_map::{IfaceName, LinkId, Priority};
 use crate::connection::{SrtlaConnection, UplinkSpec};
 use crate::registration::SrtlaRegistrationManager;
 use crate::sender::{SequenceTracker, apply_link_changes};
@@ -23,6 +23,7 @@ fn mapped(link_id: &str, last: u8, iface: &str) -> UplinkSpec {
         ip: ip(last),
         iface: Some(IfaceName::parse(iface).unwrap()),
         link_id: Some(LinkId::parse(link_id).unwrap()),
+        priority: None,
     }
 }
 
@@ -32,6 +33,7 @@ fn adopt_specs(connections: &mut [SrtlaConnection], specs: &[UplinkSpec]) {
     for (conn, spec) in connections.iter_mut().zip(specs) {
         conn.local_ip = spec.ip;
         conn.link_id = spec.link_id.clone();
+        conn.priority_baseline = spec.priority;
         conn.egress.adopt(spec.iface.clone());
         conn.label = spec.label(HOST, PORT);
     }
@@ -87,6 +89,7 @@ async fn a_source_ip_change_rebinds_the_link_under_its_unchanged_identity() {
         ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, last)),
         iface: None,
         link_id: Some(LinkId::parse("modem-a").unwrap()),
+        priority: None,
     };
     let mut connections = create_test_connections(1).await;
     adopt_specs(&mut connections, &[loopback(2)]);
@@ -226,6 +229,7 @@ async fn an_unmapped_reload_still_matches_a_link_by_its_socket_key() {
             ip: ip(100),
             iface: Some(IfaceName::parse("wwan0").unwrap()),
             link_id: None,
+            priority: None,
         }],
     )
     .await;
@@ -234,4 +238,93 @@ async fn an_unmapped_reload_still_matches_a_link_by_its_socket_key() {
     // losing the map is not a reason to drop a bond that did not change.
     assert_eq!(connections.len(), 1);
     assert_eq!(connections[0].conn_id, before);
+}
+
+fn priority(value: f64) -> Option<Priority> {
+    Some(Priority::try_from(value).unwrap())
+}
+
+#[tokio::test]
+async fn three_layer_sequence() {
+    // Given: a real constructor sets only the baseline from the spec.
+    let mut spec = UplinkSpec::unmapped(HOST.parse().unwrap());
+    spec.link_id = Some(LinkId::parse("modem-a").unwrap());
+    spec.priority = priority(0.05);
+    let mut connections = SmallVec::new();
+    connections.push(SrtlaConnection::connect(&spec, HOST, PORT).await.unwrap());
+    let conn = &mut connections[0];
+    assert_eq!(conn.effective_priority(), priority(0.05));
+    // When/Then: each override wins independently; clearing exposes the next layer.
+    conn.priority_override_link = priority(0.2);
+    assert_eq!(conn.effective_priority(), priority(0.2));
+    conn.priority_override_conn = priority(-0.2);
+    assert_eq!(conn.effective_priority(), priority(-0.2));
+    conn.clear_priority_override_conn();
+    assert_eq!(conn.effective_priority(), priority(0.2));
+    conn.clear_priority_override_link();
+    assert_eq!(conn.effective_priority(), priority(0.05));
+    conn.priority_override_link = priority(0.2);
+    conn.priority_override_conn = priority(-0.2);
+    conn.clear_priority_override_link();
+    assert_eq!(conn.effective_priority(), priority(-0.2));
+    conn.priority_override_link = priority(0.2);
+    apply(&mut connections, &[spec]).await;
+    assert_eq!(connections[0].effective_priority(), priority(0.2));
+    assert_eq!(connections[0].priority_override_conn, None);
+}
+
+#[tokio::test]
+async fn reload_updates_baseline_keeps_link_id_override_drops_conn_id_override() {
+    // Given: two mapped links with distinct values in every layer.
+    let mut connections = create_test_connections(2).await;
+    let mut a = mapped("modem-a", 100, "wwan0");
+    let mut b = mapped("modem-b", 100, "wwan1");
+    a.priority = priority(0.05);
+    b.priority = priority(-0.05);
+    adopt_specs(&mut connections, &[a.clone(), b.clone()]);
+    for (conn, value) in connections.iter_mut().zip([0.2, 0.15]) {
+        conn.priority_override_link = priority(value);
+        conn.priority_override_conn = priority(-0.2);
+    }
+    let ids = [connections[0].conn_id, connections[1].conn_id];
+    // When: SIGHUP reorders rows and changes/removes their baselines.
+    a.priority = priority(0.1);
+    b.priority = None;
+    apply(&mut connections, &[b, a]).await;
+    // Then: persistent preference follows identity, not the old index.
+    for (conn, (id, baseline, persistent)) in connections
+        .iter_mut()
+        .zip([(ids[1], None, 0.15), (ids[0], priority(0.1), 0.2)])
+    {
+        assert_eq!(conn.conn_id, id);
+        assert_eq!(conn.priority_override_conn, None);
+        assert_eq!(conn.priority_baseline, baseline);
+        assert_eq!(conn.effective_priority(), priority(persistent));
+        conn.clear_priority_override_link();
+        assert_eq!(conn.effective_priority(), baseline);
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn iface_replacement_under_same_link_id_keeps_override() {
+    // Given: an old mapped socket and the host's real loopback interface.
+    let mut connections = create_test_connections(1).await;
+    let mut spec = UplinkSpec::unmapped(HOST.parse().unwrap());
+    spec.link_id = Some(LinkId::parse("modem-a").unwrap());
+    spec.iface = Some(IfaceName::parse("old-modem").unwrap());
+    adopt_specs(&mut connections, &[spec.clone()]);
+    let before = connections[0].conn_id;
+    connections[0].priority_override_link = priority(0.2);
+    connections[0].priority_override_conn = priority(-0.2);
+    // When: the identity moves to a different named interface.
+    spec.iface = Some(IfaceName::parse("lo").unwrap());
+    spec.priority = priority(0.1);
+    apply(&mut connections, &[spec]).await;
+    // Then: a real fresh socket retains only the persistent override.
+    assert_eq!(connections.len(), 1);
+    assert_ne!(connections[0].conn_id, before);
+    assert_eq!(connections[0].priority_baseline, priority(0.1));
+    assert_eq!(connections[0].priority_override_conn, None);
+    assert_eq!(connections[0].effective_priority(), priority(0.2));
 }

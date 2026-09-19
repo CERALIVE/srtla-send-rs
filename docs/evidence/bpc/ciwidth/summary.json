@@ -1,0 +1,302 @@
+{
+  "cells": 58,
+  "cells_with_n_gte_3": 58,
+  "half_widths": {
+    "median_pct": 1.149465312464062,
+    "min_pct": 0.003654302941726152,
+    "max_pct": 26.423366994759046,
+    "mean_pct": 3.7523786962394956
+  },
+  "per_cell": {
+    "adaptive--E--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 9234178.986666666,
+      "half_width_pct": 1.1431524862046567
+    },
+    "adaptive--F--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 12803217.777777778,
+      "half_width_pct": 0.017359524897220775
+    },
+    "adaptive--H--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 6758976.0,
+      "half_width_pct": 1.3975424022152987
+    },
+    "adaptive--J--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 9198138.133333333,
+      "half_width_pct": 0.9442780565040729
+    },
+    "adaptive--K--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 12002095.466666669,
+      "half_width_pct": 0.01608163623339202
+    },
+    "adaptive--L--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 6244858.666666667,
+      "half_width_pct": 23.34223096375386
+    },
+    "classic--A--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 20696410.31111111,
+      "half_width_pct": 1.2700224952805206
+    },
+    "classic--B2--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 11379598.222222222,
+      "half_width_pct": 1.3127055921052646
+    },
+    "classic--E--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 11370801.493333334,
+      "half_width_pct": 0.7567527529504731
+    },
+    "classic--F--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 12804387.555555556,
+      "half_width_pct": 0.005481454412574681
+    },
+    "classic--G--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 12803919.644444443,
+      "half_width_pct": 0.008222482093259764
+    },
+    "classic--H--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 9416009.244444445,
+      "half_width_pct": 1.7752875990757009
+    },
+    "classic--J--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 11904886.933333334,
+      "half_width_pct": 0.35594794169234656
+    },
+    "classic--K--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 12001393.6,
+      "half_width_pct": 0.02704796994019016
+    },
+    "classic--L--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 8017422.933333334,
+      "half_width_pct": 13.506740786133244
+    },
+    "edpf--B2--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 12224411.733333332,
+      "half_width_pct": 0.4229584122791956
+    },
+    "edpf--C--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 15371406.4,
+      "half_width_pct": 7.623026608677794
+    },
+    "edpf--D--ceralive--production": {
+      "n": 4,
+      "median_goodput_bps": 14015505.28,
+      "half_width_pct": 3.1809463716078525
+    },
+    "edpf--E--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 11198563.413333334,
+      "half_width_pct": 7.881344247088765
+    },
+    "edpf--F--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 12803217.777777778,
+      "half_width_pct": 1.099132023755139
+    },
+    "edpf--H--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 10130392.533333331,
+      "half_width_pct": 1.3625708710061106
+    },
+    "edpf--J--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 12128256.0,
+      "half_width_pct": 1.0734953703703622
+    },
+    "edpf--K--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 11999463.466666669,
+      "half_width_pct": 0.005118006609543585
+    },
+    "edpf--L--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 8510308.8,
+      "half_width_pct": 11.90697099028886
+    },
+    "enhanced--A--ceralive--production": {
+      "n": 4,
+      "median_goodput_bps": 20712553.244444445,
+      "half_width_pct": 1.5593231825780542
+    },
+    "enhanced--B2--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 11450018.844444444,
+      "half_width_pct": 1.647902576571791
+    },
+    "enhanced--D--ceralive--production": {
+      "n": 4,
+      "median_goodput_bps": 10694693.333333332,
+      "half_width_pct": 6.880393765381456
+    },
+    "enhanced--E--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 11442532.266666668,
+      "half_width_pct": 0.49561430411579455
+    },
+    "enhanced--F--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 12802749.866666667,
+      "half_width_pct": 0.014619081556199452
+    },
+    "enhanced--H--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 9913281.777777778,
+      "half_width_pct": 4.220307982771851
+    },
+    "enhanced--J--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 11957877.866666667,
+      "half_width_pct": 0.6383072385508224
+    },
+    "enhanced--K--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 12000691.733333332,
+      "half_width_pct": 0.019738862164255026
+    },
+    "enhanced--L--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 7419783.466666667,
+      "half_width_pct": 23.591732488293992
+    },
+    "rtt-threshold--B2--ceralive--production": {
+      "n": 4,
+      "median_goodput_bps": 11485112.177777776,
+      "half_width_pct": 0.37481412071459436
+    },
+    "rtt-threshold--E--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 11339778.986666666,
+      "half_width_pct": 0.781104935444346
+    },
+    "rtt-threshold--F--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 12804387.555555556,
+      "half_width_pct": 0.011876484560573627
+    },
+    "rtt-threshold--H--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 9241712.355555557,
+      "half_width_pct": 1.4954938990430897
+    },
+    "rtt-threshold--J--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 11667129.6,
+      "half_width_pct": 1.1557781387234674
+    },
+    "rtt-threshold--K--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 12000691.733333332,
+      "half_width_pct": 0.014621379380941145
+    },
+    "rtt-threshold--L--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 6863378.666666667,
+      "half_width_pct": 26.423366994759046
+    },
+    "upstream-classic--A--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 22146934.755555555,
+      "half_width_pct": 0.7225631978703467
+    },
+    "upstream-classic--B1--ceralive--production": {
+      "n": 3,
+      "median_goodput_bps": 8002917.688888889,
+      "half_width_pct": 2.3708597655450623
+    },
+    "upstream-classic--B2--ceralive--production": {
+      "n": 4,
+      "median_goodput_bps": 11493300.622222222,
+      "half_width_pct": 0.34706672637707103
+    },
+    "upstream-classic--E--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 11741948.586666666,
+      "half_width_pct": 0.5756264345830048
+    },
+    "upstream-classic--F--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 12804387.555555556,
+      "half_width_pct": 0.003654302941726152
+    },
+    "upstream-classic--G--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 12773973.333333334,
+      "half_width_pct": 0.29120879120879317
+    },
+    "upstream-classic--H--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 9226154.311111111,
+      "half_width_pct": 6.721735492132722
+    },
+    "upstream-classic--J--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 12185458.133333333,
+      "half_width_pct": 0.7099040981482071
+    },
+    "upstream-classic--K--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 12001218.133333333,
+      "half_width_pct": 0.018275922568568675
+    },
+    "upstream-classic--L--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 8245529.6,
+      "half_width_pct": 3.741062308478032
+    },
+    "upstream-enhanced--A--ceralive--production": {
+      "n": 4,
+      "median_goodput_bps": 15119611.733333334,
+      "half_width_pct": 3.486986661715099
+    },
+    "upstream-enhanced--E--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 10621207.893333333,
+      "half_width_pct": 4.480334108691061
+    },
+    "upstream-enhanced--F--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 12261142.755555555,
+      "half_width_pct": 3.68073576553198
+    },
+    "upstream-enhanced--G--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 10672818.48888889,
+      "half_width_pct": 8.093119095113876
+    },
+    "upstream-enhanced--H--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 7889566.222222222,
+      "half_width_pct": 5.781748091037147
+    },
+    "upstream-enhanced--J--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 10650651.2,
+      "half_width_pct": 6.355953145850833
+    },
+    "upstream-enhanced--K--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 12001569.066666666,
+      "half_width_pct": 0.02119945027632335
+    },
+    "upstream-enhanced--L--ceralive--production": {
+      "n": 5,
+      "median_goodput_bps": 7640696.0,
+      "half_width_pct": 20.476518544034906
+    }
+  }
+}

@@ -5,11 +5,14 @@
 //! and [`SrtlaTestStack`] for the full 3-process test pipeline
 //! (srt-live-transmit + srtla_rec + srtla_send).
 
-use std::collections::{HashSet, VecDeque};
-use std::io::Read;
-use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Mutex};
+// allow: SIZE_OK — Existing harness compatibility surface; conformance is kept here by the task's explicit file fence.
+
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::process::Stdio;
+use std::process::{Child, Command};
+use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -18,6 +21,12 @@ use anyhow::{Context, Result, bail};
 use crate::impairment::{ImpairmentConfig, apply_impairment};
 use crate::test_util::unique_ns_name;
 use crate::topology::Namespace;
+
+mod output;
+mod process_control;
+use output::{OutputTail, drain_pipe, new_output_tail, output_lines};
+mod sls_runtime;
+pub use process_control::ProcessControlError;
 
 // ---------------------------------------------------------------------------
 // Dependency checking
@@ -39,6 +48,7 @@ pub enum SkipReason {
     NotRoot,
     MissingBinary(String),
     MissingTool(String),
+    InvalidConfiguration(String),
     NoNetem,
 }
 
@@ -48,6 +58,7 @@ impl std::fmt::Display for SkipReason {
             SkipReason::NotRoot => write!(f, "requires root / passwordless sudo"),
             SkipReason::MissingBinary(b) => write!(f, "{b} not found in PATH"),
             SkipReason::MissingTool(t) => write!(f, "system tool '{t}' not found"),
+            SkipReason::InvalidConfiguration(message) => f.write_str(message),
             SkipReason::NoNetem => write!(
                 f,
                 "sch_netem kernel module not available (try: sudo modprobe sch_netem)"
@@ -67,11 +78,16 @@ pub fn check_integration_deps() -> std::result::Result<(), SkipReason> {
     }
 
     // External binaries
-    for bin in &["srtla_rec", "srt-live-transmit"] {
-        if check_binary(bin).is_none() {
-            return Err(SkipReason::MissingBinary(bin.to_string()));
-        }
+    for (key, bin) in [
+        ("SRTLA_REC_BIN", "srtla_rec"),
+        ("SRT_LIVE_TRANSMIT_BIN", "srt-live-transmit"),
+    ] {
+        let resolved = resolve_external_binary(key, bin)
+            .map_err(|error| SkipReason::InvalidConfiguration(error.to_string()))?;
+        tracing::info!(binary = bin, path = %resolved.display(), "resolved integration dependency");
     }
+    ReceiverKind::from_env()
+        .map_err(|error| SkipReason::InvalidConfiguration(error.to_string()))?;
 
     // System tools
     for tool in &["ip", "tc", "ss"] {
@@ -104,44 +120,6 @@ pub fn check_impairment_deps() -> std::result::Result<(), SkipReason> {
 // NamespaceProcess
 // ---------------------------------------------------------------------------
 
-const OUTPUT_TAIL_BYTES: usize = 64 * 1024;
-
-type OutputTail = Arc<Mutex<VecDeque<u8>>>;
-
-fn new_output_tail() -> OutputTail {
-    Arc::new(Mutex::new(VecDeque::with_capacity(OUTPUT_TAIL_BYTES)))
-}
-
-fn drain_pipe<R>(mut reader: R, tail: OutputTail) -> JoinHandle<()>
-where
-    R: Read + Send + 'static,
-{
-    std::thread::spawn(move || {
-        let mut buffer = [0_u8; 8192];
-        while let Ok(bytes_read) = reader.read(&mut buffer) {
-            if bytes_read == 0 {
-                break;
-            }
-            if let Ok(mut output) = tail.lock() {
-                output.extend(&buffer[..bytes_read]);
-                while output.len() > OUTPUT_TAIL_BYTES {
-                    output.pop_front();
-                }
-            }
-        }
-    })
-}
-
-fn output_lines(tail: &OutputTail) -> Vec<String> {
-    let Ok(mut output) = tail.lock() else {
-        return Vec::new();
-    };
-    String::from_utf8_lossy(output.make_contiguous())
-        .lines()
-        .map(str::to_owned)
-        .collect()
-}
-
 /// A child process running inside a network namespace.
 ///
 /// Captures stdout+stderr and kills the process on drop.
@@ -159,6 +137,9 @@ pub struct NamespaceProcess {
     stdout_tail: OutputTail,
     stderr_tail: OutputTail,
     drain_threads: Vec<JoinHandle<()>>,
+    launch: Option<process_control::Launch>,
+    inner: Option<process_control::Identity>,
+    teardown: process_control::Teardown,
 }
 
 impl NamespaceProcess {
@@ -179,6 +160,9 @@ impl NamespaceProcess {
             stdout_tail,
             stderr_tail,
             drain_threads,
+            launch: None,
+            inner: None,
+            teardown: process_control::Teardown::Namespace,
         })
     }
 
@@ -194,27 +178,18 @@ impl NamespaceProcess {
         args: &[&str],
         env: &[(&str, &str)],
     ) -> Result<Self> {
-        let label = format!("{binary} in ns:{}", ns.name);
-        let mut cmd = Command::new("sudo");
-        cmd.args(["ip", "netns", "exec", &ns.name]);
-        if !env.is_empty() {
-            // Use `env` to set variables inside the namespace
-            cmd.arg("env");
-            for &(k, v) in env {
-                cmd.arg(format!("{k}={v}"));
-            }
-        }
-        cmd.arg(binary)
-            .args(args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        let child = cmd.spawn().with_context(|| format!("spawn {label}"))?;
-        let mut process = Self::from_child(child, ProcessScope::Namespace(ns.name.clone()))?;
-        process.label = label;
-
-        tracing::debug!(label = %process.label, pid = process.child.id(), "spawned namespace process");
-        Ok(process)
+        Self::spawn_launch(
+            process_control::Launch {
+                namespace: ns.name.clone(),
+                binary: binary.into(),
+                args: args.iter().map(|s| (*s).into()).collect(),
+                env: env
+                    .iter()
+                    .map(|(k, v)| ((*k).into(), (*v).into()))
+                    .collect(),
+            },
+            process_control::Teardown::Namespace,
+        )
     }
 
     /// Read all captured stdout lines (non-blocking snapshot via `try_wait`).
@@ -234,6 +209,10 @@ impl NamespaceProcess {
         let mut lines = output_lines(&self.stdout_tail);
         lines.extend(output_lines(&self.stderr_tail));
         lines
+    }
+
+    pub fn stderr_line_count(&self) -> Result<u64> {
+        output::line_count(&self.stderr_tail)
     }
 
     fn join_drains(&mut self) {
@@ -355,7 +334,15 @@ impl NamespaceProcess {
 
 impl Drop for NamespaceProcess {
     fn drop(&mut self) {
-        self.kill();
+        match self.teardown {
+            process_control::Teardown::Namespace => self.kill(),
+            process_control::Teardown::Process => {
+                if let Err(error) = self.stop_process_only() {
+                    tracing::warn!(%error, "process-only teardown failed");
+                }
+            }
+            process_control::Teardown::None => {}
+        }
     }
 }
 
@@ -368,6 +355,46 @@ mod namespace_process_tests {
     use std::time::{Duration, Instant};
 
     use super::{NamespaceProcess, ProcessScope, new_output_tail};
+
+    #[test]
+    fn stderr_count_survives_tail_truncation() {
+        let child = Command::new("python3")
+            .args(["-c", "import sys; sys.stderr.write('line\\n' * 20000)"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut process = NamespaceProcess::from_child(child, ProcessScope::Pids(vec![])).unwrap();
+        process.child.wait().unwrap();
+        process.join_drains();
+        assert_eq!(process.stderr_line_count().unwrap(), 20000);
+        assert!(process.stderr_lines().len() < 20000);
+    }
+
+    #[test]
+    fn restart_process_only_when_already_exited_preserves_other_pids() {
+        // Given: a reaped child and a separate live process in its teardown scope.
+        let mut other = Command::new("sleep").arg("30").spawn().unwrap();
+        let child = Command::new("true")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut process =
+            NamespaceProcess::from_child(child, ProcessScope::Pids(vec![other.id()])).unwrap();
+        process.child.wait().unwrap();
+        // When: attempting a receiver-only restart after exit.
+        let error = process.restart_process_only().unwrap_err();
+        let alive = other.try_wait().unwrap().is_none();
+        other.kill().unwrap();
+        other.wait().unwrap();
+        // Then: the error is typed and the unrelated process received no signal.
+        assert!(matches!(
+            error.downcast_ref(),
+            Some(super::ProcessControlError::AlreadyExited)
+        ));
+        assert!(alive);
+    }
 
     fn signal_exact(signal: &str, target: &str) {
         let _ = Command::new("kill").args([signal, "--", target]).status();
@@ -433,6 +460,9 @@ mod namespace_process_tests {
             stdout_tail: new_output_tail(),
             stderr_tail: new_output_tail(),
             drain_threads: vec![],
+            launch: None,
+            inner: None,
+            teardown: super::process_control::Teardown::Namespace,
         };
         let (done_tx, done_rx) = mpsc::channel();
         let teardown = thread::spawn(move || {
@@ -670,13 +700,456 @@ fn registered_uplink_count(log: &[String]) -> usize {
 // SrtlaTestStack
 // ---------------------------------------------------------------------------
 
-/// Full 3-process SRTLA test stack: srt-live-transmit + srtla_rec + srtla_send.
+/// Explicit libsrt listener tuning. Only `LEGACY_DEFAULT` omits URI parameters.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SrtProfile {
+    pub latency_ms: u32,
+    pub lossmaxttl: u32,
+    /// Emit `reorderfreeze=1`; explicit so a profile cannot inherit it by accident.
+    pub reorderfreeze: bool,
+    pub name: &'static str,
+}
+
+impl SrtProfile {
+    /// `lossmaxttl` is the receiver L1 policy value (`SLSSrt.cpp`), not a local guess.
+    pub const PRODUCTION: Self = Self {
+        latency_ms: 2000,
+        lossmaxttl: 200,
+        reorderfreeze: true,
+        name: "production",
+    };
+    pub const STRICT: Self = Self {
+        latency_ms: 500,
+        lossmaxttl: 10,
+        reorderfreeze: false,
+        name: "strict",
+    };
+    /// Sentinel for the old URI, not a request to configure libsrt with zeroes.
+    pub const LEGACY_DEFAULT: Self = Self {
+        latency_ms: 0,
+        lossmaxttl: 0,
+        reorderfreeze: false,
+        name: "legacy-default",
+    };
+
+    /// The latency ladder: the same receiver policy at five latencies.
+    ///
+    /// Every rung varies ONLY `latency=`; `lossmaxttl=200` and `reorderfreeze=1`
+    /// are held identical to `PRODUCTION` (pinned by
+    /// `srt_profile_ladder_varies_only_latency`).
+    pub const LADDER: [Self; 5] = [
+        Self {
+            latency_ms: 200,
+            lossmaxttl: 200,
+            reorderfreeze: true,
+            name: "ladder-200",
+        },
+        Self {
+            latency_ms: 300,
+            lossmaxttl: 200,
+            reorderfreeze: true,
+            name: "ladder-300",
+        },
+        Self {
+            latency_ms: 500,
+            lossmaxttl: 200,
+            reorderfreeze: true,
+            name: "ladder-500",
+        },
+        Self {
+            latency_ms: 2000,
+            lossmaxttl: 200,
+            reorderfreeze: true,
+            name: "ladder-2000",
+        },
+        Self {
+            latency_ms: 5000,
+            lossmaxttl: 200,
+            reorderfreeze: true,
+            name: "ladder-5000",
+        },
+    ];
+
+    /// The ladder rung at `latency_ms`, or `None` when that latency is not a rung.
+    pub fn rung(latency_ms: u32) -> Option<Self> {
+        Self::LADDER
+            .iter()
+            .find(|rung| rung.latency_ms == latency_ms)
+            .copied()
+    }
+
+    pub fn listener_uri(&self, port: u16) -> String {
+        let uri = format!("srt://:{port}?mode=listener");
+        if *self == Self::LEGACY_DEFAULT {
+            uri
+        } else {
+            let receiver_options = if self.reorderfreeze {
+                "&reorderfreeze=1"
+            } else {
+                ""
+            };
+            format!(
+                "{uri}&latency={}&lossmaxttl={}{receiver_options}",
+                self.latency_ms, self.lossmaxttl
+            )
+        }
+    }
+
+    /// Listener arguments; `-stats 1000` counts packets, not milliseconds.
+    /// Capture directories must already exist; non-UTF-8 paths are rejected.
+    pub fn listener_argv(&self, port: u16, stats_csv: Option<&Path>) -> Result<Vec<String>> {
+        let mut args = Vec::new();
+        if let Some(path) = stats_csv {
+            args.extend([
+                "-statsout".into(),
+                path.to_str()
+                    .context("stats_csv path must be UTF-8")?
+                    .into(),
+                "-statspf:csv".into(),
+                "-stats".into(),
+                "1000".into(),
+            ]);
+        }
+        args.extend([self.listener_uri(port), "udp://127.0.0.1:9999".into()]);
+        Ok(args)
+    }
+}
+
+/// Receiver CLI dialect; selected by `SRTLA_REC_KIND` (default `ceralive`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReceiverKind {
+    CeraLive,
+    Irlserver,
+    Belabox,
+}
+
+impl ReceiverKind {
+    pub fn from_env() -> Result<Self> {
+        Self::parse(std::env::var_os("SRTLA_REC_KIND").as_deref())
+    }
+
+    fn parse(value: Option<&std::ffi::OsStr>) -> Result<Self> {
+        match value {
+            None => Ok(Self::CeraLive),
+            Some(value) => match value.to_str() {
+                Some("ceralive") => Ok(Self::CeraLive),
+                Some("irlserver") => Ok(Self::Irlserver),
+                Some("belabox") => Ok(Self::Belabox),
+                Some(_) | None => bail!(
+                    "invalid SRTLA_REC_KIND {value:?}; expected ceralive, irlserver or belabox"
+                ),
+            },
+        }
+    }
+
+    /// The three endpoint values follow each receiver's native CLI contract.
+    pub fn argv(&self, srtla_port: u16, srt_host: &str, srt_port: u16) -> Vec<String> {
+        match self {
+            Self::CeraLive | Self::Irlserver => vec![
+                "--srtla_port".into(),
+                srtla_port.to_string(),
+                "--srt_hostname".into(),
+                srt_host.into(),
+                "--srt_port".into(),
+                srt_port.to_string(),
+            ],
+            Self::Belabox => vec![
+                srtla_port.to_string(),
+                srt_host.into(),
+                srt_port.to_string(),
+            ],
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ReceiverSpec {
+    pub label: String,
+    pub lineage: String,
+    pub srtla_rec_kind: String,
+    pub srtla_rec_bin: PathBuf,
+    pub srt_live_transmit_bin: PathBuf,
+    pub listener_uri_extra: String,
+}
+
+impl ReceiverSpec {
+    pub fn from_env() -> Result<Self> {
+        let kind = std::env::var("SRTLA_REC_KIND").unwrap_or_else(|_| "ceralive".into());
+        ReceiverKind::parse(Some(std::ffi::OsStr::new(&kind)))?;
+        Ok(Self {
+            label: kind.clone(),
+            lineage: kind.clone(),
+            srtla_rec_kind: kind,
+            srtla_rec_bin: std::env::var_os("SRTLA_REC_BIN")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| "srtla_rec".into()),
+            srt_live_transmit_bin: std::env::var_os("SRT_LIVE_TRANSMIT_BIN")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| "srt-live-transmit".into()),
+            listener_uri_extra: String::new(),
+        })
+    }
+
+    pub fn resolved(mut self) -> Result<Self> {
+        fn resolve(path: &Path) -> Result<PathBuf> {
+            let found = if path.components().count() == 1 {
+                if path.is_file() {
+                    path.to_owned()
+                } else {
+                    std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+                        .map(|directory| directory.join(path))
+                        .find(|candidate| candidate.is_file())
+                        .with_context(|| {
+                            format!("receiver binary {} not on PATH", path.display())
+                        })?
+                }
+            } else {
+                path.to_owned()
+            };
+            anyhow::ensure!(
+                found.is_file(),
+                "receiver binary {} is not a file",
+                found.display()
+            );
+            found
+                .canonicalize()
+                .with_context(|| format!("receiver binary {}", path.display()))
+        }
+        self.kind()?;
+        Self::validate_options(&self.listener_uri_extra)?;
+        self.srtla_rec_bin = resolve(&self.srtla_rec_bin)?;
+        self.srt_live_transmit_bin = resolve(&self.srt_live_transmit_bin)?;
+        Ok(self)
+    }
+
+    pub fn kind(&self) -> Result<ReceiverKind> {
+        ReceiverKind::parse(Some(std::ffi::OsStr::new(&self.srtla_rec_kind)))
+    }
+
+    pub fn validate_options(extra: &str) -> Result<()> {
+        if extra.is_empty() {
+            return Ok(());
+        }
+        anyhow::ensure!(
+            extra.starts_with('&'),
+            "listener_uri_extra must begin with &"
+        );
+        let mut names = std::collections::BTreeSet::new();
+        for option in extra[1..].split('&') {
+            let (key, value) = option
+                .split_once('=')
+                .context("listener option requires key=value")?;
+            anyhow::ensure!(
+                !key.is_empty()
+                    && !value.is_empty()
+                    && names.insert(key)
+                    && key.bytes().all(|b| b.is_ascii_alphanumeric())
+                    && value
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"_.:-".contains(&b))
+                    && !["mode", "adapter", "port", "packetfilter"].contains(&key),
+                "invalid or duplicate listener option {key}"
+            );
+        }
+        Ok(())
+    }
+
+    pub fn listener_argv(
+        &self,
+        profile: SrtProfile,
+        port: u16,
+        stats_csv: Option<&Path>,
+    ) -> Result<Vec<String>> {
+        Self::validate_options(&self.listener_uri_extra)?;
+        let mut args = profile.listener_argv(port, stats_csv)?;
+        let index = args.len() - 2;
+        let base = args[index].clone();
+        let (endpoint, query) = base.split_once('?').context("listener URI query")?;
+        let mut options: Vec<&str> = query.split('&').collect();
+        for option in self.listener_uri_extra.split('&').filter(|s| !s.is_empty()) {
+            let (key, _) = option.split_once('=').context("listener option")?;
+            options.retain(|existing| existing.split_once('=').is_none_or(|(name, _)| name != key));
+            options.push(option);
+        }
+        args[index] = format!("{endpoint}?{}", options.join("&"));
+        Ok(args)
+    }
+}
+
+/// SLS is opt-in through `start_conformance`; ordinary stacks always use SLT.
+#[derive(Debug)]
+pub enum SrtSink {
+    Slt,
+    Sls {
+        binary: PathBuf,
+        conf_template: PathBuf,
+    },
+}
+
+impl SrtSink {
+    pub fn sls_from_env(conf_template: PathBuf) -> Result<Self> {
+        let binary = std::env::var_os("SLS_BIN").context("SLS_BIN is required for conformance")?;
+        let binary = PathBuf::from(binary)
+            .canonicalize()
+            .context("resolve SLS_BIN")?;
+        anyhow::ensure!(binary.is_file(), "SLS_BIN is not a file");
+        Ok(Self::Sls {
+            binary,
+            conf_template,
+        })
+    }
+}
+
+#[cfg(test)]
+const SLS_TEMPLATE: &str = include_str!("../../../tests/bench_support/sls-conformance.conf.tmpl");
+const SLS_STREAM: &str = "publish/live/conformance";
+
+fn render_sls_conf(template: &str, directory: &Path) -> Result<String> {
+    let pidfile = directory.join("sls.pid");
+    let pidfile = pidfile.to_str().context("SLS pidfile must be UTF-8")?;
+    anyhow::ensure!(
+        pidfile
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"/_.-".contains(&b)),
+        "SLS pidfile cannot contain config delimiters or whitespace"
+    );
+    let mut conf = template.to_owned();
+    for (name, value) in [
+        ("{{publisher_port}}", "4002"),
+        ("{{classic_port}}", "4003"),
+        ("{{player_port}}", "4000"),
+        ("{{stats_port}}", "8181"),
+        ("{{pidfile}}", pidfile),
+    ] {
+        anyhow::ensure!(conf.contains(name), "missing SLS template token {name}");
+        conf = conf.replace(name, value);
+    }
+    anyhow::ensure!(!conf.contains("{{"), "unknown SLS template token");
+    Ok(conf)
+}
+
+pub use crate::metrics::sls::{SlsPlayerStats, SlsPublisherStats};
+
+#[derive(Debug, serde::Deserialize)]
+struct SlsStats {
+    status: String,
+    publishers: std::collections::BTreeMap<String, SlsPublisherStats>,
+}
+
+fn parse_sls_stats(json: &str) -> Result<SlsStats> {
+    let stats: SlsStats = serde_json::from_str(json).context("parse SLS /stats")?;
+    anyhow::ensure!(stats.status == "ok", "SLS /stats status is not ok");
+    Ok(stats)
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SlsAssertions {
+    pub registered: bool,
+    pub carry: bool,
+    pub latency: bool,
+}
+
+impl SlsAssertions {
+    fn evaluate(
+        publisher: Option<&SlsPublisherStats>,
+        bytes: u64,
+        offered: u64,
+        preset: u32,
+    ) -> Self {
+        Self {
+            registered: publisher.is_some(),
+            carry: offered > 0
+                && u128::from(bytes) * 10 >= u128::from(offered) * 9
+                && publisher.is_some_and(|p| !p.players.is_empty()),
+            latency: publisher.is_some_and(|p| p.latency == Some(preset.max(100))),
+        }
+    }
+
+    pub fn require_pass(&self) -> Result<()> {
+        anyhow::ensure!(
+            self.registered && self.carry && self.latency,
+            "SLS conformance failed: registered={} carry={} latency={}",
+            self.registered,
+            self.carry,
+            self.latency
+        );
+        Ok(())
+    }
+}
+
+/// Deliberately not metrics::RunRecord: conformance cannot enter covering-set reduction.
+#[derive(Debug, serde::Serialize)]
+pub struct SlsConformanceRecord {
+    pub sink: &'static str,
+    pub metrics: &'static str,
+    pub assertions: SlsAssertions,
+    pub sls_stats: Option<SlsPublisherStats>,
+    pub offered_bytes: u64,
+    pub player_bytes: u64,
+    pub duration_ms: u32,
+    pub useful_goodput_bps: f64,
+    pub pkt_rcv_belated: Option<u64>,
+    pub occupancy_pct: Option<f64>,
+    pub belated_gate: &'static str,
+    pub occupancy_gate: &'static str,
+}
+
+fn sls_player_goodput(start: u64, end: u64, duration_ms: u32) -> Result<(u64, f64)> {
+    use crate::metrics::Window;
+    use crate::metrics::sink::{SinkBucket, SinkSeries};
+    let bytes = end
+        .checked_sub(start)
+        .context("player output truncated during measurement")?;
+    let window = Window::new(0, i64::from(duration_ms))?;
+    let series = SinkSeries::new(vec![SinkBucket {
+        t_ms: i64::from(duration_ms),
+        duration_ms,
+        bytes,
+        // Only the byte-based rate is consumed; file capture has no datagram count.
+        pkts: 0,
+    }])?;
+    Ok((bytes, series.useful_goodput_bps(window)?))
+}
+
+pub struct SlsMeasurement {
+    started: Instant,
+    start_bytes: u64,
+    output: PathBuf,
+}
+
+pub struct SlsCapture {
+    player: Option<NamespaceProcess>,
+    directory: tempfile::TempDir,
+    output: PathBuf,
+}
+
+impl SlsCapture {
+    fn scrape(ns: &Namespace) -> Result<SlsStats> {
+        let output = ns.exec_checked(
+            "curl",
+            &[
+                "--noproxy",
+                "*",
+                "--max-time",
+                "2",
+                "-fsS",
+                "-H",
+                "Authorization: bpc-conformance-local",
+                "http://127.0.0.1:8181/stats",
+            ],
+        )?;
+        parse_sls_stats(std::str::from_utf8(&output.stdout).context("SLS /stats UTF-8")?)
+    }
+}
+
+/// Full SRTLA stack; SLS conformance adds an explicitly attached player.
 pub struct SrtlaTestStack {
     pub topo: SrtlaTestTopology,
     srt_server: Option<NamespaceProcess>,
     srtla_rec: Option<NamespaceProcess>,
     srtla_send: Option<NamespaceProcess>,
     _ip_list_path: PathBuf,
+    sls_capture: Option<SlsCapture>,
 }
 
 /// Output collected from all processes after stopping the stack.
@@ -698,44 +1171,102 @@ impl SrtlaTestStack {
     /// Start the full stack: srt-live-transmit → srtla_rec → srtla_send.
     ///
     /// `sender_extra_args` are appended to the srtla_send command line.
-    pub fn start(test_name: &str, num_links: usize, sender_extra_args: &[&str]) -> Result<Self> {
+    /// Pass `SrtProfile::LEGACY_DEFAULT` and `None` to retain the old listener argv.
+    /// Profile and capture remain explicit arguments so existing tests cannot opt in silently.
+    pub fn start(
+        test_name: &str,
+        num_links: usize,
+        sender_extra_args: &[&str],
+        srt_profile: SrtProfile,
+        stats_csv: Option<PathBuf>,
+    ) -> Result<Self> {
+        Self::start_with_sink(
+            test_name,
+            num_links,
+            sender_extra_args,
+            srt_profile,
+            stats_csv,
+            SrtSink::Slt,
+        )
+    }
+
+    /// No sender metrics or receiver CSV is requested by this conformance path.
+    pub fn start_conformance(
+        test_name: &str,
+        num_links: usize,
+        sender_extra_args: &[&str],
+        sink: SrtSink,
+    ) -> Result<Self> {
+        match sink {
+            SrtSink::Slt => bail!("conformance requires SrtSink::Sls"),
+            SrtSink::Sls { .. } => Self::start_with_sink(
+                test_name,
+                num_links,
+                sender_extra_args,
+                SrtProfile::LEGACY_DEFAULT,
+                None,
+                sink,
+            ),
+        }
+    }
+
+    fn start_with_sink(
+        test_name: &str,
+        num_links: usize,
+        sender_extra_args: &[&str],
+        srt_profile: SrtProfile,
+        stats_csv: Option<PathBuf>,
+        sink: SrtSink,
+    ) -> Result<Self> {
+        let receiver = ReceiverSpec::from_env()?.resolved()?;
+        let srt_binary = &receiver.srt_live_transmit_bin;
+        let rec_binary = &receiver.srtla_rec_bin;
+        let receiver_kind = receiver.kind()?;
+        let listener_args =
+            receiver.listener_argv(srt_profile, SRT_SERVER_PORT, stats_csv.as_deref())?;
+        let server_port = match &sink {
+            SrtSink::Slt => SRT_SERVER_PORT,
+            SrtSink::Sls { .. } => 4002,
+        };
+        let receiver_args = receiver_kind.argv(SRTLA_REC_PORT, "127.0.0.1", server_port);
         let topo = SrtlaTestTopology::new(test_name, num_links)?;
         let ip_list_path = topo.write_ip_list()?;
 
         // 1. Start srt-live-transmit in receiver NS
-        //    Acts as an SRT listener that sinks to /dev/null.
-        let srt_uri = format!("srt://:{}?mode=listener", SRT_SERVER_PORT);
-        // Sink to a UDP port — srt-live-transmit only supports srt://, udp://, file://con
-        let sink_uri = "udp://127.0.0.1:9999";
-        let mut srt_server = NamespaceProcess::spawn(
-            &topo.receiver_ns,
-            "srt-live-transmit",
-            &[&srt_uri, sink_uri],
-        )
-        .context("start srt-live-transmit")?;
+        let (mut srt_server, sls_capture) = match sink {
+            SrtSink::Slt => (
+                NamespaceProcess::spawn(
+                    &topo.receiver_ns,
+                    srt_binary
+                        .to_str()
+                        .context("SRT tool binary path must be UTF-8")?,
+                    &listener_args.iter().map(String::as_str).collect::<Vec<_>>(),
+                )
+                .context("start srt-live-transmit")?,
+                None,
+            ),
+            SrtSink::Sls { .. } => {
+                crate::bond::configure_bond_routing(&topo)?;
+                let (process, capture) = sink.start_sls_listener(&topo.receiver_ns)?;
+                (process, Some(capture))
+            }
+        };
 
         // Brief pause for listener setup, then check it's alive
         std::thread::sleep(Duration::from_millis(500));
         if let Some((code, stderr)) = srt_server.check_exit() {
-            bail!("srt-live-transmit exited immediately (code: {code:?})\nstderr:\n{stderr}");
+            bail!("SRT sink exited immediately (code: {code:?})\nstderr:\n{stderr}");
         }
-        wait_for_udp_listener(&topo.receiver_ns, SRT_SERVER_PORT, Duration::from_secs(5))
-            .context("wait for srt-live-transmit")?;
+        wait_for_udp_listener(&topo.receiver_ns, server_port, Duration::from_secs(5))
+            .context("wait for SRT sink")?;
 
         // 2. Start srtla_rec in receiver NS
-        let srtla_port_str = SRTLA_REC_PORT.to_string();
-        let srt_port_str = SRT_SERVER_PORT.to_string();
         let mut srtla_rec = NamespaceProcess::spawn(
             &topo.receiver_ns,
-            "srtla_rec",
-            &[
-                "--srtla_port",
-                &srtla_port_str,
-                "--srt_hostname",
-                "127.0.0.1",
-                "--srt_port",
-                &srt_port_str,
-            ],
+            rec_binary
+                .to_str()
+                .context("receiver binary path must be UTF-8")?,
+            &receiver_args.iter().map(String::as_str).collect::<Vec<_>>(),
         )
         .context("start srtla_rec")?;
 
@@ -778,7 +1309,52 @@ impl SrtlaTestStack {
             srtla_rec: Some(srtla_rec),
             srtla_send: Some(srtla_send),
             _ip_list_path: ip_list_path,
+            sls_capture,
         })
+    }
+
+    /// Attach after the publisher has connected; readiness requires actual file growth.
+    pub fn attach_sls_player(&mut self) -> Result<()> {
+        let capture = self
+            .sls_capture
+            .as_mut()
+            .context("not an SLS conformance stack")?;
+        capture.attach_player(&self.topo.receiver_ns, &find_srt_live_transmit_binary()?)
+    }
+
+    pub fn begin_sls_measurement(&self) -> Result<SlsMeasurement> {
+        let capture = self
+            .sls_capture
+            .as_ref()
+            .context("not an SLS conformance stack")?;
+        capture.begin_measurement()
+    }
+
+    /// Scrape before stopping the publisher. Any of the three failures returns Err.
+    pub fn finish_sls_measurement(
+        &self,
+        measurement: SlsMeasurement,
+        offered_bytes: u64,
+        device_preset_ms: u32,
+    ) -> Result<SlsConformanceRecord> {
+        let capture = self
+            .sls_capture
+            .as_ref()
+            .context("not an SLS conformance stack")?;
+        let server = self
+            .srt_server
+            .as_ref()
+            .context("SLS server stopped before scrape")?;
+        let record = capture.finish_measurement(
+            (&self.topo.receiver_ns, server),
+            measurement,
+            (offered_bytes, device_preset_ms),
+        )?;
+        record
+            .assertions
+            .require_pass()
+            .with_context(|| format!("{record:?}"))?;
+        Ok(record)
     }
 
     /// Snapshot srtla_send's live log without stopping the stack.
@@ -818,6 +1394,9 @@ impl SrtlaTestStack {
 
     /// Stop all processes and collect their output.
     pub fn stop(&mut self) -> StackOutput {
+        if let Some(capture) = &mut self.sls_capture {
+            drop(capture.player.take());
+        }
         let mut send_out = (vec![], vec![]);
         let mut rec_out = (vec![], vec![]);
         let mut srt_out = (vec![], vec![]);
@@ -849,6 +1428,9 @@ impl SrtlaTestStack {
 
 impl Drop for SrtlaTestStack {
     fn drop(&mut self) {
+        if let Some(capture) = &mut self.sls_capture {
+            drop(capture.player.take());
+        }
         // Ensure all processes are killed even if stop() wasn't called.
         // Dropping NamespaceProcess triggers its Drop impl which calls kill().
         drop(self.srtla_send.take());
@@ -941,10 +1523,16 @@ pub fn inject_udp_stream(
     let dur_secs = duration.as_secs_f64();
 
     let script = format!(
-        "import socket,time\ns=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)\nd=b'\\x00'*188\\
-         nstart=time.time(); i=0\nwhile time.time()-start<{dur_secs}:\n\x20 \
-         s.sendto(d,('{target_ip}',{port}))\n\x20 i+=1\n\x20 \
-         time.sleep({interval_us}/1e6)\ns.close()\nprint(f'sent {{i}} packets')"
+        r#"import socket,time
+s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+d=b'\x00'*188
+start=time.monotonic(); i=0
+while time.monotonic()-start<{dur_secs}:
+    s.sendto(d,('{target_ip}',{port}))
+    i+=1
+    time.sleep({interval_us}/1e6)
+s.close()
+print(f'sent {{i}} packets')"#
     );
     ns.exec_checked("python3", &["-c", &script])
         .context("inject UDP stream")?;
@@ -954,6 +1542,602 @@ pub fn inject_udp_stream(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod sls_sink_tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires SLS_BIN, real SRT tools, built sender and netns privileges"]
+    fn sls_sink_live_conformance() {
+        // Given a private two-uplink sender -> receiver -> real SLS stack.
+        check_integration_deps().expect("live conformance prerequisites");
+        let template = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/bench_support/sls-conformance.conf.tmpl");
+        let sink = SrtSink::sls_from_env(template).expect("SLS_BIN");
+        let mut stack =
+            SrtlaTestStack::start_conformance("slsconf", 2, &["--mode", "enhanced"], sink)
+                .expect("conformance stack");
+        stack
+            .wait_for_registered_uplinks(2, Duration::from_secs(25))
+            .expect("registered uplinks");
+        let tool = find_srt_live_transmit_binary().unwrap();
+        let caller = NamespaceProcess::spawn_process_only(
+            &stack.topo.sender_ns,
+            tool.to_str().unwrap(),
+            &[
+                "udp://:6000",
+                "srt://127.0.0.1:5555?mode=caller&latency=50&streamid=publish/live/conformance",
+            ],
+        )
+        .unwrap();
+        wait_for_udp_listener(&stack.topo.sender_ns, 6000, Duration::from_secs(5)).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let offered = dir.path().join("offered.ts");
+        let source = NamespaceProcess::spawn_process_only(&stack.topo.sender_ns, "python3", &[
+            "-u", "-c", r#"import socket, sys, time
+payload = (b'\x47\x1f\xff\x10' + b'\xff' * 184) * 7
+with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock, open(sys.argv[1], 'wb', buffering=0) as sent:
+    start = time.monotonic()
+    for i in range(20000):
+        sock.sendto(payload, ('127.0.0.1', 6000))
+        sent.write(payload)
+        time.sleep(max(0, start + (i + 1) / 500 - time.monotonic()))
+"#, offered.to_str().unwrap(),
+        ]).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let stats = SlsCapture::scrape(&stack.topo.receiver_ns).unwrap();
+            if stats.publishers.contains_key(SLS_STREAM) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "publisher absent; caller={:?}; sender={:?}",
+                caller.log_snapshot(),
+                stack.sender_log_snapshot()
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        stack.attach_sls_player().unwrap();
+        // When a six-second steady offered-byte window reaches the attached player.
+        let offered_start = std::fs::metadata(&offered).unwrap().len();
+        let measurement = stack.begin_sls_measurement().unwrap();
+        std::thread::sleep(Duration::from_secs(6));
+        let offered_bytes = std::fs::metadata(&offered).unwrap().len() - offered_start;
+        let record = stack
+            .finish_sls_measurement(measurement, offered_bytes, 50)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "{error:#}; SLS={:?}; sender={:?}",
+                    stack.srt_server.as_ref().unwrap().log_snapshot(),
+                    stack.sender_log_snapshot()
+                )
+            });
+        // Then all three checks block independently and no metric RunRecord is emitted.
+        assert_eq!(record.sls_stats.as_ref().unwrap().latency, Some(100));
+        let json = serde_json::to_value(&record).unwrap();
+        assert_eq!(json["sink"], "sls");
+        assert_eq!(json["metrics"], "none");
+        assert!(json["pkt_rcv_belated"].is_null());
+        assert!(json["occupancy_pct"].is_null());
+        assert!(serde_json::from_value::<crate::metrics::RunRecord>(json.clone()).is_err());
+        eprintln!(
+            "registered=ok carry=ok latency=ok\n{}",
+            serde_json::to_string_pretty(&json).unwrap()
+        );
+        drop(source);
+        drop(caller);
+        stack.stop();
+    }
+
+    fn captured() -> String {
+        let evidence: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../docs/evidence/bpc/sls-stats-map.json"
+        ))
+        .unwrap();
+        evidence["exact_response"].to_string()
+    }
+
+    #[test]
+    fn sls_sink_renders_distinct_listeners_and_floor() {
+        // Given the shipped template and an isolated run directory.
+        let dir = tempfile::tempdir().unwrap();
+        // When rendering the conformance configuration.
+        let conf = render_sls_conf(SLS_TEMPLATE, dir.path()).unwrap();
+        // Then both bonded aliases, player and HTTP listeners are explicit.
+        for directive in [
+            "listen_publisher_srtla 4002;",
+            "listen_publisher_srtla_classic 4003;",
+            "listen_player 4000;",
+            "http_port 8181;",
+            "latency_min 100;",
+        ] {
+            assert!(conf.contains(directive), "{conf}");
+        }
+        assert!(!conf.contains("{{"));
+        assert!(conf.contains(dir.path().to_str().unwrap()));
+    }
+
+    #[test]
+    fn sls_sink_parses_captured_publisher_without_inventing_counters() {
+        // Given exact JSON captured from a live publisher and attached player.
+        // When parsing the publisher's exact stream ID, never a substring.
+        let stats = parse_sls_stats(&captured()).unwrap();
+        let publisher = &stats.publishers["publish/live/baseline"];
+        // Then native names and unknown fields retain their real meaning.
+        assert_eq!(publisher.latency, Some(200));
+        assert_eq!(publisher.rtt, Some(0.021));
+        assert_eq!(publisher.pkt_rcv_drop, Some(0));
+        assert_eq!(publisher.pkt_rcv_loss, Some(0));
+        assert_eq!(publisher.pkt_rcv_retrans, Some(0));
+        assert_eq!(publisher.ms_rcv_buf, Some(121));
+        assert_eq!(publisher.reorder_hold_ms, None);
+        assert_eq!(publisher.players.len(), 1);
+        assert!(!stats.publishers.contains_key("baseline"));
+    }
+
+    #[test]
+    fn sls_sink_rejects_bad_http_payloads() {
+        // Given malformed, unauthorized, and wrong-type endpoint responses.
+        for json in [
+            "<html>unauthorized</html>",
+            r#"{"status":"error","publishers":{}}"#,
+            r#"{"status":"ok"}"#,
+            r#"{"status":"ok","publishers":{"x":{"latency":"100","players":[]}}}"#,
+        ] {
+            // When parsing the boundary, then no successful observation is invented.
+            assert!(parse_sls_stats(json).is_err(), "{json}");
+        }
+    }
+
+    #[test]
+    fn sls_sink_uses_player_delta_and_existing_goodput_calculation() {
+        // Given 500 warmup bytes, then 900 application bytes in a two-second window.
+        // When measuring the attached player's file growth.
+        let (bytes, bps) = sls_player_goodput(500, 1400, 2000).unwrap();
+        // Then warmup is excluded and the existing bits/s conversion is reused.
+        assert_eq!(bytes, 900);
+        assert_eq!(bps, 3600.0);
+        assert!(sls_player_goodput(500, 499, 2000).is_err());
+        assert!(sls_player_goodput(0, 900, 0).is_err());
+    }
+
+    #[test]
+    fn sls_sink_three_assertions_are_independently_blocking() {
+        // Given a registered publisher whose real negotiated latency is 200ms.
+        let stats = parse_sls_stats(&captured()).unwrap();
+        let publisher = stats.publishers.get("publish/live/baseline");
+        // When checking each counterexample, then every failed assertion blocks.
+        for (observed, bytes, offered, preset, pass) in [
+            (publisher, 900, 1000, 200, true),
+            (None, 1000, 1000, 200, false),
+            (publisher, 899, 1000, 200, false),
+            (publisher, 1000, 1000, 500, false),
+            (publisher, 0, 0, 200, false),
+        ] {
+            let checks = SlsAssertions::evaluate(observed, bytes, offered, preset);
+            assert_eq!(checks.require_pass().is_ok(), pass, "{checks:?}");
+        }
+    }
+
+    #[test]
+    fn sls_sink_latency_floor_and_missing_latency() {
+        // Given a publisher at the bonded floor, with an attached player.
+        let mut stats = parse_sls_stats(&captured()).unwrap();
+        let publisher = stats.publishers.get_mut("publish/live/baseline").unwrap();
+        publisher.latency = Some(100);
+        // When the device requests less than the floor, then 100ms is required.
+        assert!(SlsAssertions::evaluate(Some(publisher), 900, 1000, 50).latency);
+        publisher.latency = None;
+        assert!(!SlsAssertions::evaluate(Some(publisher), 900, 1000, 50).latency);
+        publisher.players.clear();
+        assert!(!SlsAssertions::evaluate(Some(publisher), 1000, 1000, 50).carry);
+    }
+}
+
+/// Resolve an explicit receiver path, or the `srtla_rec` PATH entry when unset.
+pub fn find_srtla_rec_binary() -> Result<PathBuf> {
+    resolve_external_binary("SRTLA_REC_BIN", "srtla_rec")
+}
+
+/// Resolve an explicit SRT tool path, or `srt-live-transmit` when unset.
+pub fn find_srt_live_transmit_binary() -> Result<PathBuf> {
+    resolve_external_binary("SRT_LIVE_TRANSMIT_BIN", "srt-live-transmit")
+}
+
+fn resolve_external_binary(key: &str, fallback: &str) -> Result<PathBuf> {
+    match std::env::var_os(key) {
+        Some(explicit) => {
+            let path = PathBuf::from(explicit);
+            if !path.is_file() {
+                bail!("{key}={} is not a file", path.display());
+            }
+            std::fs::canonicalize(&path)
+                .with_context(|| format!("resolve {key}={}", path.display()))
+        }
+        None => check_binary(fallback)
+            .with_context(|| format!("{fallback} not found in PATH ({key} unset)")),
+    }
+}
+
+#[cfg(test)]
+mod srt_profile_tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires netns privileges, real SRT tools and a built srtla_send"]
+    fn profile_stats_stack_writes_csv() {
+        // Given a registered single-link stack with explicit strict tuning and capture.
+        check_integration_deps().expect("live stack dependencies");
+        let dir = tempfile::tempdir().expect("capture directory");
+        let csv = dir.path().join("listener stats.csv");
+        let mut stack =
+            SrtlaTestStack::start("profile_csv", 1, &[], SrtProfile::STRICT, Some(csv.clone()))
+                .expect("profile stack");
+        stack
+            .wait_for_registered_uplinks(1, Duration::from_secs(20))
+            .expect("registered uplink");
+        let tool = find_srt_live_transmit_binary().expect("SRT tool");
+        let caller_uri = format!(
+            "srt://127.0.0.1:{}?mode=caller&latency=500",
+            stack.sender_srt_port()
+        );
+        let caller = NamespaceProcess::spawn(
+            &stack.topo.sender_ns,
+            tool.to_str().expect("tool path"),
+            &["udp://:6000", &caller_uri],
+        )
+        .expect("real SRT caller");
+        wait_for_udp_listener(&stack.topo.sender_ns, 6000, Duration::from_secs(10))
+            .expect("caller input ready");
+        // When real libsrt carries enough messages to cross its stats packet count.
+        // A burst can overflow the caller's UDP receive buffer before SRT reads 1000 messages.
+        inject_udp_stream(
+            &stack.topo.sender_ns,
+            "127.0.0.1",
+            6000,
+            500,
+            Duration::from_secs(6),
+        )
+        .expect("source datagrams");
+        // Then the listener publishes real CSV, including a data row rather than just a header.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let captured = loop {
+            let text = std::fs::read_to_string(&csv).expect("read listener stats CSV");
+            if text.ends_with('\n') && text.lines().count() >= 2 {
+                break text;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "no stats rows; listener={:?}; caller={:?}; sender={:?}",
+                stack.srt_server.as_ref().expect("listener").log_snapshot(),
+                caller.log_snapshot(),
+                stack.sender_log_snapshot()
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        };
+        let mut lines = captured.lines();
+        let header = lines.next().expect("CSV header");
+        let recv_column = header
+            .split(',')
+            .position(|field| field == "pktRecv")
+            .expect("pktRecv column");
+        let received = lines
+            .next()
+            .expect("CSV data row")
+            .split(',')
+            .nth(recv_column)
+            .expect("pktRecv value")
+            .parse::<u64>()
+            .expect("numeric pktRecv");
+        assert!(received > 0, "listener must report real received packets");
+        eprintln!(
+            "listener CSV captured: pktRecv={received}, data_rows={}, path={}",
+            captured.lines().count() - 1,
+            csv.display()
+        );
+        stack.stop();
+        drop(caller);
+    }
+
+    #[test]
+    fn srt_uri_includes_profile_params() {
+        for (profile, expected) in [
+            (
+                SrtProfile::PRODUCTION,
+                "srt://:4001?mode=listener&latency=2000&lossmaxttl=200&reorderfreeze=1",
+            ),
+            (
+                SrtProfile::STRICT,
+                "srt://:4001?mode=listener&latency=500&lossmaxttl=10",
+            ),
+        ] {
+            // Given an explicit preset; when composing the listener URI.
+            let uri = profile.listener_uri(4001);
+            // Then tuning is exact: production freezes reordering without disabling NAK reports.
+            assert_eq!(uri, expected);
+        }
+    }
+
+    #[test]
+    fn production_lossmaxttl_matches_receiver_l1() {
+        // Given the receiver L1 LOSSMAXTTL policy is 200 (SLSSrt.cpp:300-303).
+        // When reading the production profile.
+        // Then the harness requests the same value instead of the stale 40.
+        assert_eq!(SrtProfile::PRODUCTION.lossmaxttl, 200);
+    }
+
+    /// Query parameters of a listener URI, so equality can be checked per key.
+    fn listener_query(uri: &str) -> std::collections::BTreeMap<String, String> {
+        uri.split_once('?')
+            .expect("listener URI has a query")
+            .1
+            .split('&')
+            .map(|pair| pair.split_once('=').expect("key=value query pair"))
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect()
+    }
+
+    /// Fails naming the first query key whose value diverges from `PRODUCTION`.
+    fn assert_only_latency_differs(profile: &SrtProfile) {
+        let production = listener_query(&SrtProfile::PRODUCTION.listener_uri(4001));
+        let actual = listener_query(&profile.listener_uri(4001));
+        let missing: Vec<_> = production
+            .keys()
+            .filter(|key| !actual.contains_key(*key))
+            .collect();
+        let extra: Vec<_> = actual
+            .keys()
+            .filter(|key| !production.contains_key(*key))
+            .collect();
+        assert!(
+            missing.is_empty() && extra.is_empty(),
+            "rung {} diverges from PRODUCTION on parameter(s): missing={missing:?} extra={extra:?}",
+            profile.name
+        );
+        for (key, production_value) in &production {
+            if key == "latency" {
+                continue;
+            }
+            let actual_value = &actual[key];
+            assert_eq!(
+                actual_value, production_value,
+                "rung {} diverges from PRODUCTION on parameter `{key}`",
+                profile.name
+            );
+        }
+        assert_eq!(
+            actual["latency"],
+            profile.latency_ms.to_string(),
+            "rung {} must request its own latency",
+            profile.name
+        );
+    }
+
+    #[test]
+    fn srt_profile_ladder_varies_only_latency() {
+        // Given the five ladder rungs and the production receiver policy.
+        for rung in SrtProfile::LADDER {
+            // When comparing each rung's listener URI against PRODUCTION's.
+            assert_only_latency_differs(&rung);
+            // Then only latency differs: reorderfreeze and lossmaxttl are identical.
+            assert_eq!(rung.lossmaxttl, 200, "rung {} maxttl", rung.name);
+            assert!(rung.reorderfreeze, "rung {} reorderfreeze", rung.name);
+        }
+        assert_eq!(
+            SrtProfile::LADDER.map(|rung| rung.latency_ms),
+            [200, 300, 500, 2000, 5000]
+        );
+        // And the `rung` constructor returns the matching rung, or None off-ladder.
+        assert_eq!(SrtProfile::rung(500).unwrap().latency_ms, 500);
+        assert!(SrtProfile::rung(250).is_none());
+    }
+
+    #[test]
+    fn legacy_default_uri_unchanged() {
+        // Given legacy behavior without stats capture; when building the invocation.
+        let args = SrtProfile::LEGACY_DEFAULT
+            .listener_argv(4001, None)
+            .expect("legacy args");
+        // Then the entire listener argument vector is byte-identical to the old stack.
+        assert_eq!(args, ["srt://:4001?mode=listener", "udp://127.0.0.1:9999"]);
+    }
+
+    #[test]
+    fn stats_capture_uses_csv_and_packet_count_flags() {
+        // Given an explicit capture path containing a space; when building the invocation.
+        let args = SrtProfile::PRODUCTION
+            .listener_argv(4001, Some(std::path::Path::new("capture dir/stats.csv")))
+            .expect("stats args");
+        // Then capture is one path argument and the cadence is 1000 packets, not milliseconds.
+        assert_eq!(
+            args,
+            [
+                "-statsout",
+                "capture dir/stats.csv",
+                "-statspf:csv",
+                "-stats",
+                "1000",
+                "srt://:4001?mode=listener&latency=2000&lossmaxttl=200&reorderfreeze=1",
+                "udp://127.0.0.1:9999"
+            ]
+        );
+    }
+
+    #[test]
+    fn legacy_profile_can_capture_stats_without_tuning_latency() {
+        // Given a legacy profile with opt-in capture; when composing the invocation.
+        let args = SrtProfile::LEGACY_DEFAULT
+            .listener_argv(1234, Some(std::path::Path::new("stats.csv")))
+            .expect("legacy stats args");
+        // Then capture does not opt into either profile knob.
+        assert_eq!(
+            args,
+            [
+                "-statsout",
+                "stats.csv",
+                "-statspf:csv",
+                "-stats",
+                "1000",
+                "srt://:1234?mode=listener",
+                "udp://127.0.0.1:9999"
+            ]
+        );
+    }
+}
+
+#[cfg(test)]
+mod launch_policy_tests {
+    use super::*;
+
+    #[test]
+    fn belabox_argv_is_positional() {
+        // Given a BELABOX receiver and distinct listener/forwarding ports.
+        let receiver = ReceiverKind::Belabox;
+        // When composing its invocation.
+        let args = receiver.argv(15000, "127.0.0.2", 15001);
+        // Then only the three ordered positionals are emitted.
+        assert_eq!(args, ["15000", "127.0.0.2", "15001"]);
+    }
+
+    #[test]
+    fn ceralive_and_irlserver_argv_use_flags() {
+        for receiver in [ReceiverKind::CeraLive, ReceiverKind::Irlserver] {
+            // Given either flags-based receiver; when composing its invocation.
+            let args = receiver.argv(15000, "127.0.0.2", 15001);
+            // Then the receiver's own CLI names and order are preserved.
+            assert_eq!(
+                args,
+                [
+                    "--srtla_port",
+                    "15000",
+                    "--srt_hostname",
+                    "127.0.0.2",
+                    "--srt_port",
+                    "15001"
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn receiver_kind_parses_known_values_and_legacy_default() {
+        for (value, expected) in [
+            (None, ReceiverKind::CeraLive),
+            (Some("ceralive"), ReceiverKind::CeraLive),
+            (Some("irlserver"), ReceiverKind::Irlserver),
+            (Some("belabox"), ReceiverKind::Belabox),
+        ] {
+            // Given a supported environment value; when parsing it.
+            let kind = ReceiverKind::parse(value.map(std::ffi::OsStr::new));
+            // Then it selects the corresponding CLI dialect.
+            assert_eq!(kind.expect("known receiver kind"), expected);
+        }
+    }
+
+    #[test]
+    fn receiver_kind_rejects_unknown_values() {
+        // Given a typo rather than a supported dialect; when parsing it.
+        let error = ReceiverKind::parse(Some(std::ffi::OsStr::new("belaboxx"))).unwrap_err();
+        // Then the environment setting is diagnosed instead of silently defaulted.
+        assert!(error.to_string().contains("SRTLA_REC_KIND"));
+    }
+
+    #[test]
+    fn env_override_wins_over_path() {
+        // Given isolated child-process environment overrides (no global env mutation).
+        let executable = std::env::current_exe().expect("test executable");
+        if std::env::var_os("NETWORK_SIM_OVERRIDE_CHILD").is_some() {
+            // When resolving the real environment boundary.
+            let rec = find_srtla_rec_binary().expect("receiver override");
+            let srt = find_srt_live_transmit_binary().expect("SRT tool override");
+            let kind = ReceiverKind::from_env().expect("receiver kind override");
+            // Then explicit paths win even with no usable PATH.
+            assert_eq!(rec, executable);
+            assert_eq!(srt, executable);
+            assert_eq!(kind, ReceiverKind::Belabox);
+            return;
+        }
+        let output = Command::new(&executable)
+            .args([
+                "--exact",
+                "harness::launch_policy_tests::env_override_wins_over_path",
+            ])
+            .env("NETWORK_SIM_OVERRIDE_CHILD", "1")
+            .env("SRTLA_REC_BIN", &executable)
+            .env("SRT_LIVE_TRANSMIT_BIN", &executable)
+            .env("SRTLA_REC_KIND", "belabox")
+            .env("PATH", "")
+            .output()
+            .expect("run isolated override test");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
+
+    #[test]
+    fn env_override_missing_file_is_reported() {
+        // Given a missing explicit path and an otherwise available fallback.
+        let dir = tempfile::tempdir().expect("isolated missing binary path");
+        let missing = dir.path().join("missing-receiver");
+        if let Some(path) = std::env::var_os("NETWORK_SIM_MISSING_CHILD") {
+            // When resolving, no PATH fallback is allowed for an explicit override.
+            let error = resolve_external_binary("SRTLA_REC_BIN", "sh").unwrap_err();
+            // Then diagnostics retain both the environment key and missing filename.
+            let message = error.to_string();
+            assert!(message.contains("SRTLA_REC_BIN"), "{message}");
+            assert!(
+                message.contains(&path.to_string_lossy().to_string()),
+                "{message}"
+            );
+            assert!(message.contains("not a file"), "{message}");
+            return;
+        }
+        let output = Command::new(std::env::current_exe().expect("test executable"))
+            .args([
+                "--exact",
+                "harness::launch_policy_tests::env_override_missing_file_is_reported",
+            ])
+            .env("NETWORK_SIM_MISSING_CHILD", &missing)
+            .env("SRTLA_REC_BIN", &missing)
+            .output()
+            .expect("run isolated missing override test");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
+
+    #[test]
+    fn absent_override_resolves_path_binary() {
+        // Given an isolated environment without the override.
+        if std::env::var_os("NETWORK_SIM_PATH_CHILD").is_some() {
+            // When resolving a standard tool through the same resolver.
+            let binary = resolve_external_binary("SRTLA_REC_BIN", "sh").expect("PATH fallback");
+            // Then the normal PATH resolution is retained.
+            assert_eq!(Some(binary), check_binary("sh"));
+            return;
+        }
+        let output = Command::new(std::env::current_exe().expect("test executable"))
+            .args([
+                "--exact",
+                "harness::launch_policy_tests::absent_override_resolves_path_binary",
+            ])
+            .env("NETWORK_SIM_PATH_CHILD", "1")
+            .env_remove("SRTLA_REC_BIN")
+            .output()
+            .expect("run isolated PATH fallback test");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
+}
 
 /// Locate the srtla_send binary from a cargo build.
 pub(crate) fn find_srtla_send_binary() -> Result<PathBuf> {

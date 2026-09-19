@@ -1,0 +1,14 @@
+# Python test harness for the bench scripts under scripts/bench/.
+# The scripts themselves carry PEP 723 inline metadata; this project only pins
+# the dependencies shared by their pytest regression suite so that
+# `uv run pytest scripts/bench/ -q` resolves them deterministically.
+[project]
+name = "srtla-send-rs-bench"
+version = "0.0.0"
+requires-python = ">=3.12"
+
+[dependency-groups]
+dev = ["pytest>=8", "numpy==2.*", "pydantic==2.*"]
+
+[tool.uv]
+package = false

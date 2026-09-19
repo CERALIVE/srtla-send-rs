@@ -14,6 +14,8 @@ static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 #[cfg(not(loom))]
 pub mod ab_metrics;
 #[cfg(not(loom))]
+pub mod adaptive_env;
+#[cfg(not(loom))]
 pub mod bind_map;
 #[cfg(not(loom))]
 pub mod capabilities;
@@ -55,6 +57,9 @@ pub mod test_helpers;
 
 #[cfg(all(test, not(loom)))]
 pub mod tests;
+
+#[cfg(all(test, unix, feature = "test-internals", not(loom)))]
+mod retired_control_tests;
 
 // Re-export commonly used items
 #[cfg(not(loom))]

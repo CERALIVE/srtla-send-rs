@@ -3,12 +3,23 @@
 //! Uses the random-walk scenario generator to apply evolving impairment
 //! over time and validates that srtla_send survives without crashing.
 
+#[path = "bench_support/add_link_smoke.rs"]
+mod add_link_smoke;
 mod common;
+
+#[test]
+fn add_link_mid_run_registers_and_carries() -> anyhow::Result<()> {
+    if common::skip_without_impairment_deps() {
+        return Ok(());
+    }
+    add_link_smoke::run(env!("CARGO_BIN_EXE_srtla_send"))
+}
 
 use std::thread;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
+use network_sim::harness::SrtProfile;
 use network_sim::{ImpairmentConfig, LinkScenarioConfig, Scenario, ScenarioConfig, SrtlaTestStack};
 
 #[test]
@@ -18,7 +29,8 @@ fn test_random_walk_stability() {
     }
     common::build_srtla_send();
 
-    let mut stack = SrtlaTestStack::start("rw", 2, &[]).expect("start stack");
+    let mut stack =
+        SrtlaTestStack::start("rw", 2, &[], SrtProfile::LEGACY_DEFAULT, None).expect("start stack");
 
     common::wait_until_ready(&stack);
 
@@ -121,7 +133,8 @@ fn test_step_change_convergence() {
     }
     common::build_srtla_send();
 
-    let mut stack = SrtlaTestStack::start("step", 2, &[]).expect("start stack");
+    let mut stack = SrtlaTestStack::start("step", 2, &[], SrtProfile::LEGACY_DEFAULT, None)
+        .expect("start stack");
 
     common::wait_until_ready(&stack);
 
