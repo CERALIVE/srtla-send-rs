@@ -163,7 +163,7 @@ fn manifest_receiver_override_replaces_defaults_without_environment_mutation() {
         lineage: "belabox".into(),
         srtla_rec_kind: "belabox".into(),
         srtla_rec_bin: "/missing/default".into(),
-        srt_live_transmit_bin: srt_live_transmit.to_string_lossy().into_owned(),
+        srt_live_transmit_bin: srt_live_transmit.to_string_lossy().into_owned().into(),
         listener_uri_extra: String::new(),
     };
     // When the receiver resolves, then its binary replaces the missing default.
