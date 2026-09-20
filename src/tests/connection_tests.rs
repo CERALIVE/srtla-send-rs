@@ -1,14 +1,36 @@
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+    use std::net::SocketAddr;
+    use std::sync::Arc;
     use std::time::Duration;
 
+    use socket2::{Domain, Protocol, Socket, Type};
     use srtla_core::utils::now_ms;
     use srtla_protocol::*;
+    use tokio::net::UdpSocket;
 
-    use crate::sender::{SEQUENCE_TRACKING_MAX_AGE_MS, SequenceTracker, attribute_nak};
+    use crate::net::{BatchUdpSocket, SourceIpBinder};
+    use crate::sender::{
+        ConnIo, ConnIoMap, SEQUENCE_TRACKING_MAX_AGE_MS, SequenceTracker, attribute_nak,
+        flush_all_batches,
+    };
     use crate::test_helpers::{
         advance_test_clock, create_test_connection, create_test_connections,
     };
+
+    fn conn_io_to(remote: SocketAddr) -> ConnIo {
+        let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)).unwrap();
+        socket
+            .bind(&"127.0.0.1:0".parse::<SocketAddr>().unwrap().into())
+            .unwrap();
+        socket.set_nonblocking(true).unwrap();
+        ConnIo {
+            socket: Arc::new(BatchUdpSocket::new(socket, remote).unwrap()),
+            binder: Arc::new(SourceIpBinder),
+            remote,
+        }
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn test_connection_score() {
@@ -1150,5 +1172,71 @@ mod tests {
             connections[1].congestion.nak_count, 0,
             "the duplicate never leaks onto another uplink"
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn control_packet_padded_to_32b() {
+        let receiver = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let recv_addr = receiver.local_addr().unwrap();
+        let io = conn_io_to(recv_addr);
+
+        let tiny = [0x90u8, 0x00];
+        io.send_control_padded(&tiny).await.unwrap();
+
+        let mut buf = [0xffu8; 64];
+        let (n, _) = tokio::time::timeout(Duration::from_secs(2), receiver.recv_from(&mut buf))
+            .await
+            .expect("control packet not received")
+            .unwrap();
+
+        assert_eq!(
+            n, 32,
+            "tiny control frame must be NAT-padded to 32 wire bytes"
+        );
+        assert_eq!(&buf[..2], &tiny, "original payload bytes must be preserved");
+        assert!(
+            buf[2..32].iter().all(|&b| b == 0),
+            "padding bytes must be zero"
+        );
+
+        let big = [0xabu8; 40];
+        io.send_control_padded(&big).await.unwrap();
+        let (n, _) = tokio::time::timeout(Duration::from_secs(2), receiver.recv_from(&mut buf))
+            .await
+            .expect("passthrough control packet not received")
+            .unwrap();
+        assert_eq!(
+            n, 40,
+            "control frame >= 32 bytes must pass through unpadded"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn data_not_padded() {
+        let receiver = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let recv_addr = receiver.local_addr().unwrap();
+
+        let mut connections = vec![create_test_connection().await];
+        let conn_id = connections[0].conn_id;
+        let mut conn_io: ConnIoMap = HashMap::new();
+        conn_io.insert(conn_id, conn_io_to(recv_addr));
+        let mut seq_tracker = SequenceTracker::new();
+
+        let payload = [0x11u8; 1316];
+        connections[0].queue_data_packet(&payload, None, now_ms());
+        assert!(connections[0].has_queued_packets());
+        flush_all_batches(&mut connections, &conn_io, &mut seq_tracker).await;
+
+        let mut buf = [0u8; 2048];
+        let (n, _) = tokio::time::timeout(Duration::from_secs(2), receiver.recv_from(&mut buf))
+            .await
+            .expect("data packet not received")
+            .unwrap();
+
+        assert_eq!(
+            n, 1316,
+            "DATA must be forwarded verbatim, never padded to 32B"
+        );
+        assert_eq!(&buf[..1316], &payload, "DATA payload must be unchanged");
     }
 }

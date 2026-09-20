@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use smallvec::SmallVec;
 use srtla_core::connection::SrtlaConnection;
+use srtla_protocol::MIN_CONTROL_PKT_LEN;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::task::JoinHandle;
 use tokio::time::Duration;
@@ -22,6 +23,26 @@ pub struct ConnIo {
     pub socket: Arc<BatchUdpSocket>,
     pub binder: Arc<dyn UplinkBinder>,
     pub remote: SocketAddr,
+}
+
+impl ConnIo {
+    /// Send a control-plane frame, zero-padding it to [`MIN_CONTROL_PKT_LEN`]
+    /// when it is smaller.
+    ///
+    /// Mirrors the C `pad_sendto` (`srtla/src/protocol/pad_sendto.h`): frames
+    /// already at or above the minimum go out unchanged; smaller ones go out as
+    /// a 32-byte frame with trailing zeros. Every control-plane sender
+    /// (keepalive, REG1/REG2, REG2 probes) routes through here; the DATA path
+    /// (`net::send_all_datagrams`, `sendmmsg`-based) deliberately bypasses it.
+    pub async fn send_control_padded(&self, pkt: &[u8]) -> std::io::Result<usize> {
+        if pkt.len() >= MIN_CONTROL_PKT_LEN {
+            self.socket.send(pkt).await
+        } else {
+            let mut padded = [0u8; MIN_CONTROL_PKT_LEN];
+            padded[..pkt.len()].copy_from_slice(pkt);
+            self.socket.send(&padded).await
+        }
+    }
 }
 
 /// Shell-owned map from `conn_id` to its [`ConnIo`]. Lives entirely inside the

@@ -89,7 +89,7 @@ pub async fn handle_housekeeping(
                         info!("{} marked for recovery; re-sending REG1", label);
                         let pkt = reg.build_reg1_for(i, current_ms);
                         if let Some(io) = conn_io.get(&conn.conn_id) {
-                            match io.socket.send(&pkt).await {
+                            match io.send_control_padded(&pkt).await {
                                 Ok(_) => conn.note_sent(current_ms),
                                 Err(e) => warn!("Failed to send REG1 to uplink #{i}: {e:?}"),
                             }
@@ -105,7 +105,7 @@ pub async fn handle_housekeeping(
                         info!("{} marked for recovery; re-sending REG2", label);
                         let pkt = reg.build_reg2(i);
                         if let Some(io) = conn_io.get(&conn.conn_id) {
-                            match io.socket.send(&pkt).await {
+                            match io.send_control_padded(&pkt).await {
                                 Ok(_) => conn.note_sent(current_ms),
                                 Err(e) => warn!("Failed to send REG2 to uplink #{i}: {e:?}"),
                             }
@@ -121,13 +121,13 @@ pub async fn handle_housekeeping(
         if conn.needs_keepalive(current_ms) {
             let ka = conn.keepalive_packet(current_ms);
             if let Some(io) = conn_io.get(&conn.conn_id) {
-                let _ = io.socket.send(&ka).await;
+                let _ = io.send_control_padded(&ka).await;
             }
         }
         if conn.needs_rtt_measurement(current_ms) {
             let ka = conn.keepalive_packet(current_ms);
             if let Some(io) = conn_io.get(&conn.conn_id) {
-                let _ = io.socket.send(&ka).await;
+                let _ = io.send_control_padded(&ka).await;
             }
         }
         if !classic {
@@ -164,7 +164,7 @@ pub async fn handle_housekeeping(
         && let Some(conn) = connections.get_mut(idx)
         && let Some(io) = conn_io.get(&conn.conn_id)
     {
-        match io.socket.send(&pkt).await {
+        match io.send_control_padded(&pkt).await {
             Ok(_) => conn.note_sent(current_ms),
             Err(e) => warn!("Failed to send REG1 to uplink #{idx}: {e:?}"),
         }
@@ -172,7 +172,7 @@ pub async fn handle_housekeeping(
     if let Some(pkt) = sends.broadcast_reg2 {
         for (i, conn) in connections.iter_mut().enumerate() {
             if let Some(io) = conn_io.get(&conn.conn_id)
-                && io.socket.send(&pkt).await.is_ok()
+                && io.send_control_padded(&pkt).await.is_ok()
             {
                 conn.note_sent(current_ms);
                 debug!("REG2 → uplink #{i} sent");

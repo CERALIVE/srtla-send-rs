@@ -160,7 +160,7 @@ pub async fn handle_uplink_packet(
                 if let Some(pkt) = incoming.reg1_send.take()
                     && let Some(io) = conn_io.get(&connections[idx].conn_id)
                 {
-                    match io.socket.send(&pkt).await {
+                    match io.send_control_padded(&pkt).await {
                         Ok(_) => connections[idx].note_sent(srtla_core::utils::now_ms()),
                         Err(e) => {
                             warn!(

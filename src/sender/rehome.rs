@@ -361,7 +361,7 @@ async fn rehome_bond(
         if let Some(conn) = connections.get(idx)
             && let Some(io) = conn_io.get(&conn.conn_id)
         {
-            let _ = io.socket.send(&pkt).await;
+            let _ = io.send_control_padded(&pkt).await;
         }
     }
 }

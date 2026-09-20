@@ -24,13 +24,15 @@ pub use connections::{
 #[allow(unused_imports)]
 pub use housekeeping::GLOBAL_TIMEOUT_MS;
 use housekeeping::handle_housekeeping;
+// Re-exported so the ported DATA-padding test drives the same production flush
+// path the send loop uses, not a mirrored copy.
+#[allow(unused_imports)]
+pub(crate) use packet_handler::flush_all_batches;
 // Re-exported for the NAK-attribution conformance tests so they drive the real
 // production path rather than a mirrored copy.
 #[allow(unused_imports)]
 pub(crate) use packet_handler::{attribute_nak, process_connection_events};
-use packet_handler::{
-    drain_packet_queue, flush_all_batches, handle_srt_packet, handle_uplink_packet,
-};
+use packet_handler::{drain_packet_queue, handle_srt_packet, handle_uplink_packet};
 // Scripted resolver seam for tests that drive the re-home trigger policy.
 #[cfg(any(test, feature = "test-internals"))]
 pub use rehome::StubResolver;
@@ -188,7 +190,7 @@ pub async fn run_sender_with_config(
             if let Some(conn) = connections.get(idx)
                 && let Some(io) = conn_io.get(&conn.conn_id)
             {
-                let _ = io.socket.send(&pkt).await;
+                let _ = io.send_control_padded(&pkt).await;
             }
         }
     }
@@ -441,7 +443,7 @@ pub async fn run_sender_with_config(
                                     if let Some(conn) = connections.get(idx)
                                         && let Some(io) = conn_io.get(&conn.conn_id)
                                     {
-                                        let _ = io.socket.send(&pkt).await;
+                                        let _ = io.send_control_padded(&pkt).await;
                                     }
                                 }
                             }

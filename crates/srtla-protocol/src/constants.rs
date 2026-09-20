@@ -68,6 +68,17 @@ pub const SRTLA_TYPE_REG3_LEN: usize = 2;
 
 pub const MTU: usize = 1500;
 
+/// Minimum on-wire size for SRTLA **control** packets (keepalive, REG1/REG2,
+/// probes).
+///
+/// Parity with the C `pad_sendto` (`srtla/src/protocol/pad_sendto.h`): tiny
+/// control frames are zero-padded up to 32 bytes so cellular/carrier NAT
+/// keepalive thresholds don't silently drop them. DATA packets are never padded
+/// (the batch `sendmmsg` path bypasses this), so throughput accounting is
+/// unaffected. Current control frames are already >= 32 B on the wire, so this
+/// is a passthrough today, but the floor is enforced.
+pub const MIN_CONTROL_PKT_LEN: usize = 32;
+
 // Timeout constants
 pub const CONN_TIMEOUT: u64 = 5; // sec
 pub const REG2_TIMEOUT: u64 = 4; // sec
