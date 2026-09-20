@@ -5,7 +5,7 @@
 //! and [`SrtlaTestStack`] for the full 3-process test pipeline
 //! (srt-live-transmit + srtla_rec + srtla_send).
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -834,6 +834,62 @@ pub fn wait_for_connected_uplinks(
     }
 }
 
+/// Block until at least `min_count` of `process`'s uplinks have completed
+/// SRTLA registration (REG3), or `timeout` elapses.
+///
+/// Uplink sockets are unconnected, so a connected-UDP-peer probe is not a
+/// valid readiness signal; registration is. The free-function form serves
+/// stacks assembled outside [`SrtlaTestStack`] — custom routing, extra CLI
+/// flags — so both paths share one readiness definition.
+pub fn wait_for_registered_uplinks(
+    process: &NamespaceProcess,
+    min_count: usize,
+    timeout: Duration,
+) -> Result<()> {
+    let start = Instant::now();
+    loop {
+        let log = process.log_snapshot();
+        let registered = registered_uplink_count(&log);
+        if registered >= min_count {
+            return Ok(());
+        }
+        if start.elapsed() > timeout {
+            bail!(
+                "timeout waiting for {min_count} registered uplink(s) (saw \
+                 {registered})\nsrtla_send log:\n{}",
+                log.join("\n")
+            );
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
+/// `srtla_send` logs `REG3 from uplink #N` per uplink and
+/// `connection established (active=N)` for the aggregate. Both are read
+/// because the aggregate line is emitted only on change, and the per-uplink
+/// line only at debug level.
+fn registered_uplink_count(log: &[String]) -> usize {
+    let mut reg3_uplinks: HashSet<String> = HashSet::new();
+    let mut max_active = 0usize;
+
+    for line in log {
+        if let Some(rest) = line.split("REG3 from uplink #").nth(1) {
+            let idx: String = rest.chars().take_while(char::is_ascii_digit).collect();
+            if !idx.is_empty() {
+                let _ = reg3_uplinks.insert(idx);
+            }
+        }
+        if let Some(rest) = line.split("connection established (active=").nth(1) {
+            let count: String = rest.chars().take_while(char::is_ascii_digit).collect();
+            if let Ok(parsed) = count.parse::<usize>() {
+                max_active = max_active.max(parsed);
+            }
+        }
+    }
+
+    reg3_uplinks.len().max(max_active)
+}
+
 // ---------------------------------------------------------------------------
 // SrtlaTestStack
 // ---------------------------------------------------------------------------
@@ -1264,7 +1320,7 @@ pub fn spawn_udp_stream(
 // ---------------------------------------------------------------------------
 
 /// Locate the srtla_send binary from a cargo build.
-fn find_srtla_send_binary() -> Result<PathBuf> {
+pub(crate) fn find_srtla_send_binary() -> Result<PathBuf> {
     // Check common cargo build output locations
     let candidates = [
         // Debug build
