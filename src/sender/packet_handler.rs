@@ -633,8 +633,7 @@ mod tests {
     use socket2::{Domain, Protocol, Socket, Type};
 
     use super::*;
-    use crate::bind_map::IfaceName;
-    use crate::net::{BatchUdpSocket, EgressLifecycle, RouteHealth, SourceIpBinder, UplinkSpec};
+    use crate::net::{BatchUdpSocket, SourceIpBinder};
     use crate::test_helpers::create_test_connection;
 
     /// An uplink whose socket can never send: an IPv4 socket pinned to an IPv6
@@ -657,88 +656,114 @@ mod tests {
         )
     }
 
-    /// An uplink whose peer can never be reached: `2001:db8::/32` is the RFC
-    /// 3849 documentation prefix, so it is never globally routed, and the
-    /// socket's loopback source address cannot reach a global destination
-    /// either. `sendmmsg` therefore answers `ENETUNREACH` deterministically,
-    /// without needing a privileged interface to be torn down under the test.
+    /// `SO_BINDTODEVICE` — and therefore the whole ADR-003 device-binding
+    /// lifecycle — exists only on Linux: `DeviceBinder` is `#[cfg(target_os =
+    /// "linux")]`, and `classify_egress_fault` is a no-op stub off Unix. These
+    /// two tests assert a *Linux errno contract* (`ENODEV`/`ENETUNREACH` on a
+    /// device-bound socket means the binding is dead), so they can only be run
+    /// where that contract holds. macOS answers the same unreachable send with a
+    /// different errno and Windows has no such classification at all, so off
+    /// Linux they were asserting behavior the production code never promises.
     ///
-    /// `iface` is what makes the link *mapped*: the same failing socket with
-    /// `None` is the legacy link, which is the control the ADR-003 assertion
-    /// needs.
-    fn unreachable_egress_conn_io(iface: Option<&str>) -> ConnIo {
-        let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP)).unwrap();
-        socket
-            .bind(&"[::1]:0".parse::<SocketAddr>().unwrap().into())
-            .unwrap();
-        socket.set_nonblocking(true).unwrap();
-        let remote: SocketAddr = "[2001:db8::1]:9".parse().unwrap();
-        let iface = iface.map(|name| IfaceName::parse(name).expect("fixture interface name"));
-        ConnIo {
-            socket: Arc::new(BatchUdpSocket::new(socket, remote).unwrap()),
-            binder: Arc::new(SourceIpBinder),
-            remote,
-            spec: UplinkSpec {
-                ip: IpAddr::V6(Ipv6Addr::LOCALHOST),
-                iface: iface.clone(),
-                link_id: None,
-            },
-            egress: EgressLifecycle::for_spec(iface.as_ref()),
-            route_health: RouteHealth::Unknown,
+    /// The experiment and its falsifiability control are gated together on
+    /// purpose: a control that runs without its experiment proves nothing.
+    #[cfg(target_os = "linux")]
+    mod device_binding {
+        use std::net::{IpAddr, Ipv6Addr, SocketAddr};
+        use std::sync::Arc;
+
+        use socket2::{Domain, Protocol, Socket, Type};
+
+        use super::super::*;
+        use crate::bind_map::IfaceName;
+        use crate::net::{
+            BatchUdpSocket, EgressLifecycle, RouteHealth, SourceIpBinder, UplinkSpec,
+        };
+        use crate::test_helpers::create_test_connection;
+
+        /// An uplink whose peer can never be reached: `2001:db8::/32` is the RFC
+        /// 3849 documentation prefix, so it is never globally routed, and the
+        /// socket's loopback source address cannot reach a global destination
+        /// either. `sendmmsg` therefore answers `ENETUNREACH` deterministically,
+        /// without needing a privileged interface to be torn down under the test.
+        ///
+        /// `iface` is what makes the link *mapped*: the same failing socket with
+        /// `None` is the legacy link, which is the control the ADR-003 assertion
+        /// needs.
+        fn unreachable_egress_conn_io(iface: Option<&str>) -> ConnIo {
+            let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP)).unwrap();
+            socket
+                .bind(&"[::1]:0".parse::<SocketAddr>().unwrap().into())
+                .unwrap();
+            socket.set_nonblocking(true).unwrap();
+            let remote: SocketAddr = "[2001:db8::1]:9".parse().unwrap();
+            let iface = iface.map(|name| IfaceName::parse(name).expect("fixture interface name"));
+            ConnIo {
+                socket: Arc::new(BatchUdpSocket::new(socket, remote).unwrap()),
+                binder: Arc::new(SourceIpBinder),
+                remote,
+                spec: UplinkSpec {
+                    ip: IpAddr::V6(Ipv6Addr::LOCALHOST),
+                    iface: iface.clone(),
+                    link_id: None,
+                },
+                egress: EgressLifecycle::for_spec(iface.as_ref()),
+                route_health: RouteHealth::Unknown,
+            }
         }
-    }
 
-    /// ADR-003: the data path must reach the same verdict the housekeeping
-    /// re-resolution would. `SO_BINDTODEVICE` freezes an ifindex at bind time,
-    /// so `ENETUNREACH`/`ENODEV` on a device-bound socket means the *binding* is
-    /// dead — retrying on it can never heal. Without this arm the flush error
-    /// was merely logged and the stale binding survived until the next tick.
-    #[tokio::test]
-    async fn a_failed_flush_on_a_mapped_link_invalidates_its_device_binding() {
-        let mut connections = vec![create_test_connection().await];
-        let conn_id = connections[0].conn_id;
-        let mut conn_io = ConnIoMap::new();
-        conn_io.insert(conn_id, unreachable_egress_conn_io(Some("wwan0")));
+        /// ADR-003: the data path must reach the same verdict the housekeeping
+        /// re-resolution would. `SO_BINDTODEVICE` freezes an ifindex at bind time,
+        /// so `ENETUNREACH`/`ENODEV` on a device-bound socket means the *binding* is
+        /// dead — retrying on it can never heal. Without this arm the flush error
+        /// was merely logged and the stale binding survived until the next tick.
+        #[tokio::test]
+        async fn a_failed_flush_on_a_mapped_link_invalidates_its_device_binding() {
+            let mut connections = vec![create_test_connection().await];
+            let conn_id = connections[0].conn_id;
+            let mut conn_io = ConnIoMap::new();
+            conn_io.insert(conn_id, unreachable_egress_conn_io(Some("wwan0")));
 
-        let now = srtla_core::utils::now_ms();
-        let mut seq_tracker = SequenceTracker::new();
-        connections[0].queue_data_packet(&[0u8; 1316], Some(4242), now);
+            let now = srtla_core::utils::now_ms();
+            let mut seq_tracker = SequenceTracker::new();
+            connections[0].queue_data_packet(&[0u8; 1316], Some(4242), now);
 
-        flush_all_batches(&mut connections, &mut conn_io, &mut seq_tracker).await;
+            flush_all_batches(&mut connections, &mut conn_io, &mut seq_tracker).await;
 
-        assert!(
-            !connections[0].connected,
-            "precondition: the socket must really have refused the batch"
-        );
-        assert!(
-            conn_io[&conn_id].egress.needs_rebind(),
-            "an unreachable device binding must be invalidated by the send that saw it"
-        );
-    }
+            assert!(
+                !connections[0].connected,
+                "precondition: the socket must really have refused the batch"
+            );
+            assert!(
+                conn_io[&conn_id].egress.needs_rebind(),
+                "an unreachable device binding must be invalidated by the send that saw it"
+            );
+        }
 
-    /// The falsifiability control: the *same* failing socket on an unmapped
-    /// link. Those errno values carry no ifindex meaning for a socket that was
-    /// never device-bound, so the legacy recovery path must be left exactly as
-    /// it was.
-    #[tokio::test]
-    async fn a_failed_flush_on_an_unmapped_link_never_touches_the_binding() {
-        let mut connections = vec![create_test_connection().await];
-        let conn_id = connections[0].conn_id;
-        let mut conn_io = ConnIoMap::new();
-        conn_io.insert(conn_id, unreachable_egress_conn_io(None));
+        /// The falsifiability control: the *same* failing socket on an unmapped
+        /// link. Those errno values carry no ifindex meaning for a socket that was
+        /// never device-bound, so the legacy recovery path must be left exactly as
+        /// it was.
+        #[tokio::test]
+        async fn a_failed_flush_on_an_unmapped_link_never_touches_the_binding() {
+            let mut connections = vec![create_test_connection().await];
+            let conn_id = connections[0].conn_id;
+            let mut conn_io = ConnIoMap::new();
+            conn_io.insert(conn_id, unreachable_egress_conn_io(None));
 
-        let now = srtla_core::utils::now_ms();
-        let mut seq_tracker = SequenceTracker::new();
-        connections[0].queue_data_packet(&[0u8; 1316], Some(4242), now);
+            let now = srtla_core::utils::now_ms();
+            let mut seq_tracker = SequenceTracker::new();
+            connections[0].queue_data_packet(&[0u8; 1316], Some(4242), now);
 
-        flush_all_batches(&mut connections, &mut conn_io, &mut seq_tracker).await;
+            flush_all_batches(&mut connections, &mut conn_io, &mut seq_tracker).await;
 
-        assert!(
-            !connections[0].connected,
-            "precondition: the socket must really have refused the batch"
-        );
-        assert!(!conn_io[&conn_id].egress.needs_rebind());
-        assert!(!conn_io[&conn_id].egress.is_removed());
+            assert!(
+                !connections[0].connected,
+                "precondition: the socket must really have refused the batch"
+            );
+            assert!(!conn_io[&conn_id].egress.needs_rebind());
+            assert!(!conn_io[&conn_id].egress.is_removed());
+        }
     }
 
     /// The periodic 15ms flush used to only `warn!` when the socket refused the
