@@ -20,7 +20,7 @@
 use srtla_send::stats::{LinkStats, StatsSnapshot};
 use srtla_send::telemetry_file::{
     TELEMETRY_SCHEMA_VERSION, TelemetryConn, TelemetryInputs, build_telemetry_json,
-    conns_from_stats,
+    build_telemetry_json_from_stats, conns_from_stats,
 };
 
 /// Fixed publish timestamp fed through the deterministic clock seam. Matches the
@@ -47,6 +47,18 @@ fn json(last_updated_ms: u64, conns: &[TelemetryConn]) -> String {
         last_updated_ms,
         &TelemetryInputs {
             conns,
+            ..TelemetryInputs::default()
+        },
+    )
+}
+
+/// The same, with an explicit bond-level ADR-002 cumulative count.
+fn doc(last_updated_ms: u64, conns: &[TelemetryConn], session_bytes_sent: u64) -> String {
+    build_telemetry_json(
+        last_updated_ms,
+        &TelemetryInputs {
+            conns,
+            session_bytes_sent: Some(session_bytes_sent),
             ..TelemetryInputs::default()
         },
     )
@@ -234,4 +246,69 @@ fn bitrate_bps_is_exactly_wire_bytes_times_eight() {
         }],
     );
     assert!(!json.contains("312500"), "raw wire bytes/s leaked: {json}");
+}
+
+// ---- ADR-002: bytes_sent_total is a BYTE COUNT, never a rate ---------------
+
+#[test]
+fn bytes_sent_total_is_serialized_verbatim_without_the_x8() {
+    // The whole point of a second byte-valued field next to `bitrate_bps` is that
+    // exactly one of them is multiplied. 312_500 must appear as 2_500_000 bps AND
+    // as a literal 312500 byte count in the same document.
+    let conn = TelemetryConn {
+        bitrate_bytes_per_sec: 312_500,
+        bytes_sent_total: Some(312_500),
+        ..base_conn()
+    };
+    let json = doc(FIXED_MS, &[conn], 312_500);
+
+    assert!(json.contains("\"bitrate_bps\":2500000"), "got {json}");
+    assert!(json.contains("\"bytes_sent_total\":312500"), "got {json}");
+}
+
+#[test]
+fn bond_total_is_independent_of_the_per_link_totals() {
+    // The doc-level counter is a session accumulator, not a sum of the live
+    // links: after a SIGHUP teardown it legitimately EXCEEDS that sum, and the
+    // serializer must not "helpfully" recompute it.
+    let json = doc(
+        FIXED_MS,
+        &[TelemetryConn {
+            bytes_sent_total: Some(100),
+            ..base_conn()
+        }],
+        9_000,
+    );
+
+    assert!(json.contains("\"bytes_sent_total\":9000"), "got {json}");
+    assert!(json.contains("\"bytes_sent_total\":100"), "got {json}");
+}
+
+#[test]
+fn idle_snapshot_still_reports_the_bond_total() {
+    // Every uplink dropped mid-session: `connections` empties, but the operator's
+    // "total transferred" must keep reading what was already sent, not reset.
+    let json = doc(FIXED_MS, &[], 4_096);
+
+    assert!(json.contains("\"connections\":[]"), "got {json}");
+    assert!(json.contains("\"bytes_sent_total\":4096"), "got {json}");
+}
+
+#[test]
+fn bytes_sent_total_survives_the_stats_projection() {
+    let snap = StatsSnapshot {
+        links: vec![LinkStats {
+            bytes_sent_total: 777_000,
+            ..link(true, 100, 20, 10)
+        }],
+        session_bytes_sent: 1_500_000,
+        ..StatsSnapshot::default()
+    };
+
+    let conns = conns_from_stats(&snap);
+    assert_eq!(conns[0].bytes_sent_total, Some(777_000));
+
+    let json = build_telemetry_json_from_stats(FIXED_MS, &snap);
+    assert!(json.contains("\"bytes_sent_total\":777000"), "got {json}");
+    assert!(json.contains("\"bytes_sent_total\":1500000"), "got {json}");
 }

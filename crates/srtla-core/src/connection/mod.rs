@@ -1357,6 +1357,15 @@ impl SrtlaConnection {
         self.bitrate.mbps()
     }
 
+    /// Cumulative wire BYTES this uplink has sent this session (ADR-002).
+    ///
+    /// Counted at the same site as the bitrate estimate, so the two agree by
+    /// construction: DATA only, SRT/SRTLA framing and SRT-level retransmits
+    /// included, control frames excluded.
+    pub fn session_bytes_sent(&self) -> u64 {
+        self.bitrate.bytes_sent_total
+    }
+
     /// Pick the batch regime for this connection from its observed
     /// bitrate. Called from housekeeping each tick; the underlying
     /// `BatchSender::set_regime` is a cheap field write — no-op cost

@@ -17,9 +17,9 @@
 //! 4. **Simple aggregates**: Only sums and counts, no derived calculations like
 //!    "capacity estimation" that would require assumptions about packet sizes.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use serde::Serialize;
 use srtla_core::connection::SrtlaConnection;
@@ -64,6 +64,9 @@ pub struct LinkStats {
     /// name also claimed bits. Anything that compared the two, or
     /// graphed the gauge, was silently out by a factor of 8.
     pub bitrate_bytes_per_sec: u32,
+    /// Wire bytes this link has sent for the whole process lifetime (ADR-002).
+    /// Survives a socket replacement; restarts only when the process does.
+    pub bytes_sent_total: u64,
 
     // --- RTT baseline tracking ---
     /// Dual-window minimum RTT baseline in milliseconds.
@@ -211,6 +214,7 @@ impl Default for LinkStats {
             rtt_ms: 0,
             nak_count: 0,
             bitrate_bytes_per_sec: 0,
+            bytes_sent_total: 0,
             rtt_min_ms: 0.0,
             rtt_velocity: 0.0,
             base_score: 0,
@@ -259,6 +263,15 @@ pub struct StatsSnapshot {
     /// Sum of in_flight across active links
     pub total_in_flight: i32,
 
+    /// Wire bytes the whole bond has sent this session (ADR-002), in **bytes**
+    /// — not bits, and not a rate. Monotonic for the process lifetime: it does
+    /// not regress when a link reconnects or is dropped by a SIGHUP reload.
+    ///
+    /// Deliberately NOT `links.map(bytes_sent_total).sum()`: a link torn down by
+    /// a reload would take its bytes out of that sum and the operator's "total
+    /// transferred" would go backwards.
+    pub session_bytes_sent: u64,
+
     // --- Weak-link classifier output ---
     /// Estimated max delay budget the classifier derived this tick (ms).
     /// Zero when classification was bypassed (e.g. under the throughput floor).
@@ -285,11 +298,53 @@ impl Default for StatsSnapshot {
             total_links: 0,
             total_window: 0,
             total_in_flight: 0,
+            session_bytes_sent: 0,
             weak_link_estimated_max_delay_ms: 0,
             weak_link_selected_delay_ms: 0,
             negotiated_latency_ms: 0,
             links: Vec::new(),
         }
+    }
+}
+
+/// Monotonic bond-level byte accumulator behind [`StatsSnapshot::session_bytes_sent`].
+///
+/// Each link's own counter is monotonic but *local* — it disappears when the
+/// link is torn down by a SIGHUP reload, and a re-added IP comes back as a fresh
+/// connection starting at 0. Summing the live links would therefore make the
+/// bond total jump backwards on every reload. Instead this banks each link's
+/// **delta** since the last observation, keyed by the connection's stable
+/// `conn_id`, so bytes are only ever added.
+#[derive(Default)]
+struct SessionBytes {
+    total: u64,
+    last_seen: HashMap<u64, u64>,
+}
+
+impl SessionBytes {
+    fn observe(&mut self, connections: &[SrtlaConnection]) -> u64 {
+        self.observe_totals(
+            connections
+                .iter()
+                .map(|c| (c.conn_id, c.session_bytes_sent())),
+        )
+    }
+
+    /// Bank each live connection's delta since the last observation, then drop
+    /// bookkeeping for connections that are gone — their bytes are already in
+    /// `total`, so forgetting them is what keeps the accumulator monotonic
+    /// instead of subtracting a departed link back out.
+    fn observe_totals(&mut self, totals: impl IntoIterator<Item = (u64, u64)>) -> u64 {
+        let mut live = HashSet::with_capacity(self.last_seen.len());
+        for (conn_id, link_total) in totals {
+            let previous = self.last_seen.insert(conn_id, link_total);
+            self.total = self
+                .total
+                .saturating_add(link_total.saturating_sub(previous.unwrap_or(0)));
+            live.insert(conn_id);
+        }
+        self.last_seen.retain(|conn_id, _| live.contains(conn_id));
+        self.total
     }
 }
 
@@ -300,12 +355,14 @@ impl Default for StatsSnapshot {
 #[derive(Clone, Default)]
 pub struct SharedStats {
     inner: Arc<RwLock<StatsSnapshot>>,
+    session_bytes: Arc<Mutex<SessionBytes>>,
 }
 
 impl SharedStats {
     pub fn new() -> Self {
         Self {
             inner: Arc::new(RwLock::new(StatsSnapshot::default())),
+            session_bytes: Arc::new(Mutex::new(SessionBytes::default())),
         }
     }
 
@@ -324,10 +381,17 @@ impl SharedStats {
         let current_time_ms = now_ms();
         let quality_enabled = config.quality_enabled && !config.mode.is_classic();
 
+        let session_bytes_sent = self
+            .session_bytes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .observe(connections);
+
         let mut snapshot = StatsSnapshot {
             mode: format!("{}", config.mode),
             quality_enabled,
             total_links: connections.len(),
+            session_bytes_sent,
             weak_link_estimated_max_delay_ms: classification
                 .map(|c| c.estimated_max_delay_ms)
                 .unwrap_or(0),
@@ -410,6 +474,7 @@ impl SharedStats {
                 rtt_ms: conn.get_smooth_rtt_ms() as u32,
                 nak_count: conn.total_nak_count(),
                 bitrate_bytes_per_sec: (conn.current_bitrate_mbps() * 1_000_000.0 / 8.0) as u32,
+                bytes_sent_total: conn.session_bytes_sent(),
                 rtt_min_ms: conn.get_rtt_min_ms(),
                 rtt_velocity: conn.get_rtt_velocity(),
                 base_score: conn.get_score(),
@@ -517,5 +582,80 @@ mod tests {
         assert!(json.contains("\"active_links\""));
         assert!(json.contains("\"total_window\""));
         assert!(json.contains("\"links\""));
+        assert!(json.contains("\"session_bytes_sent\""));
+    }
+
+    // ---- ADR-002 session-bytes accumulator --------------------------------
+
+    #[test]
+    fn session_bytes_sums_live_links() {
+        let mut acc = SessionBytes::default();
+        assert_eq!(acc.observe_totals([(7, 1_000), (9, 500)]), 1_500);
+    }
+
+    #[test]
+    fn session_bytes_banks_only_the_delta_between_observations() {
+        let mut acc = SessionBytes::default();
+        acc.observe_totals([(7, 1_000)]);
+        assert_eq!(
+            acc.observe_totals([(7, 1_600)]),
+            1_600,
+            "a link's own counter is cumulative, so re-observing it must add 600, not 1600"
+        );
+    }
+
+    #[test]
+    fn session_bytes_survives_a_link_teardown() {
+        // A SIGHUP reload that drops an uplink must not take its bytes with it —
+        // this is the regression a naive `links.map(total).sum()` would ship.
+        let mut acc = SessionBytes::default();
+        acc.observe_totals([(7, 1_000), (9, 500)]);
+
+        assert_eq!(acc.observe_totals([(7, 1_000)]), 1_500);
+    }
+
+    #[test]
+    fn session_bytes_counts_a_readded_link_from_zero() {
+        // A re-added IP comes back as a NEW connection (fresh conn_id, counter at
+        // 0). Its bytes must accrue on top of the banked total, never replace it.
+        let mut acc = SessionBytes::default();
+        acc.observe_totals([(7, 1_000)]);
+        acc.observe_totals([]);
+
+        assert_eq!(acc.observe_totals([(11, 300)]), 1_300);
+    }
+
+    #[test]
+    fn session_bytes_never_regresses_on_a_backwards_link_counter() {
+        // Per-link counters are monotonic by construction; if one ever went
+        // backwards the bond total must still refuse to shrink.
+        let mut acc = SessionBytes::default();
+        acc.observe_totals([(7, 1_000)]);
+
+        assert_eq!(acc.observe_totals([(7, 400)]), 1_000);
+    }
+
+    #[test]
+    fn session_bytes_forgets_departed_links() {
+        // Bookkeeping for a link that is gone must not accumulate across a long
+        // session of SIGHUP churn.
+        let mut acc = SessionBytes::default();
+        acc.observe_totals([(1, 10), (2, 10), (3, 10)]);
+        acc.observe_totals([(3, 10)]);
+
+        assert_eq!(acc.last_seen.len(), 1);
+        assert_eq!(acc.total, 30);
+    }
+
+    #[test]
+    fn empty_update_reports_zero_session_bytes() {
+        let stats = SharedStats::new();
+        let config = ConfigSnapshot {
+            mode: SchedulingMode::Enhanced,
+            quality_enabled: true,
+            ..ConfigSnapshot::default()
+        };
+        stats.update(&[], &config, None, None);
+        assert_eq!(stats.get().session_bytes_sent, 0);
     }
 }

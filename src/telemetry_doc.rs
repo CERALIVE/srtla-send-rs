@@ -183,6 +183,7 @@ pub fn build_telemetry_json_from_stats(last_updated_ms: u64, stats: &StatsSnapsh
         last_updated_ms,
         &TelemetryInputs {
             conns: &conns_from_stats(stats),
+            session_bytes_sent: Some(stats.session_bytes_sent),
             ..TelemetryInputs::default()
         },
     )
@@ -250,10 +251,11 @@ pub fn conns_from_stats(stats: &StatsSnapshot) -> Vec<TelemetryConn> {
                 // LinkStats carries wire bytes/s; the x8 to bits/s is applied
                 // once, at JSON serialization.
                 bitrate_bytes_per_sec: l.bitrate_bytes_per_sec,
-                // ADR-002 (cumulative bytes) and ADR-003 (iface / link_id) are
-                // not wired into the stats collector yet, so every one of them
-                // is genuinely absent rather than reported as zero or empty.
-                bytes_sent_total: None,
+                // ADR-002: a byte COUNT, passed through with no x8.
+                bytes_sent_total: Some(l.bytes_sent_total),
+                // ADR-003 (iface / link_id) is not wired into the stats
+                // collector yet, so both are genuinely absent rather than
+                // reported as an empty string.
                 iface: None,
                 link_id: None,
             }
@@ -681,8 +683,7 @@ mod tests {
 
     #[test]
     fn the_runtime_projection_emits_none_of_the_not_yet_wired_optionals() {
-        // Given: the live stats collector, which has no cumulative-byte or
-        // bind-map inputs yet.
+        // Given: the live stats collector, which has no bind-map inputs yet.
         let snap = StatsSnapshot {
             links: vec![link(10, true, 100)],
             ..Default::default()
@@ -692,19 +693,52 @@ mod tests {
         // `--stats-file` sink calls.
         let doc = build_telemetry_json_from_stats(1_749_556_546_000, &snap);
 
-        // Then: not one of the four optional keys materializes — neither as
-        // `null` nor as an empty value — so the published document is exactly
-        // the frozen ADR-001 shape.
-        for absent in [
-            "bytes_sent_total",
-            "iface",
-            "link_id",
-            "bind_map_status",
-            "disposition",
-        ] {
+        // Then: the ADR-003 keys do not materialize — neither as `null` nor as
+        // an empty value.
+        for absent in ["iface", "link_id", "bind_map_status", "disposition"] {
             assert!(!doc.contains(absent), "unexpected `{absent}` in {doc}");
         }
         assert!(doc.contains("\"bitrate_bps\":800"), "got {doc}");
+    }
+
+    // ---- ADR-002: the runtime feed populates BOTH scopes ------------------
+
+    #[test]
+    fn the_runtime_projection_reports_cumulative_bytes_at_both_scopes() {
+        // Given: a live snapshot whose bond accumulator already EXCEEDS the sum
+        // of its live links — the state a SIGHUP teardown leaves behind.
+        let snap = StatsSnapshot {
+            links: vec![LinkStats {
+                bytes_sent_total: 777_000,
+                ..link(10, true, 100)
+            }],
+            session_bytes_sent: 1_500_000,
+            ..Default::default()
+        };
+
+        // When: projected and serialized through the `--stats-file` path.
+        let conns = conns_from_stats(&snap);
+        let doc = build_telemetry_json_from_stats(1_749_556_546_000, &snap);
+
+        // Then: both counters ship verbatim, and the serializer does NOT
+        // "helpfully" recompute the bond figure from the live links.
+        assert_eq!(conns[0].bytes_sent_total, Some(777_000));
+        assert!(doc.contains("\"bytes_sent_total\":777000"), "got {doc}");
+        assert!(doc.contains("\"bytes_sent_total\":1500000"), "got {doc}");
+    }
+
+    #[test]
+    fn a_link_that_has_sent_nothing_reports_zero_rather_than_omitting_the_key() {
+        // Given: a live link with the counter wired but no traffic yet.
+        // When/Then: `Some(0)` is a positive claim ("nothing sent"), distinct
+        // from the absent key that means "this build cannot tell you".
+        let snap = StatsSnapshot {
+            links: vec![link(10, true, 0)],
+            ..Default::default()
+        };
+        let doc = build_telemetry_json_from_stats(1_749_556_546_000, &snap);
+        assert!(doc.contains("\"bytes_sent_total\":0"), "got {doc}");
+        assert!(!doc.contains("null"), "got {doc}");
     }
 
     #[test]

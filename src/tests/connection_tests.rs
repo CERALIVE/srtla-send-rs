@@ -283,6 +283,44 @@ mod tests {
         assert_eq!(conn.congestion.last_nak_time_ms, 0);
     }
 
+    // ---- ADR-002: a socket replacement is not a new session ---------------
+
+    #[test]
+    fn a_socket_replacement_does_not_reset_the_links_cumulative_bytes() {
+        // Given: a link that has carried real traffic.
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut conn = rt.block_on(create_test_connection());
+        let payload = [0u8; 1316];
+        for seq in 0..10u32 {
+            conn.queue_data_packet(&payload, Some(seq), now_ms());
+        }
+        let before = conn.session_bytes_sent();
+        assert_eq!(before, 13_160, "10 x 1316 B of DATA must be counted");
+
+        // When: the link is torn down the two ways the sender tears one down —
+        // the soft recovery path and the full socket-replacement path.
+        conn.mark_for_recovery();
+        assert_eq!(
+            conn.session_bytes_sent(),
+            before,
+            "mark_for_recovery must not touch the cumulative byte count"
+        );
+
+        conn.reset_for_reconnect(now_ms());
+
+        // Then: the cumulative total survives, because a radio stall is a
+        // transient link event and not a new streaming session.
+        assert_eq!(
+            conn.session_bytes_sent(),
+            before,
+            "a socket replacement must not reset the per-link cumulative total"
+        );
+
+        // And: post-reconnect traffic accrues on top rather than restarting.
+        conn.queue_data_packet(&payload, Some(99), now_ms());
+        assert_eq!(conn.session_bytes_sent(), before + 1_316);
+    }
+
     #[test]
     fn test_srtla_ack_handling() {
         let rt = tokio::runtime::Runtime::new().unwrap();
