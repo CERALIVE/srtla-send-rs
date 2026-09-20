@@ -12,6 +12,7 @@
 //! - `set_conn_timeout { ms: u64 }` (clamped; response echoes the applied value)
 //! - `get_status` → current `ConfigSnapshot`
 //! - `get_stats` → per-link telemetry
+//! - `get_capabilities` → the `--capabilities-json` document plus `methods`
 //!
 //! Keyframe / critical-packet hints travel on a dedicated UDP sidecar
 //! (`srtla_core::priority`) rather than over this control socket. The sidecar
@@ -30,12 +31,29 @@ use srtla_core::priority::CriticalWindow;
 #[cfg(unix)]
 use tokio::sync::mpsc;
 
+use crate::capabilities;
 use crate::config::DynamicConfig;
 use crate::stats::SharedStats;
 #[cfg(unix)]
 use crate::subscriptions::SubscriptionHub;
 
 const JSONRPC_VERSION: &str = "2.0";
+
+/// Every method name this control plane dispatches, `get_capabilities`
+/// included. Published by `get_capabilities` so a client feature-detects from
+/// one round trip instead of probing each name for `-32601`.
+const METHODS: [&str; 10] = [
+    "get_capabilities",
+    "get_stats",
+    "get_status",
+    "get_subscription_count",
+    "set_conn_timeout",
+    "set_mode",
+    "set_quality",
+    "set_stall_deselect",
+    "subscribe",
+    "unsubscribe",
+];
 
 const PARSE_ERROR: i32 = -32700;
 const INVALID_REQUEST: i32 = -32600;
@@ -360,6 +378,26 @@ fn handle_method(
             })
         }
 
+        // Must stay byte-equal to the `--capabilities-json` document apart from
+        // `methods`, so a supervisor that probed before spawning and a consumer
+        // asking the live socket cannot be told two different things.
+        "get_capabilities" => {
+            let mut doc =
+                serde_json::to_value(capabilities::capability_document()).map_err(|e| {
+                    ErrorObject {
+                        code: INTERNAL_ERROR,
+                        message: "failed to serialize capability document".into(),
+                        data: Some(Value::String(e.to_string())),
+                    }
+                })?;
+            doc.as_object_mut()
+                .ok_or_else(|| {
+                    ErrorObject::new(INTERNAL_ERROR, "capability document is not an object")
+                })?
+                .insert("methods".into(), json!(METHODS));
+            Ok(doc)
+        }
+
         // Reserved for the future streaming API. A subscription-capable
         // control plane will replace these returning METHOD_NOT_FOUND with
         // a persistent-connection impl. Reserving the names now so clients
@@ -447,6 +485,87 @@ mod tests {
         let resp = dispatch(&config, None, None, req).unwrap();
         let v: Value = serde_json::from_str(&resp.to_json()).unwrap();
         assert_eq!(v["error"]["code"], INVALID_REQUEST);
+    }
+
+    fn get_capabilities_result() -> Value {
+        let config = DynamicConfig::new();
+        let req = r#"{"jsonrpc":"2.0","id":1,"method":"get_capabilities"}"#;
+        let resp = dispatch(&config, None, None, req).unwrap();
+        let v: Value = serde_json::from_str(&resp.to_json()).unwrap();
+        v["result"].clone()
+    }
+
+    #[test]
+    fn get_capabilities_matches_the_pre_spawn_probe_document() {
+        let mut result = get_capabilities_result();
+        let methods = result
+            .as_object_mut()
+            .unwrap()
+            .remove("methods")
+            .expect("methods is the one additive key");
+        assert_eq!(methods, json!(METHODS));
+
+        let probe: Value = serde_json::from_str(&capabilities::capability_json()).unwrap();
+        assert_eq!(
+            result, probe,
+            "the runtime document must equal the pre-spawn probe document modulo `methods`"
+        );
+    }
+
+    /// The subscription trio is dispatched only on the async path, which is the
+    /// only one holding a push channel; the sync path answers it
+    /// method-not-found by design.
+    const SUBSCRIPTION_METHODS: [&str; 3] = ["subscribe", "unsubscribe", "get_subscription_count"];
+
+    #[test]
+    fn every_advertised_non_subscription_method_is_dispatched() {
+        let result = get_capabilities_result();
+        let listed: Vec<&str> = result["methods"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert!(listed.contains(&"get_capabilities"));
+
+        let config = DynamicConfig::new();
+        for method in listed.iter().filter(|m| !SUBSCRIPTION_METHODS.contains(m)) {
+            let req = format!(r#"{{"jsonrpc":"2.0","id":1,"method":"{method}"}}"#);
+            let resp = dispatch(&config, None, None, &req).unwrap();
+            let v: Value = serde_json::from_str(&resp.to_json()).unwrap();
+            assert_ne!(
+                v["error"]["code"].as_i64(),
+                Some(i64::from(METHOD_NOT_FOUND)),
+                "{method} is advertised but answers unknown-method"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn every_advertised_subscription_method_is_dispatched_on_the_async_path() {
+        let config = DynamicConfig::new();
+        let hub = SubscriptionHub::new();
+        let (push_tx, _rx) = mpsc::channel(1);
+        let mut owned_ids = Vec::new();
+        let mut ctx = SubscriptionContext {
+            hub: &hub,
+            push_tx,
+            owned_ids: &mut owned_ids,
+        };
+
+        for method in SUBSCRIPTION_METHODS {
+            let req = format!(r#"{{"jsonrpc":"2.0","id":1,"method":"{method}"}}"#);
+            let resp = dispatch_async(&config, None, None, Some(&mut ctx), &req)
+                .await
+                .unwrap();
+            let v: Value = serde_json::from_str(&resp.to_json()).unwrap();
+            assert_ne!(
+                v["error"]["code"].as_i64(),
+                Some(i64::from(METHOD_NOT_FOUND)),
+                "{method} is advertised but answers unknown-method on the async path"
+            );
+        }
     }
 
     #[test]

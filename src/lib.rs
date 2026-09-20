@@ -15,6 +15,9 @@
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 pub mod bind_map;
+// The `--capabilities-json` pre-spawn probe document, also served at runtime by
+// the JSON-RPC `get_capabilities` method.
+pub mod capabilities;
 pub mod config;
 pub mod control;
 pub mod control_socket;

@@ -12,8 +12,8 @@ use clap::Parser;
 use clap::builder::{PossibleValuesParser, TypedValueParser};
 use srtla_core::mode::SchedulingMode;
 use srtla_send::{
-    config, control_socket, metrics, net, priority_listener, sender, stats, subscriptions,
-    telemetry_file, toml_config, version,
+    capabilities, config, control_socket, metrics, net, priority_listener, sender, stats,
+    subscriptions, telemetry_file, toml_config, version,
 };
 use tracing_subscriber::EnvFilter;
 
@@ -23,6 +23,10 @@ use tracing_subscriber::EnvFilter;
 #[cfg(all(not(windows), feature = "mimalloc"))]
 #[global_allocator]
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+/// Flags that answer a question and exit, so the four stream positionals are
+/// not required alongside them.
+const EARLY_EXIT_FLAGS: [&str; 2] = ["print_version", "capabilities_json"];
 
 #[derive(Parser, Debug)]
 #[command(
@@ -38,19 +42,26 @@ struct Cli {
     #[arg(short = 'v', long = "version", action = clap::ArgAction::SetTrue)]
     print_version: bool,
 
+    /// Print a single line of JSON describing what this build supports, then
+    /// exit 0 without binding a socket or writing a file. Intended as a
+    /// pre-spawn probe: a binary that predates the flag answers with a usage
+    /// error and a non-zero exit, which is the "no support" signal.
+    #[arg(long = "capabilities-json")]
+    capabilities_json: bool,
+
     /// Local UDP port to listen for SRT packets (from srt-live-transmit or SRT
     /// app)
-    #[arg(required_unless_present = "print_version")]
+    #[arg(required_unless_present_any = EARLY_EXIT_FLAGS)]
     local_srt_port: Option<u16>,
     /// Receiver host (srtla_rec or SRT listener)
-    #[arg(required_unless_present = "print_version")]
+    #[arg(required_unless_present_any = EARLY_EXIT_FLAGS)]
     receiver_host: Option<String>,
     /// Receiver UDP port to send SRTLA packets to
-    #[arg(required_unless_present = "print_version")]
+    #[arg(required_unless_present_any = EARLY_EXIT_FLAGS)]
     receiver_port: Option<u16>,
     /// Path to file containing newline-separated local source IPs to use for
     /// uplinks
-    #[arg(required_unless_present = "print_version")]
+    #[arg(required_unless_present_any = EARLY_EXIT_FLAGS)]
     ips_file: Option<String>,
 
     /// Unix domain socket path for remote toggle control (e.g.,
@@ -170,6 +181,14 @@ fn warn_if_not_loopback(what: &str, addr: std::net::SocketAddr) {
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
     let args = Cli::parse();
+
+    // Answered before the subscriber is installed: a probe's stdout must carry
+    // the document and nothing else, and an operator's RUST_LOG must not be
+    // able to contaminate what a supervisor parses.
+    if args.capabilities_json {
+        println!("{}", capabilities::capability_json());
+        return Ok(());
+    }
 
     // `--verbose` raises the default log level to debug (parity with the C
     // sender's --verbose); an explicit RUST_LOG still wins. Without the flag,
