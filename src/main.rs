@@ -4,7 +4,10 @@
 // than re-declaring its modules keeps one compilation of the tree instead of
 // two, and keeps the library's embedder-facing surface (the Android and Apple
 // binders no CLI ever constructs) from reading as dead code here.
-use anyhow::{Context, Result};
+use std::net::{IpAddr, SocketAddr};
+use std::str::FromStr;
+
+use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use clap::builder::{PossibleValuesParser, TypedValueParser};
 use srtla_core::mode::SchedulingMode;
@@ -56,6 +59,15 @@ struct Cli {
     /// Path to TOML config file (reloaded on SIGHUP)
     #[arg(long = "config")]
     config_file: Option<String>,
+
+    /// Enable verbose (debug-level) logging
+    #[arg(long = "verbose")]
+    verbose: bool,
+
+    /// Validate the IP list and resolve the receiver, then exit without binding
+    /// sockets (non-zero exit if the IP list is unusable)
+    #[arg(long = "dry-run")]
+    dry_run: bool,
 
     /// Scheduling mode: classic, enhanced (default)
     //
@@ -145,12 +157,21 @@ fn warn_if_not_loopback(what: &str, addr: std::net::SocketAddr) {
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
+    let args = Cli::parse();
+
+    // `--verbose` raises the default log level to debug (parity with the C
+    // sender's --verbose); an explicit RUST_LOG still wins. Without the flag,
+    // upstream's RUST_LOG-driven default is unchanged.
+    let env_filter = if args.verbose {
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug"))
+    } else {
+        EnvFilter::from_default_env()
+    };
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
+        .with_env_filter(env_filter)
         .with_target(false)
         .init();
 
-    let args = Cli::parse();
     if args.print_version {
         println!("{}", version::version_line());
         return Ok(());
@@ -160,6 +181,26 @@ async fn main() -> Result<()> {
     let receiver_host = args.receiver_host.as_deref().expect("required");
     let receiver_port = args.receiver_port.expect("required");
     let ips_file = args.ips_file.as_deref().expect("required");
+
+    // `--dry-run` validates the configuration and exits before any socket is
+    // bound: the local SRT listener is bound inside `run_sender_with_config`,
+    // which this path never reaches.
+    if args.dry_run {
+        let report = dry_run_resolve(ips_file, receiver_host, receiver_port).await?;
+        println!("dry-run: configuration valid; no sockets bound");
+        println!(
+            "receiver {receiver_host}:{receiver_port} resolves to {} address(es):",
+            report.receiver_addrs.len()
+        );
+        for addr in &report.receiver_addrs {
+            println!("  {addr}");
+        }
+        println!("source uplink IPs ({}):", report.source_ips.len());
+        for ip in &report.source_ips {
+            println!("  {ip}");
+        }
+        return Ok(());
+    }
 
     // Load TOML config (if specified), then apply CLI overrides
     if let Some(ref path) = args.config_file {
@@ -243,4 +284,84 @@ async fn main() -> Result<()> {
     )
     .await
     .context("srtla_send failed")
+}
+
+/// Resolved `--dry-run` inputs: the parsed source IPs and the receiver
+/// addresses the host resolved to.
+struct DryRunReport {
+    source_ips: Vec<IpAddr>,
+    receiver_addrs: Vec<SocketAddr>,
+}
+
+/// Validate the run configuration without binding any sockets.
+///
+/// Reads and parses `ips_file` through the sender's own startup parser
+/// ([`sender::read_ip_list`]), then resolves `receiver_host:receiver_port`.
+/// Returns a specific error when the IP list is unusable (missing/unreadable,
+/// empty, or zero valid IPs) or the receiver cannot be resolved.
+async fn dry_run_resolve(
+    ips_file: &str,
+    receiver_host: &str,
+    receiver_port: u16,
+) -> Result<DryRunReport> {
+    let source_ips = match sender::read_ip_list(ips_file).await {
+        Ok(ips) if !ips.is_empty() => ips.to_vec(),
+        // The file was read but yielded no usable IPs. Re-read only to tell
+        // "no content" from "content that does not parse" — the same
+        // distinction the SIGHUP reload guard makes — so the operator gets an
+        // actionable message instead of a generic one.
+        Ok(_) => return Err(classify_unusable_ips_file(ips_file)),
+        Err(e) => {
+            return Err(anyhow!(
+                "ips file not found or unreadable: {ips_file} ({e:#})"
+            ));
+        }
+    };
+
+    let receiver_addrs: Vec<SocketAddr> = tokio::net::lookup_host((receiver_host, receiver_port))
+        .await
+        .with_context(|| {
+            format!("failed to resolve receiver address {receiver_host}:{receiver_port}")
+        })?
+        .collect();
+
+    if receiver_addrs.is_empty() {
+        return Err(anyhow!(
+            "receiver host {receiver_host}:{receiver_port} resolved to no addresses"
+        ));
+    }
+
+    Ok(DryRunReport {
+        source_ips,
+        receiver_addrs,
+    })
+}
+
+/// Build the specific error for an ips file that yielded zero valid IPs.
+///
+/// `read_ip_list` deliberately collapses a missing/empty/all-invalid file to an
+/// empty list (startup tolerates an empty pool); a dry run wants the
+/// operator-facing reason instead.
+fn classify_unusable_ips_file(ips_file: &str) -> anyhow::Error {
+    let text = std::fs::read_to_string(ips_file).unwrap_or_default();
+    let mut saw_content = false;
+    let mut first_invalid: Option<(usize, String)> = None;
+    for (idx, line) in text.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        saw_content = true;
+        if IpAddr::from_str(trimmed).is_err() && first_invalid.is_none() {
+            first_invalid = Some((idx + 1, trimmed.to_string()));
+        }
+    }
+
+    if !saw_content {
+        return anyhow!("no valid source IPs in {ips_file}: ips file is empty");
+    }
+    let (line_no, content) = first_invalid.unwrap_or((1, String::new()));
+    anyhow!(
+        "no valid source IPs in {ips_file}: first invalid entry on line {line_no} ('{content}')"
+    )
 }
