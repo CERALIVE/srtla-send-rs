@@ -4,30 +4,47 @@
 // than re-declaring its modules keeps one compilation of the tree instead of
 // two, and keeps the library's embedder-facing surface (the Android and Apple
 // binders no CLI ever constructs) from reading as dead code here.
+//
+// Under `--cfg loom` the library compiles down to `subscriptions` alone (see
+// `lib.rs`), so there is nothing for this shell to consume; the Loom lane never
+// runs the binary, it only has to link one.
+#[cfg(not(loom))]
 use std::net::{IpAddr, SocketAddr};
+#[cfg(not(loom))]
 use std::str::FromStr;
 
+#[cfg(not(loom))]
 use anyhow::{Context, Result, anyhow};
+#[cfg(not(loom))]
 use clap::Parser;
+#[cfg(not(loom))]
 use clap::builder::{PossibleValuesParser, TypedValueParser};
+#[cfg(not(loom))]
 use srtla_core::mode::SchedulingMode;
+#[cfg(not(loom))]
 use srtla_send::{
     capabilities, config, control_socket, metrics, net, priority_listener, sender, stats,
     subscriptions, telemetry_file, toml_config, version,
 };
+#[cfg(not(loom))]
 use tracing_subscriber::EnvFilter;
+
+#[cfg(loom)]
+fn main() {}
 
 // Use mimalloc as the global allocator for the binary (non-Windows only).
 // Gated default-on via the `mimalloc` feature; --no-default-features builds
 // fall back to the system allocator (docs/notes/mimalloc-decision.md).
-#[cfg(all(not(windows), feature = "mimalloc"))]
+#[cfg(all(not(windows), not(loom), feature = "mimalloc"))]
 #[global_allocator]
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 /// Flags that answer a question and exit, so the four stream positionals are
 /// not required alongside them.
+#[cfg(not(loom))]
 const EARLY_EXIT_FLAGS: [&str; 2] = ["print_version", "capabilities_json"];
 
+#[cfg(not(loom))]
 #[derive(Parser, Debug)]
 #[command(
     name = "srtla_send",
@@ -174,6 +191,7 @@ struct Cli {
 /// so a routable bind exposes an open control / scrape surface. We warn rather
 /// than refuse so an operator can still bind elsewhere on a trusted network if
 /// they explicitly choose to.
+#[cfg(not(loom))]
 fn warn_if_not_loopback(what: &str, addr: std::net::SocketAddr) {
     if !addr.ip().is_loopback() {
         tracing::warn!(
@@ -184,6 +202,7 @@ fn warn_if_not_loopback(what: &str, addr: std::net::SocketAddr) {
     }
 }
 
+#[cfg(not(loom))]
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
     let args = Cli::parse();
@@ -377,6 +396,7 @@ async fn main() -> Result<()> {
 /// hands it over, so neither the fsync nor the rename ever runs on the
 /// packet-forwarding loop. The task holds a weak reference and exits once the
 /// caller drops the writer.
+#[cfg(not(loom))]
 fn spawn_telemetry_sink(
     path: std::path::PathBuf,
     interval_ms: u64,
@@ -402,6 +422,7 @@ fn spawn_telemetry_sink(
 
 /// Resolved `--dry-run` inputs: the parsed source IPs and the receiver
 /// addresses the host resolved to.
+#[cfg(not(loom))]
 struct DryRunReport {
     source_ips: Vec<IpAddr>,
     receiver_addrs: Vec<SocketAddr>,
@@ -413,6 +434,7 @@ struct DryRunReport {
 /// ([`sender::read_ip_list`]), then resolves `receiver_host:receiver_port`.
 /// Returns a specific error when the IP list is unusable (missing/unreadable,
 /// empty, or zero valid IPs) or the receiver cannot be resolved.
+#[cfg(not(loom))]
 async fn dry_run_resolve(
     ips_file: &str,
     receiver_host: &str,
@@ -456,6 +478,7 @@ async fn dry_run_resolve(
 /// `read_ip_list` deliberately collapses a missing/empty/all-invalid file to an
 /// empty list (startup tolerates an empty pool); a dry run wants the
 /// operator-facing reason instead.
+#[cfg(not(loom))]
 fn classify_unusable_ips_file(ips_file: &str) -> anyhow::Error {
     let text = std::fs::read_to_string(ips_file).unwrap_or_default();
     let mut saw_content = false;

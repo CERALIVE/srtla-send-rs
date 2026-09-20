@@ -27,12 +27,20 @@
 //!   existing `get_stats` update.
 //! - `priority.window` — fired on each critical-window extension from
 //!   the priority sidecar (encoder keyframe hint).
+//!
+//! Under `RUSTFLAGS="--cfg loom"` the `Mutex` and the subscriber channel come
+//! from [`loom_sync`] rather than tokio, so `tests/subscription_loom.rs` can
+//! race the real `subscribe`/`unsubscribe`/`publish` bodies below across the
+//! schedules Loom enumerates. Only those primitives change.
 
 use std::sync::Arc;
 #[cfg(unix)]
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[cfg(loom)]
+use loom_sync::{Mutex, mpsc};
 use serde_json::{Value, json};
+#[cfg(not(loom))]
 use tokio::sync::{Mutex, mpsc};
 
 /// One registered subscription. The sender is the *connection's* push
@@ -138,10 +146,140 @@ impl SubscriptionHub {
     }
 }
 
+/// Loom-visible stand-ins for the two synchronization primitives this module
+/// uses: `tokio::sync::Mutex` and a capacity-one `tokio::sync::mpsc` sender.
+///
+/// The hub's own `subscribe`/`unsubscribe`/`publish` bodies above are the code
+/// `tests/subscription_loom.rs` exercises; nothing here reimplements any of
+/// them. These types exist only so the locking and the channel hand-off happen
+/// on primitives Loom's scheduler can interleave, which tokio's cannot be.
+#[cfg(loom)]
+pub mod loom_sync {
+    use std::future::Future;
+    use std::task::{Context, Poll, Waker};
+
+    pub use loom::sync::MutexGuard;
+
+    /// `tokio::sync::Mutex`'s shape over `loom::sync::Mutex`. `lock` is `async`
+    /// to match, but acquires the guard with Loom's *blocking* lock — that is
+    /// the point, since it is the contention the async lock would hide from
+    /// Loom.
+    pub struct Mutex<T>(loom::sync::Mutex<T>);
+
+    impl<T> Mutex<T> {
+        pub fn new(value: T) -> Self {
+            Self(loom::sync::Mutex::new(value))
+        }
+
+        pub async fn lock(&self) -> MutexGuard<'_, T> {
+            self.0.lock().expect("subscription hub lock")
+        }
+    }
+
+    impl<T: Default> Default for Mutex<T> {
+        fn default() -> Self {
+            Self::new(T::default())
+        }
+    }
+
+    /// Drive a hub future to completion on the current Loom thread. Every await
+    /// in the hub resolves against the primitives above, which complete without
+    /// ever returning `Pending`; the loop keeps the helper correct instead of
+    /// assuming that.
+    pub fn block_on<F: Future>(future: F) -> F::Output {
+        let mut future = Box::pin(future);
+        let mut cx = Context::from_waker(Waker::noop());
+        loop {
+            match future.as_mut().poll(&mut cx) {
+                Poll::Ready(output) => return output,
+                Poll::Pending => loom::thread::yield_now(),
+            }
+        }
+    }
+
+    pub mod mpsc {
+        use loom::sync::{Arc, Mutex};
+
+        pub mod error {
+            #[derive(Debug)]
+            pub enum TrySendError<T> {
+                Full(T),
+                Closed(T),
+            }
+        }
+
+        struct Shared<T> {
+            slot: Option<T>,
+            receiver_alive: bool,
+        }
+
+        pub struct Sender<T> {
+            shared: Arc<Mutex<Shared<T>>>,
+        }
+
+        pub struct Receiver<T> {
+            shared: Arc<Mutex<Shared<T>>>,
+        }
+
+        pub fn channel<T>(capacity: usize) -> (Sender<T>, Receiver<T>) {
+            assert_eq!(
+                capacity, 1,
+                "the Loom adapter models a capacity-one channel"
+            );
+            let shared = Arc::new(Mutex::new(Shared {
+                slot: None,
+                receiver_alive: true,
+            }));
+            (
+                Sender {
+                    shared: Arc::clone(&shared),
+                },
+                Receiver { shared },
+            )
+        }
+
+        impl<T> Clone for Sender<T> {
+            fn clone(&self) -> Self {
+                Self {
+                    shared: Arc::clone(&self.shared),
+                }
+            }
+        }
+
+        impl<T> Sender<T> {
+            pub fn try_send(&self, value: T) -> Result<(), error::TrySendError<T>> {
+                let mut shared = self.shared.lock().expect("loom channel lock");
+                if !shared.receiver_alive {
+                    return Err(error::TrySendError::Closed(value));
+                }
+                if shared.slot.is_some() {
+                    return Err(error::TrySendError::Full(value));
+                }
+                shared.slot = Some(value);
+                Ok(())
+            }
+        }
+
+        impl<T> Receiver<T> {
+            pub fn try_recv(&self) -> Option<T> {
+                self.shared.lock().expect("loom channel lock").slot.take()
+            }
+        }
+
+        impl<T> Drop for Receiver<T> {
+            fn drop(&mut self) {
+                let mut shared = self.shared.lock().expect("loom channel lock");
+                shared.receiver_alive = false;
+                shared.slot = None;
+            }
+        }
+    }
+}
+
 // Every test here drives `subscribe`/`unsubscribe`, which are unix-gated with
 // the control socket that owns them, so the module is too — `cargo test` must
 // keep compiling on Windows.
-#[cfg(all(test, unix))]
+#[cfg(all(test, unix, not(loom)))]
 mod tests {
     use super::*;
 

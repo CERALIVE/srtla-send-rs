@@ -49,6 +49,18 @@ sha2 = "0.11"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# Loom is pulled in only under `RUSTFLAGS="--cfg loom"`, and it has to be a
+# regular (not dev-) dependency because `src/subscriptions.rs` itself swaps its
+# synchronization primitives for Loom's under that cfg. An ordinary build never
+# sees it. Lane contract: `RUSTFLAGS="--cfg loom" cargo test --test subscription_loom`.
+[target.'cfg(loom)'.dependencies]
+loom = "0.7.2"
+
+[lints.rust]
+# `loom` is a custom cfg set by RUSTFLAGS for the dedicated concurrency lane,
+# not a feature, so declare it rather than let `unexpected_cfgs` flag it.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
+
 [features]
 default = ["mimalloc"]
 # Default-on preserves the shipped binary's allocator; --no-default-features

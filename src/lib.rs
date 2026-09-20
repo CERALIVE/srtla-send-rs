@@ -14,32 +14,52 @@
 #[global_allocator]
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+// `--cfg loom` compiles this crate down to `subscriptions` alone. Loom replaces
+// that module's synchronization primitives with its own, which changes the
+// channel type `control` hands the hub, and Loom cannot model tokio's runtime
+// anyway — so the rest of the tree is excluded from the lane rather than
+// contorted to fit it. See `tests/subscription_loom.rs`.
+#[cfg(not(loom))]
 pub mod bind_map;
 // The `--capabilities-json` pre-spawn probe document, also served at runtime by
 // the JSON-RPC `get_capabilities` method.
+#[cfg(not(loom))]
 pub mod capabilities;
+#[cfg(not(loom))]
 pub mod config;
+#[cfg(not(loom))]
 pub mod control;
+#[cfg(not(loom))]
 pub mod control_socket;
+#[cfg(not(loom))]
 pub mod metrics;
 // Uplink socket I/O (shell): batched UDP socket + egress binders.
+#[cfg(not(loom))]
 pub mod net;
+#[cfg(not(loom))]
 pub mod priority_listener;
+#[cfg(not(loom))]
 pub mod sender;
+#[cfg(not(loom))]
 pub mod stats;
 pub mod subscriptions;
 // ADR-001 telemetry: the document model + units, and the opt-in `--stats-file`
 // atomic publish mechanics that carry it.
+#[cfg(not(loom))]
 pub mod telemetry_doc;
+#[cfg(not(loom))]
 pub mod telemetry_file;
+#[cfg(not(loom))]
 pub mod toml_config;
+#[cfg(not(loom))]
 pub mod version;
 
 // Test helpers module - available when test-internals feature is enabled
-#[cfg(any(test, feature = "test-internals"))]
+#[cfg(all(any(test, feature = "test-internals"), not(loom)))]
 pub mod test_helpers;
 
-#[cfg(test)]
+#[cfg(all(test, not(loom)))]
 pub mod tests;
 
+#[cfg(not(loom))]
 pub use config::{ConfigSnapshot, DynamicConfig};
