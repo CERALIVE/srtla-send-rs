@@ -1,0 +1,300 @@
+name: Release
+
+# Tag-triggered release: pushing a version tag (e.g. v4.1.0) cross-builds both
+# device architectures, packages the pipeline-compatible .debs, and attaches
+# them to the GitHub release for that tag. No crates.io publish, no scheduled
+# upstream sync — releases are cut deliberately by pushing a tag.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+# Never cancel a release mid-run — a tag build that uploads .debs must complete.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test (pinned nightly)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+
+      - name: Cache Rust dependencies and bounded target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          shared-key: "srtla-send-${{ runner.os }}-${{ runner.arch }}-nightly-${{ hashFiles('rust-toolchain.toml') }}"
+          key: "source-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'rustfmt.toml', 'build.rs', 'src/**/*.rs', 'crates/**/*.rs', 'tests/**/*.rs') }}"
+          add-job-id-key: false
+          cache-targets: true
+          cache-bin: false
+          cache-on-failure: false
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        run: cargo clippy -- -D warnings
+
+      - name: Check compilation
+        run: cargo check
+
+      - name: Check compilation without test features
+        run: cargo check --release
+
+      - name: Run library tests
+        run: cargo test --lib
+
+      - name: Run bounded all-features test command
+        run: timeout --foreground --kill-after=10s 600s cargo test --all-features --verbose
+
+      - name: Run test-internals suite
+        run: timeout --foreground --kill-after=10s 600s cargo test --features test-internals
+
+      - name: Install cargo-audit + cargo-deny (prebuilt)
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,cargo-deny
+
+      - name: Run security audit
+        run: cargo audit
+
+      - name: Run supply-chain checks
+        run: cargo deny check advisories sources
+
+  loom:
+    name: Loom model (subscription manager)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+
+      - name: Cache Rust dependencies and bounded target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          shared-key: "srtla-send-${{ runner.os }}-${{ runner.arch }}-nightly-loom-${{ hashFiles('rust-toolchain.toml') }}"
+          key: "source-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'rustfmt.toml', 'build.rs', 'src/**/*.rs', 'crates/**/*.rs', 'tests/**/*.rs') }}"
+          add-job-id-key: false
+          cache-targets: true
+          cache-bin: false
+          cache-on-failure: false
+
+      - name: Run loom model test
+        env:
+          RUSTFLAGS: --cfg loom
+        run: cargo test --test subscription_loom
+
+  miri:
+    name: Miri (batch I/O pure pointer logic)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+
+      - name: Cache Rust dependencies (Miri target disabled)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          shared-key: "srtla-send-${{ runner.os }}-${{ runner.arch }}-nightly-miri-${{ hashFiles('rust-toolchain.toml') }}"
+          key: "source-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'rustfmt.toml', 'build.rs', 'src/**/*.rs', 'crates/**/*.rs', 'tests/**/*.rs') }}"
+          add-job-id-key: false
+          cache-targets: false
+          cache-bin: false
+          cache-on-failure: false
+
+      - name: Install miri component
+        run: rustup component add miri
+
+      - name: Miri — recv buffer self-pointer setup
+        run: cargo miri test --lib --no-default-features --features test-internals test_recv_buffer_creation
+
+      - name: Miri — recv buffer allocation size invariant
+        run: cargo miri test --lib --no-default-features --features test-internals test_buffer_size
+
+      - name: Miri — oversized msg_len clamps to MTU
+        run: cargo miri test --lib --no-default-features --features test-internals iter_clamps_oversized_msg_len_to_mtu
+
+      - name: Miri — sockaddr_storage round-trip decode
+        run: cargo miri test --lib --no-default-features --features test-internals sockaddr_storage_roundtrip
+
+      - name: Miri — batch receive errno classification
+        run: cargo miri test --lib --no-default-features --features test-internals recv_retry_action_classifies_errors
+
+  build-deb:
+    name: Build .deb (${{ matrix.arch }})
+    needs: [test, loom, miri]
+    runs-on: ubuntu-latest
+    # The runner host may advance independently of the Debian 12 device ABI.
+    # Execute every build/package step against Bookworm's glibc 2.36 instead.
+    container:
+      image: debian:bookworm-slim
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            target: aarch64-unknown-linux-gnu
+            cross: true
+            objdump: aarch64-linux-gnu-objdump
+          - arch: amd64
+            target: x86_64-unknown-linux-gnu
+            cross: false
+            objdump: objdump
+    steps:
+      - name: Install Bookworm build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential ca-certificates curl git pkg-config binutils dpkg-dev zstd
+
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      # Pinned nightly from rust-toolchain.toml + the build target for this leg.
+      - name: Install Rust toolchain (from rust-toolchain.toml) + target
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+          target: ${{ matrix.target }}
+
+      - name: Cache Rust dependencies and bounded target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          shared-key: "srtla-send-${{ runner.os }}-${{ runner.arch }}-bookworm-nightly-${{ matrix.arch }}-${{ matrix.target }}-${{ hashFiles('rust-toolchain.toml') }}"
+          key: "source-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'rustfmt.toml', 'build.rs', 'src/**/*.rs', 'crates/**/*.rs', 'tests/**/*.rs') }}"
+          add-job-id-key: false
+          cache-targets: true
+          cache-bin: false
+          cache-on-failure: false
+
+      - name: Install aarch64 cross toolchain
+        if: matrix.cross
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+            libc6-dev-arm64-cross binutils-aarch64-linux-gnu pkg-config
+
+      - name: Build (${{ matrix.target }})
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig
+        run: cargo build --release --target ${{ matrix.target }} --verbose
+
+      - name: Verify device GLIBC compatibility
+        run: |
+          binary="target/${{ matrix.target }}/release/srtla_send"
+          required_glibc="$("${{ matrix.objdump }}" -T "${binary}" | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -n 1)"
+          test -n "${required_glibc}"
+          echo "${{ matrix.arch }} requires at most ${required_glibc}; device ceiling is GLIBC_2.36"
+          if dpkg --compare-versions "${required_glibc#GLIBC_}" gt "2.36"; then
+            echo "ERROR: ${required_glibc} exceeds the device GLIBC_2.36 ceiling" >&2
+            exit 1
+          fi
+
+      # ci/build-deb.sh emits srtla_<ver>_<arch>.deb and asserts the control
+      # metadata (Package, Version, Architecture, Conflicts, Replaces, absent
+      # Provides), the /usr/bin/srtla_send path, and the fetch-debs.sh
+      # `*${ARCH}*.deb` glob match.
+      - name: Package .deb
+        run: |
+          ci/build-deb.sh "${{ matrix.arch }}" \
+            "target/${{ matrix.target }}/release/srtla_send" dist
+
+      - name: Generate checksum
+        run: |
+          cd dist
+          sha256sum srtla_*_${{ matrix.arch }}.deb \
+            > "srtla_${{ matrix.arch }}.deb.sha256"
+
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: srtla-${{ matrix.arch }}-deb
+          path: |
+            dist/srtla_*_${{ matrix.arch }}.deb
+            dist/srtla_${{ matrix.arch }}.deb.sha256
+          if-no-files-found: error
+
+  release:
+    name: Attach .debs to release
+    needs: build-deb
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: ./artifacts
+
+      - name: Flatten artifact tree
+        run: |
+          mkdir -p release-assets
+          find ./artifacts -type f \( -name '*.deb' -o -name '*.deb.sha256' \) \
+            -exec cp -v {} release-assets/ \;
+          echo "Release assets:"
+          ls -1 release-assets
+
+      # Final gate: both architectures must be present and each filename must
+      # match the device fetch glob `*${ARCH}*.deb`, mirroring fetch-debs.sh.
+      - name: Verify both arch .debs match the fetch-debs.sh glob
+        run: |
+          rc=0
+          for ARCH in arm64 amd64; do
+            shopt -s nullglob
+            matches=( release-assets/*"${ARCH}"*.deb )
+            shopt -u nullglob
+            if [ ${#matches[@]} -eq 0 ]; then
+              echo "MISSING: no file matches '*${ARCH}*.deb'"; rc=1
+            else
+              echo "OK: ${matches[*]} matches '*${ARCH}*.deb'"
+            fi
+          done
+           exit "$rc"
+
+      - name: Create release and attach .debs
+        id: create-release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            release-assets/srtla_*_arm64.deb
+            release-assets/srtla_*_amd64.deb
+            release-assets/srtla_*.deb.sha256
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trigger APT reindex
+        uses: peter-evans/repository-dispatch@v4
+        with:
+          token: ${{ secrets.CERALIVE_DISPATCH_TOKEN }}
+          repository: CERALIVE/apt-worker
+          event-type: apt-reindex
+          client-payload: '{"component":"srtla","repo":"srtla-send-rs","channel":"stable","tag":"${{ github.ref_name }}","version":"${{ github.ref_name }}"}'

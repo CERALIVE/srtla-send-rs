@@ -26,3 +26,8 @@ target/
 bond-bunny-main/
 moblin/
 /.claude
+
+# Python bytecode cache from the scripts/ contract tests
+__pycache__/
+# Local .deb staging produced by ci/build-deb.sh
+/dist/

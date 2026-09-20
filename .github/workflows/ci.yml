@@ -2,38 +2,111 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, upstream/v4]
   pull_request:
-    branches: [main, master]
+    branches: [main, upstream/v4]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
-    name: Test
+  # Change detection. A documentation-only pull request has nothing for the
+  # gates below to prove, so they skip rather than run to a vacuous green.
+  #
+  # The gating is a JOB-LEVEL `if:`, never a trigger-level `paths:`/
+  # `paths-ignore:`. A trigger filter stops the workflow from starting at all,
+  # and a required check that never reports blocks a merge instead of passing
+  # it — which is what the always-run summary job at the bottom exists to avoid.
+  #
+  # `code` is an EXCLUSION list — "every changed file is NOT documentation" —
+  # so this step carries `predicate-quantifier: 'every'`. The quantifier is a
+  # property of the STEP, not of a filter: a positive OR list must live in its
+  # own step under the default `some`, or `every` would turn it into an AND that
+  # no single file can satisfy.
+  changes:
+    name: Change detection
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      # The filter runs on pull requests only. On a push the step is skipped and
+      # the fallback keeps `code` true, so the default branch keeps full coverage.
+      code: ${{ steps.filter.outputs.code || 'true' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Detect non-documentation changes
+        id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@v4
+        with:
+          predicate-quantifier: 'every'
+          filters: |
+            code:
+              - '!**/*.md'
+              - '!docs/**'
+              - '!LICENSE*'
+              - '!.github/ISSUE_TEMPLATE/**'
+              - '!.github/PULL_REQUEST_TEMPLATE.md'
+
+  # Primary gate — runs on the PINNED nightly from rust-toolchain.toml. The
+  # `toolchain` input is intentionally omitted so setup-rust-toolchain reads the
+  # toolchain file (nightly-2026-06-12 + rustfmt/clippy/rust-src + the aarch64
+  # target). Upstream floated `nightly`; the fork pins a date for a reproducible
+  # device build, so CI must honour the pin. Keep every upstream step (fmt,
+  # clippy -D warnings, check, bounded tests, and the cargo audit).
+  test:
+    name: Test (pinned nightly)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      - name: Install Rust toolchain
+      - name: Install Rust toolchain (from rust-toolchain.toml)
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: nightly
-          components: rustfmt, clippy
+          cache: false
 
-      - name: Cache dependencies
-        uses: actions/cache@v4
+      - name: Cache Rust dependencies and bounded target
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+          workspaces: ". -> target"
+          shared-key: "srtla-send-${{ runner.os }}-${{ runner.arch }}-nightly-${{ hashFiles('rust-toolchain.toml') }}"
+          key: "source-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'rustfmt.toml', 'build.rs', 'src/**/*.rs', 'crates/**/*.rs', 'tests/**/*.rs') }}"
+          add-job-id-key: false
+          cache-targets: true
+          cache-bin: false
+          cache-on-failure: false
+
+      - name: Install uv for typed workflow contracts
+        uses: astral-sh/setup-uv@v8.3.2
+
+      - name: Verify release workflow contracts
+        run: uv run scripts/release_workflow_contract_test.py
+
+      - name: Verify Rust cache contracts
+        run: uv run scripts/rust_cache_contract_test.py
+
+      - name: Verify release artifact version contract
+        run: bash scripts/release_version_contract_test.sh
+
+      - name: Verify Debian version ordering contract
+        run: bash scripts/deb_version_ordering_test.sh
 
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+      # lib + bin only (NOT --all-targets): upstream test code carries pedantic
+      # clippy debt; the gate matches upstream ci.yml exactly.
       - name: Run clippy
         run: cargo clippy -- -D warnings
 
@@ -43,105 +116,344 @@ jobs:
       - name: Check compilation without test features
         run: cargo check --release
 
-      - name: Run unit tests
-        run: cargo test --lib --verbose
+      # test-internals is the crate's only meaningful test feature, so
+      # --all-features compiles every test target. Privileged netns scenarios
+      # still self-skip when dependencies are absent; the timeout keeps
+      # unexpected privileged-runtime regressions blocking and bounded when they
+      # do run. No-feature shipping paths stay checked by
+      # check/clippy/release build.
+      - name: Run bounded all-features test command
+        run: timeout --foreground --kill-after=10s 600s cargo test --all-features --verbose
 
-      - name: Run unit tests with test-internals (verify encapsulation)
-        run: cargo test --lib --features test-internals --verbose
-
-      - name: Run all tests
-        run: cargo test --features test-internals --verbose
-
-      - name: Run tests with all features
-        run: cargo test --all-features --verbose
-
-      - name: Install cargo-audit
-        run: cargo install cargo-audit
+      - name: Install cargo-audit + cargo-deny (prebuilt)
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,cargo-deny
 
       - name: Run security audit
         run: cargo audit
 
-      - name: Install cargo-deny
-        run: cargo install cargo-deny
-
       - name: Run supply-chain checks (advisories + sources)
         run: cargo deny check advisories sources
 
-  # Miri lane over the only unsafe FFI in the tree: the recvmmsg batch-receive
-  # path in src/connection/batch_recv.rs. Miri interprets the pure pointer logic
-  # (self-referential iovec/mmsghdr setup, msg_len -> MTU clamp, sockaddr_storage
-  # decode) and fails the PR on any UB regression there. Hard limit: miri cannot
-  # execute the real recvmmsg syscall, so the live-syscall path is not covered.
-  # The `batch_recv` filter scopes the run to that module's pure tests; the
-  # mimalloc test allocator is cfg'd out under miri (C FFI miri cannot run).
-  miri:
-    name: Miri (batch_recv unsafe pointer logic)
+  loom:
+    name: Loom model (subscription manager)
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      - name: Install Rust toolchain
+      - name: Install Rust toolchain (from rust-toolchain.toml)
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: nightly
-          components: miri
+          cache: false
 
-      - name: Run batch_recv tests under miri
-        run: cargo miri test --lib batch_recv
+      - name: Cache Rust dependencies and bounded target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          shared-key: "srtla-send-${{ runner.os }}-${{ runner.arch }}-nightly-loom-${{ hashFiles('rust-toolchain.toml') }}"
+          key: "source-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'rustfmt.toml', 'build.rs', 'src/**/*.rs', 'crates/**/*.rs', 'tests/**/*.rs') }}"
+          add-job-id-key: false
+          cache-targets: true
+          cache-bin: false
+          cache-on-failure: false
 
+      - name: Run loom model test
+        env:
+          RUSTFLAGS: --cfg loom
+        run: cargo test --test subscription_loom
+
+  # Dedicated BLOCKING miri lane over the ONLY unsafe FFI in the tree: the
+  # recvmmsg + sendmmsg batch I/O paths in src/net/batch_recv.rs. miri vets the
+  # PURE POINTER LOGIC — the self-referential iovec/mmsghdr setup that
+  # RecvMmsgBuffer::new() writes into its own heap allocation
+  # (test_recv_buffer_creation), the allocation's own size invariant
+  # (test_buffer_size), the msg_len→MTU clamp in the iterator
+  # (iter_clamps_oversized_msg_len_to_mtu), the sockaddr_storage→SocketAddr cast
+  # plus big-endian field decode (sockaddr_storage_roundtrip), and the errno
+  # classification that decides whether a failed batch receive is retried or
+  # tears the link down (recv_retry_action_classifies_errors).
+  #
+  # HARD LIMIT: miri CANNOT execute the real recvmmsg/sendmmsg syscall or FFI,
+  # so neither live-syscall path is covered here — only the Rust-side pointer
+  # logic and decode around them. The send-side pointer setup lives inside
+  # try_send_batch, which issues the syscall in the same function, so it has no
+  # miri-runnable test; adding one requires extracting the header construction
+  # into a pure helper, which is a production change and out of scope for the
+  # packaging/CI layer.
+  #
+  # Each filter is its own invocation (miri takes a single substring filter per
+  # run). --no-default-features drops the mimalloc #[global_allocator] (C FFI
+  # miri cannot run); the system allocator miri provides is used instead. --lib
+  # scopes to the unit-test binary where all five pure tests live.
+  miri:
+    name: Miri (batch I/O pure pointer logic)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+
+      - name: Cache Rust dependencies (Miri target disabled)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          shared-key: "srtla-send-${{ runner.os }}-${{ runner.arch }}-nightly-miri-${{ hashFiles('rust-toolchain.toml') }}"
+          key: "source-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'rustfmt.toml', 'build.rs', 'src/**/*.rs', 'crates/**/*.rs', 'tests/**/*.rs') }}"
+          add-job-id-key: false
+          cache-targets: false
+          cache-bin: false
+          cache-on-failure: false
+
+      - name: Install miri component
+        run: rustup component add miri
+
+      - name: Miri — recv buffer self-pointer setup
+        run: cargo miri test --lib --no-default-features --features test-internals test_recv_buffer_creation
+
+      - name: Miri — recv buffer allocation size invariant
+        run: cargo miri test --lib --no-default-features --features test-internals test_buffer_size
+
+      - name: Miri — oversized msg_len clamps to MTU
+        run: cargo miri test --lib --no-default-features --features test-internals iter_clamps_oversized_msg_len_to_mtu
+
+      - name: Miri — sockaddr_storage round-trip decode
+        run: cargo miri test --lib --no-default-features --features test-internals sockaddr_storage_roundtrip
+
+      - name: Miri — batch receive errno classification
+        run: cargo miri test --lib --no-default-features --features test-internals recv_retry_action_classifies_errors
+
+  # Cross-build both device-relevant targets and package the pipeline-compatible
+  # .deb on every push/PR, so a packaging break (name, binary path, Conflicts,
+  # filename glob) is caught before a tag is ever cut. The aarch64 leg is the
+  # device target; the x86_64 leg is the dev/CI target. ci/build-deb.sh is the
+  # single source of truth for the control metadata and runs the fetch-debs.sh
+  # glob self-test.
+  build-deb:
+    name: Build .deb (${{ matrix.arch }})
+    needs: [changes, test]
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            target: aarch64-unknown-linux-gnu
+            cross: true
+          - arch: amd64
+            target: x86_64-unknown-linux-gnu
+            cross: false
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      # Pinned nightly from rust-toolchain.toml + the extra build target. The
+      # toolchain file already lists aarch64; `target` re-adds it harmlessly and
+      # adds x86_64 for the amd64 leg.
+      - name: Install Rust toolchain (from rust-toolchain.toml) + target
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+          target: ${{ matrix.target }}
+
+      - name: Cache Rust dependencies and bounded target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          shared-key: "srtla-send-${{ runner.os }}-${{ runner.arch }}-nightly-${{ matrix.arch }}-${{ matrix.target }}-${{ hashFiles('rust-toolchain.toml') }}"
+          key: "source-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'rustfmt.toml', 'build.rs', 'src/**/*.rs', 'crates/**/*.rs', 'tests/**/*.rs') }}"
+          add-job-id-key: false
+          cache-targets: true
+          cache-bin: false
+          cache-on-failure: false
+
+      - name: Install aarch64 cross toolchain
+        if: matrix.cross
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+            libc6-dev-arm64-cross binutils-aarch64-linux-gnu pkg-config
+
+      - name: Build (${{ matrix.target }})
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig
+        run: cargo build --release --target ${{ matrix.target }} --verbose
+
+      - name: Package .deb (asserts name, binary path, Conflicts, fetch glob)
+        run: |
+          ci/build-deb.sh "${{ matrix.arch }}" \
+            "target/${{ matrix.target }}/release/srtla_send" dist
+
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: srtla-${{ matrix.arch }}-deb
+          path: dist/srtla_*_${{ matrix.arch }}.deb
+          if-no-files-found: error
+
+  # Upstream cross-channel/cross-OS coverage — kept intact. rust-toolchain.toml
+  # would otherwise force the pinned nightly onto these runners, so each job
+  # invokes cargo with an explicit `+<channel>` (highest precedence, above the
+  # toolchain file) to genuinely exercise stable/beta as upstream intended.
   test-stable:
     name: Test (Rust stable)
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
+          cache: false
           toolchain: stable
 
+      - name: Cache Rust dependencies and bounded target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          shared-key: "srtla-send-${{ runner.os }}-${{ runner.arch }}-stable"
+          key: "source-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'rustfmt.toml', 'build.rs', 'src/**/*.rs', 'crates/**/*.rs', 'tests/**/*.rs') }}"
+          add-job-id-key: false
+          cache-targets: true
+          cache-bin: false
+          cache-on-failure: false
+
       - name: Run tests
-        run: cargo test --features test-internals
+        run: cargo +stable test --features test-internals
 
   test-beta:
     name: Test (Rust beta)
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
+          cache: false
           toolchain: beta
 
+      - name: Cache Rust dependencies and bounded target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          shared-key: "srtla-send-${{ runner.os }}-${{ runner.arch }}-beta"
+          key: "source-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'rustfmt.toml', 'build.rs', 'src/**/*.rs', 'crates/**/*.rs', 'tests/**/*.rs') }}"
+          add-job-id-key: false
+          cache-targets: true
+          cache-bin: false
+          cache-on-failure: false
+
       - name: Run tests
-        run: cargo test
+        run: cargo +beta test
 
   test-windows:
     name: Test (Windows)
     runs-on: windows-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+          toolchain: stable
+
+      - name: Cache Rust dependencies and bounded target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          shared-key: "srtla-send-${{ runner.os }}-${{ runner.arch }}-stable"
+          key: "source-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'rustfmt.toml', 'build.rs', 'src/**/*.rs', 'crates/**/*.rs', 'tests/**/*.rs') }}"
+          add-job-id-key: false
+          cache-targets: true
+          cache-bin: false
+          cache-on-failure: false
 
       - name: Run tests
-        run: cargo test --features test-internals --verbose
+        run: cargo +stable test --features test-internals --verbose
 
   test-macos:
     name: Test (macOS)
     runs-on: macos-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+          toolchain: stable
+
+      - name: Cache Rust dependencies and bounded target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          shared-key: "srtla-send-${{ runner.os }}-${{ runner.arch }}-stable"
+          key: "source-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'rustfmt.toml', 'build.rs', 'src/**/*.rs', 'crates/**/*.rs', 'tests/**/*.rs') }}"
+          add-job-id-key: false
+          cache-targets: true
+          cache-bin: false
+          cache-on-failure: false
 
       - name: Run tests
-        run: cargo test --verbose
+        run: cargo +stable test --verbose
+
+  # The one check a branch-protection rule can require. It runs on every event,
+  # including a docs-only pull request where every gate above skipped, and goes
+  # red whenever a dependency failed or was cancelled. A SKIPPED dependency is a
+  # pass — that is the whole point of the gating above.
+  ci-summary:
+    name: CI summary
+    if: always()
+    needs:
+      - changes
+      - test
+      - loom
+      - miri
+      - build-deb
+      - test-stable
+      - test-beta
+      - test-windows
+      - test-macos
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any dependency failed or was cancelled
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          set -euo pipefail
+          echo "dependency results: ${RESULTS}"
+          for result in ${RESULTS}; do
+            case "${result}" in
+              failure|cancelled)
+                echo "::error::a required job reported '${result}'"
+                exit 1
+                ;;
+            esac
+          done
+          echo "every dependency succeeded or was skipped"
