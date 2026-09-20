@@ -13,7 +13,7 @@ use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 // Re-export connection management functions for tests
 #[allow(unused_imports)]
 pub use connections::{
@@ -62,6 +62,53 @@ use crate::stats::SharedStats;
 pub const HOUSEKEEPING_INTERVAL_MS: u64 = 1000;
 const STATUS_LOG_INTERVAL_MS: u64 = 30_000;
 
+/// Cleanup callbacks run exactly once when the sender returns.
+///
+/// The sender drains and runs every registered hook on its way out — on
+/// SIGTERM/SIGINT, when the uplink packet channel closes, or on any early
+/// return/error — so a caller can guarantee that a resource it created for the
+/// run is released with the run. Hooks run in registration order, synchronously,
+/// and at most once: [`run`](Self::run) drains the set, and [`Drop`] routes
+/// through the same drain as a safety net for the error paths.
+///
+/// This is the registration point the `--stats-file` sink (a later port) uses
+/// to unlink its telemetry file and `.tmp` sibling, so no stale snapshot
+/// outlives the process even if the run ends by returning `Err`.
+///
+/// Hooks are infallible and take no arguments; handle a cleanup step's own
+/// error inside the hook (e.g. ignore a failed `remove_file`). A panicking hook
+/// is a bug — it will abort during unwinding.
+#[derive(Default)]
+pub struct ShutdownHooks {
+    hooks: Vec<Box<dyn FnOnce() + Send>>,
+}
+
+impl ShutdownHooks {
+    /// An empty hook set.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register a cleanup callback to run on shutdown. Later registrations run
+    /// later.
+    pub fn register(&mut self, hook: impl FnOnce() + Send + 'static) {
+        self.hooks.push(Box::new(hook));
+    }
+
+    /// Run every registered hook in registration order, exactly once.
+    pub fn run(&mut self) {
+        for hook in self.hooks.drain(..) {
+            hook();
+        }
+    }
+}
+
+impl Drop for ShutdownHooks {
+    fn drop(&mut self) {
+        self.run();
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn run_sender_with_config(
     local_srt_port: u16,
@@ -73,6 +120,7 @@ pub async fn run_sender_with_config(
     critical_window: srtla_core::priority::CriticalWindow,
     subscription_hub: crate::subscriptions::SubscriptionHub,
     binder: std::sync::Arc<dyn crate::net::UplinkBinder>,
+    mut on_shutdown: ShutdownHooks,
 ) -> Result<()> {
     info!(
         "starting srtla_send: local_srt_port={}, receiver={}:{}, ips_file={}, mode={}",
@@ -100,7 +148,17 @@ pub async fn run_sender_with_config(
         .context("bind local SRT UDP listener")?;
     info!("listening for SRT on [::]:{}", local_srt_port);
 
-    let ips = read_ip_list(ips_file).await?;
+    // A missing / empty / all-invalid ips file at startup is NOT fatal: bind no
+    // uplinks, start with an EMPTY pool, and wait for a SIGHUP reload. CeraUI
+    // writes the IP file and signals the sender only once interfaces appear, so
+    // exiting here would crash-loop the device before the first modem is up.
+    let ips = match read_ip_list(ips_file).await {
+        Ok(ips) => ips,
+        Err(e) => {
+            warn!("ips file unreadable at startup ({e:#}); starting with an empty uplink pool");
+            SmallVec::new()
+        }
+    };
     debug!(
         "uplink IPs loaded: {}",
         ips.iter()
@@ -109,7 +167,7 @@ pub async fn run_sender_with_config(
             .join(", ")
     );
     if ips.is_empty() {
-        return Err(anyhow!("no IPs in list: {}", ips_file));
+        warn!("no valid source IPs at startup; waiting for SIGHUP reload");
     }
 
     // Shell-owned I/O half of every connection, keyed by conn_id (never by
@@ -118,19 +176,20 @@ pub async fn run_sender_with_config(
     let mut connections =
         create_connections_from_ips(&ips, receiver_host, receiver_port, &binder, &mut conn_io)
             .await;
-    if connections.is_empty() {
-        return Err(anyhow!("no uplinks available"));
-    }
 
     let mut reg = SrtlaRegistrationManager::new();
 
-    // Send the initial RTT probes the (pure) probing state machine emitted.
-    let probes = reg.start_probing(&mut connections, srtla_core::utils::now_ms());
-    for (idx, pkt) in probes {
-        if let Some(conn) = connections.get(idx)
-            && let Some(io) = conn_io.get(&conn.conn_id)
-        {
-            let _ = io.socket.send(&pkt).await;
+    // Probing bootstraps the connection group. With an empty pool there is
+    // nothing to probe, so it stays NotStarted and is restarted once a SIGHUP
+    // reload populates the pool (see the queued-changes block in the main loop).
+    if !connections.is_empty() {
+        let probes = reg.start_probing(&mut connections, srtla_core::utils::now_ms());
+        for (idx, pkt) in probes {
+            if let Some(conn) = connections.get(idx)
+                && let Some(io) = conn_io.get(&conn.conn_id)
+            {
+                let _ = io.socket.send(&pkt).await;
+            }
         }
     }
 
@@ -192,6 +251,14 @@ pub async fn run_sender_with_config(
     // Prepare SIGHUP stream (Unix only) or a never-completing future (non-Unix)
     #[cfg(unix)]
     let mut sighup = signal(SignalKind::hangup())?;
+    // SIGTERM/SIGINT drive a graceful `Ok(())` return so the process exits 0
+    // well inside CeraUI's 10s SIGKILL window and any registered shutdown hooks
+    // (the `--stats-file` unlink, a later port) run instead of being skipped by
+    // an abrupt default-action kill.
+    #[cfg(unix)]
+    let mut sigterm = signal(SignalKind::terminate())?;
+    #[cfg(unix)]
+    let mut sigint = signal(SignalKind::interrupt())?;
 
     // Main loop - run housekeeping frequently like C version
     // Run housekeeping once before entering the main event loop so we start in a clean state.
@@ -279,6 +346,7 @@ pub async fn run_sender_with_config(
                                 &config,
                             ).await;
                         } else {
+                            on_shutdown.run();
                             return Ok(());
                         }
                     }
@@ -359,6 +427,24 @@ pub async fn run_sender_with_config(
                             ).await;
                             info!("connection changes applied successfully");
                             sync_readers(&connections, &conn_io, &mut reader_handles, &packet_tx);
+                            // Bootstrap registration when a reload populated an
+                            // empty pool. `start_probing` self-guards (no-op once
+                            // probing has begun), so this only fires on the
+                            // empty-pool -> first-uplinks transition and never
+                            // disturbs an established bond's reload.
+                            if !connections.is_empty() {
+                                let probes = reg.start_probing(
+                                    &mut connections,
+                                    srtla_core::utils::now_ms(),
+                                );
+                                for (idx, pkt) in probes {
+                                    if let Some(conn) = connections.get(idx)
+                                        && let Some(io) = conn_io.get(&conn.conn_id)
+                                    {
+                                        let _ = io.socket.send(&pkt).await;
+                                    }
+                                }
+                            }
                         }
 
                         status_elapsed_ms = status_elapsed_ms.saturating_add(HOUSEKEEPING_INTERVAL_MS);
@@ -435,6 +521,16 @@ pub async fn run_sender_with_config(
             )
             .await;
         }
+        _ = sigterm.recv() => {
+            info!("received SIGTERM - shutting down");
+            on_shutdown.run();
+            return Ok(());
+        }
+        _ = sigint.recv() => {
+            info!("received SIGINT - shutting down");
+            on_shutdown.run();
+            return Ok(());
+        }
     }
 
     #[cfg(not(unix))]
@@ -458,5 +554,44 @@ pub async fn read_ip_list(path: &str) -> Result<SmallVec<IpAddr, 4>> {
             Ok(ips)
         }
         reload::IpReload::Refuse(_) => Ok(SmallVec::new()),
+    }
+}
+
+#[cfg(test)]
+mod shutdown_hook_tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::ShutdownHooks;
+
+    #[test]
+    fn hooks_run_on_drop_in_registration_order() {
+        let order = Arc::new(std::sync::Mutex::new(Vec::new()));
+        {
+            let mut hooks = ShutdownHooks::new();
+            for n in 0..3 {
+                let order = order.clone();
+                hooks.register(move || order.lock().unwrap().push(n));
+            }
+        }
+        assert_eq!(*order.lock().unwrap(), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn explicit_run_then_drop_runs_each_hook_exactly_once() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        {
+            let mut hooks = ShutdownHooks::new();
+            let calls = calls.clone();
+            hooks.register(move || {
+                calls.fetch_add(1, Ordering::SeqCst);
+            });
+            hooks.run();
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "an explicit run drains the set, so Drop must not run the hook again"
+        );
     }
 }

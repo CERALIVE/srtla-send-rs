@@ -187,7 +187,14 @@ pub async fn handle_housekeeping(
         .filter(|c| !c.is_timed_out(current_ms))
         .count();
 
-    if active_connections == 0 {
+    if connections.is_empty() {
+        // Empty start: no uplinks are configured yet (missing/empty/all-invalid
+        // ips file). There is nothing to fail, so keep the all-links-failed
+        // timer disarmed and wait for a SIGHUP reload — otherwise a device that
+        // boots before its modems appear would exit after one
+        // GLOBAL_TIMEOUT_MS instead of waiting for them.
+        *all_failed_at = None;
+    } else if active_connections == 0 {
         if all_failed_at.is_none() {
             // Monotonic ms stamp on the single now_ms() clock; the all-links-failed
             // timeout below is a plain difference against the per-tick current_ms.

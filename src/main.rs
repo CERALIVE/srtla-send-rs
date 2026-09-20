@@ -271,6 +271,11 @@ async fn main() -> Result<()> {
     let binder: std::sync::Arc<dyn net::UplinkBinder> =
         std::sync::Arc::new(net::AppleInterfaceBinder::new());
 
+    // Shutdown hooks run once when the sender returns (SIGTERM/SIGINT, or any
+    // early exit). The `--stats-file` sink (a later port) registers its
+    // telemetry-file unlink here; nothing registers yet.
+    let on_shutdown = sender::ShutdownHooks::new();
+
     sender::run_sender_with_config(
         local_srt_port,
         receiver_host,
@@ -281,6 +286,7 @@ async fn main() -> Result<()> {
         critical_window,
         subscription_hub,
         binder,
+        on_shutdown,
     )
     .await
     .context("srtla_send failed")
