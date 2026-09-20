@@ -90,6 +90,14 @@ fn help_lists_the_ceraui_control_plane_flags() {
         "help must list --dry-run: {help}"
     );
     assert!(
+        help.contains("--stats-file"),
+        "help must list --stats-file: {help}"
+    );
+    assert!(
+        help.contains("--stats-file-interval"),
+        "help must list --stats-file-interval: {help}"
+    );
+    assert!(
         help.contains("srtla_send [OPTIONS] SRT_LISTEN_PORT SRTLA_HOST SRTLA_PORT BIND_IPS_FILE"),
         "usage must keep the documented positional shape: {help}"
     );

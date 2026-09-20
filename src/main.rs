@@ -13,7 +13,7 @@ use clap::builder::{PossibleValuesParser, TypedValueParser};
 use srtla_core::mode::SchedulingMode;
 use srtla_send::{
     config, control_socket, metrics, net, priority_listener, sender, stats, subscriptions,
-    toml_config, version,
+    telemetry_file, toml_config, version,
 };
 use tracing_subscriber::EnvFilter;
 
@@ -68,6 +68,16 @@ struct Cli {
     /// sockets (non-zero exit if the IP list is unusable)
     #[arg(long = "dry-run")]
     dry_run: bool,
+
+    /// Publish a per-uplink telemetry snapshot to this path (ADR-001). Opt-in:
+    /// omit it and no file is ever written. Each publish is atomic (temp
+    /// sibling, fsync, rename) and the file is unlinked on clean shutdown.
+    #[arg(long = "stats-file")]
+    stats_file: Option<std::path::PathBuf>,
+
+    /// Publish cadence for `--stats-file`, in milliseconds.
+    #[arg(long = "stats-file-interval", default_value_t = telemetry_file::DEFAULT_STATS_FILE_INTERVAL_MS)]
+    stats_file_interval: u64,
 
     /// Scheduling mode: classic, enhanced (default)
     //
@@ -272,11 +282,18 @@ async fn main() -> Result<()> {
         std::sync::Arc::new(net::AppleInterfaceBinder::new());
 
     // Shutdown hooks run once when the sender returns (SIGTERM/SIGINT, or any
-    // early exit). The `--stats-file` sink (a later port) registers its
-    // telemetry-file unlink here; nothing registers yet.
-    let on_shutdown = sender::ShutdownHooks::new();
+    // early exit). The `--stats-file` sink registers its telemetry-file unlink
+    // here so no stale snapshot outlives the process.
+    let mut on_shutdown = sender::ShutdownHooks::new();
+    let telemetry = args
+        .stats_file
+        .map(|path| spawn_telemetry_sink(path, args.stats_file_interval, &shared_stats));
+    if let Some(writer) = &telemetry {
+        let path = writer.path().to_path_buf();
+        on_shutdown.register(move || telemetry_file::remove(&path));
+    }
 
-    sender::run_sender_with_config(
+    let outcome = sender::run_sender_with_config(
         local_srt_port,
         receiver_host,
         receiver_port,
@@ -289,7 +306,44 @@ async fn main() -> Result<()> {
         on_shutdown,
     )
     .await
-    .context("srtla_send failed")
+    .context("srtla_send failed");
+
+    // Dropping the writer joins its thread, which drains any pending snapshot
+    // and then unlinks the live file and its `.tmp` sibling. Holding it until
+    // here makes that the LAST filesystem action of the process, so the unlink
+    // cannot be undone by a publish that was already in flight.
+    drop(telemetry);
+    outcome
+}
+
+/// Start the opt-in ADR-001 `--stats-file` sink and its publisher task.
+///
+/// The returned [`TelemetryWriter`] owns the OS thread that does the actual
+/// temp -> fsync -> `rename(2)`; the spawned task only serializes a snapshot and
+/// hands it over, so neither the fsync nor the rename ever runs on the
+/// packet-forwarding loop. The task holds a weak reference and exits once the
+/// caller drops the writer.
+fn spawn_telemetry_sink(
+    path: std::path::PathBuf,
+    interval_ms: u64,
+    shared_stats: &stats::SharedStats,
+) -> std::sync::Arc<telemetry_file::TelemetryWriter> {
+    let writer = std::sync::Arc::new(telemetry_file::TelemetryWriter::new(path, interval_ms));
+    let period = writer.period();
+    let weak = std::sync::Arc::downgrade(&writer);
+    let stats = shared_stats.clone();
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(period);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            ticker.tick().await;
+            let Some(writer) = weak.upgrade() else {
+                return;
+            };
+            writer.publish_prebuilt(&telemetry_file::build_current_telemetry_json(&stats.get()));
+        }
+    });
+    writer
 }
 
 /// Resolved `--dry-run` inputs: the parsed source IPs and the receiver

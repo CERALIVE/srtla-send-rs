@@ -193,6 +193,54 @@ pub struct LinkStats {
     pub in_flight_cap_active: bool,
 }
 
+impl Default for LinkStats {
+    /// A neutral, fully-inactive link.
+    ///
+    /// Exists so a caller that cares about three of these ~35 fields can say so
+    /// with `..Default::default()` instead of restating the rest; the telemetry
+    /// projection tests are the current consumers. `IpAddr` has no `Default`, so
+    /// the whole impl has to be written out rather than derived.
+    fn default() -> Self {
+        Self {
+            ip: IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+            label: String::new(),
+            connected: false,
+            timed_out: false,
+            window: 0,
+            in_flight: 0,
+            rtt_ms: 0,
+            nak_count: 0,
+            bitrate_bytes_per_sec: 0,
+            rtt_min_ms: 0.0,
+            rtt_velocity: 0.0,
+            base_score: 0,
+            quality_multiplier: 1.0,
+            weak: false,
+            weak_reason: weak_reason_str(WeakReason::Healthy).to_string(),
+            weak_share_permille: 0,
+            weak_threshold_permille: 0,
+            cc_state: "unknown".to_string(),
+            cc_climb_mode: "normal".to_string(),
+            cc_target_bps: 0,
+            cc_rtt_ewma_ms: 0.0,
+            cc_rtt_var_ms: 0.0,
+            cc_rtt_min_ms: 0.0,
+            cc_loss_permille: 0,
+            cc_loss_ewma: 0.0,
+            cc_loss_degraded: false,
+            batch_regime: "normal".to_string(),
+            stall_gated: false,
+            stall_gate_events: 0,
+            silence_pulls: 0,
+            sole_carrier: false,
+            sole_carrier_excluded: false,
+            sole_carrier_elections: 0,
+            in_flight_cap_packets: 0,
+            in_flight_cap_active: false,
+        }
+    }
+}
+
 /// Aggregate statistics snapshot.
 #[derive(Clone, Debug, Serialize)]
 pub struct StatsSnapshot {

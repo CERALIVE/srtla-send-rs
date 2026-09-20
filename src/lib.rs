@@ -13,6 +13,7 @@
 #[global_allocator]
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+pub mod bind_map;
 pub mod config;
 pub mod control;
 pub mod control_socket;
@@ -23,6 +24,10 @@ pub mod priority_listener;
 pub mod sender;
 pub mod stats;
 pub mod subscriptions;
+// ADR-001 telemetry: the document model + units, and the opt-in `--stats-file`
+// atomic publish mechanics that carry it.
+pub mod telemetry_doc;
+pub mod telemetry_file;
 pub mod toml_config;
 pub mod version;
 
