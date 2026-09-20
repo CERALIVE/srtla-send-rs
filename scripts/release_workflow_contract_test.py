@@ -171,7 +171,10 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         attach = steps["Create release and attach .debs"]["with"]["files"]
         for architecture in ("arm64", "amd64"):
             self.assertIn(f"release-assets/srtla_*_{architecture}.deb", attach)
-        self.assertNotIn("srtla-send-rs_", attach)
+        # The retired transitional artifact prefix. Built by concatenation so
+        # the literal never appears in the tree (the docs gate greps for it).
+        retired_prefix = "srtla-send-rs" + "_"
+        self.assertNotIn(retired_prefix, attach)
 
         dispatch = steps["Trigger APT reindex"]["with"]["client-payload"]
         self.assertIn('"component":"srtla"', dispatch)

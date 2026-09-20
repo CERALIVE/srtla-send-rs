@@ -1,11 +1,13 @@
 # SRTLA Sender (Rust)
 
-[![CI](https://github.com/irlserver/srtla_send/actions/workflows/ci.yml/badge.svg)](https://github.com/irlserver/srtla_send/actions/workflows/ci.yml)
-[![Build Debian Packages](https://github.com/irlserver/srtla_send/actions/workflows/build-debian.yml/badge.svg)](https://github.com/irlserver/srtla_send/actions/workflows/build-debian.yml)
+[![CI](https://github.com/CERALIVE/srtla-send-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/CERALIVE/srtla-send-rs/actions/workflows/ci.yml)
+[![Release](https://github.com/CERALIVE/srtla-send-rs/actions/workflows/release.yml/badge.svg)](https://github.com/CERALIVE/srtla-send-rs/actions/workflows/release.yml)
 
 A Rust implementation of the SRTLA bonding sender. SRTLA is a SRT transport proxy with link aggregation for connection bonding that can transport [SRT](https://github.com/Haivision/srt/) traffic over multiple network links for capacity aggregation and redundancy. Traffic is balanced dynamically, depending on the network conditions. The intended application is bonding mobile modems for live streaming.
 
 This application is experimental. Be prepared to troubleshoot it and experiment with various settings for your needs.
+
+This repository is [CERALIVE](https://github.com/CERALIVE)'s fork of [`irlserver/srtla_send`](https://github.com/irlserver/srtla_send). Upstream's code is used as-is; a thin layer of operator flags, telemetry, and packaging that the CeraUI device integration needs sits on top. That layer is described in [The CERALIVE layer](#the-ceralive-layer) below; everything else on this page is upstream's documentation and applies unchanged.
 
 ## Credits & Acknowledgments
 
@@ -112,6 +114,8 @@ The project uses GitHub Actions for continuous integration with automated testin
 - Security vulnerability scanning
 - Build verification across multiple Rust versions
 
+The fork's workflows are described under [CI and packaging](#ci-and-packaging) in the CERALIVE section.
+
 ## Usage
 
 ```bash
@@ -135,9 +139,12 @@ srtla_send [OPTIONS] SRT_LISTEN_PORT SRTLA_HOST SRTLA_PORT BIND_IPS_FILE
 - `--no-rehome`: Disable whole-bond re-home (on by default). When every uplink has been down for longer than the all-links-failed window *and* the receiver hostname no longer resolves to the address the bond is pinned to, the sender moves every uplink together to the newly-resolved address and re-registers from scratch over the ordinary REG1/REG2/REG3 flow. It is deliberately conservative: a bond with any live uplink is never touched, a merely reordered DNS answer is not a move, a failed lookup is not a move, and at most one migration is attempted per minute. Pass this to keep the old behaviour of staying on the cached address until the process is restarted.
 - `--config <PATH>`: Path to a TOML config file (reloaded on SIGHUP)
 - `--control-socket <PATH>`: Unix domain socket path for remote control (e.g., `/tmp/srtla.sock`)
+- `--conn-timeout-ms <MS>`: Per-link liveness timeout (default 5000, clamped to 1000..=60000; also settable at runtime via `set_conn_timeout`)
 - `--priority-bind <ADDR:PORT>`: UDP sidecar address for encoder keyframe priority hints
 - `--metrics-bind <ADDR:PORT>`: Expose a Prometheus scrape endpoint at `/metrics`
 - `-v, --version`: Print version and exit (see [Version output](#version-output))
+
+The CERALIVE fork adds `--verbose`, `--dry-run`, `--stats-file`, `--stats-file-interval`, `--bind-map`, and `--capabilities-json`. They are documented in [The CERALIVE layer](#the-ceralive-layer).
 
 ### Version output
 
@@ -145,17 +152,101 @@ srtla_send [OPTIONS] SRT_LISTEN_PORT SRTLA_HOST SRTLA_PORT BIND_IPS_FILE
 
 ```bash
 $ ./target/release/srtla_send -v
-3.0.0 (main@974c8b9) [srtla_send]
+4.1.0 (main@974c8b9) [srtla_send]
 ```
 
 The parenthetical is emitted only when the build could resolve a commit. Building outside a git checkout (an exported source tarball, a container that copies only `src/`, a vendored crate) is a normal build with nothing to name, so the metadata is omitted entirely rather than filled with a placeholder:
 
 ```bash
 $ ./target/release/srtla_send -v
-3.0.0 [srtla_send]
+4.1.0 [srtla_send]
 ```
 
-A tag build (detached HEAD) reports the bare hash, `3.0.0 (974c8b9) [srtla_send]`, and a build from a modified working tree suffixes the hash with `-dirty`.
+A tag build (detached HEAD) reports the bare hash, `4.1.0 (974c8b9) [srtla_send]`, and a build from a modified working tree suffixes the hash with `-dirty`.
+
+## The CERALIVE layer
+
+Everything in this section is CERALIVE's addition on top of upstream. It exists because [CeraUI](https://github.com/CERALIVE/CeraUI) spawns `srtla_send` on the device, reads its telemetry, and packages it into the device image. The contract CeraUI depends on is written down in [`AGENTS.md`](AGENTS.md) (section "PARITY CONTRACT"); this is the operator's view of the same things.
+
+### Version and upstream sync
+
+The fork is based on upstream `df0b3938791ff24eced4aed8b29e3d49d0efb639` (v4.0.1) and ships as **`4.1.0`**. The version follows upstream's semver line, not CalVer, so a CERALIVE release stays traceable to the upstream release it builds on. Upstream merges are manual and gated: they land in a dedicated PR, run the full gate on the pinned toolchain, and must not regress the contract below. There is no automatic sync. The upstream remote is added only for the duration of a merge and removed before the PR is opened.
+
+### Toolchain
+
+`rust-toolchain.toml` pins `nightly-2026-06-12` (the crate needs nightly for its `rustfmt` configuration; upstream floats on `nightly`, the fork pins a date so the device image is reproducible). `cargo` picks it up automatically; the "Build" section above still applies.
+
+### Flags added by the fork
+
+- `--verbose`: enable debug-level logging (equivalent to `RUST_LOG=debug` for the sender's own spans).
+- `--dry-run`: parse `BIND_IPS_FILE`, resolve `SRTLA_HOST`, print both, and exit `0` **without binding any socket**. A missing, unreadable, empty, or all-invalid IP list exits non-zero with a specific error. With `--bind-map`, an unusable sidecar is also an error here rather than a fallback.
+- `--stats-file <PATH>`: publish the telemetry snapshot described below to this path. Opt-in: omit the flag and no file is ever written.
+- `--stats-file-interval <MS>`: publish cadence for `--stats-file` (default `1000`).
+- `--bind-map <PATH>`: an optional sidecar that adds interface binding and stable link identity to `BIND_IPS_FILE`, described below.
+- `--capabilities-json`: print one line of JSON describing what this build supports and exit `0`, before logging starts and without binding anything.
+
+Two upstream defaults matter to the device integration and are left as upstream ships them: whole-bond re-home and stalled-link deselect are **on** (`--no-rehome`, `--no-stall-deselect` to opt out), and the per-link liveness timeout defaults to 5 s. CeraUI passes `--conn-timeout-ms 15000` on the command line to match the bonding receiver's own timeout; the binary does not bake that value in.
+
+### Telemetry file contract
+
+With `--stats-file`, the sender writes a single-line JSON document on every interval. Each publish is atomic (written to a temp sibling, `fsync`ed, then renamed over the target), so a reader never sees a partial file, and the fsync runs off the packet-forwarding loop. On a clean `SIGTERM`/`SIGINT` the file and its `.tmp` sibling are removed.
+
+```json
+{"schema_version":1,"last_updated_ms":1749556546000,"connections":[{"conn_id":"0","rtt_ms":42,"nak_count":3,"weight_percent":50,"window":8192,"in_flight":100,"bitrate_bps":2500000,"bytes_sent_total":812000000,"iface":"wwan0","link_id":"modem-a"},{"conn_id":"1","rtt_ms":42,"nak_count":3,"weight_percent":50,"window":8192,"in_flight":100,"bitrate_bps":2500000,"bytes_sent_total":812000000,"iface":"wwan1","link_id":"modem-b"}],"bytes_sent_total":1620000000,"bind_map_status":{"state":"active"},"disposition":{"state":"mapped"}}
+```
+
+- `schema_version` is `1` and names the shape of the **required** fields. The schema grows only by addition; added fields are always optional and never bump the version.
+- `last_updated_ms` is wall-clock epoch milliseconds (a consumer compares it against its own clock to detect a stale producer).
+- The seven required per-connection fields are `conn_id`, `rtt_ms`, `nak_count`, `weight_percent`, `window`, `in_flight`, `bitrate_bps`. `bitrate_bps` is wire bytes per second **× 8**. `conn_id` is the string index of the uplink in `BIND_IPS_FILE`, so a `SIGHUP` reorder changes it; anything that must survive a reload keys on `link_id` instead.
+- `bytes_sent_total` (per connection and for the whole bond) is a cumulative **byte** count, no ×8, monotonic for the process lifetime: it survives a link's socket replacement and does not go backwards when a reload drops a link. Absent means unknown, never zero. See [ADR-002](docs/adr/ADR-002-session-bytes-telemetry.md).
+- `bind_map_status` and `disposition` are always present at the top level (an unmapped run reports `{"state":"absent"}` and `{"state":"legacy_unique_only"}`). The per-connection `iface` and `link_id` appear only for a mapped link and are omitted (never `null`, never `""`) otherwise, as is `bind_map_status.reason` when there is no degradation. See [ADR-003](docs/adr/ADR-003-bind-map-contract.md).
+- An idle sender publishes `"connections":[]`; it does not stop publishing.
+
+`docs/adr/ADR-001-control-protocol.md` holds the original schema record. Its control-socket transport section is superseded by [ADR-004](docs/adr/ADR-004-control-dialect.md): the sender uses upstream's JSON-RPC dialect as-is and extends it only additively. Note that `get_stats` and the `stats` subscription return upstream's richer stats snapshot (whose rate field is `bitrate_bytes_per_sec`, in bytes), extended with the same optional `bytes_sent_total`, `iface`, `link_id`, `bind_map_status`, and `disposition` fields. The file is the ADR-001 document; the socket is upstream's shape plus those additions.
+
+### Bind-map sidecar
+
+`BIND_IPS_FILE` identifies an uplink by source IP alone, which cannot tell two identical USB modems apart when both present the same address. `--bind-map <PATH>` names a separate JSON file that describes the IP list **positionally**: the Nth row describes the Nth accepted IP line and carries `{link_id, ip, iface, id_path?}`, under a header of `{schema_version, generation, ips_file_sha256}`. The IP list itself is byte-unchanged, and without the flag the sender behaves exactly as upstream does.
+
+With a mapping in place, a link's socket is bound to its interface with `SO_BINDTODEVICE` **and** to its source address, so egress leaves the named interface and the wire source is deterministic. `link_id` is the stable identity across reloads, reconnects, and interface changes. The interface is re-resolved by name every housekeeping tick (a replugged modem gets a fresh socket; a vanished one waits for a reload), and each interface's default route is observed read-only and reported on its own axis in the status log. The sidecar must name the exact IP-list bytes it describes; a mismatch is retried briefly and then fails open in a duplicate-safe way (at startup, one representative of a same-IP collision group is kept and the rest reported excluded; on a reload, the last valid mapped pool is retained). Full contract: [ADR-003](docs/adr/ADR-003-bind-map-contract.md).
+
+### Capability probe
+
+A supervisor has to decide **before spawning** whether the installed binary understands the optional flags. `--capabilities-json` answers that:
+
+```bash
+$ srtla_send --capabilities-json
+{"schema_version":1,"binary":"srtla_send","version":"4.1.0","capabilities":{"bind_map":true,"stats_file":true,"dry_run":true,"control_socket_jsonrpc":true,"conn_timeout_ms":true,"modes":["classic","enhanced"]}}
+```
+
+The `get_capabilities` JSON-RPC method on `--control-socket` returns the same document plus a `methods` array. A binary that predates the flag rejects it with a usage error and a non-zero exit; callers treat **any** non-zero exit, unparseable output, or timeout as "no support" and fall back to the plain spawn. See [ADR-004](docs/adr/ADR-004-control-dialect.md).
+
+### Control socket
+
+The control dialect is upstream's JSON-RPC 2.0 exactly as documented in [docs/CONTROL_PROTOCOL.md](docs/CONTROL_PROTOCOL.md). CERALIVE adds `get_capabilities` and the optional telemetry fields above, nothing else: no handshake method, no second subscription method, no alternative naming. Subscriptions carry no replay of the last frame, so a client that wants immediate state calls `get_stats` once after subscribing.
+
+### Startup and shutdown behavior
+
+- The local `SRT_LISTEN_PORT` listener is bound before the IP list is read and before any uplink is dialed, so an encoder that connects immediately after spawn never hits a closed port.
+- A missing, empty, or all-invalid `BIND_IPS_FILE` at startup is not fatal: the sender starts with no uplinks and waits for a `SIGHUP`.
+- A `SIGHUP` reload that resolves to zero valid source IPs is refused with a specific log line and the existing links keep running.
+- `SIGTERM`/`SIGINT` exit `0` promptly and remove the stats file.
+- Control-plane frames (keepalive, REG1/REG2) are zero-padded to at least 32 bytes so carrier NATs do not drop them. Data is never padded.
+
+### CI and packaging
+
+Two workflows, both on the pinned nightly:
+
+- `ci.yml` (push and PR): formatting, clippy with warnings as errors, the bounded test suite, `cargo audit` and `cargo deny`, upstream's stable/beta/Windows/macOS lanes, a blocking **Loom** lane over the subscription hub (`RUSTFLAGS="--cfg loom" cargo test --test subscription_loom`, 2 tests), a blocking **Miri** lane over the five pure pointer-logic tests in `src/net/batch_recv.rs`, and a `.deb` build matrix for `arm64` and `amd64` so a packaging break is caught before any tag.
+- `release.yml` (tag `v*`): the same gate, then both `.deb`s built inside `debian:bookworm-slim` with a **`GLIBC_2.36`** ceiling check on each binary (Debian 12 is the device image), attached to the GitHub release with their `.sha256` files.
+
+The package is **`srtla`**, the binary installs at `/usr/bin/srtla_send`, and the artifact is named `srtla_<version>_<arch>.deb` (`srtla_4.1.0_arm64.deb`, `srtla_4.1.0_amd64.deb`). `ci/build-deb.sh` is the single source of truth for that metadata and re-runs the device image builder's fetch glob against the real filename as a self-test. A release tag must be `v<version>` with the version taken from `Cargo.toml`.
+
+Privileged network-namespace tests (`tests/netns_*.rs`, including the duplicate-IP twin-modem scenarios in `tests/netns_twin.rs`) self-skip on ordinary runners and are run locally through `scripts/netns_test_gate.sh`.
+
+### License
+
+Upstream's MIT license and credits are kept intact in this repository. CERALIVE applies AGPLv3 at the distribution layer, not by altering upstream's notices.
 
 ## Example Usage
 
