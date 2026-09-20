@@ -1264,7 +1264,7 @@ mod tests {
         let payload = [0x11u8; 1316];
         connections[0].queue_data_packet(&payload, None, now_ms());
         assert!(connections[0].has_queued_packets());
-        flush_all_batches(&mut connections, &conn_io, &mut seq_tracker).await;
+        flush_all_batches(&mut connections, &mut conn_io, &mut seq_tracker).await;
 
         let mut buf = [0u8; 2048];
         let (n, _) = tokio::time::timeout(Duration::from_secs(2), receiver.recv_from(&mut buf))

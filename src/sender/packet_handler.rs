@@ -11,7 +11,7 @@ use tracing::{debug, info, trace, warn};
 
 use super::connections::recover_connection;
 use super::sequence::SequenceTracker;
-use super::uplink::{ConnIoMap, UplinkPacket};
+use super::uplink::{ConnIo, ConnIoMap, UplinkPacket};
 use crate::config::{ConfigSnapshot, DynamicConfig};
 
 /// Type alias for instant ACK forwarding: (client_addr, packet_data)
@@ -287,7 +287,7 @@ pub async fn handle_srt_packet(
     res: Result<(usize, SocketAddr), std::io::Error>,
     recv_buf: &mut [u8],
     connections: &mut [SrtlaConnection],
-    conn_io: &ConnIoMap,
+    conn_io: &mut ConnIoMap,
     last_selected_idx: &mut Option<usize>,
     seq_tracker: &mut SequenceTracker,
     last_client_addr: &mut Option<SocketAddr>,
@@ -400,7 +400,7 @@ pub async fn forward_via_connection(
     pkt: &[u8],
     seq: Option<u32>,
     connections: &mut [SrtlaConnection],
-    conn_io: &ConnIoMap,
+    conn_io: &mut ConnIoMap,
     last_selected_idx: &mut Option<usize>,
     seq_tracker: &mut SequenceTracker,
     packet_time_ms: u64,
@@ -452,9 +452,9 @@ pub async fn forward_via_connection(
     }
 
     // Flush if batch threshold reached
-    if needs_flush && let Some(io) = conn_io.get(&connections[sel_idx].conn_id) {
+    if needs_flush && let Some(io) = conn_io.get_mut(&conn_id) {
         let conn = &mut connections[sel_idx];
-        flush_connection(conn, &io.socket, seq_tracker, "batch flush").await;
+        flush_connection(conn, io, seq_tracker, "batch flush").await;
     }
 }
 
@@ -491,7 +491,7 @@ async fn send_stall_probes(
     pkt: &[u8],
     probe_seq: u32,
     connections: &mut [SrtlaConnection],
-    conn_io: &ConnIoMap,
+    conn_io: &mut ConnIoMap,
     seq_tracker: &mut SequenceTracker,
     packet_time_ms: u64,
 ) {
@@ -521,8 +521,8 @@ async fn send_stall_probes(
         let mut probe: SmallVec<u8, 1500> = SmallVec::from_slice_copy(pkt);
         srtla_protocol::set_srt_data_retransmit(&mut probe);
         let needs_flush = conn.queue_probe_packet(&probe, probe_seq, packet_time_ms);
-        if needs_flush && let Some(io) = conn_io.get(&conn.conn_id) {
-            flush_connection(conn, &io.socket, seq_tracker, "probe batch flush").await;
+        if needs_flush && let Some(io) = conn_io.get_mut(&conn.conn_id) {
+            flush_connection(conn, io, seq_tracker, "probe batch flush").await;
         }
     }
 }
@@ -567,11 +567,27 @@ async fn send_connection_batch(
 /// links are healthy, which is exactly what should carry it.
 async fn flush_connection(
     conn: &mut SrtlaConnection,
-    socket: &crate::net::BatchUdpSocket,
+    io: &mut ConnIo,
     seq_tracker: &mut SequenceTracker,
     what: &str,
 ) {
-    if let Err(e) = send_connection_batch(conn, socket).await {
+    if let Err(e) = send_connection_batch(conn, &io.socket).await {
+        // ADR-003: on a device-bound socket, `ENODEV`/`ENETUNREACH` says the
+        // *binding* is dead, not that this particular send was unlucky —
+        // `SO_BINDTODEVICE` froze an ifindex that has stopped describing the
+        // device, and no retry on this socket can ever heal it. Recording it
+        // here lets the data path reach the verdict the housekeeping
+        // re-resolution would reach up to a full tick later. Inert for an
+        // unmapped link, whose socket is not device-bound at all.
+        if let Some(fault) = io.egress.note_send_error(&e.source) {
+            warn!(
+                "{}: egress fault {} on {}; the socket's interface binding is dead and will not \
+                 be reused",
+                conn.label,
+                fault.as_str(),
+                io.egress.iface().map_or("-", |iface| iface.as_str())
+            );
+        }
         warn!("{}: {what} failed, marking for recovery: {}", conn.label, e);
         recover_connection(conn, seq_tracker);
     }
@@ -583,7 +599,7 @@ async fn flush_connection(
 /// before iterating. This avoids work on the 15ms timer when traffic is idle.
 pub async fn flush_all_batches(
     connections: &mut [SrtlaConnection],
-    conn_io: &ConnIoMap,
+    conn_io: &mut ConnIoMap,
     seq_tracker: &mut SequenceTracker,
 ) {
     // One monotonic read drives the flush-window check for every connection.
@@ -602,9 +618,9 @@ pub async fn flush_all_batches(
     // Now do the actual flush for connections that need it
     for conn in connections.iter_mut() {
         if (conn.needs_batch_flush(now) || conn.has_queued_packets())
-            && let Some(io) = conn_io.get(&conn.conn_id)
+            && let Some(io) = conn_io.get_mut(&conn.conn_id)
         {
-            flush_connection(conn, &io.socket, seq_tracker, "periodic batch flush").await;
+            flush_connection(conn, io, seq_tracker, "periodic batch flush").await;
         }
     }
 }
@@ -617,8 +633,8 @@ mod tests {
     use socket2::{Domain, Protocol, Socket, Type};
 
     use super::*;
-    use crate::net::{BatchUdpSocket, SourceIpBinder};
-    use crate::sender::uplink::ConnIo;
+    use crate::bind_map::IfaceName;
+    use crate::net::{BatchUdpSocket, EgressLifecycle, RouteHealth, SourceIpBinder, UplinkSpec};
     use crate::test_helpers::create_test_connection;
 
     /// An uplink whose socket can never send: an IPv4 socket pinned to an IPv6
@@ -641,6 +657,90 @@ mod tests {
         )
     }
 
+    /// An uplink whose peer can never be reached: `2001:db8::/32` is the RFC
+    /// 3849 documentation prefix, so it is never globally routed, and the
+    /// socket's loopback source address cannot reach a global destination
+    /// either. `sendmmsg` therefore answers `ENETUNREACH` deterministically,
+    /// without needing a privileged interface to be torn down under the test.
+    ///
+    /// `iface` is what makes the link *mapped*: the same failing socket with
+    /// `None` is the legacy link, which is the control the ADR-003 assertion
+    /// needs.
+    fn unreachable_egress_conn_io(iface: Option<&str>) -> ConnIo {
+        let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP)).unwrap();
+        socket
+            .bind(&"[::1]:0".parse::<SocketAddr>().unwrap().into())
+            .unwrap();
+        socket.set_nonblocking(true).unwrap();
+        let remote: SocketAddr = "[2001:db8::1]:9".parse().unwrap();
+        let iface = iface.map(|name| IfaceName::parse(name).expect("fixture interface name"));
+        ConnIo {
+            socket: Arc::new(BatchUdpSocket::new(socket, remote).unwrap()),
+            binder: Arc::new(SourceIpBinder),
+            remote,
+            spec: UplinkSpec {
+                ip: IpAddr::V6(Ipv6Addr::LOCALHOST),
+                iface: iface.clone(),
+                link_id: None,
+            },
+            egress: EgressLifecycle::for_spec(iface.as_ref()),
+            route_health: RouteHealth::Unknown,
+        }
+    }
+
+    /// ADR-003: the data path must reach the same verdict the housekeeping
+    /// re-resolution would. `SO_BINDTODEVICE` freezes an ifindex at bind time,
+    /// so `ENETUNREACH`/`ENODEV` on a device-bound socket means the *binding* is
+    /// dead — retrying on it can never heal. Without this arm the flush error
+    /// was merely logged and the stale binding survived until the next tick.
+    #[tokio::test]
+    async fn a_failed_flush_on_a_mapped_link_invalidates_its_device_binding() {
+        let mut connections = vec![create_test_connection().await];
+        let conn_id = connections[0].conn_id;
+        let mut conn_io = ConnIoMap::new();
+        conn_io.insert(conn_id, unreachable_egress_conn_io(Some("wwan0")));
+
+        let now = srtla_core::utils::now_ms();
+        let mut seq_tracker = SequenceTracker::new();
+        connections[0].queue_data_packet(&[0u8; 1316], Some(4242), now);
+
+        flush_all_batches(&mut connections, &mut conn_io, &mut seq_tracker).await;
+
+        assert!(
+            !connections[0].connected,
+            "precondition: the socket must really have refused the batch"
+        );
+        assert!(
+            conn_io[&conn_id].egress.needs_rebind(),
+            "an unreachable device binding must be invalidated by the send that saw it"
+        );
+    }
+
+    /// The falsifiability control: the *same* failing socket on an unmapped
+    /// link. Those errno values carry no ifindex meaning for a socket that was
+    /// never device-bound, so the legacy recovery path must be left exactly as
+    /// it was.
+    #[tokio::test]
+    async fn a_failed_flush_on_an_unmapped_link_never_touches_the_binding() {
+        let mut connections = vec![create_test_connection().await];
+        let conn_id = connections[0].conn_id;
+        let mut conn_io = ConnIoMap::new();
+        conn_io.insert(conn_id, unreachable_egress_conn_io(None));
+
+        let now = srtla_core::utils::now_ms();
+        let mut seq_tracker = SequenceTracker::new();
+        connections[0].queue_data_packet(&[0u8; 1316], Some(4242), now);
+
+        flush_all_batches(&mut connections, &mut conn_io, &mut seq_tracker).await;
+
+        assert!(
+            !connections[0].connected,
+            "precondition: the socket must really have refused the batch"
+        );
+        assert!(!conn_io[&conn_id].egress.needs_rebind());
+        assert!(!conn_io[&conn_id].egress.is_removed());
+    }
+
     /// The periodic 15ms flush used to only `warn!` when the socket refused the
     /// batch, while `take_batch` had already registered every packet in it as
     /// in-flight. That left phantom in-flight packets crushing the link's score
@@ -660,7 +760,7 @@ mod tests {
         assert!(connections[0].has_queued_packets());
         assert!(connections[0].connected);
 
-        flush_all_batches(&mut connections, &conn_io, &mut seq_tracker).await;
+        flush_all_batches(&mut connections, &mut conn_io, &mut seq_tracker).await;
 
         assert_eq!(
             connections[0].in_flight_packets, 0,
@@ -686,14 +786,14 @@ mod tests {
     async fn successful_flush_registers_the_batch_and_stamps_last_sent() {
         let mut connections = vec![create_test_connection().await];
         let conn_id = connections[0].conn_id;
-        let conn_io = crate::test_helpers::create_test_conn_io_map(&connections);
+        let mut conn_io = crate::test_helpers::create_test_conn_io_map(&connections);
 
         let now = srtla_core::utils::now_ms();
         let mut seq_tracker = SequenceTracker::new();
         connections[0].queue_data_packet(&[0u8; 1316], Some(7), now);
         seq_tracker.insert(7, conn_id, now);
 
-        flush_all_batches(&mut connections, &conn_io, &mut seq_tracker).await;
+        flush_all_batches(&mut connections, &mut conn_io, &mut seq_tracker).await;
 
         assert_eq!(connections[0].in_flight_packets, 1);
         assert!(connections[0].connected);

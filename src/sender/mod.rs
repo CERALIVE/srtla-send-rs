@@ -315,7 +315,7 @@ pub async fn run_sender_with_config(
                             res,
                             &mut recv_buf,
                             &mut connections,
-                            &conn_io,
+                            &mut conn_io,
                             &mut last_selected_idx,
                             &mut seq_tracker,
                             &mut last_client_addr,
@@ -492,7 +492,7 @@ pub async fn run_sender_with_config(
                     }
                     $($sighup_branch)*
                     _ = batch_flush_timer.tick() => {
-                        flush_all_batches(&mut connections, &conn_io, &mut seq_tracker).await;
+                        flush_all_batches(&mut connections, &mut conn_io, &mut seq_tracker).await;
                     }
                 }
             }
