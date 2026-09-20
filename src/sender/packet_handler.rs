@@ -633,11 +633,12 @@ mod tests {
             .unwrap();
         socket.set_nonblocking(true).unwrap();
         let remote = SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 9);
-        ConnIo {
-            socket: Arc::new(BatchUdpSocket::new(socket, remote).unwrap()),
-            binder: Arc::new(SourceIpBinder),
+        ConnIo::unmapped(
+            Arc::new(BatchUdpSocket::new(socket, remote).unwrap()),
+            Arc::new(SourceIpBinder),
             remote,
-        }
+            IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        )
     }
 
     /// The periodic 15ms flush used to only `warn!` when the socket refused the

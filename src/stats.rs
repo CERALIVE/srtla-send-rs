@@ -37,8 +37,23 @@ use crate::config::ConfigSnapshot;
 /// plus additional context useful for external monitoring.
 #[derive(Clone, Debug, Serialize)]
 pub struct LinkStats {
+    /// This link's position in IP-list order — the same `conn_id` the ADR-001
+    /// telemetry document publishes, and therefore **transient**: a SIGHUP that
+    /// reorders the file hands the same modem a different one. Correlates a
+    /// record across the two surfaces within one snapshot; anything that must
+    /// survive a reload keys on `link_id` instead.
+    pub conn_id: usize,
     /// Local IP address used for this link
     pub ip: IpAddr,
+    /// Egress interface this link's socket is bound to (ADR-003). Absent — not
+    /// empty — for an unmapped link, so "no bind-map row" stays distinguishable
+    /// from "an interface named the empty string".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub iface: Option<String>,
+    /// The bind-map sidecar's writer-assigned identity, echoed verbatim
+    /// (ADR-003). The sender never invents one, so an unmapped link has none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link_id: Option<String>,
     /// Human-readable label (e.g., "host:port via ip")
     pub label: String,
     /// True if SRTLA registration completed (REG3 received)
@@ -205,7 +220,10 @@ impl Default for LinkStats {
     /// the whole impl has to be written out rather than derived.
     fn default() -> Self {
         Self {
+            conn_id: 0,
             ip: IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+            iface: None,
+            link_id: None,
             label: String::new(),
             connected: false,
             timed_out: false,
@@ -287,6 +305,17 @@ pub struct StatsSnapshot {
 
     /// Per-link details
     pub links: Vec<LinkStats>,
+
+    /// The ADR-003 operating-mode pair: is the bind-map in force
+    /// (`bind_map_status`), and what is the sender actually running
+    /// (`disposition`). Flattened so both appear at the top level of `get_stats`
+    /// and of the telemetry document under their own names.
+    ///
+    /// Composed by [`SharedStats::get`] from its own lock rather than rebuilt in
+    /// [`SharedStats::update`]: the snapshot is rebuilt on every ~1 s
+    /// housekeeping tick while this changes only on a reload.
+    #[serde(flatten)]
+    pub bind_map: crate::bind_map::BindMapReport,
 }
 
 impl Default for StatsSnapshot {
@@ -303,8 +332,19 @@ impl Default for StatsSnapshot {
             weak_link_selected_delay_ms: 0,
             negotiated_latency_ms: 0,
             links: Vec::new(),
+            bind_map: crate::bind_map::BindMapReport::default(),
         }
     }
+}
+
+/// The ADR-003 identity echo for one uplink.
+///
+/// Both halves are `None` for an unmapped link, which is what makes a legacy
+/// run's telemetry document byte-identical to the pre-ADR-003 producer's.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LinkIdentity {
+    pub iface: Option<String>,
+    pub link_id: Option<String>,
 }
 
 /// Monotonic bond-level byte accumulator behind [`StatsSnapshot::session_bytes_sent`].
@@ -356,6 +396,11 @@ impl SessionBytes {
 pub struct SharedStats {
     inner: Arc<RwLock<StatsSnapshot>>,
     session_bytes: Arc<Mutex<SessionBytes>>,
+    /// The ADR-003 operating mode, on its OWN lock. `update` rebuilds the whole
+    /// snapshot every housekeeping tick while this changes only on a reload, so
+    /// keeping it here means a reload cannot be overwritten by the next tick and
+    /// a tick never has to know about the bind-map.
+    bind_map: Arc<RwLock<crate::bind_map::BindMapReport>>,
 }
 
 impl SharedStats {
@@ -363,6 +408,17 @@ impl SharedStats {
         Self {
             inner: Arc::new(RwLock::new(StatsSnapshot::default())),
             session_bytes: Arc::new(Mutex::new(SessionBytes::default())),
+            bind_map: Arc::new(RwLock::new(crate::bind_map::BindMapReport::default())),
+        }
+    }
+
+    /// Record the sender's current ADR-003 operating mode.
+    ///
+    /// Called once at startup and once per reload — never from the housekeeping
+    /// tick, which is exactly why it has its own lock.
+    pub fn set_bind_map(&self, report: crate::bind_map::BindMapReport) {
+        if let Ok(mut guard) = self.bind_map.write() {
+            *guard = report;
         }
     }
 
@@ -371,12 +427,14 @@ impl SharedStats {
     /// `classification` carries the weak-link classifier's per-tick output.
     /// Pass `None` when the classifier is disabled or unavailable; the weak
     /// fields are populated with neutral defaults in that case.
+    #[allow(clippy::too_many_arguments)]
     pub fn update(
         &self,
         connections: &[SrtlaConnection],
         config: &ConfigSnapshot,
         classification: Option<&ClassificationResult>,
         link_cc: Option<&HashMap<u64, LinkCcSnapshot>>,
+        identities: Option<&HashMap<u64, LinkIdentity>>,
     ) {
         let current_time_ms = now_ms();
         let quality_enabled = config.quality_enabled && !config.mode.is_classic();
@@ -400,7 +458,7 @@ impl SharedStats {
             ..Default::default()
         };
 
-        for conn in connections {
+        for (idx, conn) in connections.iter().enumerate() {
             let timed_out = conn.is_timed_out(current_time_ms);
             let is_active = conn.connected && !timed_out;
 
@@ -464,8 +522,12 @@ impl SharedStats {
             let in_flight_cap_pkts = cap.unwrap_or(0).max(0) as u32;
             let in_flight_cap_active = cap.map(|c| conn.in_flight_packets > c).unwrap_or(false);
 
+            let identity = identities.and_then(|m| m.get(&conn.conn_id));
             let link = LinkStats {
+                conn_id: idx,
                 ip: conn.local_ip,
+                iface: identity.and_then(|i| i.iface.clone()),
+                link_id: identity.and_then(|i| i.link_id.clone()),
                 label: conn.label.clone(),
                 connected: conn.connected,
                 timed_out,
@@ -517,12 +579,18 @@ impl SharedStats {
         }
     }
 
-    /// Get current stats snapshot.
+    /// Get current stats snapshot, with the ADR-003 operating mode composed in
+    /// from its own lock.
     pub fn get(&self) -> StatsSnapshot {
-        self.inner
+        let mut snapshot = self
+            .inner
             .read()
             .map(|guard| guard.clone())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        if let Ok(guard) = self.bind_map.read() {
+            snapshot.bind_map = guard.clone();
+        }
+        snapshot
     }
 
     /// Serialize to JSON.
@@ -568,7 +636,7 @@ mod tests {
             quality_enabled: true,
             ..ConfigSnapshot::default()
         };
-        stats.update(&[], &config, None, None);
+        stats.update(&[], &config, None, None, None);
         let snapshot = stats.get();
         assert_eq!(snapshot.mode, "enhanced");
         assert!(snapshot.quality_enabled);
@@ -655,7 +723,7 @@ mod tests {
             quality_enabled: true,
             ..ConfigSnapshot::default()
         };
-        stats.update(&[], &config, None, None);
+        stats.update(&[], &config, None, None, None);
         assert_eq!(stats.get().session_bytes_sent, 0);
     }
 }

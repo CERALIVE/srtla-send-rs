@@ -64,6 +64,12 @@ struct Cli {
     #[arg(required_unless_present_any = EARLY_EXIT_FLAGS)]
     ips_file: Option<String>,
 
+    /// Path to the optional ADR-003 bind-map sidecar describing BIND_IPS_FILE
+    /// positionally (`link_id` + egress interface per row). Additive and fully
+    /// optional: omit it and the sender behaves exactly as it always has.
+    #[arg(long = "bind-map")]
+    bind_map: Option<String>,
+
     /// Unix domain socket path for remote toggle control (e.g.,
     /// /tmp/srtla.sock)
     #[arg(long = "control-socket")]
@@ -218,6 +224,17 @@ async fn main() -> Result<()> {
     // which this path never reaches.
     if args.dry_run {
         let report = dry_run_resolve(ips_file, receiver_host, receiver_port).await?;
+        // A degraded map is an ERROR here, not a fallback: the operator asked
+        // whether the configuration is valid, so answering "it will limp" with
+        // exit 0 would defeat the flag.
+        let mapping = match args.bind_map.as_deref() {
+            None => None,
+            Some(sidecar) => Some(
+                srtla_send::bind_map::dry_run_validate(ips_file, sidecar)
+                    .await
+                    .map_err(|e| anyhow!("bind-map is unusable ({}): {e}", e.reason()))?,
+            ),
+        };
         println!("dry-run: configuration valid; no sockets bound");
         println!(
             "receiver {receiver_host}:{receiver_port} resolves to {} address(es):",
@@ -229,6 +246,21 @@ async fn main() -> Result<()> {
         println!("source uplink IPs ({}):", report.source_ips.len());
         for ip in &report.source_ips {
             println!("  {ip}");
+        }
+        if let Some(pool) = mapping {
+            println!(
+                "bind-map generation {} maps {} uplink(s):",
+                pool.generation,
+                pool.rows.len()
+            );
+            for row in &pool.rows {
+                println!(
+                    "  {} on {} [{}]",
+                    row.ip,
+                    row.iface.as_str(),
+                    row.link_id.as_str()
+                );
+            }
         }
         return Ok(());
     }
@@ -319,6 +351,7 @@ async fn main() -> Result<()> {
         receiver_host,
         receiver_port,
         ips_file,
+        args.bind_map.as_deref(),
         config,
         shared_stats,
         critical_window,

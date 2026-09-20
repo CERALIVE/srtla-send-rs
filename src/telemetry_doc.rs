@@ -184,7 +184,7 @@ pub fn build_telemetry_json_from_stats(last_updated_ms: u64, stats: &StatsSnapsh
         &TelemetryInputs {
             conns: &conns_from_stats(stats),
             session_bytes_sent: Some(stats.session_bytes_sent),
-            ..TelemetryInputs::default()
+            bind_map: Some(&stats.bind_map),
         },
     )
 }
@@ -253,11 +253,10 @@ pub fn conns_from_stats(stats: &StatsSnapshot) -> Vec<TelemetryConn> {
                 bitrate_bytes_per_sec: l.bitrate_bytes_per_sec,
                 // ADR-002: a byte COUNT, passed through with no x8.
                 bytes_sent_total: Some(l.bytes_sent_total),
-                // ADR-003 (iface / link_id) is not wired into the stats
-                // collector yet, so both are genuinely absent rather than
-                // reported as an empty string.
-                iface: None,
-                link_id: None,
+                // ADR-003: echoed, never invented. An unmapped link carries
+                // neither, and the key is then omitted rather than emptied.
+                iface: l.iface.clone(),
+                link_id: l.link_id.clone(),
             }
         })
         .collect()
@@ -682,8 +681,9 @@ mod tests {
     }
 
     #[test]
-    fn the_runtime_projection_emits_none_of_the_not_yet_wired_optionals() {
-        // Given: the live stats collector, which has no bind-map inputs yet.
+    fn an_unmapped_run_reports_the_absent_mode_and_no_per_link_identity() {
+        // Given: a live snapshot from a run with no `--bind-map`, which is what
+        // `SharedStats::get` composes when nothing ever called `set_bind_map`.
         let snap = StatsSnapshot {
             links: vec![link(10, true, 100)],
             ..Default::default()
@@ -693,12 +693,55 @@ mod tests {
         // `--stats-file` sink calls.
         let doc = build_telemetry_json_from_stats(1_749_556_546_000, &snap);
 
-        // Then: the ADR-003 keys do not materialize — neither as `null` nor as
-        // an empty value.
-        for absent in ["iface", "link_id", "bind_map_status", "disposition"] {
+        // Then: the operating mode is stated POSITIVELY — a UI must be able to
+        // read "no bind-map" as a fact rather than infer it from two missing
+        // keys.
+        assert!(
+            doc.contains(r#""bind_map_status":{"state":"absent"}"#),
+            "got {doc}"
+        );
+        assert!(
+            doc.contains(r#""disposition":{"state":"legacy_unique_only"}"#),
+            "got {doc}"
+        );
+
+        // And: the per-link identity keys do NOT materialize, neither as `null`
+        // nor as an empty string, because the sender never invents one.
+        for absent in ["iface", "link_id"] {
             assert!(!doc.contains(absent), "unexpected `{absent}` in {doc}");
         }
         assert!(doc.contains("\"bitrate_bps\":800"), "got {doc}");
+    }
+
+    #[test]
+    fn a_mapped_link_echoes_its_interface_and_identity() {
+        // Given: a snapshot whose link carries the ADR-003 echo, i.e. a run
+        // with a coherent `--bind-map`.
+        let snap = StatsSnapshot {
+            links: vec![LinkStats {
+                iface: Some("wwan0".to_string()),
+                link_id: Some("modem-a".to_string()),
+                ..link(10, true, 100)
+            }],
+            bind_map: BindMapReport::new(BindMapStatus::Active, BindMapDisposition::Mapped, &[]),
+            ..Default::default()
+        };
+
+        // When: the sink serializes it.
+        let doc = build_telemetry_json_from_stats(1_749_556_546_000, &snap);
+
+        // Then: both identity fields ride along verbatim, and the mode says the
+        // map is in force.
+        assert!(doc.contains(r#""iface":"wwan0""#), "got {doc}");
+        assert!(doc.contains(r#""link_id":"modem-a""#), "got {doc}");
+        assert!(
+            doc.contains(r#""bind_map_status":{"state":"active"}"#),
+            "got {doc}"
+        );
+        assert!(
+            doc.contains(r#""disposition":{"state":"mapped"}"#),
+            "got {doc}"
+        );
     }
 
     // ---- ADR-002: the runtime feed populates BOTH scopes ------------------

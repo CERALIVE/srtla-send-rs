@@ -25,11 +25,12 @@ mod tests {
             .bind(&"127.0.0.1:0".parse::<SocketAddr>().unwrap().into())
             .unwrap();
         socket.set_nonblocking(true).unwrap();
-        ConnIo {
-            socket: Arc::new(BatchUdpSocket::new(socket, remote).unwrap()),
-            binder: Arc::new(SourceIpBinder),
+        ConnIo::unmapped(
+            Arc::new(BatchUdpSocket::new(socket, remote).unwrap()),
+            Arc::new(SourceIpBinder),
             remote,
-        }
+            std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        )
     }
 
     #[tokio::test(flavor = "current_thread")]

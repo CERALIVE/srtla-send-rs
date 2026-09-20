@@ -7,6 +7,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tracing::{debug, error, info, warn};
 
 use super::connections::{reconnect_uplink, recover_connection};
+use super::egress_tick;
 use super::rehome::{RehomeGate, try_rehome};
 use super::sequence::SequenceTracker;
 use super::uplink::{ConnIoMap, ConnectionId, ReaderHandle, UplinkPacket, restart_reader_for};
@@ -54,6 +55,27 @@ pub async fn handle_housekeeping(
 
     // housekeeping: drive registration, send keepalives
     for (i, conn) in connections.iter_mut().enumerate() {
+        // Re-resolve the egress interface by NAME and re-read the route
+        // invariant before anything else touches this link's socket. A replug
+        // leaves the socket holding an ifindex that no longer names the device,
+        // and neither the liveness timeout nor a send error would report it in
+        // time. Inert for an unmapped link.
+        if let Some(io) = conn_io.get_mut(&conn.conn_id)
+            && egress_tick::handle_egress(
+                conn,
+                io,
+                reader_handles,
+                packet_tx,
+                seq_tracker,
+                receiver_host,
+                current_ms,
+            )
+            .await
+                == egress_tick::TickFlow::Skip
+        {
+            continue;
+        }
+
         // Simple reconnect-on-timeout, then allow reg driver to proceed
         if conn.is_timed_out(current_ms) {
             if conn.should_attempt_reconnect(current_ms) {

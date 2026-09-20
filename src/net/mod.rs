@@ -10,19 +10,32 @@
 #[cfg(target_vendor = "apple")]
 pub mod apple;
 pub mod batch_recv;
+// ADR-003: the egress-binding half of an uplink's lifecycle, the read-only
+// route invariant it is deliberately distinct from, and the identity/socket-key
+// split the bind-map introduces.
+pub mod egress;
+pub mod route;
 mod socket;
+mod spec;
 
 #[cfg(target_vendor = "apple")]
 pub use apple::AppleInterfaceBinder;
 pub use batch_recv::{BatchUdpSocket, RecvMmsgBuffer};
+pub use egress::{
+    EgressFault, EgressLifecycle, EgressPoll, IfaceResolver, LinkState, SystemIfaceResolver,
+};
+pub use route::{RouteHealth, RouteTransition, classify_route_transition, observe_default_route};
 // Host-side binder for platforms that steer egress by network handle (Android).
 // Exported for library consumers; the CLI binary does not construct it. Unix
 // only: it binds by raw fd, which Windows does not have.
 #[cfg(unix)]
 pub use socket::CallbackBinder;
+#[cfg(target_os = "linux")]
+pub use socket::DeviceBinder;
 pub use socket::{
     SourceIpBinder, UplinkBinder, create_uplink_socket, resolve_remote, resolve_remote_all,
 };
+pub use spec::{SocketKey, UplinkSpec};
 use srtla_core::connection::BATCH_SEND_SIZE;
 
 /// How far a batch flush got before the socket refused it.

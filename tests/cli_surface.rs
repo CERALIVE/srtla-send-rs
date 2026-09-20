@@ -98,6 +98,10 @@ fn help_lists_the_ceraui_control_plane_flags() {
         "help must list --stats-file-interval: {help}"
     );
     assert!(
+        help.contains("--bind-map"),
+        "help must list --bind-map: {help}"
+    );
+    assert!(
         help.contains("srtla_send [OPTIONS] SRT_LISTEN_PORT SRTLA_HOST SRTLA_PORT BIND_IPS_FILE"),
         "usage must keep the documented positional shape: {help}"
     );

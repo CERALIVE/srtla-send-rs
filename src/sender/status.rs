@@ -3,6 +3,7 @@ use srtla_core::utils::now_ms;
 use srtla_protocol::PKT_LOG_SIZE;
 use tracing::{info, warn};
 
+use super::uplink::ConnIoMap;
 use crate::config::DynamicConfig;
 
 /// Comprehensive status monitoring for connections
@@ -14,6 +15,7 @@ use crate::config::DynamicConfig;
 #[cfg_attr(not(unix), allow(dead_code))]
 pub(crate) fn log_connection_status(
     connections: &[SrtlaConnection],
+    conn_io: &ConnIoMap,
     last_selected_idx: Option<usize>,
     config: &DynamicConfig,
 ) {
@@ -138,6 +140,22 @@ pub(crate) fn log_connection_status(
             conn.in_flight_packets,
             conn.current_bitrate_mbps()
         );
+
+        // The route invariant is its OWN axis, never folded into ACTIVE /
+        // TIMED_OUT above. A device-bound link with no default route keeps
+        // answering `sendto` with success while the kernel ARPs for the
+        // receiver on-link and drops every packet, so it can read ACTIVE and be
+        // blackholed at the same time; merging the two would hide exactly that.
+        if let Some(io) = conn_io.get(&conn.conn_id)
+            && let Some(iface) = io.egress.iface()
+        {
+            info!(
+                "        Egress: iface={} route={} link_id={}",
+                iface.as_str(),
+                io.route_health.as_str(),
+                io.spec.link_id.as_ref().map_or("-", |id| id.as_str())
+            );
+        }
 
         if conn.rtt.estimated_rtt_ms > 0.0 {
             info!(

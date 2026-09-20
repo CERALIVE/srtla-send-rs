@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -11,90 +11,220 @@ use tracing::{debug, info, warn};
 
 use super::sequence::SequenceTracker;
 use super::uplink::{ConnIo, ConnIoMap};
+use crate::bind_map::EffectiveLink;
 use crate::net::{
-    BatchUdpSocket, UplinkBinder, create_uplink_socket, resolve_remote, resolve_remote_all,
+    BatchUdpSocket, EgressLifecycle, RouteHealth, SocketKey, SystemIfaceResolver, UplinkBinder,
+    UplinkSpec, create_uplink_socket, resolve_remote, resolve_remote_all,
 };
 
 pub struct PendingConnectionChanges {
-    pub new_ips: Option<SmallVec<IpAddr, 4>>,
+    pub new_links: Option<SmallVec<UplinkSpec, 4>>,
     pub receiver_host: String,
     pub receiver_port: u16,
 }
 
+/// Legacy shape: uplinks identified by source IP alone, no bind-map.
+#[must_use]
+pub fn specs_from_ips(ips: &[IpAddr]) -> SmallVec<UplinkSpec, 4> {
+    ips.iter().copied().map(UplinkSpec::unmapped).collect()
+}
+
+/// Turn a resolved bind-map decision into uplink specs, in file order.
+#[must_use]
+pub fn specs_from_effective_links(links: &[EffectiveLink]) -> SmallVec<UplinkSpec, 4> {
+    links.iter().map(UplinkSpec::from).collect()
+}
+
+/// Apply a reloaded uplink set to the live connection pool.
+///
+/// The pool is rebuilt in **ips-file order**: a surviving uplink keeps its
+/// existing socket and registration state (no re-handshake, no disconnect) but
+/// is repositioned to match the file, and a removed uplink is torn down. The
+/// telemetry `conn_id` is the link's index in this vector, so reordering the
+/// file reorders `conn_id` consistently — the C sender's "reload reassigns by
+/// file order" semantics.
+///
+/// Survival is decided by **identity**, not by socket key: a mapped link whose
+/// `link_id` is unchanged survives even when its IP or interface moved — but it
+/// survives as a *fresh socket*, because every piece of state the old socket
+/// held is scoped to an ifindex that no longer describes it.
 #[allow(clippy::too_many_arguments)]
 pub async fn apply_connection_changes(
     connections: &mut SmallVec<SrtlaConnection, 4>,
     conn_io: &mut ConnIoMap,
-    new_ips: &[IpAddr],
+    new_links: &[UplinkSpec],
     receiver_host: &str,
     receiver_port: u16,
     last_selected_idx: &mut Option<usize>,
     seq_tracker: &mut SequenceTracker,
     binder: &Arc<dyn UplinkBinder>,
 ) {
-    let current_labels: HashSet<String> = connections.iter().map(|c| c.label.clone()).collect();
-    let desired_labels: HashSet<String> = new_ips
+    // Dedup on the SOCKET KEY, not on the IP: that is what tells two twin
+    // modems sharing 192.168.8.100 apart. Without a bind-map the key has no
+    // interface and degenerates to the IP, which is the legacy behavior.
+    let mut seen = HashSet::<SocketKey>::new();
+    let desired: SmallVec<UplinkSpec, 4> = new_links
         .iter()
-        .map(|ip| format!("{}:{} via {}", receiver_host, receiver_port, ip))
+        .filter(|spec| seen.insert(spec.socket_key()))
+        .cloned()
         .collect();
 
-    // Remove stale connections
-    let old_len = connections.len();
-    let removed_conn_ids: Vec<u64> = connections
-        .iter()
-        .filter(|c| !desired_labels.contains(&c.label))
-        .map(|c| c.conn_id)
-        .collect();
+    let previous_order: SmallVec<u64, 4> = connections.iter().map(|c| c.conn_id).collect();
+    let mut survivors = Survivors::take(connections, conn_io);
 
-    connections.retain(|c| desired_labels.contains(&c.label));
+    // Two passes: claim every survivor first, so a link whose socket key moved
+    // cannot be outbid by a later row that happens to want its old key.
+    let claimed: SmallVec<Option<SrtlaConnection>, 4> =
+        desired.iter().map(|spec| survivors.claim(spec)).collect();
+    let attempted_new = claimed.iter().filter(|c| c.is_none()).count();
 
-    // If connections were removed, reset selection state and clean up sequence tracker
-    if connections.len() != old_len {
-        info!("removed {} stale connections", old_len - connections.len());
+    let mut fresh = create_missing(
+        &desired,
+        &claimed,
+        receiver_host,
+        receiver_port,
+        binder,
+        conn_io,
+    )
+    .await;
+    let added = fresh.len();
+
+    // Drop the leaving links' sequence entries and I/O halves so a stale NAK
+    // cannot be misattributed to whichever uplink later reuses that index.
+    let removed = survivors.retire(seq_tracker, conn_io);
+
+    for (spec, existing) in desired.iter().zip(claimed) {
+        match existing {
+            Some(conn) => connections.push(conn),
+            None => {
+                if let Some(conn) = fresh.remove(&spec.socket_key()) {
+                    connections.push(conn);
+                }
+            }
+        }
+    }
+
+    if removed > 0 {
+        info!("removed {removed} stale connections");
+    }
+    if added > 0 {
+        info!("added {added} new connections");
+    } else if attempted_new > 0 {
+        warn!("failed to add any new connections (attempted {attempted_new})");
+    }
+
+    // A reorder invalidates the cached selection index, not just a removal.
+    let new_order: SmallVec<u64, 4> = connections.iter().map(|c| c.conn_id).collect();
+    if previous_order != new_order {
         *last_selected_idx = None;
+    }
+}
 
-        // Remove entries for removed connections from the ring buffer and drop
-        // their I/O half. Keyed by the stable conn_id, so this stays correct no
-        // matter how `retain` shuffled the connections vec's indices.
-        for conn_id in removed_conn_ids {
-            seq_tracker.remove_connection(conn_id);
-            conn_io.remove(&conn_id);
+/// The pre-reload pool, indexed both ways so a link can be matched by identity
+/// first and by socket key second.
+struct Survivors {
+    by_link_id: HashMap<String, (SocketKey, SrtlaConnection)>,
+    by_key: HashMap<SocketKey, SrtlaConnection>,
+}
+
+impl Survivors {
+    fn take(connections: &mut SmallVec<SrtlaConnection, 4>, conn_io: &ConnIoMap) -> Self {
+        let mut by_link_id = HashMap::new();
+        let mut by_key = HashMap::new();
+        for conn in std::mem::take(connections) {
+            let spec = conn_io
+                .get(&conn.conn_id)
+                .map_or_else(|| UplinkSpec::unmapped(conn.local_ip), |io| io.spec.clone());
+            let key = spec.socket_key();
+            match spec.link_id {
+                Some(id) => {
+                    by_link_id.insert(id.as_str().to_string(), (key, conn));
+                }
+                None => {
+                    by_key.insert(key, conn);
+                }
+            }
         }
+        Self { by_link_id, by_key }
     }
 
-    // Add new connections
-    let mut seen = HashSet::<IpAddr>::new();
-    let new_ips_needed: SmallVec<IpAddr, 4> = new_ips
+    /// Claim the live connection that `spec` describes, if its socket is still
+    /// the right one.
+    ///
+    /// A mapped link whose socket key moved is deliberately **not** returned:
+    /// its window, packet log, in-flight count, and registration are all scoped
+    /// to the interface it was bound to, so carrying them onto a new interface
+    /// would credit the new link with the old one's history.
+    fn claim(&mut self, spec: &UplinkSpec) -> Option<SrtlaConnection> {
+        let key = spec.socket_key();
+        let Some(id) = spec.link_id.as_ref() else {
+            // Legacy identity: the socket key IS the link. A previously-mapped
+            // survivor still matches on it, so falling back to legacy does not
+            // needlessly tear down a bond that is otherwise unchanged.
+            return self.by_key.remove(&key).or_else(|| {
+                let matched = self
+                    .by_link_id
+                    .iter()
+                    .find(|(_, (existing_key, _))| *existing_key == key)
+                    .map(|(id, _)| id.clone())?;
+                self.by_link_id.remove(&matched).map(|(_, conn)| conn)
+            });
+        };
+        let (existing_key, _) = self.by_link_id.get(id.as_str())?;
+        (*existing_key == key)
+            .then(|| self.by_link_id.remove(id.as_str()))
+            .flatten()
+            .map(|(_, conn)| conn)
+    }
+
+    /// Retire everything left unclaimed, returning how many links left the pool.
+    fn retire(self, seq_tracker: &mut SequenceTracker, conn_io: &mut ConnIoMap) -> usize {
+        let leaving: SmallVec<u64, 4> = self
+            .by_link_id
+            .values()
+            .map(|(_, conn)| conn)
+            .chain(self.by_key.values())
+            .map(|c| c.conn_id)
+            .collect();
+        for conn_id in &leaving {
+            seq_tracker.remove_connection(*conn_id);
+            conn_io.remove(conn_id);
+        }
+        leaving.len()
+    }
+}
+
+/// Dial every desired link that no survivor covers.
+async fn create_missing(
+    desired: &[UplinkSpec],
+    claimed: &[Option<SrtlaConnection>],
+    receiver_host: &str,
+    receiver_port: u16,
+    binder: &Arc<dyn UplinkBinder>,
+    conn_io: &mut ConnIoMap,
+) -> HashMap<SocketKey, SrtlaConnection> {
+    let missing: SmallVec<UplinkSpec, 4> = desired
         .iter()
-        .copied()
-        .filter(|ip| seen.insert(*ip))
-        .filter(|ip| {
-            let label = format!("{}:{} via {}", receiver_host, receiver_port, ip);
-            !current_labels.contains(&label)
-        })
+        .zip(claimed)
+        .filter(|(_, existing)| existing.is_none())
+        .map(|(spec, _)| spec.clone())
         .collect();
-
-    if !new_ips_needed.is_empty() {
-        let mut new_connections = create_connections_from_ips(
-            &new_ips_needed,
-            receiver_host,
-            receiver_port,
-            binder,
-            conn_io,
-        )
-        .await;
-        let added_count = new_connections.len();
-        connections.append(&mut new_connections);
-
-        if added_count > 0 {
-            info!("added {} new connections", added_count);
-        } else {
-            warn!(
-                "failed to add any new connections (attempted {})",
-                new_ips_needed.len()
-            );
-        }
+    if missing.is_empty() {
+        return HashMap::new();
     }
+    let created =
+        create_connections_from_links(&missing, receiver_host, receiver_port, binder, conn_io)
+            .await;
+    created
+        .into_iter()
+        .map(|conn| {
+            let key = conn_io
+                .get(&conn.conn_id)
+                .map_or_else(|| UplinkSpec::unmapped(conn.local_ip), |io| io.spec.clone())
+                .socket_key();
+            (key, conn)
+        })
+        .collect()
 }
 
 pub async fn create_connections_from_ips(
@@ -104,9 +234,26 @@ pub async fn create_connections_from_ips(
     binder: &Arc<dyn UplinkBinder>,
     conn_io: &mut ConnIoMap,
 ) -> SmallVec<SrtlaConnection, 4> {
+    create_connections_from_links(
+        &specs_from_ips(ips),
+        receiver_host,
+        receiver_port,
+        binder,
+        conn_io,
+    )
+    .await
+}
+
+pub async fn create_connections_from_links(
+    links: &[UplinkSpec],
+    receiver_host: &str,
+    receiver_port: u16,
+    binder: &Arc<dyn UplinkBinder>,
+    conn_io: &mut ConnIoMap,
+) -> SmallVec<SrtlaConnection, 4> {
     let mut connections = SmallVec::new();
-    for ip in ips {
-        match connect_uplink(*ip, receiver_host, receiver_port, binder).await {
+    for spec in links {
+        match connect_uplink(spec, receiver_host, receiver_port, binder).await {
             Ok((conn, io)) => {
                 info!("added uplink {}", conn.label);
                 conn_io.insert(conn.conn_id, io);
@@ -114,18 +261,21 @@ pub async fn create_connections_from_ips(
             }
             Err(e) => warn!(
                 "failed to add uplink {} -> {}:{}: {}",
-                ip, receiver_host, receiver_port, e
+                spec.origin(),
+                receiver_host,
+                receiver_port,
+                e
             ),
         }
     }
     connections
 }
 
-/// Open a UDP socket bound to `ip`, steered onto its egress by `binder`, and
-/// pair it with a fresh socket-free [`SrtlaConnection`]. The connection and its
-/// [`ConnIo`] share a `conn_id` so the shell can key the I/O map by it.
+/// Open a UDP socket for `spec`, steered onto its egress, and pair it with a
+/// fresh socket-free [`SrtlaConnection`]. The connection and its [`ConnIo`]
+/// share a `conn_id` so the shell can key the I/O map by it.
 async fn connect_uplink(
-    ip: IpAddr,
+    spec: &UplinkSpec,
     receiver_host: &str,
     receiver_port: u16,
     binder: &Arc<dyn UplinkBinder>,
@@ -133,20 +283,56 @@ async fn connect_uplink(
     use rand::RngCore;
 
     let remote = resolve_remote(receiver_host, receiver_port).await?;
-    let sock = create_uplink_socket(ip)?;
-    binder.bind(&sock, ip)?;
+    let mut egress = EgressLifecycle::for_spec(spec.iface.as_ref());
+    // Re-resolve the interface by NAME before every socket creation: a replug
+    // leaves the old ifindex describing nothing, and SO_BINDTODEVICE freezes
+    // whatever index it is handed at setsockopt time.
+    egress
+        .resolve_for_bind(&SystemIfaceResolver)
+        .map_err(|fault| anyhow::anyhow!("egress unavailable ({})", fault.as_str()))?;
+    let link_binder = link_binder_for(spec, binder);
+
+    let sock = create_uplink_socket(spec.ip)?;
+    link_binder.bind(&sock, spec.ip)?;
     sock.set_nonblocking(true)?;
     let socket = Arc::new(BatchUdpSocket::new(sock, remote)?);
 
     let conn_id = rand::rng().next_u64();
-    let label = format!("{}:{} via {}", receiver_host, receiver_port, ip);
-    let conn = SrtlaConnection::new_registering(conn_id, label, ip, now_ms());
+    let label = spec.label(receiver_host, receiver_port);
+    let conn = SrtlaConnection::new_registering(conn_id, label, spec.ip, now_ms());
+    let route_health = observe_route_for(spec);
     let io = ConnIo {
         socket,
-        binder: binder.clone(),
+        binder: link_binder,
         remote,
+        spec: spec.clone(),
+        egress,
+        route_health,
     };
     Ok((conn, io))
+}
+
+/// The binder this link's socket is created with.
+///
+/// A mapped link gets `SO_BINDTODEVICE` + `bind(ip, 0)`; an unmapped one keeps
+/// the process-wide binder verbatim, which is what makes a run without
+/// `--bind-map` byte-identical to the legacy one.
+fn link_binder_for(spec: &UplinkSpec, default: &Arc<dyn UplinkBinder>) -> Arc<dyn UplinkBinder> {
+    match spec.iface.as_ref() {
+        None => default.clone(),
+        #[cfg(target_os = "linux")]
+        Some(iface) => Arc::new(crate::net::DeviceBinder::new(iface.as_str())),
+        #[cfg(not(target_os = "linux"))]
+        Some(_) => default.clone(),
+    }
+}
+
+/// Read the route invariant for a mapped link. An unmapped link has no
+/// interface to observe, so it stays `Unknown` rather than claiming anything.
+fn observe_route_for(spec: &UplinkSpec) -> RouteHealth {
+    spec.iface.as_ref().map_or(RouteHealth::Unknown, |iface| {
+        crate::net::observe_default_route(iface.as_str())
+    })
 }
 
 /// Put a link into recovery and drop the sequence ownership it can no longer
@@ -195,6 +381,14 @@ pub(super) fn rebuild_uplink_socket(
     seq_tracker: &mut SequenceTracker,
     now: u64,
 ) -> Result<()> {
+    // The interface is re-resolved by NAME here, never carried over: the socket
+    // being replaced may be holding an ifindex that stopped describing the
+    // device, which is the one failure `SO_BINDTODEVICE` cannot recover from.
+    io.egress
+        .resolve_for_bind(&SystemIfaceResolver)
+        .map_err(|fault| anyhow::anyhow!("egress unavailable ({})", fault.as_str()))?;
+    io.route_health = observe_route_for(&io.spec);
+
     let sock = create_uplink_socket(conn.local_ip)?;
     io.binder.bind(&sock, conn.local_ip)?;
     sock.set_nonblocking(true)?;

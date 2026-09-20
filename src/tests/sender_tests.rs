@@ -5,7 +5,6 @@ mod tests {
     use std::io::Write;
     use std::net::{IpAddr, Ipv4Addr};
 
-    use smallvec::SmallVec;
     use srtla_core::mode::SchedulingMode;
     use srtla_core::selection::{calculate_quality_multiplier, select_connection_idx};
     use srtla_core::utils::now_ms;
@@ -502,7 +501,7 @@ mod tests {
         rt.block_on(apply_connection_changes(
             &mut connections,
             &mut conn_io,
-            &new_ips,
+            &crate::sender::specs_from_ips(&new_ips),
             "127.0.0.1",
             8080,
             &mut last_selected_idx,
@@ -563,14 +562,14 @@ mod tests {
     #[test]
     fn test_pending_connection_changes() {
         let changes = PendingConnectionChanges {
-            new_ips: Some(SmallVec::from_vec(vec![IpAddr::V4(Ipv4Addr::new(
+            new_links: Some(crate::sender::specs_from_ips(&[IpAddr::V4(Ipv4Addr::new(
                 192, 168, 1, 100,
             ))])),
             receiver_host: "test-host".to_string(),
             receiver_port: 9090,
         };
 
-        assert!(changes.new_ips.is_some());
+        assert!(changes.new_links.is_some());
         assert_eq!(changes.receiver_host, "test-host");
         assert_eq!(changes.receiver_port, 9090);
     }

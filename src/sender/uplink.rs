@@ -10,7 +10,9 @@ use tokio::task::JoinHandle;
 use tokio::time::Duration;
 use tracing::warn;
 
-use crate::net::{BatchUdpSocket, RecvMmsgBuffer, UplinkBinder};
+use crate::net::{
+    BatchUdpSocket, EgressLifecycle, RecvMmsgBuffer, RouteHealth, UplinkBinder, UplinkSpec,
+};
 
 pub type ConnectionId = u64;
 
@@ -19,13 +21,46 @@ pub type ConnectionId = u64;
 /// `conn_id` — the same stable-id lifecycle as [`ReaderHandle`]s, so no index
 /// stays in lockstep with the connections vec. `binder`/`remote` are retained
 /// for reconnect, which re-creates the socket in place.
+///
+/// `spec`, `egress`, and `route_health` are the ADR-003 half. They live here
+/// rather than on [`SrtlaConnection`] because they are interface facts about
+/// the socket, not protocol state: the pure core is deliberately unaware that
+/// an uplink can be pinned to a device at all.
 pub struct ConnIo {
     pub socket: Arc<BatchUdpSocket>,
     pub binder: Arc<dyn UplinkBinder>,
     pub remote: SocketAddr,
+    /// Identity (`link_id`) plus current socket key (`ip`, `iface`).
+    pub spec: UplinkSpec,
+    /// Ifindex staleness for a device-bound link; inert for an unmapped one.
+    pub egress: EgressLifecycle,
+    /// Last observed per-interface default-route invariant. Distinct from ACK
+    /// liveness: a link can be ACK-live and route-blackholed at the same time.
+    pub route_health: RouteHealth,
 }
 
 impl ConnIo {
+    /// The I/O half of a legacy, unmapped uplink: source-IP bound, no identity,
+    /// and no interface to re-resolve or observe a route on.
+    ///
+    /// The ADR-003 half is inert in this shape, which is what lets the tests and
+    /// every `--bind-map`-less run share the pre-ADR-003 code path exactly.
+    pub fn unmapped(
+        socket: Arc<BatchUdpSocket>,
+        binder: Arc<dyn UplinkBinder>,
+        remote: SocketAddr,
+        ip: std::net::IpAddr,
+    ) -> Self {
+        Self {
+            socket,
+            binder,
+            remote,
+            spec: UplinkSpec::unmapped(ip),
+            egress: EgressLifecycle::unmapped(),
+            route_health: RouteHealth::Unknown,
+        }
+    }
+
     /// Send a control-plane frame, zero-padding it to [`MIN_CONTROL_PKT_LEN`]
     /// when it is smaller.
     ///

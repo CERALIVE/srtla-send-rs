@@ -6,12 +6,13 @@
 //!
 //! Nothing here re-derives state. Every value is read straight off the
 //! [`BindMapStatus`] / [`BindMapDisposition`] / [`CollisionGroup`] tokens, so a
-//! UI and a log line can never disagree about what the sender is doing. When the
-//! resolver lands it gains a `From<&Resolution>` that funnels into
-//! [`BindMapReport::new`]; the record shape does not change.
+//! UI and a log line can never disagree about what the sender is doing. The
+//! resolver's own [`Resolution`] funnels through [`BindMapReport::new`] rather
+//! than re-deriving anything of its own.
 
 use serde::Serialize;
 
+use super::resolve::Resolution;
 use super::status::{BindMapDisposition, BindMapStatus, CollisionGroup, DegradedReason};
 
 /// Is the map in force, and if not, why not?
@@ -108,6 +109,16 @@ impl BindMapReport {
     #[must_use]
     pub fn degraded(reason: DegradedReason, disposition: BindMapDisposition) -> Self {
         Self::new(BindMapStatus::Degraded(reason), disposition, &[])
+    }
+}
+
+impl From<&Resolution> for BindMapReport {
+    fn from(resolution: &Resolution) -> Self {
+        Self::new(
+            resolution.status,
+            resolution.disposition,
+            &resolution.excluded,
+        )
     }
 }
 

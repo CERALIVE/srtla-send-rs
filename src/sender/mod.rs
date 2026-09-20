@@ -1,5 +1,7 @@
 mod connections;
+mod egress_tick;
 mod housekeeping;
+mod links;
 mod packet_handler;
 mod rehome;
 mod reload;
@@ -18,12 +20,16 @@ use anyhow::{Context, Result};
 #[allow(unused_imports)]
 pub use connections::{
     PendingConnectionChanges, apply_connection_changes, create_connections_from_ips,
-    recover_connection,
+    create_connections_from_links, recover_connection, specs_from_effective_links, specs_from_ips,
 };
 // Re-export public items used by tests
 #[allow(unused_imports)]
 pub use housekeeping::GLOBAL_TIMEOUT_MS;
 use housekeeping::handle_housekeeping;
+// ADR-003: where the uplink set comes from (legacy ips file, or the bind-map
+// pair read).
+#[allow(unused_imports)]
+pub use links::{LinkSource, SenderPaths, read_bind_map};
 // Re-exported so the ported DATA-padding test drives the same production flush
 // path the send loop uses, not a mirrored copy.
 #[allow(unused_imports)]
@@ -117,6 +123,7 @@ pub async fn run_sender_with_config(
     receiver_host: &str,
     receiver_port: u16,
     ips_file: &str,
+    bind_map: Option<&str>,
     config: DynamicConfig,
     shared_stats: SharedStats,
     critical_window: srtla_core::priority::CriticalWindow,
@@ -150,25 +157,32 @@ pub async fn run_sender_with_config(
         .context("bind local SRT UDP listener")?;
     info!("listening for SRT on [::]:{}", local_srt_port);
 
+    // Where the uplink set comes from. Without `--bind-map` this reads the ips
+    // file exactly as it always has and every spec is unmapped, so the bind-map
+    // module is never entered at all.
+    let mut link_source = LinkSource::new(&SenderPaths { ips_file, bind_map });
+
     // A missing / empty / all-invalid ips file at startup is NOT fatal: bind no
     // uplinks, start with an EMPTY pool, and wait for a SIGHUP reload. CeraUI
     // writes the IP file and signals the sender only once interfaces appear, so
     // exiting here would crash-loop the device before the first modem is up.
-    let ips = match read_ip_list(ips_file).await {
-        Ok(ips) => ips,
+    let links = match link_source.startup().await {
+        Ok(links) => links,
         Err(e) => {
             warn!("ips file unreadable at startup ({e:#}); starting with an empty uplink pool");
             SmallVec::new()
         }
     };
+    shared_stats.set_bind_map(link_source.report().clone());
     debug!(
-        "uplink IPs loaded: {}",
-        ips.iter()
-            .map(|i| i.to_string())
+        "uplinks loaded: {}",
+        links
+            .iter()
+            .map(|spec| spec.origin())
             .collect::<SmallVec<_, 4>>()
             .join(", ")
     );
-    if ips.is_empty() {
+    if links.is_empty() {
         warn!("no valid source IPs at startup; waiting for SIGHUP reload");
     }
 
@@ -176,7 +190,7 @@ pub async fn run_sender_with_config(
     // index — so no lockstep with the connections vec through add/remove).
     let mut conn_io: ConnIoMap = std::collections::HashMap::new();
     let mut connections =
-        create_connections_from_ips(&ips, receiver_host, receiver_port, &binder, &mut conn_io)
+        create_connections_from_links(&links, receiver_host, receiver_port, &binder, &mut conn_io)
             .await;
 
     let mut reg = SrtlaRegistrationManager::new();
@@ -261,6 +275,10 @@ pub async fn run_sender_with_config(
     let mut sigterm = signal(SignalKind::terminate())?;
     #[cfg(unix)]
     let mut sigint = signal(SignalKind::interrupt())?;
+    // Answers from the off-loop ADR-003 pair read a SIGHUP spawns.
+    #[cfg(unix)]
+    let (bind_map_tx, mut bind_map_rx) =
+        tokio::sync::mpsc::unbounded_channel::<links::PairReadResult>();
 
     // Main loop - run housekeeping frequently like C version
     // Run housekeeping once before entering the main event loop so we start in a clean state.
@@ -403,6 +421,7 @@ pub async fn run_sender_with_config(
                             &housekeeping_snap,
                             Some(&classification),
                             Some(&link_cc_snapshots),
+                            Some(&link_identities(&connections, &conn_io)),
                         );
 
                         // Fan the fresh snapshot out to any `stats` subscribers
@@ -414,13 +433,13 @@ pub async fn run_sender_with_config(
                         }
 
                         if let Some(changes) = pending_changes.take()
-                            && let Some(new_ips) = changes.new_ips
+                            && let Some(new_links) = changes.new_links
                         {
-                            info!("applying queued connection changes: {} IPs", new_ips.len());
+                            info!("applying queued connection changes: {} uplinks", new_links.len());
                             apply_connection_changes(
                                 &mut connections,
                                 &mut conn_io,
-                                &new_ips,
+                                &new_links,
                                 &changes.receiver_host,
                                 changes.receiver_port,
                                 &mut last_selected_idx,
@@ -451,7 +470,7 @@ pub async fn run_sender_with_config(
 
                         status_elapsed_ms = status_elapsed_ms.saturating_add(HOUSEKEEPING_INTERVAL_MS);
                         if status_elapsed_ms >= STATUS_LOG_INTERVAL_MS {
-                            log_connection_status(&connections, last_selected_idx, &config);
+                            log_connection_status(&connections, &conn_io, last_selected_idx, &config);
                             status_elapsed_ms = status_elapsed_ms.saturating_sub(STATUS_LOG_INTERVAL_MS);
                         }
 
@@ -484,28 +503,39 @@ pub async fn run_sender_with_config(
     event_loop! {
         _ = sighup.recv() => {
             info!("received SIGHUP - evaluating uplink IP reload from {}", ips_file);
-            // Guard against a reload that resolves to zero usable IPs (missing,
-            // empty, or all-garbage file): refuse it and keep the current links
-            // up rather than queuing an empty list, which would tear down every
-            // connection in apply_connection_changes. Mirrors the C sender.
-            match reload::analyze_ip_reload(ips_file) {
-                reload::IpReload::Apply { ips, first_invalid_line } => {
-                    if let Some(line) = first_invalid_line {
+            // With `--bind-map` the reload runs the ADR-003 pair protocol, whose
+            // bounded hash-mismatch retry can take up to 2 s. Holding the event
+            // loop for that long would stall packet forwarding, so the read goes
+            // to a spawned task and answers back through `bind_map_rx`.
+            if let Some((ips_path, sidecar, prior)) = link_source.read_args() {
+                let tx = bind_map_tx.clone();
+                tokio::spawn(async move {
+                    let _ = tx.send(links::read_bind_map(ips_path, sidecar, prior).await);
+                });
+            } else {
+                // Legacy reload guard: refuse a reload that resolves to zero
+                // usable IPs (missing, empty, or all-garbage file) and keep the
+                // current links up rather than queuing an empty list, which
+                // would tear down every connection. Mirrors the C sender.
+                match reload::analyze_ip_reload(ips_file) {
+                    reload::IpReload::Apply { ips, first_invalid_line } => {
+                        if let Some(line) = first_invalid_line {
+                            warn!(
+                                "ips file has an invalid entry starting at line {line}; applying valid IPs only"
+                            );
+                        }
+                        pending_changes = Some(PendingConnectionChanges {
+                            new_links: Some(specs_from_ips(&ips)),
+                            receiver_host: receiver_host.to_string(),
+                            receiver_port,
+                        });
+                        info!("uplink IP changes queued for next processing cycle");
+                    }
+                    reload::IpReload::Refuse(reason) => {
                         warn!(
-                            "ips file has an invalid entry starting at line {line}; applying valid IPs only"
+                            "refusing SIGHUP reload ({reason:?}); keeping current connections"
                         );
                     }
-                    pending_changes = Some(PendingConnectionChanges {
-                        new_ips: Some(ips),
-                        receiver_host: receiver_host.to_string(),
-                        receiver_port,
-                    });
-                    info!("uplink IP changes queued for next processing cycle");
-                }
-                reload::IpReload::Refuse(reason) => {
-                    warn!(
-                        "refusing SIGHUP reload ({reason:?}); keeping current connections"
-                    );
                 }
             }
             let config_snap = config.snapshot();
@@ -523,6 +553,24 @@ pub async fn run_sender_with_config(
             )
             .await;
         }
+        Some(read) = bind_map_rx.recv() => {
+            let new_links = link_source.adopt(read);
+            shared_stats.set_bind_map(link_source.report().clone());
+            if new_links.is_empty() {
+                // Every degraded arm that still has something to run returns a
+                // non-empty set, so an empty one means the ips file itself was
+                // unusable. Tearing down a live bond for that would be worse
+                // than ignoring the reload.
+                warn!("bind-map reload produced no usable uplinks; keeping current connections");
+            } else {
+                pending_changes = Some(PendingConnectionChanges {
+                    new_links: Some(new_links),
+                    receiver_host: receiver_host.to_string(),
+                    receiver_port,
+                });
+                info!("uplink changes queued for next processing cycle");
+            }
+        }
         _ = sigterm.recv() => {
             info!("received SIGTERM - shutting down");
             on_shutdown.run();
@@ -537,6 +585,31 @@ pub async fn run_sender_with_config(
 
     #[cfg(not(unix))]
     event_loop! {}
+}
+
+/// The ADR-003 identity echo for every live uplink, keyed by `conn_id`.
+///
+/// Built from the I/O map rather than the connections themselves: `iface` and
+/// `link_id` are facts about the socket, and the pure core deliberately does
+/// not carry them. An unmapped link contributes an entry with both `None`, so
+/// its telemetry record omits both keys entirely.
+fn link_identities(
+    connections: &[srtla_core::connection::SrtlaConnection],
+    conn_io: &ConnIoMap,
+) -> HashMap<ConnectionId, crate::stats::LinkIdentity> {
+    connections
+        .iter()
+        .filter_map(|conn| {
+            let io = conn_io.get(&conn.conn_id)?;
+            Some((
+                conn.conn_id,
+                crate::stats::LinkIdentity {
+                    iface: io.spec.iface.as_ref().map(|i| i.as_str().to_string()),
+                    link_id: io.spec.link_id.as_ref().map(|i| i.as_str().to_string()),
+                },
+            ))
+        })
+        .collect()
 }
 
 pub async fn read_ip_list(path: &str) -> Result<SmallVec<IpAddr, 4>> {

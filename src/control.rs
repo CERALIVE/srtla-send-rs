@@ -578,4 +578,52 @@ mod tests {
         assert!(result["mode"].is_string());
         assert!(result["quality_enabled"].is_boolean());
     }
+
+    /// ADR-003 rides on `get_stats` ADDITIVELY: the operating-mode pair at the
+    /// top level and the identity echo per link. A consumer that predates the
+    /// bind-map keeps reading every field it already knew.
+    #[test]
+    fn get_stats_carries_the_bind_map_mode_and_the_per_link_identity() {
+        let config = DynamicConfig::new();
+        let stats = SharedStats::new();
+        stats.set_bind_map(crate::bind_map::BindMapReport::new(
+            crate::bind_map::BindMapStatus::Active,
+            crate::bind_map::BindMapDisposition::Mapped,
+            &[],
+        ));
+
+        let req = r#"{"jsonrpc":"2.0","id":1,"method":"get_stats"}"#;
+        let resp = dispatch(&config, Some(&stats), None, req).unwrap();
+        let v: Value = serde_json::from_str(&resp.to_json()).unwrap();
+        let result = &v["result"];
+
+        assert_eq!(result["bind_map_status"]["state"], "active");
+        assert_eq!(result["disposition"]["state"], "mapped");
+        assert!(
+            result["links"].is_array(),
+            "the per-link array stays where it was: {result}"
+        );
+        // Pre-existing keys must still be there — additive means additive.
+        assert!(result["mode"].is_string());
+        assert!(result["total_links"].is_number());
+    }
+
+    /// A run with no `--bind-map` still STATES its mode rather than omitting it,
+    /// so a UI reads "legacy" as a fact instead of inferring it from silence.
+    #[test]
+    fn get_stats_reports_the_absent_mode_when_no_bind_map_was_supplied() {
+        let config = DynamicConfig::new();
+        let stats = SharedStats::new();
+
+        let req = r#"{"jsonrpc":"2.0","id":1,"method":"get_stats"}"#;
+        let resp = dispatch(&config, Some(&stats), None, req).unwrap();
+        let v: Value = serde_json::from_str(&resp.to_json()).unwrap();
+
+        assert_eq!(v["result"]["bind_map_status"]["state"], "absent");
+        assert_eq!(v["result"]["disposition"]["state"], "legacy_unique_only");
+        assert!(
+            v["result"]["bind_map_status"].get("reason").is_none(),
+            "a non-degraded status must not carry a reason"
+        );
+    }
 }

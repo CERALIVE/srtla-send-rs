@@ -39,6 +39,54 @@ impl UplinkBinder for SourceIpBinder {
     }
 }
 
+/// Linux egress steering via `SO_BINDTODEVICE` **and** a source-address bind.
+///
+/// Selected only for a link the bind-map names (`--bind-map`); an unmapped link
+/// keeps [`SourceIpBinder`] verbatim, which is what makes a run without the flag
+/// byte-identical to the legacy one.
+///
+/// Both halves are load-bearing and neither substitutes for the other:
+///
+/// * `SO_BINDTODEVICE` decides which interface the packet physically leaves by,
+///   overriding the routing table. On its own it leaves the **source address**
+///   to the kernel, which picks one from the chosen interface — so two modems
+///   presenting the same address, or an interface holding several, would put a
+///   non-deterministic source on the wire and the receiver would see the bond's
+///   links blur together.
+/// * `bind(ip, 0)` pins that source address. On its own it steers nothing
+///   without host source routing, which is exactly what a modem bond cannot
+///   rely on.
+///
+/// The device binding is applied **first** so the subsequent `bind(2)` is
+/// evaluated against the interface this link is already pinned to.
+#[cfg(target_os = "linux")]
+pub struct DeviceBinder {
+    pub ifname: String,
+}
+
+#[cfg(target_os = "linux")]
+impl DeviceBinder {
+    #[must_use]
+    pub fn new(ifname: impl Into<String>) -> Self {
+        Self {
+            ifname: ifname.into(),
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl UplinkBinder for DeviceBinder {
+    fn bind(&self, sock: &Socket, ip: IpAddr) -> Result<()> {
+        // The socket2 method is `bind_device` (NOT `set_bind_device`); passing
+        // `None` would clear the binding rather than set it.
+        sock.bind_device(Some(self.ifname.as_bytes()))
+            .with_context(|| format!("bind socket to device {}", self.ifname))?;
+        let addr = SocketAddr::new(ip, 0);
+        sock.bind(&addr.into())
+            .with_context(|| format!("bind socket to {ip} on {}", self.ifname))
+    }
+}
+
 /// Binder that delegates to a host-supplied closure over the raw fd. The Android
 /// integration wires this to `ConnectivityManager` / `Network.bindSocket`,
 /// keying on the same `IpAddr` used as the uplink identity. The closure must
