@@ -5,10 +5,12 @@
 //! and [`SrtlaTestStack`] for the full 3-process test pipeline
 //! (srt-live-transmit + srtla_rec + srtla_send).
 
-use std::io::{BufRead, BufReader};
+use std::collections::VecDeque;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
@@ -173,41 +175,110 @@ pub fn check_impairment_deps() -> std::result::Result<(), SkipReason> {
 // NamespaceProcess
 // ---------------------------------------------------------------------------
 
+/// How much of each pipe is retained. A bounded ring rather than an
+/// unbounded `Vec<String>`: `srtla_send` under `RUST_LOG=debug` logs a
+/// line per scheduling switch, so a 90-second bonded run emits hundreds
+/// of thousands of them, and a poller that re-joins the whole buffer
+/// every 200 ms would spend the run allocating instead of asserting.
+const OUTPUT_TAIL_BYTES: usize = 64 * 1024;
+
+type OutputTail = Arc<Mutex<VecDeque<u8>>>;
+
+fn new_output_tail() -> OutputTail {
+    Arc::new(Mutex::new(VecDeque::with_capacity(OUTPUT_TAIL_BYTES)))
+}
+
+/// Drain a child pipe into a bounded ring buffer until EOF.
+///
+/// Draining continuously is load-bearing rather than a convenience. A
+/// piped child whose output nobody reads blocks in `write()` as soon as
+/// the 64 KiB pipe buffer fills. srtla_send runs here with
+/// `RUST_LOG=debug`, which at a few Mbps fills that buffer in about a
+/// second — and because the task doing the logging is the main select
+/// loop, the *sender* wedges while its control socket (which logs almost
+/// nothing) carries on answering. The symptom is a stats snapshot frozen
+/// at the values it held a second into the run, which reads like an
+/// impossibly stable control loop rather than a deadlocked one. Short
+/// tests never noticed because they finish under 64 KiB.
+fn drain_pipe<R>(mut reader: R, tail: OutputTail) -> JoinHandle<()>
+where
+    R: Read + Send + 'static,
+{
+    std::thread::spawn(move || {
+        let mut buffer = [0_u8; 8192];
+        while let Ok(bytes_read) = reader.read(&mut buffer) {
+            if bytes_read == 0 {
+                break;
+            }
+            if let Ok(mut output) = tail.lock() {
+                output.extend(&buffer[..bytes_read]);
+                while output.len() > OUTPUT_TAIL_BYTES {
+                    output.pop_front();
+                }
+            }
+        }
+    })
+}
+
+fn output_lines(tail: &OutputTail) -> Vec<String> {
+    let Ok(mut output) = tail.lock() else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(output.make_contiguous())
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// What teardown is allowed to signal.
+///
+/// Deliberately *not* "the tracked child's process group". `spawn_with_env`
+/// runs a plain `Command::spawn()`, so the `sudo ip netns exec` wrapper
+/// inherits the harness's process group and its PID is therefore **not** a
+/// PGID. `kill -- -<pid>` then fails `ESRCH`, and with the error discarded
+/// the subsequent unbounded `child.wait()` never returns — the whole netns
+/// suite hangs on any host with working privileges. The namespace's own PID
+/// list is authoritative and needs no such assumption.
+enum ProcessScope {
+    Namespace(String),
+    #[cfg(test)]
+    Pids(Vec<u32>),
+}
+
 /// A child process running inside a network namespace.
 ///
 /// Captures stdout+stderr and kills the process on drop.
-///
-/// The output pipes are drained continuously by background threads, and
-/// that is load-bearing rather than a convenience. A piped child whose
-/// output nobody reads blocks in `write()` as soon as the 64 KiB pipe
-/// buffer fills. srtla_send runs here with `RUST_LOG=debug`, which at a
-/// few Mbps fills that buffer in about a second — and because the task
-/// doing the logging is the main select loop, the *sender* wedges while
-/// its control socket (which logs almost nothing) carries on answering.
-/// The symptom is a stats snapshot frozen at the values it held a second
-/// into the run, which reads like an impossibly stable control loop
-/// rather than a deadlocked one. Short tests never noticed because they
-/// finish under 64 KiB.
 pub struct NamespaceProcess {
     child: Child,
-    #[expect(dead_code)]
     label: String,
-    stdout: Arc<Mutex<Vec<String>>>,
-    stderr: Arc<Mutex<Vec<String>>>,
-}
-
-/// Drain a child pipe into a shared buffer, line by line, until EOF.
-fn drain_pipe<R: std::io::Read + Send + 'static>(pipe: R, sink: Arc<Mutex<Vec<String>>>) {
-    std::thread::spawn(move || {
-        for line in BufReader::new(pipe).lines().map_while(|l| l.ok()) {
-            if let Ok(mut buf) = sink.lock() {
-                buf.push(line);
-            }
-        }
-    });
+    scope: ProcessScope,
+    reaped: bool,
+    stdout_tail: OutputTail,
+    stderr_tail: OutputTail,
+    drain_threads: Vec<JoinHandle<()>>,
 }
 
 impl NamespaceProcess {
+    fn from_child(mut child: Child, scope: ProcessScope) -> Result<Self> {
+        let stdout_tail = new_output_tail();
+        let stderr_tail = new_output_tail();
+        let stdout = child.stdout.take().context("capture child stdout")?;
+        let stderr = child.stderr.take().context("capture child stderr")?;
+        let drain_threads = vec![
+            drain_pipe(stdout, Arc::clone(&stdout_tail)),
+            drain_pipe(stderr, Arc::clone(&stderr_tail)),
+        ];
+        Ok(Self {
+            child,
+            label: "test child".to_string(),
+            scope,
+            reaped: false,
+            stdout_tail,
+            stderr_tail,
+            drain_threads,
+        })
+    }
+
     /// Spawn `binary args...` inside `ns` via `sudo ip netns exec`.
     pub fn spawn(ns: &Namespace, binary: &str, args: &[&str]) -> Result<Self> {
         Self::spawn_with_env(ns, binary, args, &[])
@@ -235,70 +306,67 @@ impl NamespaceProcess {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        let mut child = cmd.spawn().with_context(|| format!("spawn {label}"))?;
+        let child = cmd.spawn().with_context(|| format!("spawn {label}"))?;
+        let mut process = Self::from_child(child, ProcessScope::Namespace(ns.name.clone()))?;
+        process.label = label;
 
-        // Start draining immediately — see the note on the struct. If we
-        // wait until the process exits to read these, it never gets there.
-        let stdout = Arc::new(Mutex::new(Vec::new()));
-        let stderr = Arc::new(Mutex::new(Vec::new()));
-        if let Some(pipe) = child.stdout.take() {
-            drain_pipe(pipe, Arc::clone(&stdout));
-        }
-        if let Some(pipe) = child.stderr.take() {
-            drain_pipe(pipe, Arc::clone(&stderr));
-        }
-
-        tracing::debug!(%label, pid = child.id(), "spawned namespace process");
-        Ok(Self {
-            child,
-            label,
-            stdout,
-            stderr,
-        })
+        tracing::debug!(label = %process.label, pid = process.child.id(), "spawned namespace process");
+        Ok(process)
     }
 
     /// Snapshot of the stdout lines captured so far. Safe to call while
     /// the process is still running.
     pub fn stdout_lines(&mut self) -> Vec<String> {
-        self.stdout.lock().map(|b| b.clone()).unwrap_or_default()
+        output_lines(&self.stdout_tail)
     }
 
     /// Snapshot of the stderr lines captured so far. Safe to call while
     /// the process is still running.
     pub fn stderr_lines(&mut self) -> Vec<String> {
-        self.stderr.lock().map(|b| b.clone()).unwrap_or_default()
+        output_lines(&self.stderr_tail)
     }
 
-    /// Send SIGTERM, wait briefly, then SIGKILL if needed.
+    /// Snapshot the live stdout+stderr tail without waiting for exit. The
+    /// drain threads keep both tails current, so this is safe to poll while
+    /// the process runs.
+    pub fn log_snapshot(&self) -> Vec<String> {
+        let mut lines = output_lines(&self.stdout_tail);
+        lines.extend(output_lines(&self.stderr_tail));
+        lines
+    }
+
+    fn join_drains(&mut self) {
+        for drain_thread in self.drain_threads.drain(..) {
+            let _ = drain_thread.join();
+        }
+    }
+
+    /// Send SIGTERM to the namespace's exact PIDs, then SIGKILL if needed.
     ///
-    /// Signals the entire process group (negative PID) so the inner process
-    /// receives the signal even when wrapped by `sudo ip netns exec`.
+    /// Every wait is bounded. The previous implementation signalled
+    /// `-<child pid>` on the assumption that the tracked `sudo` child led
+    /// its own process group — it does not — and then blocked forever in
+    /// `child.wait()` on a process nothing had actually signalled.
     pub fn kill(&mut self) {
-        if let Some(pid) = self.pid() {
-            // Signal the entire process group so the inner process receives it
-            let _ = Command::new("sudo")
-                .args(["kill", "-TERM", "--", &format!("-{pid}")])
-                .output();
+        if self.reaped && self.scope_pids().is_empty() {
+            self.join_drains();
+            return;
         }
 
-        match self.child.try_wait().ok().flatten() {
-            Some(_) => return,
-            None => {
-                // Wait up to 2s for graceful exit
-                std::thread::sleep(Duration::from_secs(2));
-                if self.child.try_wait().ok().flatten().is_some() {
-                    return;
-                }
-            }
+        self.signal_scope("-TERM");
+        if self.wait_until_stopped(Duration::from_secs(2)) {
+            self.join_drains();
+            return;
         }
 
-        // Force kill the process group
-        if let Some(pid) = self.pid() {
-            let _ = Command::new("sudo")
-                .args(["kill", "-9", "--", &format!("-{pid}")])
-                .output();
+        self.signal_scope("-KILL");
+        let _ = self.child.kill();
+        if !self.wait_until_stopped(Duration::from_secs(2)) {
+            tracing::warn!(label = %self.label, "namespace process teardown exceeded grace period");
+            drop(self.child.stdout.take());
+            drop(self.child.stderr.take());
         }
-        let _ = self.child.wait();
+        self.join_drains();
     }
 
     /// Check if the process is still running.
@@ -311,6 +379,7 @@ impl NamespaceProcess {
     pub fn check_exit(&mut self) -> Option<(Option<i32>, String)> {
         match self.child.try_wait() {
             Ok(Some(status)) => {
+                self.join_drains();
                 let stderr = self.stderr_lines().join("\n");
                 Some((status.code(), stderr))
             }
@@ -318,14 +387,187 @@ impl NamespaceProcess {
         }
     }
 
-    fn pid(&self) -> Option<u32> {
-        Some(self.child.id())
+    fn signal_scope(&self, signal: &str) {
+        let pids = self.scope_pids();
+        if pids.is_empty() {
+            return;
+        }
+
+        let mut command = match &self.scope {
+            ProcessScope::Namespace(_) => {
+                let mut command = Command::new("sudo");
+                command.args(["-n", "kill"]);
+                command
+            }
+            #[cfg(test)]
+            ProcessScope::Pids(_) => Command::new("kill"),
+        };
+        command.args([signal, "--"]);
+        command.args(pids.iter().map(u32::to_string));
+        let _ = command.output();
+    }
+
+    fn wait_until_stopped(&mut self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if let Ok(Some(_)) = self.child.try_wait() {
+                self.reaped = true;
+            }
+            if self.reaped && self.scope_pids().is_empty() {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    fn scope_pids(&self) -> Vec<u32> {
+        match &self.scope {
+            ProcessScope::Namespace(namespace) => {
+                let Ok(output) = Command::new("sudo")
+                    .args(["-n", "ip", "netns", "pids", namespace])
+                    .output()
+                else {
+                    return Vec::new();
+                };
+                if !output.status.success() {
+                    return Vec::new();
+                }
+                String::from_utf8_lossy(&output.stdout)
+                    .split_whitespace()
+                    .filter_map(|pid| pid.parse().ok())
+                    .collect()
+            }
+            #[cfg(test)]
+            ProcessScope::Pids(pids) => pids
+                .iter()
+                .copied()
+                .filter(|pid| {
+                    Command::new("kill")
+                        .args(["-0", "--", &pid.to_string()])
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .status()
+                        .is_ok_and(|status| status.success())
+                })
+                .collect(),
+        }
     }
 }
 
 impl Drop for NamespaceProcess {
     fn drop(&mut self) {
         self.kill();
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod namespace_process_tests {
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
+
+    use super::{NamespaceProcess, ProcessScope, new_output_tail};
+
+    fn signal_exact(signal: &str, target: &str) {
+        let _ = Command::new("kill").args([signal, "--", target]).status();
+    }
+
+    fn is_alive(pid: u32) -> bool {
+        Command::new("kill")
+            .args(["-0", "--", &pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+    }
+
+    /// The exact shape `sudo ip netns exec` produces: the tracked child is
+    /// NOT its own process-group leader, and the process that must actually
+    /// die lives in a third group. Signalling `-<tracked pid>` reaches
+    /// neither, so the old teardown's unbounded `wait()` never returned.
+    #[test]
+    fn kill_returns_when_wrapper_and_inner_process_have_mismatched_groups() {
+        let mut child = Command::new("sh")
+            .args([
+                "-c",
+                "setsid sh -c 'trap \"\" TERM INT; echo ready; exec sleep 30' & echo $!; wait",
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn mismatched process groups");
+        let wrapper_pid = child.id();
+        let mut reader = BufReader::new(child.stdout.take().expect("child stdout"));
+        let mut pid_line = String::new();
+        reader.read_line(&mut pid_line).expect("read inner pid");
+        let inner_pid = pid_line.trim().parse::<u32>().expect("parse inner pid");
+        let mut readiness_line = String::new();
+        reader
+            .read_line(&mut readiness_line)
+            .expect("read inner readiness");
+        assert_eq!(readiness_line.trim(), "ready");
+
+        let wrapper_pgid = Command::new("ps")
+            .args(["-o", "pgid=", "-p", &wrapper_pid.to_string()])
+            .output()
+            .expect("read wrapper pgid");
+        let wrapper_pgid = String::from_utf8_lossy(&wrapper_pgid.stdout)
+            .trim()
+            .parse::<u32>()
+            .expect("parse wrapper pgid");
+        assert_ne!(
+            wrapper_pid, wrapper_pgid,
+            "wrapper unexpectedly leads its PGID"
+        );
+        assert_ne!(
+            wrapper_pgid, inner_pid,
+            "inner process did not create a new group"
+        );
+        for signal in ["-TERM", "-INT", "-TERM", "-INT"] {
+            signal_exact(signal, &inner_pid.to_string());
+        }
+        assert!(is_alive(inner_pid), "inner process did not ignore TERM/INT");
+
+        let mut process = NamespaceProcess {
+            child,
+            label: "mismatched process groups".to_string(),
+            scope: ProcessScope::Pids(vec![inner_pid]),
+            reaped: false,
+            stdout_tail: new_output_tail(),
+            stderr_tail: new_output_tail(),
+            drain_threads: vec![],
+        };
+        let (done_tx, done_rx) = mpsc::channel();
+        let teardown = thread::spawn(move || {
+            // Twice, plus the drop: teardown must be idempotent, because
+            // `stop()` kills explicitly and `Drop` kills again.
+            process.kill();
+            process.kill();
+            drop(process);
+            let _ = done_tx.send(());
+        });
+
+        let completed = done_rx.recv_timeout(Duration::from_secs(8)).is_ok();
+        if !completed {
+            signal_exact("-KILL", &wrapper_pid.to_string());
+            signal_exact("-KILL", &format!("-{inner_pid}"));
+        }
+        teardown.join().expect("teardown thread");
+
+        assert!(
+            completed,
+            "NamespaceProcess::kill blocked on mismatched process groups"
+        );
+        assert!(
+            !is_alive(wrapper_pid),
+            "wrapper process leaked after teardown"
+        );
+        assert!(!is_alive(inner_pid), "inner process leaked after teardown");
     }
 }
 
