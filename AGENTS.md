@@ -93,6 +93,9 @@ Two dependency pins are load-bearing and must survive an upstream merge or a
   `now_ms()`, because the consumer compares it against `Date.now()`. The document model
   is `src/telemetry_doc.rs`; publish mechanics are `src/telemetry_file.rs`; the snapshot
   is fed from upstream's `src/stats.rs`, not a parallel collector.
+  Writer-thread creation is fallible: `TelemetryWriter::new` returns `anyhow::Result`,
+  propagated through `spawn_telemetry_sink` to `main` as a contextual startup error,
+  never a panic. Once started, filesystem publish failures remain best-effort warnings.
 - **`bytes_sent_total` (ADR-002)** is additive at both scopes, counted in **bytes** (no
   ×8), counted at the same call site as `bitrate_bps`, and monotonic for the process
   lifetime: it does not reset on a per-link socket replacement and does not regress

@@ -191,6 +191,8 @@ Two upstream defaults matter to the device integration and are left as upstream 
 
 With `--stats-file`, the sender writes a single-line JSON document on every interval. Each publish is atomic (written to a temp sibling, `fsync`ed, then renamed over the target), so a reader never sees a partial file, and the fsync runs off the packet-forwarding loop. On a clean `SIGTERM`/`SIGINT` the file and its `.tmp` sibling are removed.
 
+If the OS cannot create the telemetry writer thread, startup exits non-zero with a `spawn telemetry writer thread` error and the underlying OS cause, rather than panicking. Once the writer has started, filesystem publish failures remain best-effort warnings and do not stop the stream.
+
 ```json
 {"schema_version":1,"last_updated_ms":1749556546000,"connections":[{"conn_id":"0","rtt_ms":42,"nak_count":3,"weight_percent":50,"window":8192,"in_flight":100,"bitrate_bps":2500000,"bytes_sent_total":812000000,"iface":"wwan0","link_id":"modem-a"},{"conn_id":"1","rtt_ms":42,"nak_count":3,"weight_percent":50,"window":8192,"in_flight":100,"bitrate_bps":2500000,"bytes_sent_total":812000000,"iface":"wwan1","link_id":"modem-b"}],"bytes_sent_total":1620000000,"bind_map_status":{"state":"active"},"disposition":{"state":"mapped"}}
 ```
