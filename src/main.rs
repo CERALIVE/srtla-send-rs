@@ -359,7 +359,8 @@ async fn main() -> Result<()> {
     let mut on_shutdown = sender::ShutdownHooks::new();
     let telemetry = args
         .stats_file
-        .map(|path| spawn_telemetry_sink(path, args.stats_file_interval, &shared_stats));
+        .map(|path| spawn_telemetry_sink(path, args.stats_file_interval, &shared_stats))
+        .transpose()?;
     if let Some(writer) = &telemetry {
         let path = writer.path().to_path_buf();
         on_shutdown.register(move || telemetry_file::remove(&path));
@@ -401,8 +402,8 @@ fn spawn_telemetry_sink(
     path: std::path::PathBuf,
     interval_ms: u64,
     shared_stats: &stats::SharedStats,
-) -> std::sync::Arc<telemetry_file::TelemetryWriter> {
-    let writer = std::sync::Arc::new(telemetry_file::TelemetryWriter::new(path, interval_ms));
+) -> Result<std::sync::Arc<telemetry_file::TelemetryWriter>> {
+    let writer = std::sync::Arc::new(telemetry_file::TelemetryWriter::new(path, interval_ms)?);
     let period = writer.period();
     let weak = std::sync::Arc::downgrade(&writer);
     let stats = shared_stats.clone();
@@ -417,7 +418,7 @@ fn spawn_telemetry_sink(
             writer.publish_prebuilt(&telemetry_file::build_current_telemetry_json(&stats.get()));
         }
     });
-    writer
+    Ok(writer)
 }
 
 /// Resolved `--dry-run` inputs: the parsed source IPs and the receiver

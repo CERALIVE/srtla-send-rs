@@ -19,6 +19,7 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+use anyhow::{Context, Result};
 use tracing::warn;
 
 pub use crate::telemetry_doc::{
@@ -144,7 +145,8 @@ pub struct TelemetryWriter {
 }
 
 impl TelemetryWriter {
-    pub fn new(path: impl Into<PathBuf>, interval_ms: u64) -> Self {
+    /// Returns an error if the dedicated writer thread cannot be spawned.
+    pub fn new(path: impl Into<PathBuf>, interval_ms: u64) -> Result<Self> {
         Self::with_write_fn(path, interval_ms, write_atomic)
     }
 
@@ -155,7 +157,7 @@ impl TelemetryWriter {
         path: impl Into<PathBuf>,
         interval_ms: u64,
         write_fn: impl Fn(&Path, &str) -> io::Result<()> + Send + 'static,
-    ) -> Self {
+    ) -> Result<Self> {
         let path = path.into();
         let slot: Slot = Arc::new((Mutex::new(None), Condvar::new()));
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -167,15 +169,15 @@ impl TelemetryWriter {
             std::thread::Builder::new()
                 .name("telemetry-writer".to_string())
                 .spawn(move || writer_loop(&thread_path, &slot, &shutdown, write_fn.as_ref()))
-                .expect("spawn telemetry writer thread")
+                .context("spawn telemetry writer thread")?
         };
-        Self {
+        Ok(Self {
             slot,
             shutdown,
             handle: Some(handle),
             period: Duration::from_millis(interval_ms.max(1)),
             path,
-        }
+        })
     }
 
     /// The publish cadence (`--stats-file-interval`, floored at 1 ms).
@@ -370,26 +372,27 @@ mod tests {
     // ---- Opt-in + unlink-on-exit semantics -------------------------------
 
     #[test]
-    fn constructing_writer_creates_no_file() {
+    fn constructing_writer_creates_no_file() -> anyhow::Result<()> {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("stats.json");
-        let writer = TelemetryWriter::new(&path, 1000);
+        let writer = TelemetryWriter::new(&path, 1000)?;
         // No publish call -> nothing on disk (opt-in: construction is inert).
         assert!(
             !path.exists(),
             "constructing a writer must not create the file"
         );
         assert_eq!(writer.path(), path);
+        Ok(())
     }
 
     #[test]
     fn the_period_defaults_to_one_second_and_never_reaches_zero() {
         assert_eq!(DEFAULT_STATS_FILE_INTERVAL_MS, 1000);
-        let writer = TelemetryWriter::new("unused", DEFAULT_STATS_FILE_INTERVAL_MS);
+        let writer = TelemetryWriter::new("unused", DEFAULT_STATS_FILE_INTERVAL_MS).unwrap();
         assert_eq!(writer.period(), Duration::from_millis(1000));
         // A zero interval would spin a tokio interval at zero delay; floor it.
         assert_eq!(
-            TelemetryWriter::new("unused", 0).period(),
+            TelemetryWriter::new("unused", 0).unwrap().period(),
             Duration::from_millis(1)
         );
     }
@@ -412,7 +415,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("stats.json");
         {
-            let writer = TelemetryWriter::new(&path, 1000);
+            let writer = TelemetryWriter::new(&path, 1000).unwrap();
             writer.publish_prebuilt(&doc(0, &[]));
             assert!(
                 wait_until(|| path.exists(), Duration::from_secs(2)),
@@ -439,6 +442,7 @@ mod tests {
                 }
                 Ok(())
             })
+            .unwrap()
         };
 
         writer.publish_prebuilt("first");
@@ -482,6 +486,7 @@ mod tests {
                 }
                 Ok(())
             })
+            .unwrap()
         };
 
         writer.publish_prebuilt("A");
@@ -509,7 +514,7 @@ mod tests {
         let path = dir.path().join("stats.json");
         let tmp = tmp_path(&path);
 
-        let writer = TelemetryWriter::new(&path, 1000);
+        let writer = TelemetryWriter::new(&path, 1000).unwrap();
         writer.publish_prebuilt(&doc(1, &[sample_conn()]));
         assert!(
             wait_until(|| path.exists(), Duration::from_secs(2)),
@@ -538,6 +543,7 @@ mod tests {
                 calls.fetch_add(1, Ordering::SeqCst);
                 Err(io::Error::other("disk full"))
             })
+            .unwrap()
         };
 
         // When: snapshots are published anyway.
