@@ -255,7 +255,7 @@ bash scripts/retire-legacy-releases.sh --dry-run --repo srtla-send-rs
 bash scripts/retire-legacy-releases.sh --dry-run --repo srtla
 ```
 
-Dry-run is the default. Targets are frozen literal lists: 21 sender tags and 5
+Dry-run is the default. Targets are frozen literal lists: 21 sender tags and 6
 releases, plus 3 receiver tags and 3 releases. The sender's `v4.1.0` tag and release
 are protected; its old `v3.1.0` is a target. The receiver has no protected release.
 Every other repository is refused. Unknown live names, malformed inventory, or a

@@ -265,7 +265,7 @@ is the system-allocator build for Miri and profiling. `docs/notes/mimalloc-decis
 `scripts/retire-legacy-releases.sh` is a temporary, standalone maintenance tool, not
 part of the sender runtime or CI publication path. It accepts only the short repo
 names `srtla-send-rs` and `srtla`, always under `CERALIVE` on github.com. Literal
-allowlists select 21 sender tags / 5 releases and 3 receiver tags / 3 releases.
+allowlists select 21 sender tags / 6 releases and 3 receiver tags / 3 releases.
 Protection is repo-qualified: sender `v4.1.0`, receiver none, SLS `v3.1.0`, SRT
 `srt-v1.5.7+ceralive.2`; the latter two repos are refused entirely. The sender's old
 `v3.1.0` is a target, not a protected SLS name.
