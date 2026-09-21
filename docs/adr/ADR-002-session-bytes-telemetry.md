@@ -137,7 +137,9 @@ on the tick that precedes its teardown.
 ### Consumer contract
 
 `bytes_sent_total` is `z.number().int().min(0).optional()` at both scopes in
-`@ceralive/srtla-send`'s `telemetrySchema`. **Absent means UNKNOWN, never
+the `telemetrySchema` of CeraUI's private workspace package `@ceraui/srtla-send`
+(`CeraUI/packages/srtla-send/`, consumed by `apps/backend` via `workspace:*`).
+**Absent means UNKNOWN, never
 zero** — the same convention CeraUI already applies to `bitrate_bps`. A device
 running a sender that predates this ADR omits the field, and its consumer must
 render an unknown state rather than "0 B", which would be a lie.
@@ -160,9 +162,15 @@ emit this field; that is why the schema entry is optional rather than required.
   pre-ADR-002/003 producer document it is compared against, so the schema can
   only ever grow and a new field cannot land silently
   (`tests/telemetry_fixtures.rs`). The consumer-side byte-parity half lives with
-  the TypeScript binding, outside this repo.
-- **A consumer only sees the field once `@ceralive/srtla-send` is republished.**
-  The Zod reader strips unknown keys, so a CeraUI pinned to a pre-ADR-002
-  binding reads `undefined` — correct, but UNKNOWN rather than live. Shipping
-  the operator-visible figure therefore requires a binding release
-  (`bindings-vYYYY.M.P`) in addition to a sender release.
+  the TypeScript reader in CeraUI (`packages/srtla-send/`), outside this repo.
+- **A consumer only sees the field once CeraUI's own reader declares it.** The
+  Zod reader strips unknown keys, so a CeraUI build whose `@ceraui/srtla-send`
+  schema predates this ADR reads `undefined` — correct, but UNKNOWN rather than
+  live. The reader is a private workspace package inside the CeraUI monorepo,
+  not a published artifact: declaring the field there is an ordinary CeraUI
+  change that ships with the next CeraUI release. There is no separate binding
+  release, no npm publish, and no `bindings-v*` tag — the former public
+  `@ceralive/srtla-send` package was permanently unpublished when the binding
+  was absorbed into CeraUI (see `docs/notes/upstream-hardfork-2026-09.md`).
+  Shipping the operator-visible figure therefore takes a sender release plus a
+  CeraUI release that carries the updated schema.
