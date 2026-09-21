@@ -260,6 +260,32 @@ apt `gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross binutils-
 `mimalloc` is the global allocator behind a default-on feature; `--no-default-features`
 is the system-allocator build for Miri and profiling. `docs/notes/mimalloc-decision.md`.
 
+## TEMPORARY RELEASE RETIREMENT
+
+`scripts/retire-legacy-releases.sh` is a temporary, standalone maintenance tool, not
+part of the sender runtime or CI publication path. It accepts only the short repo
+names `srtla-send-rs` and `srtla`, always under `CERALIVE` on github.com. Literal
+allowlists select 21 sender tags / 5 releases and 3 receiver tags / 3 releases.
+Protection is repo-qualified: sender `v4.1.0`, receiver none, SLS `v3.1.0`, SRT
+`srt-v1.5.7+ceralive.2`; the latter two repos are refused entirely. The sender's old
+`v3.1.0` is a target, not a protected SLS name.
+
+Default `--dry-run` prints paginated live tag/release inventory, release asset names,
+targets, protection and exact commands. Any unknown tag/release, malformed inventory,
+or missing protected tag/release refuses before deletion. `--apply` additionally
+requires `RETIRE_CONFIRM=<short-repo>`; release deletion and tag-ref deletion use only
+explicit-repo GitHub API operations. Missing targets are reported and skipped so an
+interrupted retirement can resume; successful apply re-lists and requires only the
+protected names to remain. Never use it before consumer and post-swap gates are green.
+
+`--also-tag` is a refusal-test probe and cannot enlarge the allowlist. `GH_MOCK=1`
+with `GH_MOCK_FIXTURE=<json>` reads `{repo,tags,releases:[{tag,assets}]}` from a file
+and cannot call `gh`, even with `--apply`. npm commands (including inventory queries)
+are printed only for an owner; no npm operation is executed. Run
+`bash scripts/retire_legacy_releases_contract_test.sh` for the isolated shell gate.
+`docs/notes/retirement-dry-run.txt` records preparation only, not completed erasure.
+Remove the temporary script and its contract test when the retirement ledger closes.
+
 ## CODEBASE (upstream layout + the CERALIVE additions)
 
 ```

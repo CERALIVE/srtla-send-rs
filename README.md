@@ -244,6 +244,37 @@ The package is **`srtla`**, the binary installs at `/usr/bin/srtla_send`, and th
 
 Privileged network-namespace tests (`tests/netns_*.rs`, including the duplicate-IP twin-modem scenarios in `tests/netns_twin.rs`) self-skip on ordinary runners and are run locally through `scripts/netns_test_gate.sh`.
 
+### Temporary legacy-release retirement
+
+The maintenance-only `scripts/retire-legacy-releases.sh` prepares removal of the
+legacy sender and C receiver releases. It does not affect the running sender.
+Inspect either repository without deleting anything:
+
+```bash
+bash scripts/retire-legacy-releases.sh --dry-run --repo srtla-send-rs
+bash scripts/retire-legacy-releases.sh --dry-run --repo srtla
+```
+
+Dry-run is the default. Targets are frozen literal lists: 21 sender tags and 5
+releases, plus 3 receiver tags and 3 releases. The sender's `v4.1.0` tag and release
+are protected; its old `v3.1.0` is a target. The receiver has no protected release.
+Every other repository is refused. Unknown live names, malformed inventory, or a
+missing protected tag/release abort before deletion. Inventory includes release
+asset names and prints each exact deletion command.
+
+Actual retirement is a separate step after all consumer and post-swap gates pass.
+It requires `--apply` and `RETIRE_CONFIRM` equal to the short repository name, uses
+explicit-repository GitHub API operations only, and re-lists to verify the result.
+Missing targets are skipped for retry safety. npm commands are **printed only** for
+the owner, including the version queries; no npm command is run by this script.
+
+For offline verification, `GH_MOCK=1 GH_MOCK_FIXTURE=<json>` accepts
+`{"repo":"CERALIVE/srtla-send-rs","tags":[...],"releases":[{"tag":"...","assets":[]}]}`
+and forces print-only behavior even with `--apply`. Run the isolated checks with
+`bash scripts/retire_legacy_releases_contract_test.sh`. The
+[captured dry-run inventory](docs/notes/retirement-dry-run.txt) proves preparation,
+not erasure. The tool and its test are removed when retirement is complete.
+
 ### License
 
 Upstream's MIT license and credits are kept intact in this repository. CERALIVE applies AGPLv3 at the distribution layer, not by altering upstream's notices.
