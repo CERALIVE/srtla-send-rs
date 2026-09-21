@@ -63,7 +63,7 @@ case "$repo" in
       v2.6.0 v2.6.1 v2.7.0 v2.7.1 v2.8.0 v3.0.0 v3.0.1 v3.1.0 v3.2.0 v3.3.0
       bindings-v2026.6.1 bindings-v2026.6.2 bindings-v2026.8.0
     )
-    target_releases=(v1.0.1 v3.0.1 v3.1.0 v3.2.0 v3.3.0)
+    target_releases=(v1.0.0 v1.0.1 v3.0.1 v3.1.0 v3.2.0 v3.3.0)
     ;;
   srtla)
     full_repo=CERALIVE/srtla

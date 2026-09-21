@@ -17,7 +17,7 @@ done
 export PATH="$scratch/bin:$PATH"
 
 sender_tags='v1.0.0 v1.0.1 v2.1.0 v2.1.1 v2.2.0 v2.2.1 v2.3.0 v.2.5.0 v2.6.0 v2.6.1 v2.7.0 v2.7.1 v2.8.0 v3.0.0 v3.0.1 v3.1.0 v3.2.0 v3.3.0 bindings-v2026.6.1 bindings-v2026.6.2 bindings-v2026.8.0'
-sender_releases='v1.0.1 v3.0.1 v3.1.0 v3.2.0 v3.3.0'
+sender_releases='v1.0.0 v1.0.1 v3.0.1 v3.1.0 v3.2.0 v3.3.0'
 jq -n --arg tags "$sender_tags" --arg releases "$sender_releases" '
   {repo: "CERALIVE/srtla-send-rs", tags: (($tags | split(" ")) + ["v4.1.0"]),
    releases: (($releases | split(" ")) + ["v4.1.0"] | map({tag: ., assets: ["fixture.deb"]}))}
@@ -40,10 +40,10 @@ expect_refused env RETIRE_CONFIRM=srtla-send-rs bash "$SCRIPT" --apply --repo sr
 output=$(bash "$SCRIPT" --dry-run --repo srtla-send-rs)
 printf 'POSITIVE MOCK: GH_MOCK=1 --dry-run --repo srtla-send-rs\n%s\nexit=0\n' "$output"
 grep -Fx "TARGETS TAGS (21): $sender_tags" <<<"$output" >/dev/null || fail 'wrong sender tag targets'
-grep -Fx "TARGETS RELEASES (5): $sender_releases" <<<"$output" >/dev/null || fail 'wrong sender release targets'
+grep -Fx "TARGETS RELEASES (6): $sender_releases" <<<"$output" >/dev/null || fail 'wrong sender release targets'
 grep -Fx 'PROTECTED (1): v4.1.0' <<<"$output" >/dev/null || fail 'missing sender protection'
 [[ $(grep -c '^gh api -X DELETE ' <<<"$output") == 21 ]] || fail 'wrong tag command count'
-[[ $(grep -c '^gh release delete ' <<<"$output") == 5 ]] || fail 'wrong release command count'
+[[ $(grep -c '^gh release delete ' <<<"$output") == 6 ]] || fail 'wrong release command count'
 if grep -E '^gh .*v4\.1\.0' <<<"$output"; then fail 'protected command emitted'; fi
 [[ $(bash "$SCRIPT" --repo srtla-send-rs) == "$output" ]] || fail 'default is not dry-run'
 mock_apply=$(RETIRE_CONFIRM=srtla-send-rs bash "$SCRIPT" --apply --repo srtla-send-rs)
@@ -61,7 +61,7 @@ expect_refused bash "$SCRIPT" --repo
 for mutation in \
   '.tags += ["v99.0.0"]' \
   '.tags += ["bindings-v2099.1.0"]' \
-  '.releases += [{tag:"v1.0.0",assets:[]}]' \
+  '.releases += [{tag:"v2.1.0",assets:[]}]' \
   '.releases += [{tag:"bindings-v2099.1.0",assets:[]}]' \
   '.tags -= ["v4.1.0"]' \
   '.releases |= map(select(.tag != "v4.1.0"))' \
