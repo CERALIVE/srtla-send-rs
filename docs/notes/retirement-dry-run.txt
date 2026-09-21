@@ -1,0 +1,59 @@
+Task 49 preparation only — 2026-09-21
+No real apply, deletion, tag mutation, or npm command was executed.
+BLOCKER: sender has an extra published v1.0.0 release outside the frozen five-release
+allowlist. The sender correctly refuses; do not proceed to retirement until this
+inventory drift is explicitly reconciled. The allowlist has NOT been expanded.
+
+$ env -u RETIRE_CONFIRM GH_MOCK=0 bash scripts/retire-legacy-releases.sh --dry-run --repo srtla-send-rs
+REPO: CERALIVE/srtla-send-rs
+MODE: dry-run
+INVENTORY SOURCE: github.com
+LIVE TAGS (22): bindings-v2026.6.1 bindings-v2026.6.2 bindings-v2026.8.0 v.2.5.0 v1.0.0 v1.0.1 v2.1.0 v2.1.1 v2.2.0 v2.2.1 v2.3.0 v2.6.0 v2.6.1 v2.7.0 v2.7.1 v2.8.0 v3.0.0 v3.0.1 v3.1.0 v3.2.0 v3.3.0 v4.1.0
+LIVE RELEASES (7): v4.1.0 v3.3.0 v3.2.0 v3.1.0 v3.0.1 v1.0.1 v1.0.0
+LIVE ASSETS v4.1.0: ["srtla_4.1.0_amd64.deb","srtla_4.1.0_arm64.deb","srtla_amd64.deb.sha256","srtla_arm64.deb.sha256"]
+LIVE ASSETS v3.3.0: ["srtla-send-rs_3.3.0_amd64.deb","srtla-send-rs_3.3.0_arm64.deb","srtla-send-rs_amd64.deb.sha256","srtla-send-rs_arm64.deb.sha256"]
+LIVE ASSETS v3.2.0: ["srtla-send-rs_3.2.0_amd64.deb","srtla-send-rs_3.2.0_arm64.deb","srtla-send-rs_amd64.deb.sha256","srtla-send-rs_arm64.deb.sha256"]
+LIVE ASSETS v3.1.0: ["srtla-send-rs_3.1.0_amd64.deb","srtla-send-rs_3.1.0_arm64.deb","srtla-send-rs_amd64.deb.sha256","srtla-send-rs_arm64.deb.sha256"]
+LIVE ASSETS v3.0.1: ["srtla-send-rs_3.0.1_amd64.deb","srtla-send-rs_3.0.1_arm64.deb","srtla-send-rs_amd64.deb.sha256","srtla-send-rs_arm64.deb.sha256"]
+LIVE ASSETS v1.0.1: ["srtla-send-rs_2026.6.1_amd64.deb","srtla-send-rs_2026.6.1_arm64.deb","srtla-send-rs_amd64.deb.sha256","srtla-send-rs_arm64.deb.sha256"]
+LIVE ASSETS v1.0.0: ["srtla-send-rs_3.0.0_amd64.deb","srtla-send-rs_3.0.0_arm64.deb","srtla-send-rs_amd64.deb.sha256","srtla-send-rs_arm64.deb.sha256"]
+TARGETS TAGS (21): v1.0.0 v1.0.1 v2.1.0 v2.1.1 v2.2.0 v2.2.1 v2.3.0 v.2.5.0 v2.6.0 v2.6.1 v2.7.0 v2.7.1 v2.8.0 v3.0.0 v3.0.1 v3.1.0 v3.2.0 v3.3.0 bindings-v2026.6.1 bindings-v2026.6.2 bindings-v2026.8.0
+TARGETS RELEASES (5): v1.0.1 v3.0.1 v3.1.0 v3.2.0 v3.3.0
+PROTECTED (1): v4.1.0
+refused: unknown live release CERALIVE/srtla-send-rs:v1.0.0
+exit=1
+
+$ env -u RETIRE_CONFIRM GH_MOCK=0 bash scripts/retire-legacy-releases.sh --dry-run --repo srtla
+REPO: CERALIVE/srtla
+MODE: dry-run
+INVENTORY SOURCE: github.com
+LIVE TAGS (3): v2026.6.0 v2026.6.1 v2026.6.2
+LIVE RELEASES (3): v2026.6.2 v2026.6.1 v2026.6.0
+LIVE ASSETS v2026.6.2: ["srtla_2026.6.2_amd64.deb","srtla_2026.6.2_amd64.deb.sha256","srtla_2026.6.2_amd64.tar.gz","srtla_2026.6.2_amd64.tar.gz.sha256","srtla_2026.6.2_arm64.deb","srtla_2026.6.2_arm64.deb.sha256","srtla_2026.6.2_arm64.tar.gz","srtla_2026.6.2_arm64.tar.gz.sha256"]
+LIVE ASSETS v2026.6.1: ["srtla_2026.6.1_amd64.deb","srtla_2026.6.1_amd64.deb.sha256","srtla_2026.6.1_amd64.tar.gz","srtla_2026.6.1_amd64.tar.gz.sha256","srtla_2026.6.1_arm64.deb","srtla_2026.6.1_arm64.deb.sha256","srtla_2026.6.1_arm64.tar.gz","srtla_2026.6.1_arm64.tar.gz.sha256"]
+LIVE ASSETS v2026.6.0: ["srtla_2026.6.0_amd64.deb","srtla_2026.6.0_amd64.deb.sha256","srtla_2026.6.0_amd64.tar.gz","srtla_2026.6.0_amd64.tar.gz.sha256","srtla_2026.6.0_arm64.deb","srtla_2026.6.0_arm64.deb.sha256","srtla_2026.6.0_arm64.tar.gz","srtla_2026.6.0_arm64.tar.gz.sha256"]
+TARGETS TAGS (3): v2026.6.0 v2026.6.1 v2026.6.2
+TARGETS RELEASES (3): v2026.6.0 v2026.6.1 v2026.6.2
+PROTECTED (0): (none)
+PREFLIGHT: PASS
+COMMANDS:
+gh release delete v2026.6.0 --repo CERALIVE/srtla --yes
+gh release delete v2026.6.1 --repo CERALIVE/srtla --yes
+gh release delete v2026.6.2 --repo CERALIVE/srtla --yes
+gh api -X DELETE repos/CERALIVE/srtla/git/refs/tags/v2026.6.0
+gh api -X DELETE repos/CERALIVE/srtla/git/refs/tags/v2026.6.1
+gh api -X DELETE repos/CERALIVE/srtla/git/refs/tags/v2026.6.2
+NPM: OWNER ACTION ONLY; commands below are printed, never executed.
+npm view @ceralive/srtla-send versions --json
+npm unpublish @ceralive/srtla-send --force
+npm deprecate @ceralive/srtla-send@'*' "retired: absorbed into CeraUI (packages/srtla-send); no further releases"
+npm view @ceralive/srtla versions --json
+Only if @ceralive/srtla exists, the owner may run:
+npm unpublish @ceralive/srtla --force
+npm deprecate @ceralive/srtla@'*' "retired: absorbed into CeraUI (packages/srtla-send); no further releases"
+NO MUTATIONS: dry-run or fixture mode; no deletion or npm command executed.
+exit=0
+
+$ gh release view v1.0.0 --repo CERALIVE/srtla-send-rs --json tagName,isDraft,isPrerelease,url,createdAt,publishedAt
+{"createdAt":"2026-06-12T23:50:27Z","isDraft":false,"isPrerelease":false,"publishedAt":"2026-06-12T23:41:41Z","tagName":"v1.0.0","url":"https://github.com/CERALIVE/srtla-send-rs/releases/tag/v1.0.0"}
+exit=0
