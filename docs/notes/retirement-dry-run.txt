@@ -1,8 +1,9 @@
 Task 49 preparation only — 2026-09-21
 No real apply, deletion, tag mutation, or npm command was executed.
-BLOCKER: sender has an extra published v1.0.0 release outside the frozen five-release
-allowlist. The sender correctly refuses; do not proceed to retirement until this
-inventory drift is explicitly reconciled. The allowlist has NOT been expanded.
+RESOLVED: the owner confirmed the plan omitted the published v1.0.0 release and
+explicitly corrected the sender release allowlist to six literal names. Both fresh
+dry-runs below pass. This is preparation only, not authorization to skip the
+separate retirement preconditions. The original refusal remains in commit a07e221.
 
 $ env -u RETIRE_CONFIRM GH_MOCK=0 bash scripts/retire-legacy-releases.sh --dry-run --repo srtla-send-rs
 REPO: CERALIVE/srtla-send-rs
@@ -18,10 +19,47 @@ LIVE ASSETS v3.0.1: ["srtla-send-rs_3.0.1_amd64.deb","srtla-send-rs_3.0.1_arm64.
 LIVE ASSETS v1.0.1: ["srtla-send-rs_2026.6.1_amd64.deb","srtla-send-rs_2026.6.1_arm64.deb","srtla-send-rs_amd64.deb.sha256","srtla-send-rs_arm64.deb.sha256"]
 LIVE ASSETS v1.0.0: ["srtla-send-rs_3.0.0_amd64.deb","srtla-send-rs_3.0.0_arm64.deb","srtla-send-rs_amd64.deb.sha256","srtla-send-rs_arm64.deb.sha256"]
 TARGETS TAGS (21): v1.0.0 v1.0.1 v2.1.0 v2.1.1 v2.2.0 v2.2.1 v2.3.0 v.2.5.0 v2.6.0 v2.6.1 v2.7.0 v2.7.1 v2.8.0 v3.0.0 v3.0.1 v3.1.0 v3.2.0 v3.3.0 bindings-v2026.6.1 bindings-v2026.6.2 bindings-v2026.8.0
-TARGETS RELEASES (5): v1.0.1 v3.0.1 v3.1.0 v3.2.0 v3.3.0
+TARGETS RELEASES (6): v1.0.0 v1.0.1 v3.0.1 v3.1.0 v3.2.0 v3.3.0
 PROTECTED (1): v4.1.0
-refused: unknown live release CERALIVE/srtla-send-rs:v1.0.0
-exit=1
+PREFLIGHT: PASS
+COMMANDS:
+gh release delete v1.0.0 --repo CERALIVE/srtla-send-rs --yes
+gh release delete v1.0.1 --repo CERALIVE/srtla-send-rs --yes
+gh release delete v3.0.1 --repo CERALIVE/srtla-send-rs --yes
+gh release delete v3.1.0 --repo CERALIVE/srtla-send-rs --yes
+gh release delete v3.2.0 --repo CERALIVE/srtla-send-rs --yes
+gh release delete v3.3.0 --repo CERALIVE/srtla-send-rs --yes
+gh api -X DELETE repos/CERALIVE/srtla-send-rs/git/refs/tags/v1.0.0
+gh api -X DELETE repos/CERALIVE/srtla-send-rs/git/refs/tags/v1.0.1
+gh api -X DELETE repos/CERALIVE/srtla-send-rs/git/refs/tags/v2.1.0
+gh api -X DELETE repos/CERALIVE/srtla-send-rs/git/refs/tags/v2.1.1
+gh api -X DELETE repos/CERALIVE/srtla-send-rs/git/refs/tags/v2.2.0
+gh api -X DELETE repos/CERALIVE/srtla-send-rs/git/refs/tags/v2.2.1
+gh api -X DELETE repos/CERALIVE/srtla-send-rs/git/refs/tags/v2.3.0
+gh api -X DELETE repos/CERALIVE/srtla-send-rs/git/refs/tags/v.2.5.0
+gh api -X DELETE repos/CERALIVE/srtla-send-rs/git/refs/tags/v2.6.0
+gh api -X DELETE repos/CERALIVE/srtla-send-rs/git/refs/tags/v2.6.1
+gh api -X DELETE repos/CERALIVE/srtla-send-rs/git/refs/tags/v2.7.0
+gh api -X DELETE repos/CERALIVE/srtla-send-rs/git/refs/tags/v2.7.1
+gh api -X DELETE repos/CERALIVE/srtla-send-rs/git/refs/tags/v2.8.0
+gh api -X DELETE repos/CERALIVE/srtla-send-rs/git/refs/tags/v3.0.0
+gh api -X DELETE repos/CERALIVE/srtla-send-rs/git/refs/tags/v3.0.1
+gh api -X DELETE repos/CERALIVE/srtla-send-rs/git/refs/tags/v3.1.0
+gh api -X DELETE repos/CERALIVE/srtla-send-rs/git/refs/tags/v3.2.0
+gh api -X DELETE repos/CERALIVE/srtla-send-rs/git/refs/tags/v3.3.0
+gh api -X DELETE repos/CERALIVE/srtla-send-rs/git/refs/tags/bindings-v2026.6.1
+gh api -X DELETE repos/CERALIVE/srtla-send-rs/git/refs/tags/bindings-v2026.6.2
+gh api -X DELETE repos/CERALIVE/srtla-send-rs/git/refs/tags/bindings-v2026.8.0
+NPM: OWNER ACTION ONLY; commands below are printed, never executed.
+npm view @ceralive/srtla-send versions --json
+npm unpublish @ceralive/srtla-send --force
+npm deprecate @ceralive/srtla-send@'*' "retired: absorbed into CeraUI (packages/srtla-send); no further releases"
+npm view @ceralive/srtla versions --json
+Only if @ceralive/srtla exists, the owner may run:
+npm unpublish @ceralive/srtla --force
+npm deprecate @ceralive/srtla@'*' "retired: absorbed into CeraUI (packages/srtla-send); no further releases"
+NO MUTATIONS: dry-run or fixture mode; no deletion or npm command executed.
+exit=0
 
 $ env -u RETIRE_CONFIRM GH_MOCK=0 bash scripts/retire-legacy-releases.sh --dry-run --repo srtla
 REPO: CERALIVE/srtla
@@ -54,6 +92,7 @@ npm deprecate @ceralive/srtla@'*' "retired: absorbed into CeraUI (packages/srtla
 NO MUTATIONS: dry-run or fixture mode; no deletion or npm command executed.
 exit=0
 
+Historical discovery metadata (retained from the initial blocked run):
 $ gh release view v1.0.0 --repo CERALIVE/srtla-send-rs --json tagName,isDraft,isPrerelease,url,createdAt,publishedAt
 {"createdAt":"2026-06-12T23:50:27Z","isDraft":false,"isPrerelease":false,"publishedAt":"2026-06-12T23:41:41Z","tagName":"v1.0.0","url":"https://github.com/CERALIVE/srtla-send-rs/releases/tag/v1.0.0"}
 exit=0
