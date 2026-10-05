@@ -2,7 +2,7 @@
 # check-doc-refs.sh — documentation reference consistency gate.
 #
 # Verifies that every `openspec/…` and `docs/…` path referenced in this repo's
-# top-level docs (AGENTS.md, README.md) actually resolves on disk. Exits non-zero
+# top-level docs and relocated contracts (docs/agents/*.md) resolves on disk. Exits non-zero
 # on the first dangling reference so a moved/renamed/deleted note is caught in CI
 # instead of rotting silently (Rule A — docs stay in sync with the tree).
 #
@@ -15,7 +15,9 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-doc_sources=(AGENTS.md README.md)
+shopt -s nullglob
+doc_sources=(AGENTS.md README.md docs/agents/*.md)
+shopt -u nullglob
 
 # Collect every in-repo openspec/ and docs/ path, strip trailing sentence
 # punctuation, de-duplicate.
