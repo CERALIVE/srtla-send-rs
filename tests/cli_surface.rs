@@ -1,7 +1,7 @@
 //! Machine-readable pin of the `srtla_send` command-line surface.
 //!
 //! These tests spawn the real binary via `CARGO_BIN_EXE_srtla_send` and pin the
-//! CeraLive device-integration contract (`AGENTS.md` → PARITY CONTRACT):
+//! CeraLive device-integration contract (`docs/agents/parity-contract-ceraui-depends-on-every-bullet-change-only-w.md`):
 //!
 //! ```text
 //! srtla_send <SRT_LISTEN_PORT> <SRTLA_HOST> <SRTLA_PORT> <BIND_IPS_FILE> [OPTIONS]

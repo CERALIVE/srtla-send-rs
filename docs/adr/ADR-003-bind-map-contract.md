@@ -47,7 +47,7 @@ modem layer — already knows it. The sender has no channel to receive it.
 ### Why not change `BIND_IPS_FILE`
 
 The IP-only file is a **load-bearing parity contract** (root `AGENTS.md` → CRITICAL
-CONSTRAINTS; this repo's `AGENTS.md` → PARITY CONTRACT). Stock senders, hand-run
+CONSTRAINTS; this repo's [parity contract](../agents/parity-contract-ceraui-depends-on-every-bullet-change-only-w.md)). Stock senders, hand-run
 invocations, BELABOX-shaped tooling, and every already-deployed CeraUI all write and
 read it in its current form. Adding columns, a header line, or a version marker to
 that file breaks all of them at once, and the file has no place to carry a version

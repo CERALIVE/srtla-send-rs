@@ -28,7 +28,7 @@ forever. `srt` was advanced from its existing `master` by one upstream merge.
   scheduler-hardening flag, the legacy control dialect, and the TypeScript binding
   track. The full list is the commit range
   [`df0b393...v4.1.0`](https://github.com/CERALIVE/srtla-send-rs/compare/df0b3938791ff24eced4aed8b29e3d49d0efb639...v4.1.0),
-  and the contract those ports satisfy is `AGENTS.md`, PARITY CONTRACT.
+  and the contract those ports satisfy is the [parity contract](../agents/parity-contract-ceraui-depends-on-every-bullet-change-only-w.md).
 - **SLS.** Server source stays byte-identical to upstream except the ledgered `port`
   rows (security-class `fix(auth)`/`fix(core)`); CI/CD, the libsrt pin, and the contract
   scripts were carried. Everything else (profiles/modes, audio-gap concealment, the

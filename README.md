@@ -166,7 +166,7 @@ A tag build (detached HEAD) reports the bare hash, `4.1.0 (974c8b9) [srtla_send]
 
 ## The CERALIVE layer
 
-Everything in this section is CERALIVE's addition on top of upstream. It exists because [CeraUI](https://github.com/CERALIVE/CeraUI) spawns `srtla_send` on the device, reads its telemetry, and packages it into the device image. The contract CeraUI depends on is written down in [`AGENTS.md`](AGENTS.md) (section "PARITY CONTRACT"); this is the operator's view of the same things.
+Everything in this section is CERALIVE's addition on top of upstream. It exists because [CeraUI](https://github.com/CERALIVE/CeraUI) spawns `srtla_send` on the device, reads its telemetry, and packages it into the device image. The contract CeraUI depends on is written down in [the parity contract](docs/agents/parity-contract-ceraui-depends-on-every-bullet-change-only-w.md); this is the operator's view of the same things.
 
 ### Version and upstream sync
 
