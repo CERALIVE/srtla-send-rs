@@ -76,7 +76,7 @@ Five Miri filters, cross-channel/OS lanes and privileged netns prerequisites: [f
 - Binary is srtla_send at /usr/bin/srtla_send; CLI order is <SRT_LISTEN_PORT> <SRTLA_HOST> <SRTLA_PORT> <BIND_IPS_FILE> [OPTIONS].
 - Control is additive upstream JSON-RPC 2.0 over --control-socket (ADR-004 supersedes ADR-001 transport); --stats-file remains optional.
 - No hello, subscribe-events, kebab-case methods or replay-on-subscribe; immediate state requires get_stats after subscribe.
-- ADR-001 file schema_version stays 1; bitrate_bps is wire bytes/s ×8; additive fields are optional, absent means unknown.
+- ADR-001 schema_version=1; rtt_ms is Kalman-smoothed RTT in ms; bitrate_bps is wire bytes/s ×8; additions optional, absent means unknown.
 - Keep bytes_sent_total process-monotonic in bytes; never reset on replacement or reload, never treat missing as zero.
 - Capability probe keys are frozen; nonzero exit, malformed output or timeout means no support, regardless of error wording.
 - --bind-map stays optional; IP-list bytes stay unchanged; degraded reload retains the last valid mapped pool.
