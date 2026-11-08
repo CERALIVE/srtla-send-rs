@@ -501,7 +501,7 @@ mod tests {
         rt.block_on(apply_connection_changes(
             &mut connections,
             &mut conn_io,
-            &crate::sender::specs_from_ips(&new_ips),
+            &crate::sender::specs_from_ips(&new_ips, &[]),
             "127.0.0.1",
             8080,
             &mut last_selected_idx,
@@ -562,9 +562,10 @@ mod tests {
     #[test]
     fn test_pending_connection_changes() {
         let changes = PendingConnectionChanges {
-            new_links: Some(crate::sender::specs_from_ips(&[IpAddr::V4(Ipv4Addr::new(
-                192, 168, 1, 100,
-            ))])),
+            new_links: Some(crate::sender::specs_from_ips(
+                &[IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100))],
+                &[],
+            )),
             receiver_host: "test-host".to_string(),
             receiver_port: 9090,
         };
@@ -597,7 +598,7 @@ mod tests {
             std::sync::Arc::new(crate::net::SourceIpBinder);
         let mut conn_io = ConnIoMap::new();
         let connections =
-            create_connections_from_ips(&ips, "127.0.0.1", 9999, &binder, &mut conn_io).await;
+            create_connections_from_ips(&ips, &[], "127.0.0.1", 9999, &binder, &mut conn_io).await;
 
         // Connections may be empty due to connection failures, which is OK for testing
         assert!(connections.len() <= ips.len());

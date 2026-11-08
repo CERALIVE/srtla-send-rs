@@ -59,60 +59,64 @@ The sender supports two mutually exclusive scheduling modes:
 
 This tool assumes that data is streamed from a SRT _sender_ in _caller_ mode to a SRT _receiver_ in _listener_ mode. To get any benefit over using SRT directly, the _sender_ should have 2 or more network links to the SRT listener (in the typical application, these would be internet-connected 4G modems). The sender needs to have [source routing](https://tldp.org/HOWTO/Adv-Routing-HOWTO/lartc.rpdb.simple.html) configured, as srtla uses `bind()` to map UDP sockets to a given connection.
 
+## Install
+
+Each [release](https://github.com/irlserver/srtla_send/releases) ships a `.deb` for `amd64` and `arm64`. It runs on any Linux distribution with glibc 2.27 or newer (Ubuntu 18.04, Debian 10 and later):
+
+```bash
+sudo dpkg -i srtla_*_arm64.deb
+```
+
+On other platforms, build from source.
+
 ## Requirements
 
-- **Rust nightly toolchain** and Cargo
+- Rust and Cargo. `rust-toolchain.toml` pins the stable toolchain, and rustup installs it on the first `cargo` command. The minimum supported version is the `rust-version` in `Cargo.toml`.
+- Rust nightly, only to format code: `rustfmt.toml` uses unstable options.
 - Unix (Linux/macOS) or Windows
   - Note: SIGHUP-based IP reload is Unix-only; Windows runs without that arm
-
-**Important:** This project requires Rust nightly due to advanced rustfmt configuration options used in the codebase.
 
 ## Build
 
 ```bash
 cd srtla_send
-rustup install nightly
-rustup default nightly  # Set nightly as default for this project
 cargo build --release
 # binary at target/release/srtla_send
 ```
 
-Alternatively, you can use nightly for individual commands:
-
-```bash
-cargo +nightly build --release
-cargo +nightly fmt
-cargo +nightly test
-```
-
 ## Testing
 
-The project includes comprehensive test suites covering unit tests, integration tests, and end-to-end tests.
+The project includes test suites covering unit tests, integration tests, and end-to-end tests.
 
 ### Run Tests Locally
 
+The `xlint` and `xtest` aliases in `.cargo/config.toml` run the same commands as CI, across every crate in the workspace.
+
 ```bash
-# Run all tests (requires nightly)
-cargo test
+# Run all tests in the workspace, as CI does
+cargo xtest
 
-# Run with verbose output
-cargo test --verbose
+# Run clippy, as CI does
+cargo xlint
 
-# Run specific test
+# Run a specific test
 cargo test test_connection_score
 
-# Check formatting (requires nightly)
-cargo fmt --all -- --check
+# Format code (nightly)
+cargo +nightly fmt --all
 ```
 
 ### CI/CD
 
-The project uses GitHub Actions for continuous integration with automated testing on every push and pull request, including:
+GitHub Actions runs on every push and pull request:
 
-- Multi-platform testing (Linux, Windows, macOS)
-- Code formatting and linting checks
-- Security vulnerability scanning
-- Build verification across multiple Rust versions
+- Formatting, clippy and a spell check
+- Tests on Linux, Windows and macOS, plus Rust beta and a build on the minimum supported Rust version
+- Miri over the unsafe batch-receive code
+- Supply chain checks with cargo-deny
+- The release debs, built against glibc 2.27
+
+Pushing a `vX.Y.Z` tag creates a draft release. See [RELEASING.md](RELEASING.md).
 
 The fork's workflows are described under [CI and packaging](#ci-and-packaging) in the CERALIVE section.
 
@@ -127,7 +131,13 @@ srtla_send [OPTIONS] SRT_LISTEN_PORT SRTLA_HOST SRTLA_PORT BIND_IPS_FILE
 - `SRT_LISTEN_PORT`: UDP port on which to receive SRT packets locally
 - `SRTLA_HOST`: hostname or IP of the SRTLA receiver (e.g., srtla_rec)
 - `SRTLA_PORT`: UDP port of the SRTLA receiver
-- `BIND_IPS_FILE`: path to a file with newline-separated local source IPs (uplinks)
+- `BIND_IPS_FILE`: path to a file with newline-separated local source IPs (uplinks). Each line is `<ip>[ <weight>]`: the optional
+  weight (integer 1..10, default 1) is a link priority in the style of Moblin's
+  "connection priorities". Weights are normalised so the lowest link is 1; in
+  classic mode a link's score is multiplied by its weight while its window is
+  above 20 000, the multiplier fades linearly to 1 between 20 000 and 10 000,
+  and is ignored below. Enhanced mode ignores weights. Exported per link as
+  `srtla_send_link_weight`.
 
 ### Options
 
@@ -136,8 +146,9 @@ srtla_send [OPTIONS] SRT_LISTEN_PORT SRTLA_HOST SRTLA_PORT BIND_IPS_FILE
 - `--no-stall-deselect`: Disable the stalled-link deselect guard (on by default). The guard skips a link whose in-flight backlog is high while its last delivery proof (an earned ACK or keepalive round-trip) has gone stale, provided a healthier link can carry the traffic. The link recovers automatically on its next keepalive round-trip, so nothing is probed blindly. This mainly helps satellite links (Starlink obstructions and handovers) that keep a large backlog while briefly delivering nothing.
 - `--stall-min-in-flight <N>`: In-flight backlog (packets) at or above which a link becomes a stall candidate (default 32)
 - `--stall-ack-stale-ms <MS>`: Delivery-proof staleness window in milliseconds after which a stall candidate is deselected (default 3000)
+- `--conn-timeout-ms <MS>`: Per-link liveness timeout. Silence past this tears the link down and re-registers it (default 5000, clamped to 1000..=60000, also settable at runtime with `set_conn_timeout`). A timed-out link that was registered before makes its first 4 reconnect attempts 1 s apart, so a short modem or tether blip re-registers before SRT's 5 s peer-idle timeout ends the session. After that it retries every 5 s until it registers again.
 - `--no-rehome`: Disable whole-bond re-home (on by default). When every uplink has been down for longer than the all-links-failed window *and* the receiver hostname no longer resolves to the address the bond is pinned to, the sender moves every uplink together to the newly-resolved address and re-registers from scratch over the ordinary REG1/REG2/REG3 flow. It is deliberately conservative: a bond with any live uplink is never touched, a merely reordered DNS answer is not a move, a failed lookup is not a move, and at most one migration is attempted per minute. Pass this to keep the old behaviour of staying on the cached address until the process is restarted.
-- `--config <PATH>`: Path to a TOML config file (reloaded on SIGHUP)
+- `--config <PATH>`: Path to a TOML config file, read once at startup. Each key is the long flag name with underscores (for example `stall_ack_stale_ms = 2000`), and a flag given on the command line wins over the file. The supported keys are `mode`, `no_quality`, `no_stall_deselect`, `stall_min_in_flight`, `stall_ack_stale_ms` and `conn_timeout_ms`. An unknown key or a file that fails to parse stops startup.
 - `--control-socket <PATH>`: Unix domain socket path for remote control (e.g., `/tmp/srtla.sock`)
 - `--conn-timeout-ms <MS>`: Per-link liveness timeout (default 5000, clamped to 1000..=60000; also settable at runtime via `set_conn_timeout`)
 - `--priority-bind <ADDR:PORT>`: UDP sidecar address for encoder keyframe priority hints

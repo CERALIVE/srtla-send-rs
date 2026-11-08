@@ -22,7 +22,7 @@ use crate::bind_map::{
     PairRead, ResolvePhase, SystemIfaces, ValidateCtx, read_pair, resolve,
 };
 use crate::net::UplinkSpec;
-use crate::sender::read_ip_list;
+use crate::sender::read_weighted_ip_list;
 
 /// The two file paths the sender's link set is derived from.
 #[derive(Debug, Clone, Copy)]
@@ -119,7 +119,8 @@ impl LinkSource {
     /// legacy contract: an empty start is not fatal, it waits for a `SIGHUP`.
     pub async fn startup(&mut self) -> Result<SmallVec<UplinkSpec, 4>> {
         let Some((ips_file, sidecar, prior)) = self.read_args() else {
-            return Ok(specs_from_ips(&read_ip_list(&self.ips_file).await?));
+            let (ips, weights) = read_weighted_ip_list(&self.ips_file).await?;
+            return Ok(specs_from_ips(&ips, &weights));
         };
         let read = read_bind_map(ips_file, sidecar, prior).await;
         Ok(self.adopt(read))

@@ -1,3 +1,4 @@
+mod client_dedup;
 mod connections;
 mod egress_tick;
 mod housekeeping;
@@ -16,6 +17,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+pub(crate) use client_dedup::ClientDedup;
 // Re-export connection management functions for tests
 #[allow(unused_imports)]
 pub use connections::{
@@ -30,15 +32,15 @@ use housekeeping::handle_housekeeping;
 // pair read).
 #[allow(unused_imports)]
 pub use links::{LinkSource, SenderPaths, read_bind_map};
-// Re-exported so the ported DATA-padding test drives the same production flush
-// path the send loop uses, not a mirrored copy.
-#[allow(unused_imports)]
-pub(crate) use packet_handler::flush_all_batches;
 // Re-exported for the NAK-attribution conformance tests so they drive the real
 // production path rather than a mirrored copy.
 #[allow(unused_imports)]
 pub(crate) use packet_handler::{attribute_nak, process_connection_events};
-use packet_handler::{drain_packet_queue, handle_srt_packet, handle_uplink_packet};
+use packet_handler::{drain_packet_queue, handle_srt_packet};
+// Re-exported so the ported DATA-padding test drives the same production flush
+// path the send loop uses, not a mirrored copy.
+#[allow(unused_imports)]
+pub(crate) use packet_handler::{flush_all_batches, handle_uplink_packet};
 // Scripted resolver seam for tests that drive the re-home trigger policy.
 #[cfg(any(test, feature = "test-internals"))]
 pub use rehome::StubResolver;
@@ -59,6 +61,8 @@ use tracing::{debug, info, warn};
 #[cfg(any(test, feature = "test-internals"))]
 pub use uplink::ConnIo;
 pub use uplink::ConnIoMap;
+#[cfg(test)]
+pub(crate) use uplink::UplinkPacket;
 use uplink::{ConnectionId, ReaderHandle, create_uplink_channel, sync_readers};
 // Re-exported so the handshake-sniffing tests drive the real receive path.
 #[allow(unused_imports)]
@@ -250,6 +254,7 @@ pub async fn run_sender_with_config(
     let mut last_client_addr: Option<SocketAddr> = None;
     // Zero-allocation ring buffer for sequence tracking
     let mut seq_tracker = SequenceTracker::new();
+    let mut client_dedup = ClientDedup::new();
     let mut last_selected_idx: Option<usize> = None;
     let mut all_failed_at: Option<u64> = None;
     // Whole-bond re-home: only ever consulted once every uplink has been down
@@ -330,6 +335,7 @@ pub async fn run_sender_with_config(
                             &conn_io,
                             &mut reg,
                             &instant_tx,
+                            &mut client_dedup,
                             last_client_addr,
                             &local_listener,
                             &seq_tracker,
@@ -347,6 +353,7 @@ pub async fn run_sender_with_config(
                                 &conn_io,
                                 &mut reg,
                                 &instant_tx,
+                                &mut client_dedup,
                                 last_client_addr,
                                 &local_listener,
                                 &seq_tracker,
@@ -359,6 +366,7 @@ pub async fn run_sender_with_config(
                                 &conn_io,
                                 &mut reg,
                                 &instant_tx,
+                                &mut client_dedup,
                                 last_client_addr,
                                 &local_listener,
                                 &seq_tracker,
@@ -482,6 +490,7 @@ pub async fn run_sender_with_config(
                             &conn_io,
                             &mut reg,
                             &instant_tx,
+                            &mut client_dedup,
                             last_client_addr,
                             &local_listener,
                             &seq_tracker,
@@ -518,24 +527,28 @@ pub async fn run_sender_with_config(
                 // current links up rather than queuing an empty list, which
                 // would tear down every connection. Mirrors the C sender.
                 match reload::analyze_ip_reload(ips_file) {
-                    reload::IpReload::Apply { ips, first_invalid_line } => {
+                    reload::IpReload::Apply { ips, weights, first_invalid_line } => {
                         if let Some(line) = first_invalid_line {
                             warn!(
                                 "ips file has an invalid entry starting at line {line}; applying valid IPs only"
                             );
                         }
                         pending_changes = Some(PendingConnectionChanges {
-                            new_links: Some(specs_from_ips(&ips)),
+                            new_links: Some(specs_from_ips(&ips, &weights)),
                             receiver_host: receiver_host.to_string(),
                             receiver_port,
                         });
-                        info!("uplink IP changes queued for next processing cycle");
+                        info!(
+                            "uplink IP changes queued for next processing cycle: {}",
+                            describe_weights(&ips, &weights)
+                        );
                     }
                     reload::IpReload::Refuse(reason) => {
                         warn!(
                             "refusing SIGHUP reload ({reason:?}); keeping current connections"
                         );
                     }
+
                 }
             }
             let config_snap = config.snapshot();
@@ -545,6 +558,7 @@ pub async fn run_sender_with_config(
                 &conn_io,
                 &mut reg,
                 &instant_tx,
+                &mut client_dedup,
                 last_client_addr,
                 &local_listener,
                 &seq_tracker,
@@ -613,6 +627,30 @@ fn link_identities(
 }
 
 pub async fn read_ip_list(path: &str) -> Result<SmallVec<IpAddr, 4>> {
+    Ok(read_weighted_ip_list(path).await?.0)
+}
+
+/// `ip weight` pairs for a log line, e.g. `192.168.0.15 (weight 10), 192.168.0.2
+/// (weight 1)`.
+fn describe_weights(ips: &[IpAddr], weights: &[u8]) -> String {
+    ips.iter()
+        .enumerate()
+        .map(|(index, ip)| {
+            format!(
+                "{ip} (weight {})",
+                weights
+                    .get(index)
+                    .copied()
+                    .unwrap_or(srtla_core::connection::LINK_WEIGHT_MIN)
+            )
+        })
+        .collect::<SmallVec<_, 4>>()
+        .join(", ")
+}
+
+/// [`read_ip_list`] plus the normalised operator weight of each IP (same
+/// order). An unweighted file yields all 1s.
+pub async fn read_weighted_ip_list(path: &str) -> Result<(SmallVec<IpAddr, 4>, SmallVec<u8, 4>)> {
     let text = std::fs::read_to_string(Path::new(path)).context("read IPs file")?;
     // Shares the SIGHUP reload guard's parser so startup and reload agree on what
     // counts as a valid IP. At startup an empty or all-invalid file is tolerated
@@ -621,14 +659,15 @@ pub async fn read_ip_list(path: &str) -> Result<SmallVec<IpAddr, 4>> {
     match reload::analyze_ip_reload_text(&text) {
         reload::IpReload::Apply {
             ips,
+            weights,
             first_invalid_line,
         } => {
             if let Some(line) = first_invalid_line {
                 warn!("ips file has an invalid entry starting at line {line}; skipping it");
             }
-            Ok(ips)
+            Ok((ips, weights))
         }
-        reload::IpReload::Refuse(_) => Ok(SmallVec::new()),
+        reload::IpReload::Refuse(_) => Ok((SmallVec::new(), SmallVec::new())),
     }
 }
 
