@@ -102,7 +102,7 @@ impl From<&EffectiveLink> for UplinkSpec {
             ip: link.ip,
             iface: link.iface.clone(),
             link_id: link.link_id.clone(),
-            weight: srtla_core::connection::LINK_WEIGHT_MIN,
+            weight: link.weight,
         }
     }
 }

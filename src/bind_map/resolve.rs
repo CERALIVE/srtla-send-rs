@@ -26,6 +26,7 @@ use super::status::{BindMapDisposition, BindMapStatus, CollisionGroup, DegradedR
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EffectiveLink {
     pub ip: IpAddr,
+    pub weight: u8,
     pub iface: Option<IfaceName>,
     pub link_id: Option<LinkId>,
 }
@@ -62,8 +63,10 @@ pub fn resolve_absent(ips: &IpsFile) -> Resolution {
         links: ips
             .accepted()
             .iter()
-            .map(|ip| EffectiveLink {
+            .zip(ips.weights())
+            .map(|(ip, &weight)| EffectiveLink {
                 ip: *ip,
+                weight,
                 iface: None,
                 link_id: None,
             })
@@ -89,6 +92,7 @@ pub fn resolve(
                 .iter()
                 .map(|row| EffectiveLink {
                     ip: row.ip,
+                    weight: row.weight,
                     iface: Some(row.iface.clone()),
                     link_id: Some(row.link_id.clone()),
                 })
@@ -113,6 +117,7 @@ fn degrade(reason: DegradedReason, ips: &IpsFile, phase: ResolvePhase<'_>) -> Re
                 .iter()
                 .map(|row| EffectiveLink {
                     ip: row.ip,
+                    weight: row.weight,
                     iface: Some(row.iface.clone()),
                     link_id: Some(row.link_id.clone()),
                 })
@@ -121,7 +126,7 @@ fn degrade(reason: DegradedReason, ips: &IpsFile, phase: ResolvePhase<'_>) -> Re
             applied: None,
         },
         ResolvePhase::Startup => {
-            let (links, excluded) = exclude_collisions(ips.accepted());
+            let (links, excluded) = exclude_collisions(ips);
             let disposition = if excluded.is_empty() {
                 BindMapDisposition::LegacyUniqueOnly
             } else {
@@ -144,17 +149,18 @@ fn degrade(reason: DegradedReason, ips: &IpsFile, phase: ResolvePhase<'_>) -> Re
 /// The *effective* link set here equals what legacy would have produced. The
 /// difference is that the ambiguity is named instead of silently swallowed: an
 /// operator with two modems and one visible link gets told why.
-fn exclude_collisions(accepted: &[IpAddr]) -> (Vec<EffectiveLink>, Vec<CollisionGroup>) {
+fn exclude_collisions(ips: &IpsFile) -> (Vec<EffectiveLink>, Vec<CollisionGroup>) {
     let mut first_seen: HashMap<IpAddr, usize> = HashMap::new();
     let mut links = Vec::new();
     let mut groups: Vec<CollisionGroup> = Vec::new();
 
-    for (index, ip) in accepted.iter().enumerate() {
+    for (index, (ip, &weight)) in ips.accepted().iter().zip(ips.weights()).enumerate() {
         match first_seen.get(ip) {
             None => {
                 first_seen.insert(*ip, index);
                 links.push(EffectiveLink {
                     ip: *ip,
+                    weight,
                     iface: None,
                     link_id: None,
                 });

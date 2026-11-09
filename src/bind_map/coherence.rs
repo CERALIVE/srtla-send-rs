@@ -100,9 +100,12 @@ pub fn validate_pair(
         });
     }
 
-    let rows = parse_rows(&doc, ctx.ifaces)?;
+    let mut rows = parse_rows(&doc, ctx.ifaces)?;
     check_correspondence(&rows, ips.accepted())?;
     check_uniqueness(&rows)?;
+    for (row, &weight) in rows.iter_mut().zip(ips.weights()) {
+        row.weight = weight;
+    }
 
     let pool = MappedPool {
         generation: doc.generation,
@@ -145,6 +148,7 @@ fn parse_rows(doc: &BindMapDoc, ifaces: &dyn IfaceOracle) -> Result<Vec<BindMapR
             link_id,
             ip,
             iface,
+            weight: srtla_core::connection::LINK_WEIGHT_MIN,
             id_path,
         });
     }

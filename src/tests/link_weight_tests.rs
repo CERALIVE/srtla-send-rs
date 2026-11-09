@@ -365,6 +365,143 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(target_os = "linux")]
+    async fn bind_map_weight_only_reload_preserves_registration_and_retains_on_mismatch() {
+        use crate::bind_map::{BindMapDisposition, BindMapStatus, DegradedReason, IpsFile};
+        use crate::net::{SourceIpBinder, UplinkBinder};
+        use crate::sender::{
+            ConnIoMap, LinkSource, SenderPaths, create_connections_from_links, read_bind_map,
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let ips = dir.path().join("ips");
+        let sidecar = dir.path().join("map.json");
+        let publish = |contents: &str| {
+            std::fs::write(&ips, contents).unwrap();
+            let sha = IpsFile::from_bytes(contents.as_bytes())
+                .unwrap()
+                .sha256()
+                .to_string();
+            std::fs::write(
+                &sidecar,
+                format!(
+                    r#"{{"schema_version":1,"generation":1,"ips_file_sha256":"{sha}","links":[
+                    {{"link_id":"a","ip":"127.0.0.1","iface":"lo"}},
+                    {{"link_id":"b","ip":"127.0.0.2","iface":"lo"}}]}}"#
+                ),
+            )
+            .unwrap();
+        };
+        publish("127.0.0.1 3\n127.0.0.2 1\n");
+        let mut source = LinkSource::new(&SenderPaths {
+            ips_file: ips.to_str().unwrap(),
+            bind_map: Some(sidecar.to_str().unwrap()),
+        });
+        let initial = source.startup().await.unwrap();
+        assert_eq!(
+            source.report().disposition.state,
+            BindMapDisposition::Mapped.as_str()
+        );
+        assert_eq!(initial.iter().map(|s| s.weight).collect::<Vec<_>>(), [3, 1]);
+        let binder: std::sync::Arc<dyn UplinkBinder> = std::sync::Arc::new(SourceIpBinder);
+        let receiver = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let port = receiver.local_addr().unwrap().port();
+        let mut io = ConnIoMap::new();
+        let mut conns =
+            create_connections_from_links(&initial, "127.0.0.1", port, &binder, &mut io).await;
+        assert_eq!(conns.len(), 2);
+        for conn in &mut conns {
+            conn.connected = true;
+            conn.phase = srtla_core::connection::LinkPhase::Live;
+            conn.reconnection.connection_established_ms = 1234;
+        }
+        let ids: Vec<_> = conns.iter().map(|c| c.conn_id).collect();
+        let sockets: Vec<_> = ids.iter().map(|id| io[id].socket.clone()).collect();
+        let mut selection = Some(1);
+        let mut tracker = SequenceTracker::new();
+        let now = now_ms();
+        tracker.insert(77, ids[0], now);
+        conns[0].register_packet(77, now);
+
+        // New IP-file bytes alone must not leak their weights into a live pool.
+        std::fs::write(&ips, "127.0.0.1 1\n127.0.0.2 7\n").unwrap();
+        let (ip_path, map_path, prior) = source.read_args().unwrap();
+        let retained = source.adopt(read_bind_map(ip_path, map_path, prior).await);
+        assert_eq!(
+            source.report().disposition.state,
+            BindMapDisposition::RetainedLastValid.as_str()
+        );
+        assert_eq!(
+            source.report().bind_map_status,
+            crate::bind_map::BindMapStatusRecord::from(BindMapStatus::Degraded(
+                DegradedReason::RetryExhausted
+            ))
+        );
+        assert_eq!(retained, initial);
+        apply_connection_changes(
+            &mut conns,
+            &mut io,
+            &retained,
+            "127.0.0.1",
+            port,
+            &mut selection,
+            &mut tracker,
+            &binder,
+        )
+        .await;
+        assert_eq!(
+            conns.iter().map(|c| c.link_weight).collect::<Vec<_>>(),
+            [3, 1]
+        );
+
+        // Same identities and generation, new coherent hash: a weight-only reload.
+        publish("127.0.0.1 1\n127.0.0.2 7\n");
+        let (ip_path, map_path, prior) = source.read_args().unwrap();
+        let desired = source.adopt(read_bind_map(ip_path, map_path, prior).await);
+        assert_eq!(
+            source.report().disposition.state,
+            BindMapDisposition::Mapped.as_str()
+        );
+        assert_eq!(desired.iter().map(|s| s.weight).collect::<Vec<_>>(), [1, 7]);
+        apply_connection_changes(
+            &mut conns,
+            &mut io,
+            &desired,
+            "127.0.0.1",
+            port,
+            &mut selection,
+            &mut tracker,
+            &binder,
+        )
+        .await;
+
+        assert_eq!(conns.iter().map(|c| c.conn_id).collect::<Vec<_>>(), ids);
+        assert_eq!(selection, Some(1));
+        assert_eq!(tracker.get(77, now), Some(ids[0]));
+        assert!(conns[0].packet_log.contains_key(&77));
+        for ((conn, spec), socket) in conns.iter().zip(&desired).zip(sockets) {
+            assert!(conn.connected);
+            assert_eq!(conn.phase, srtla_core::connection::LinkPhase::Live);
+            assert_eq!(conn.reconnection.connection_established_ms, 1234);
+            assert_eq!(conn.link_weight, spec.weight);
+            assert_eq!(io[&conn.conn_id].spec, *spec);
+            assert!(std::sync::Arc::ptr_eq(&io[&conn.conn_id].socket, &socket));
+        }
+        let stats = SharedStats::new();
+        stats.update(&conns, &classic(), None, None, None);
+        let response = crate::control::dispatch(
+            &crate::config::DynamicConfig::new(),
+            Some(&stats),
+            None,
+            r#"{"jsonrpc":"2.0","id":1,"method":"get_stats"}"#,
+        )
+        .unwrap();
+        let response: serde_json::Value = serde_json::from_str(&response.to_json()).unwrap();
+        assert_eq!(response["result"]["links"][0]["weight"], 1);
+        assert_eq!(response["result"]["links"][1]["weight"], 7);
+    }
+
+    #[tokio::test]
     async fn fork_weight_is_outside_socket_identity_and_claims_survivor() {
         let mut conns = create_test_connections(1).await;
         let id = conns[0].conn_id;

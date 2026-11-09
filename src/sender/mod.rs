@@ -6,6 +6,7 @@ mod links;
 mod packet_handler;
 mod rehome;
 mod reload;
+pub(crate) use reload::{normalise_link_weights, parse_ip_line};
 mod sequence;
 mod status;
 mod uplink;

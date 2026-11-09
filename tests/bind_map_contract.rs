@@ -92,6 +92,28 @@ async fn a_coherently_published_pair_reads_as_valid() {
 }
 
 #[tokio::test]
+async fn bind_map_weighted_pair_preserves_raw_bytes_and_row_weights() {
+    let contents = "192.168.8.100 3\r\ninvalid\r\n192.168.8.100\t1\r\n";
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ips_path = dir.path().join("srtla_ips");
+    publish(&ips_path, contents);
+    publish(&dir.path().join("bind_map.json"), &sidecar_for(contents, 1));
+
+    let pool = read(dir.path())
+        .await
+        .expect("read ips")
+        .expect("coherent pair");
+    assert_eq!(pool.rows.len(), 2);
+    assert_eq!(pool.rows[0].ip, pool.rows[1].ip);
+    assert_eq!(
+        pool.rows.iter().map(|r| r.weight).collect::<Vec<_>>(),
+        [3, 1]
+    );
+    assert_eq!(pool.ips_file_sha256, sha_of(contents));
+    assert_eq!(std::fs::read(ips_path).unwrap(), contents.as_bytes());
+}
+
+#[tokio::test]
 async fn the_bounded_retry_absorbs_the_window_between_the_two_renames() {
     // The writer commits the ips file first, so a reader landing between the two
     // renames sees NEW ips bytes + OLD sidecar. That is a DETECTABLE transient

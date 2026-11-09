@@ -19,7 +19,8 @@ use std::net::IpAddr;
 use std::str::FromStr;
 
 use smallvec::SmallVec;
-use srtla_core::connection::{LINK_WEIGHT_MAX, LINK_WEIGHT_MIN, normalise_link_weights};
+pub(crate) use srtla_core::connection::normalise_link_weights;
+use srtla_core::connection::{LINK_WEIGHT_MAX, LINK_WEIGHT_MIN};
 use tracing::warn;
 
 /// Why a SIGHUP reload was refused. In every case the existing connections are
@@ -105,7 +106,7 @@ pub fn analyze_ip_reload_text(text: &str) -> IpReload {
 /// Parse one non-blank line as `<ip>[ <weight>]`. `None` = the line has no
 /// valid IP (or more than two fields) and is skipped like any invalid line. A
 /// bad weight never invalidates the line: it is warned about and read as 1.
-fn parse_ip_line(line: &str, line_no: usize) -> Option<(IpAddr, u8)> {
+pub(crate) fn parse_ip_line(line: &str, line_no: usize) -> Option<(IpAddr, u8)> {
     let mut fields = line.split_whitespace();
     let ip = IpAddr::from_str(fields.next()?).ok()?;
     let weight = match fields.next() {
