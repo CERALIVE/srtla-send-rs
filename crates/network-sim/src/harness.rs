@@ -799,10 +799,9 @@ pub fn wait_for_udp_listener(ns: &Namespace, port: u16, timeout: Duration) -> Re
 }
 
 /// Poll `ss -uan` inside `ns` until at least `min_count` UDP sockets are
-/// connected to `peer_ip:peer_port`. The sender `connect()`s one socket per
-/// source IP to the receiver as it brings each uplink online, so a connected
-/// peer entry is the observable readiness signal that replaces a fixed
-/// registration sleep — it returns as soon as the state appears.
+/// connected to `peer_ip:peer_port`. This only observes explicitly connected
+/// sockets; srtla_send leaves its uplinks unconnected, so sender readiness uses
+/// [`wait_for_registered_uplinks`] instead.
 pub fn wait_for_connected_uplinks(
     ns: &Namespace,
     peer_ip: &str,
@@ -1164,6 +1163,17 @@ impl SrtlaTestStack {
     /// Apply impairment to sender-side link at `idx`.
     pub fn impair_link(&self, idx: usize, config: ImpairmentConfig) -> Result<()> {
         self.topo.impair_link(idx, config)
+    }
+
+    /// Wait until every sender uplink has completed SRTLA registration.
+    pub fn wait_for_registered_uplinks(&self, timeout: Duration) -> Result<()> {
+        wait_for_registered_uplinks(
+            self.srtla_send
+                .as_ref()
+                .context("srtla_send is not running")?,
+            self.topo.sender_ips.len(),
+            timeout,
+        )
     }
 
     /// The local SRT port that srtla_send listens on (for injecting test data).
