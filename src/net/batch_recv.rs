@@ -87,7 +87,10 @@ mod unix_impl {
         /// behavior.
         pub fn new(socket: Socket, peer: SocketAddr) -> std::io::Result<Self> {
             Ok(Self {
-                inner: AsyncFd::with_interest(socket, Interest::READABLE | Interest::WRITABLE)?,
+                // SAFETY: AsyncFd owns the Socket, so its fd stays open and unchanged for its lifetime, never closed or replaced elsewhere.
+                inner: unsafe {
+                    AsyncFd::register_with_interest(socket, Interest::READABLE | Interest::WRITABLE)
+                }?,
                 peer: peer.into(),
             })
         }
