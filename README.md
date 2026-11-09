@@ -61,7 +61,7 @@ This tool assumes that data is streamed from a SRT _sender_ in _caller_ mode to 
 
 ## Install
 
-Each [release](https://github.com/irlserver/srtla_send/releases) ships a `.deb` for `amd64` and `arm64`. It runs on any Linux distribution with glibc 2.27 or newer (Ubuntu 18.04, Debian 10 and later):
+Each [release](https://github.com/CERALIVE/srtla-send-rs/releases) ships the `srtla` package as a `.deb` for `amd64` and `arm64`. It's built on Debian 12 (Bookworm) and needs glibc 2.36 or newer:
 
 ```bash
 sudo dpkg -i srtla_*_arm64.deb
@@ -71,8 +71,7 @@ On other platforms, build from source.
 
 ## Requirements
 
-- Rust and Cargo. `rust-toolchain.toml` pins the stable toolchain, and rustup installs it on the first `cargo` command. The minimum supported version is the `rust-version` in `Cargo.toml`.
-- Rust nightly, only to format code: `rustfmt.toml` uses unstable options.
+- Rust and Cargo. `rust-toolchain.toml` pins `nightly-2026-06-12` (see [Toolchain](#toolchain)), and rustup installs it on the first `cargo` command. `rustfmt.toml` uses unstable options, so formatting needs that nightly too.
 - Unix (Linux/macOS) or Windows
   - Note: SIGHUP-based IP reload is Unix-only; Windows runs without that arm
 
@@ -102,23 +101,21 @@ cargo xlint
 # Run a specific test
 cargo test test_connection_score
 
-# Format code (nightly)
-cargo +nightly fmt --all
+# Format code (pinned nightly)
+cargo fmt --all
 ```
 
 ### CI/CD
 
 GitHub Actions runs on every push and pull request:
 
-- Formatting, clippy and a spell check
-- Tests on Linux, Windows and macOS, plus Rust beta and a build on the minimum supported Rust version
-- Miri over the unsafe batch-receive code
-- Supply chain checks with cargo-deny
-- The release debs, built against glibc 2.27
+- Formatting and clippy
+- Tests on Linux, Windows and macOS, plus Rust stable and beta
+- Miri over the unsafe batch-receive code, and Loom over the subscription hub
+- Supply chain checks with cargo-audit and cargo-deny
+- A `.deb` build for `arm64` and `amd64`
 
-Pushing a `vX.Y.Z` tag creates a draft release. See [RELEASING.md](RELEASING.md).
-
-The fork's workflows are described under [CI and packaging](#ci-and-packaging) in the CERALIVE section.
+Pushing a `v<version>` tag publishes the release. Both workflows are described under [CI and packaging](#ci-and-packaging) in the CERALIVE section.
 
 ## Usage
 
@@ -150,7 +147,6 @@ srtla_send [OPTIONS] SRT_LISTEN_PORT SRTLA_HOST SRTLA_PORT BIND_IPS_FILE
 - `--no-rehome`: Disable whole-bond re-home (on by default). When every uplink has been down for longer than the all-links-failed window *and* the receiver hostname no longer resolves to the address the bond is pinned to, the sender moves every uplink together to the newly-resolved address and re-registers from scratch over the ordinary REG1/REG2/REG3 flow. It is deliberately conservative: a bond with any live uplink is never touched, a merely reordered DNS answer is not a move, a failed lookup is not a move, and at most one migration is attempted per minute. Pass this to keep the old behaviour of staying on the cached address until the process is restarted.
 - `--config <PATH>`: Path to a TOML config file, read once at startup. Each key is the long flag name with underscores (for example `stall_ack_stale_ms = 2000`), and a flag given on the command line wins over the file. The supported keys are `mode`, `no_quality`, `no_stall_deselect`, `stall_min_in_flight`, `stall_ack_stale_ms` and `conn_timeout_ms`. An unknown key or a file that fails to parse stops startup.
 - `--control-socket <PATH>`: Unix domain socket path for remote control (e.g., `/tmp/srtla.sock`)
-- `--conn-timeout-ms <MS>`: Per-link liveness timeout (default 5000, clamped to 1000..=60000; also settable at runtime via `set_conn_timeout`)
 - `--priority-bind <ADDR:PORT>`: UDP sidecar address for encoder keyframe priority hints
 - `--metrics-bind <ADDR:PORT>`: Expose a Prometheus scrape endpoint at `/metrics`
 - `-v, --version`: Print version and exit (see [Version output](#version-output))
@@ -181,7 +177,7 @@ Everything in this section is CERALIVE's addition on top of upstream. It exists 
 
 ### Version and upstream sync
 
-The fork is based on upstream `df0b3938791ff24eced4aed8b29e3d49d0efb639` (v4.0.1) and ships as **`4.1.0`**. The version follows upstream's semver line, not CalVer, so a CERALIVE release stays traceable to the upstream release it builds on. Upstream merges are manual and gated: they land in a dedicated PR, run the full gate on the pinned toolchain, and must not regress the contract below. There is no automatic sync. The upstream remote is added only for the duration of a merge and removed before the PR is opened.
+The fork is based on upstream `df0b3938791ff24eced4aed8b29e3d49d0efb639` (v4.0.1). The last-merged upstream commit is `9e63d8f` (the 2026-11 sync, recorded in [`docs/notes/upstream-sync-2026-11.md`](docs/notes/upstream-sync-2026-11.md)). It ships as **`4.1.0`**. The version follows upstream's semver line, not CalVer, so a CERALIVE release stays traceable to the upstream release it builds on. Upstream merges are manual and gated: they land in a dedicated PR, run the full gate on the pinned toolchain, and must not regress the contract below. There is no automatic sync. The upstream remote is added only for the duration of a merge and removed before the PR is opened.
 
 ### Toolchain
 
@@ -402,7 +398,7 @@ Normal registration:
 
 ### Implementation Details
 
-- For each IP in `BIND_IPS_FILE`, the sender binds a UDP socket and connects to `SRTLA_HOST:SRTLA_PORT`.
+- For each IP in `BIND_IPS_FILE`, the sender binds a UDP socket to that source address and sends to `SRTLA_HOST:SRTLA_PORT` with `sendto`. The socket is deliberately left unconnected, so it still accepts replies from a multi-homed receiver that answers from another address, or through a NAT that rewrites the reply source (`src/net/batch_recv.rs`).
 - Incoming SRT UDP packets are read on `SRT_LISTEN_PORT` and forwarded over the currently selected uplink based on the score `window / (in_flight + 1)`.
 - ACKs are applied to all uplinks to reduce in-flight counts; NAKs are attributed to the uplink that originally sent the sequence (tracked), falling back to the receiver uplink if unknown.
 - **Burst NAK Detection**: The system tracks NAK bursts (multiple NAKs within 1 second) per connection. When quality scoring is enabled, connections with recent NAK bursts (≥5 NAKs in burst, within last 3 seconds) receive an additional 0.7x multiplier (30% reduction) to their quality score, helping avoid connections experiencing packet loss issues.

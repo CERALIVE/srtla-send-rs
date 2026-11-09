@@ -5,8 +5,11 @@
 One permanent remote, `origin` (`https://github.com/CERALIVE/srtla-send-rs.git`). The
 upstream remote is **transient**: added for a merge, removed before any push or PR.
 
-- **Fork base:** upstream `df0b3938791ff24eced4aed8b29e3d49d0efb639` (v4.0.1). That is
-  also the last-merged upstream SHA; the next sync's merge base is computed from it.
+- **Fork base:** upstream `df0b3938791ff24eced4aed8b29e3d49d0efb639` (v4.0.1). It stays
+  an ancestor of `main` forever.
+- **Last-merged upstream SHA:** `9e63d8fab313d876917102b0ae26823a45016d9e` (2026-11 sync,
+  ledger `docs/notes/upstream-sync-2026-11.md`). The next sync's merge base is computed
+  from it.
   The 2026-09 hard-fork closure ledger (bases across all four repos, ports/drops, A/B
   verdicts, erasure receipts, rollback) is `docs/notes/upstream-hardfork-2026-09.md`.
 - **Merges are MANUAL and COMPAT-GATED.** No auto-sync, no scheduled merge, no bot PRs.

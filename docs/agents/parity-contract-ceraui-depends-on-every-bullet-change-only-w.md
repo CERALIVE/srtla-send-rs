@@ -97,6 +97,16 @@
   re-handshake) and rebuilds the pool in file order. A reload resolving to zero valid
   source IPs is refused with a specific log and the stream keeps running on the
   existing links (`src/sender/reload.rs`).
+- **IPs-file lines may carry an optional upstream weight, `<ip> <weight>`** (integer
+  1..10, used in classic mode only). CeraUI's bare-IP lines read as weight 1. One shared
+  parser (`parse_ip_line`, `src/sender/reload.rs`) serves startup, `SIGHUP`, `--dry-run`
+  and bind-map coherence (`src/bind_map/parser.rs`). Weight is not link identity: it is
+  outside the socket key, and a weight-only reload keeps the registration.
+- **`--config <toml>` is upstream's flag.** It is read once at startup and validated by
+  `--dry-run` (an unknown key or a parse failure exits non-zero). CeraUI does not pass
+  it. `src/toml_config.rs`, `tests/cli_surface.rs`.
+- **`get_stats` and `stats` links gain upstream's additive `weight` field**
+  (`src/stats.rs`). The ADR-001 `--stats-file` document does not carry it.
 - **Empty start is not fatal.** A missing, empty, or all-invalid `BIND_IPS_FILE` at
   startup binds the local listener, starts with an empty uplink pool, and waits for a
   `SIGHUP`. It must never crash-loop the device. `tests/signal_parity.rs`.
