@@ -280,4 +280,140 @@ mod tests {
         );
         assert!(text.contains(r#"srtla_send_link_weight{ip="192.168.1.11"} 1"#));
     }
+
+    // ---- Fork: weights belong to specs, never to socket identity ------------
+
+    #[tokio::test]
+    async fn fork_weight_only_reload_preserves_registration_and_reports_weights() {
+        use crate::net::{SourceIpBinder, UplinkBinder};
+        use crate::sender::{
+            ConnIoMap, LinkSource, SenderPaths, create_connections_from_links,
+            read_weighted_ip_list,
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ips.txt");
+        std::fs::write(&path, "127.0.0.1 10\n127.0.0.2 1\n").unwrap();
+        let path = path.to_str().unwrap();
+        let mut source = LinkSource::new(&SenderPaths {
+            ips_file: path,
+            bind_map: None,
+        });
+        let initial = source.startup().await.unwrap();
+        assert_eq!(
+            initial.iter().map(|s| s.weight).collect::<Vec<_>>(),
+            [10, 1]
+        );
+        let binder: std::sync::Arc<dyn UplinkBinder> = std::sync::Arc::new(SourceIpBinder);
+        let mut io = ConnIoMap::new();
+        let mut conns =
+            create_connections_from_links(&initial, "127.0.0.1", 9999, &binder, &mut io).await;
+        assert_eq!(conns.len(), 2);
+        assert_eq!((conns[0].link_weight, conns[1].link_weight), (10, 1));
+        for conn in &mut conns {
+            conn.connected = true;
+            conn.phase = srtla_core::connection::LinkPhase::Live;
+            conn.reconnection.connection_established_ms = 1234;
+        }
+        let ids: Vec<_> = conns.iter().map(|c| c.conn_id).collect();
+        let sockets: Vec<_> = ids.iter().map(|id| io[id].socket.clone()).collect();
+        let mut selection = Some(1);
+        let mut tracker = SequenceTracker::new();
+        let now = now_ms();
+        tracker.insert(77, ids[0], now);
+        conns[0].register_packet(77, now);
+
+        std::fs::write(path, "127.0.0.1 1\n127.0.0.2 7\n").unwrap();
+        let (ips, weights) = read_weighted_ip_list(path).await.unwrap();
+        let desired = specs_from_ips(&ips, &weights);
+        apply_connection_changes(
+            &mut conns,
+            &mut io,
+            &desired,
+            "127.0.0.1",
+            9999,
+            &mut selection,
+            &mut tracker,
+            &binder,
+        )
+        .await;
+
+        assert_eq!(conns.iter().map(|c| c.conn_id).collect::<Vec<_>>(), ids);
+        assert_eq!(selection, Some(1));
+        assert_eq!(tracker.get(77, now), Some(ids[0]));
+        assert!(conns[0].packet_log.contains_key(&77));
+        for ((conn, spec), socket) in conns.iter().zip(&desired).zip(sockets) {
+            assert!(conn.connected);
+            assert_eq!(conn.phase, srtla_core::connection::LinkPhase::Live);
+            assert_eq!(conn.reconnection.connection_established_ms, 1234);
+            assert_eq!(conn.link_weight, spec.weight);
+            assert_eq!(io[&conn.conn_id].spec, *spec);
+            assert!(std::sync::Arc::ptr_eq(&io[&conn.conn_id].socket, &socket));
+        }
+        let stats = SharedStats::new();
+        stats.update(&conns, &classic(), None, None, None);
+        let response = crate::control::dispatch(
+            &crate::config::DynamicConfig::new(),
+            Some(&stats),
+            None,
+            r#"{"jsonrpc":"2.0","id":1,"method":"get_stats"}"#,
+        )
+        .unwrap();
+        let response: serde_json::Value = serde_json::from_str(&response.to_json()).unwrap();
+        assert_eq!(response["result"]["links"][0]["weight"], 1);
+        assert_eq!(response["result"]["links"][1]["weight"], 7);
+    }
+
+    #[tokio::test]
+    async fn fork_weight_is_outside_socket_identity_and_claims_survivor() {
+        let mut conns = create_test_connections(1).await;
+        let id = conns[0].conn_id;
+        let mut io = create_test_conn_io_map(&conns);
+        let before = io[&id].spec.clone();
+        let after = crate::net::UplinkSpec {
+            weight: 7,
+            ..before.clone()
+        };
+        assert_eq!(before.socket_key(), after.socket_key());
+        assert_eq!(before.link_id, after.link_id);
+        let socket = io[&id].socket.clone();
+        let binder: std::sync::Arc<dyn crate::net::UplinkBinder> =
+            std::sync::Arc::new(crate::net::SourceIpBinder);
+        apply_connection_changes(
+            &mut conns,
+            &mut io,
+            std::slice::from_ref(&after),
+            "127.0.0.1",
+            9999,
+            &mut None,
+            &mut SequenceTracker::new(),
+            &binder,
+        )
+        .await;
+        assert_eq!(conns.len(), 1, "the survivor must be claimed");
+        assert_eq!(conns[0].conn_id, id);
+        assert!(conns[0].connected);
+        assert_eq!(conns[0].link_weight, 7);
+        assert_eq!(io[&id].spec, after);
+        assert!(std::sync::Arc::ptr_eq(&io[&id].socket, &socket));
+    }
+
+    #[tokio::test]
+    async fn fork_unweighted_file_gives_every_spec_weight_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ips.txt");
+        std::fs::write(&path, "192.0.2.10\n198.51.100.23\n2001:db8::1\n").unwrap();
+        let (ips, weights) = crate::sender::read_weighted_ip_list(path.to_str().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(weights.as_slice(), [1, 1, 1]);
+        let specs = specs_from_ips(&ips, &weights);
+        assert_eq!(specs.len(), 3);
+        assert_eq!(
+            specs.iter().map(|s| s.weight).collect::<Vec<_>>(),
+            [1, 1, 1]
+        );
+        assert_eq!(specs_from_ips(&ips, &[]), specs);
+        assert_eq!(specs_from_ips(&ips, &[7])[1..], specs[1..]);
+    }
 }
