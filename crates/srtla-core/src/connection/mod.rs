@@ -298,12 +298,12 @@ pub struct SrtlaConnection {
     pub connected: bool,
     pub window: i32,
     pub in_flight_packets: i32,
-    /// Packet log: maps sequence number -> send timestamp (ms).
+    /// Packet log: sequence -> unambiguous send timestamp (ms), or None for copies.
     /// Uses FxHashMap for O(1) insert/remove instead of O(256) linear scan.
     #[cfg(feature = "test-internals")]
-    pub packet_log: FxHashMap<i32, u64>,
+    pub packet_log: FxHashMap<i32, Option<u64>>,
     #[cfg(not(feature = "test-internals"))]
-    pub(crate) packet_log: FxHashMap<i32, u64>,
+    pub(crate) packet_log: FxHashMap<i32, Option<u64>>,
     /// Send timestamps of this link's outstanding *duplicate probes*, kept
     /// apart from [`Self::packet_log`] on purpose.
     ///
@@ -313,10 +313,11 @@ pub struct SrtlaConnection {
     /// healthy round trip after the probe was sent, while the probing link's
     /// own SRTLA ACK is still in flight behind its much longer RTT. Sharing one
     /// log therefore deleted the probe's entry before its ACK could arrive, and
-    /// the ACK then matched nothing: no delivery proof, no RTT sample. The
+    /// the ACK then matched nothing: no delivery proof. The
     /// slower the link, the more reliably it lost the race — so the links whose
     /// recovery these probes exist to measure were the ones least likely to be
-    /// measured, and what did get through was biased toward the fastest probes.
+    /// measured. Probe ACKs prove delivery but never sample RTT: a sequence ACK
+    /// cannot identify which duplicate copy it acknowledges.
     ///
     /// Entries here are immune to the cumulative sweep and expire by age.
     /// Probes are also deliberately absent from the packet log's in-flight
@@ -679,9 +680,13 @@ impl SrtlaConnection {
         if batch.is_empty() {
             return batch;
         }
-        for (_, seq, send_time_ms) in &batch {
+        for (data, seq, send_time_ms) in &batch {
             if let Some(s) = seq {
-                self.register_packet(*s as i32, *send_time_ms);
+                let seq = *s as i32;
+                self.register_packet(seq, *send_time_ms);
+                if is_srt_data_retransmit(data) {
+                    self.packet_log.insert(seq, None);
+                }
             }
         }
         batch

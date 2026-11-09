@@ -66,9 +66,9 @@ mod tests {
         conn.register_packet(100, current_time);
 
         assert_eq!(conn.in_flight_packets, initial_in_flight + 1);
-        // packet_log is now a HashMap: seq -> send_time_ms
+        // Fresh data retains an unambiguous timestamp in the packet log.
         assert!(conn.packet_log.contains_key(&100));
-        assert!(conn.packet_log.get(&100).unwrap() > &0);
+        assert!(conn.packet_log.get(&100).unwrap().unwrap() > 0);
 
         // Test multiple packets
         for i in 1..=5 {
@@ -410,7 +410,7 @@ mod tests {
         // delivers the unique twin almost immediately, so the receiver's
         // cumulative ACK sweeps past that sequence first. While probes lived in
         // the shared packet log, the sweep deleted the entry and the probe's
-        // own ACK then matched nothing: no delivery proof, no RTT sample, on
+        // own ACK then matched nothing: no delivery proof, on
         // exactly the links whose recovery the probes exist to measure.
         let rt = tokio::runtime::Runtime::new().unwrap();
         let mut conn = rt.block_on(create_test_connection());
@@ -436,9 +436,8 @@ mod tests {
             "a delivered probe is delivery proof — what the rejoin dwell counts"
         );
         assert!(
-            (conn.get_smooth_rtt_ms() - 1000.0).abs() < 1.0,
-            "and it must measure the link's real round trip, got {}",
-            conn.get_smooth_rtt_ms()
+            !conn.rtt.kalman_rtt.is_initialized(),
+            "a duplicate probe ACK proves delivery but cannot identify a copy for RTT"
         );
     }
 

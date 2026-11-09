@@ -253,6 +253,8 @@ The package is **`srtla`**, the binary installs at `/usr/bin/srtla_send`, and th
 
 Privileged network-namespace tests (`tests/netns_*.rs`, including the duplicate-IP twin-modem scenarios in `tests/netns_twin.rs`) self-skip on ordinary runners and are run locally through `scripts/netns_test_gate.sh`.
 The stall-latch scenario uses sequenced SRT DATA and enough load for batched probe ACKs, with a focused sender log filter that retains the lifecycle evidence.
+ACKs for retransmitted sequences and duplicate probes retain delivery/accounting effects but do not sample RTT, because a sequence ACK cannot identify which copy arrived.
+The wire-loss fixture holds the real SRT caller at 4 Mbps below either 6 Mbps path, preserving its original per-link and CC thresholds.
 
 ### License
 

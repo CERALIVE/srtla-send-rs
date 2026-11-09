@@ -51,7 +51,7 @@ bash scripts/deb_version_ordering_test.sh
 bash scripts/check-doc-refs.sh
 ```
 
-Five Miri filters, cross-channel/OS lanes, privileged netns prerequisites and stall-latch fixture requirements: [full gate contract](docs/agents/build-gate.md).
+Five Miri filters, cross-channel/OS lanes, privileged netns prerequisites, stall-latch fixtures and RTT sample eligibility: [full gate contract](docs/agents/build-gate.md).
 
 ## WHERE TO LOOK
 

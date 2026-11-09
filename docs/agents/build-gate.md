@@ -31,6 +31,15 @@ twenty probes/s, so ten-packet receiver ACK batches keep delivery proof fresh
 through the dwell. Its focused log filter keeps lifecycle debug events on stdout
 without evicting them from the bounded capture with per-packet debug noise.
 
+RTT sampling follows Karn's ambiguity rule: repeated sequences, R-bit retransmits
+and duplicate probes cannot supply an RTT sample. Their ACK pruning, in-flight
+accounting, delivery proof and congestion/window updates remain unchanged.
+Unambiguous DATA ACKs and echoed keepalives still sample RTT. The wire-loss test
+holds the existing real SRT caller at 4 Mbps, below either 6 Mbps shaper: its
+adaptive unacknowledged-packet limit otherwise stops the load near 1.7 Mbps.
+Its sampling window and thresholds remain unchanged. Qualify it with ten
+consecutive real runs and a reverted-fix regression control.
+
 **`tests/netns_twin.rs`** (8 scenarios) is the only target that reproduces two uplinks
 sharing one source address, built on `crates/network-sim/src/twin/` (one NAT carrier
 namespace per twin, per-device `rp_filter` cleared, `src`-hinted return routes). It

@@ -18,20 +18,15 @@
 //! under test.
 //!
 //! Two links, both live, so this exercises real bonding rather than one
-//! link with dead spares. Offered load comes from the *adaptive* SRT
-//! sender, not a constant pump: it lowers its bitrate when the SRT send
-//! buffer backs up or RTT inflates (belacoder's congestion response,
-//! minus the encoder), so the rate tracks what the bond can carry rather
-//! than oversubscribing it into an immediate retransmit-fuelled collapse.
+//! link with dead spares. The real SRT caller offers a fixed 4 Mbps,
+//! below either link's 6 Mbps capacity, leaving room for retransmits.
+//! Its adaptive send-buffer controller otherwise holds the whole bond
+//! near 1.7 Mbps at this RTT: unacknowledged packets count toward its
+//! low-water mark even when neither path is congested. That makes a
+//! 0.5 Mbps per-link assertion depend on incidental scheduler shares.
 //!
-//! It keeps the run far healthier than a constant pump, but it does not
-//! make it pristine: a real SRT session over a hard-capped lossy link
-//! still oscillates, because settling at a clean steady rate would take
-//! production-grade congestion control tuned for the path. So the checks
-//! are the ones that hold *through* that oscillation: the lossy link's CC
-//! target never ratchets to the floor (the fix), and both links carry a
-//! real share at once (the bond is bonding). Aggregate goodput is logged
-//! but not asserted — it is not a stable enough number to threshold on.
+//! The lossy CC target must not ratchet to the floor, and both links
+//! must carry a real share. Aggregate goodput is logged, not asserted.
 
 mod common;
 
@@ -42,17 +37,13 @@ use network_sim::{ImpairmentConfig, SrtlaTestStack};
 
 /// Both links are the same generous size. Each is far above the share it
 /// ends up carrying, so the lossy link stays uncongested and its 2% loss
-/// is genuinely wire loss, not congestion — which is what the fix is
-/// about. The adaptive sender ramps toward the bond's real capacity, so
-/// both links get used without anyone having to guess an offered rate.
+/// is genuinely wire loss, not congestion.
 const LOSSY_LINK_KBIT: u64 = 6_000;
 const CLEAN_LINK_KBIT: u64 = 6_000;
 
-/// The adaptive sender's bitrate bounds. The ceiling sits above the
-/// 12 Mbps the bond could carry, so the sender is free to ramp up until
-/// the send buffer tells it to stop rather than being capped short.
-const SENDER_MIN_KBPS: u32 = 500;
-const SENDER_MAX_KBPS: u32 = 16_000;
+/// Equal bounds hold the offered load independent of the caller's ACK backlog.
+/// Unlike the old 7 Mbps pump, even a single path has retransmit headroom.
+const SENDER_KBPS: u32 = 4_000;
 
 const RUN_SECS: u64 = 45;
 
@@ -105,7 +96,7 @@ fn wire_loss_link_is_not_ratcheted_out_of_the_bond() {
 
     common::wait_until_ready(&stack);
     stack
-        .start_adaptive_sender(&sender_bin, SENDER_MIN_KBPS, SENDER_MAX_KBPS)
+        .start_adaptive_sender(&sender_bin, SENDER_KBPS, SENDER_KBPS)
         .expect("start adaptive SRT sender");
 
     let mut lossy_target_min = u64::MAX;
@@ -307,15 +298,8 @@ fn wire_loss_link_is_not_ratcheted_out_of_the_bond() {
     //    failover, and getting the second link to register and pull
     //    traffic is the point of the topology work in the harness.
     //
-    //    A modest per-link floor, not a goodput target. The adaptive
-    //    sender keeps the run far healthier than the old constant pump
-    //    (which collapsed almost immediately), but an SRT session over a
-    //    hard-capped lossy link still oscillates — it does not settle at
-    //    a clean steady rate. Reaching that would take production-grade
-    //    congestion control (belacoder's, tuned for real cellular), which
-    //    is well beyond what this test needs. So assert liveness, which
-    //    holds through the oscillation, not a throughput figure that
-    //    would be flaky.
+    //    The fixed load stays below either shaper. Keep the original
+    //    floor: probes and control traffic must not satisfy liveness.
     let each_link_floor = 500_000; // 0.5 Mbps: clearly pulling weight, not idle
     assert!(
         lossy_median > each_link_floor,
