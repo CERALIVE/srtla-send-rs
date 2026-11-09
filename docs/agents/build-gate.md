@@ -24,6 +24,13 @@ CI run does not prove the privileged topology. Run them only through
 `scripts/netns_test_gate.sh` (90 s per target; `netns_twin` gets 420 s via
 `NETNS_TWIN_TEST_TIMEOUT_SECONDS` because it waits out real sender timers).
 
+`netns_stall_gate` injects sequenced SRT DATA at 2000 packets/s, continuing sequence
+numbers across its unchanged 2/3/8-second phases. Unsequenced payload cannot build
+the required 32-packet backlog. At the 1-in-100 probe rate, 2000 packets/s supplies
+twenty probes/s, so ten-packet receiver ACK batches keep delivery proof fresh
+through the dwell. Its focused log filter keeps lifecycle debug events on stdout
+without evicting them from the bounded capture with per-packet debug noise.
+
 **`tests/netns_twin.rs`** (8 scenarios) is the only target that reproduces two uplinks
 sharing one source address, built on `crates/network-sim/src/twin/` (one NAT carrier
 namespace per twin, per-device `rp_filter` cleared, `src`-hinted return routes). It

@@ -66,21 +66,31 @@ pub fn inject_packets(stack: &SrtlaTestStack, count: usize) -> anyhow::Result<()
     )
 }
 
-/// Inject a steady UDP stream into srtla_send for `duration`.
+/// Inject sequenced SRT DATA into the bond for `duration`, returning the next
+/// sequence so a later phase cannot reuse an already acknowledged packet.
+/// Synthetic DATA isolates the SRTLA guard from SRT retransmission feedback.
 #[allow(dead_code)]
 pub fn inject_stream(
     stack: &SrtlaTestStack,
+    first_seq: u32,
     packets_per_sec: u32,
     duration: Duration,
-) -> anyhow::Result<()> {
-    network_sim::inject_udp_stream(
-        &stack.topo.sender_ns,
-        "127.0.0.1",
-        stack.sender_srt_port(),
-        packets_per_sec,
-        network_sim::TS_PACKET_BYTES,
-        duration,
-    )
+) -> anyhow::Result<u32> {
+    let port = stack.sender_srt_port();
+    let seconds = duration.as_secs_f64();
+    let script = format!(
+        "import socket,time\ns=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)\nstart=time.\
+         monotonic(); i=0\nwhile time.monotonic()-start < {seconds}:\n\x20   \
+         data=({first_seq}+i).to_bytes(4,'big')+bytes(184)\n\x20   \
+         s.sendto(data,('127.0.0.1',{port}))\n\x20   i+=1\n\x20   \
+         delay=start+i/{packets_per_sec}-time.monotonic()\n\x20   if delay>0: \
+         time.sleep(delay)\ns.close()\nprint({first_seq}+i)"
+    );
+    let output = stack
+        .topo
+        .sender_ns
+        .exec_checked("python3", &["-c", &script])?;
+    Ok(String::from_utf8(output.stdout)?.trim().parse()?)
 }
 
 /// Collect and print all process output for debugging failed tests.

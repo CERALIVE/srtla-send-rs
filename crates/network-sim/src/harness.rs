@@ -954,6 +954,17 @@ impl SrtlaTestStack {
     ///
     /// `sender_extra_args` are appended to the srtla_send command line.
     pub fn start(test_name: &str, num_links: usize, sender_extra_args: &[&str]) -> Result<Self> {
+        Self::start_with_log_filter(test_name, num_links, sender_extra_args, "debug")
+    }
+
+    /// Start a stack with a sender log filter that keeps lifecycle evidence
+    /// from being evicted by per-packet debug logs in the bounded output tail.
+    pub fn start_with_log_filter(
+        test_name: &str,
+        num_links: usize,
+        sender_extra_args: &[&str],
+        log_filter: &str,
+    ) -> Result<Self> {
         let topo = SrtlaTestTopology::new(test_name, num_links)?;
         let ip_list_path = topo.write_ip_list()?;
 
@@ -1023,7 +1034,7 @@ impl SrtlaTestStack {
             &topo.sender_ns,
             &bin_str,
             &send_args,
-            &[("RUST_LOG", "debug")],
+            &[("RUST_LOG", log_filter)],
         )
         .context("start srtla_send")?;
 
