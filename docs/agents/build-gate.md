@@ -8,11 +8,11 @@ Run the full gate green on the pinned nightly before every PR (auto-selected via
 ```bash
 cargo build --release
 cargo fmt --all -- --check
-cargo clippy -- -D warnings
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo check && cargo check --release
 cargo test --lib
-timeout --foreground --kill-after=10s 600s cargo test --all-features
-timeout --foreground --kill-after=10s 600s cargo test --features test-internals
+timeout --foreground --kill-after=10s 600s cargo test --workspace --all-features --verbose
+timeout --foreground --kill-after=10s 600s cargo test --workspace --features test-internals
 cargo audit && cargo deny check advisories sources
 ```
 

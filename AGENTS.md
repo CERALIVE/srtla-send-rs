@@ -36,11 +36,11 @@ Pinned `nightly-2026-06-12` is selected by `rust-toolchain.toml`.
 ```bash
 cargo build --release
 cargo fmt --all -- --check
-cargo clippy -- -D warnings
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo check && cargo check --release
 cargo test --lib
-timeout --foreground --kill-after=10s 600s cargo test --all-features --verbose
-timeout --foreground --kill-after=10s 600s cargo test --features test-internals
+timeout --foreground --kill-after=10s 600s cargo test --workspace --all-features --verbose
+timeout --foreground --kill-after=10s 600s cargo test --workspace --features test-internals
 cargo audit && cargo deny check advisories sources
 RUSTFLAGS="--cfg loom" cargo test --test subscription_loom
 uv run scripts/release_workflow_contract_test.py

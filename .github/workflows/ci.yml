@@ -105,10 +105,9 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      # lib + bin only (NOT --all-targets): upstream test code carries pedantic
-      # clippy debt; the gate matches upstream ci.yml exactly.
+      # Lint every workspace crate, target and feature; warnings fail the gate.
       - name: Run clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       - name: Check compilation
         run: cargo check
@@ -123,7 +122,7 @@ jobs:
       # do run. No-feature shipping paths stay checked by
       # check/clippy/release build.
       - name: Run bounded all-features test command
-        run: timeout --foreground --kill-after=10s 600s cargo test --all-features --verbose
+        run: timeout --foreground --kill-after=10s 600s cargo test --workspace --all-features --verbose
 
       - name: Install cargo-audit + cargo-deny (prebuilt)
         uses: taiki-e/install-action@v2
@@ -334,7 +333,7 @@ jobs:
           cache-on-failure: false
 
       - name: Run tests
-        run: cargo +stable test --features test-internals
+        run: cargo +stable test --workspace --features test-internals
 
   test-beta:
     name: Test (Rust beta)
@@ -363,7 +362,7 @@ jobs:
           cache-on-failure: false
 
       - name: Run tests
-        run: cargo +beta test
+        run: cargo +beta test --workspace
 
   test-windows:
     name: Test (Windows)
@@ -392,7 +391,7 @@ jobs:
           cache-on-failure: false
 
       - name: Run tests
-        run: cargo +stable test --features test-internals --verbose
+        run: cargo +stable test --workspace --features test-internals --verbose
 
   test-macos:
     name: Test (macOS)
@@ -421,7 +420,7 @@ jobs:
           cache-on-failure: false
 
       - name: Run tests
-        run: cargo +stable test --verbose
+        run: cargo +stable test --workspace --verbose
 
   # The one check a branch-protection rule can require. It runs on every event,
   # including a docs-only pull request where every gate above skipped, and goes
