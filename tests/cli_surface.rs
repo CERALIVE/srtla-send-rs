@@ -358,3 +358,66 @@ fn dry_run_unresolvable_host_exits_nonzero() {
         stderr_of(&out)
     );
 }
+
+#[test]
+fn dry_run_config_rejects_unknown_key() {
+    let ips = write_temp_ips("127.0.0.1\n");
+    let config = write_temp_ips("unknown_sender_setting = true\n");
+    let out = run(&[
+        "--dry-run",
+        "--config",
+        config.path().to_str().unwrap(),
+        "9000",
+        "127.0.0.1",
+        "5000",
+        ips.path().to_str().unwrap(),
+    ]);
+    assert_eq!(out.status.code(), Some(FAILURE_CODE));
+    let stderr = stderr_of(&out);
+    assert!(stderr.contains("unknown_sender_setting"), "{stderr}");
+}
+
+#[test]
+fn dry_run_config_accepts_conn_timeout_ms_without_binding() {
+    let (_held, port) = occupied_udp_port();
+    let ips = write_temp_ips("127.0.0.1\n");
+    let config = write_temp_ips("conn_timeout_ms = 8000\n");
+    let out = run(&[
+        "--dry-run",
+        "--config",
+        config.path().to_str().unwrap(),
+        &port.to_string(),
+        "127.0.0.1",
+        "5000",
+        ips.path().to_str().unwrap(),
+    ]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr_of(&out));
+    assert!(stdout_of(&out).contains("configuration valid; no sockets bound"));
+}
+
+#[test]
+fn dry_run_weighted_lines_skip_malformed_entries_and_keep_bad_weights() {
+    let (_held, port) = occupied_udp_port();
+    for contents in [
+        "192.0.2.10 10\nnot-an-ip 3\n198.51.100.23 1\n",
+        "192.0.2.10 0\n198.51.100.23 -3\n",
+        "192.0.2.10 x\n198.51.100.23 18446744073709551616\n",
+        "192.0.2.10 42\n198.51.100.23\n192.0.2.11 2 extra\n",
+    ] {
+        let ips = write_temp_ips(contents);
+        let out = run_dry_run(port, "127.0.0.1", 5000, ips.path().to_str().unwrap());
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{contents}: {}",
+            stderr_of(&out)
+        );
+        let stdout = stdout_of(&out);
+        let sources = stdout.split_once("source uplink IPs (2):\n").unwrap().1;
+        assert_eq!(sources, "  192.0.2.10\n  198.51.100.23\n");
+    }
+    let ips = write_temp_ips("not-an-ip 10\n192.0.2.10 10 extra\n");
+    let out = run_dry_run(port, "127.0.0.1", 5000, ips.path().to_str().unwrap());
+    assert_eq!(out.status.code(), Some(FAILURE_CODE));
+    assert!(stderr_of(&out).contains("first invalid entry on line 1"));
+}
