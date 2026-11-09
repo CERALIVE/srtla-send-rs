@@ -21,7 +21,7 @@ Two workflows. Both build on the pinned nightly; neither publishes a binding.
 binary at `/usr/bin/srtla_send`, `Architecture` `arm64`/`amd64`, filename
 **`srtla_<ver>_<arch>.deb`** (it re-runs the image pipeline's `*${ARCH}*.deb` fetch glob
 as a self-test), `Conflicts`/`Replaces` on the retired transitional package name. The
-version comes from `Cargo.toml` (**`4.1.0`**), follows upstream's semver line (not
+version comes from `Cargo.toml` (**`4.2.0`**), follows upstream's semver line (not
 CalVer), and a tag build must be `v<version>`; the script rejects a mismatch.
 
 aarch64 cross-build: linker `CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc`,

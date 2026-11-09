@@ -1,6 +1,6 @@
 name: Release
 
-# Tag-triggered release: pushing a version tag (e.g. v4.1.0) cross-builds both
+# Tag-triggered release: pushing a version tag (e.g. v4.2.0) cross-builds both
 # device architectures, packages the pipeline-compatible .debs, and attaches
 # them to the GitHub release for that tag. No crates.io publish, no scheduled
 # upstream sync — releases are cut deliberately by pushing a tag.

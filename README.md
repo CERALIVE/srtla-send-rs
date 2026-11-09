@@ -159,17 +159,17 @@ The CERALIVE fork adds `--verbose`, `--dry-run`, `--stats-file`, `--stats-file-i
 
 ```bash
 $ ./target/release/srtla_send -v
-4.1.0 (main@974c8b9) [srtla_send]
+4.2.0 (main@974c8b9) [srtla_send]
 ```
 
 The parenthetical is emitted only when the build could resolve a commit. Building outside a git checkout (an exported source tarball, a container that copies only `src/`, a vendored crate) is a normal build with nothing to name, so the metadata is omitted entirely rather than filled with a placeholder:
 
 ```bash
 $ ./target/release/srtla_send -v
-4.1.0 [srtla_send]
+4.2.0 [srtla_send]
 ```
 
-A tag build (detached HEAD) reports the bare hash, `4.1.0 (974c8b9) [srtla_send]`, and a build from a modified working tree suffixes the hash with `-dirty`.
+A tag build (detached HEAD) reports the bare hash, `4.2.0 (974c8b9) [srtla_send]`, and a build from a modified working tree suffixes the hash with `-dirty`.
 
 ## The CERALIVE layer
 
@@ -177,7 +177,7 @@ Everything in this section is CERALIVE's addition on top of upstream. It exists 
 
 ### Version and upstream sync
 
-The fork is based on upstream `df0b3938791ff24eced4aed8b29e3d49d0efb639` (v4.0.1). The last-merged upstream commit is `9e63d8f` (the 2026-11 sync, recorded in [`docs/notes/upstream-sync-2026-11.md`](docs/notes/upstream-sync-2026-11.md)). It ships as **`4.1.0`**. The version follows upstream's semver line, not CalVer, so a CERALIVE release stays traceable to the upstream release it builds on. Upstream merges are manual and gated: they land in a dedicated PR, run the full gate on the pinned toolchain, and must not regress the contract below. There is no automatic sync. The upstream remote is added only for the duration of a merge and removed before the PR is opened.
+The fork is based on upstream `df0b3938791ff24eced4aed8b29e3d49d0efb639` (v4.0.1). The last-merged upstream commit is `9e63d8f` (the 2026-11 sync, recorded in [`docs/notes/upstream-sync-2026-11.md`](docs/notes/upstream-sync-2026-11.md)). It ships as **`4.2.0`**. The version follows upstream's semver line, not CalVer, so a CERALIVE release stays traceable to the upstream release it builds on. Upstream merges are manual and gated: they land in a dedicated PR, run the full gate on the pinned toolchain, and must not regress the contract below. There is no automatic sync. The upstream remote is added only for the duration of a merge and removed before the PR is opened.
 
 ### Toolchain
 
@@ -225,7 +225,7 @@ A supervisor has to decide **before spawning** whether the installed binary unde
 
 ```bash
 $ srtla_send --capabilities-json
-{"schema_version":1,"binary":"srtla_send","version":"4.1.0","capabilities":{"bind_map":true,"stats_file":true,"dry_run":true,"control_socket_jsonrpc":true,"conn_timeout_ms":true,"modes":["classic","enhanced"]}}
+{"schema_version":1,"binary":"srtla_send","version":"4.2.0","capabilities":{"bind_map":true,"stats_file":true,"dry_run":true,"control_socket_jsonrpc":true,"conn_timeout_ms":true,"modes":["classic","enhanced"]}}
 ```
 
 The `get_capabilities` JSON-RPC method on `--control-socket` returns the same document plus a `methods` array. A binary that predates the flag rejects it with a usage error and a non-zero exit; callers treat **any** non-zero exit, unparseable output, or timeout as "no support" and fall back to the plain spawn. See [ADR-004](docs/adr/ADR-004-control-dialect.md).
@@ -249,7 +249,7 @@ Two workflows, both on the pinned nightly:
 - `ci.yml` (push and PR): formatting, clippy with warnings as errors, the bounded test suite, `cargo audit` and `cargo deny`, upstream's stable/beta/Windows/macOS lanes, a blocking **Loom** lane over the subscription hub (`RUSTFLAGS="--cfg loom" cargo test --test subscription_loom`, 2 tests), a blocking **Miri** lane over the five pure pointer-logic tests in `src/net/batch_recv.rs`, and a `.deb` build matrix for `arm64` and `amd64` so a packaging break is caught before any tag.
 - `release.yml` (tag `v*`): the same gate, then both `.deb`s built inside `debian:bookworm-slim` with a **`GLIBC_2.36`** ceiling check on each binary (Debian 12 is the device image), attached to the GitHub release with their `.sha256` files.
 
-The package is **`srtla`**, the binary installs at `/usr/bin/srtla_send`, and the artifact is named `srtla_<version>_<arch>.deb` (`srtla_4.1.0_arm64.deb`, `srtla_4.1.0_amd64.deb`). `ci/build-deb.sh` is the single source of truth for that metadata and re-runs the device image builder's fetch glob against the real filename as a self-test. A release tag must be `v<version>` with the version taken from `Cargo.toml`.
+The package is **`srtla`**, the binary installs at `/usr/bin/srtla_send`, and the artifact is named `srtla_<version>_<arch>.deb` (`srtla_4.2.0_arm64.deb`, `srtla_4.2.0_amd64.deb`). `ci/build-deb.sh` is the single source of truth for that metadata and re-runs the device image builder's fetch glob against the real filename as a self-test. A release tag must be `v<version>` with the version taken from `Cargo.toml`.
 
 Privileged network-namespace tests (`tests/netns_*.rs`, including the duplicate-IP twin-modem scenarios in `tests/netns_twin.rs`) self-skip on ordinary runners and are run locally through `scripts/netns_test_gate.sh`.
 
