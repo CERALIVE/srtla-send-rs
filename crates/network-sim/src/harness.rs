@@ -241,7 +241,7 @@ fn output_lines(tail: &OutputTail) -> Vec<String> {
 /// list is authoritative and needs no such assumption.
 enum ProcessScope {
     Namespace(String),
-    #[cfg(test)]
+    #[cfg(all(test, target_os = "linux"))]
     Pids(Vec<u32>),
 }
 
@@ -399,7 +399,7 @@ impl NamespaceProcess {
                 command.args(["-n", "kill"]);
                 command
             }
-            #[cfg(test)]
+            #[cfg(all(test, target_os = "linux"))]
             ProcessScope::Pids(_) => Command::new("kill"),
         };
         command.args([signal, "--"]);
@@ -440,7 +440,7 @@ impl NamespaceProcess {
                     .filter_map(|pid| pid.parse().ok())
                     .collect()
             }
-            #[cfg(test)]
+            #[cfg(all(test, target_os = "linux"))]
             ProcessScope::Pids(pids) => pids
                 .iter()
                 .copied()
