@@ -293,7 +293,8 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("ips.txt");
-        std::fs::write(&path, "127.0.0.1 10\n127.0.0.2 1\n").unwrap();
+        // Wildcard binding avoids requiring a second loopback alias on macOS.
+        std::fs::write(&path, "127.0.0.1 10\n0.0.0.0 1\n").unwrap();
         let path = path.to_str().unwrap();
         let mut source = LinkSource::new(&SenderPaths {
             ips_file: path,
@@ -323,7 +324,7 @@ mod tests {
         tracker.insert(77, ids[0], now);
         conns[0].register_packet(77, now);
 
-        std::fs::write(path, "127.0.0.1 1\n127.0.0.2 7\n").unwrap();
+        std::fs::write(path, "127.0.0.1 1\n0.0.0.0 7\n").unwrap();
         let (ips, weights) = read_weighted_ip_list(path).await.unwrap();
         let desired = specs_from_ips(&ips, &weights);
         apply_connection_changes(
