@@ -172,17 +172,35 @@ The fetch auto-followed upstream's tags `v4.0.0` and `v4.0.1` into the local rep
 ## Follow-ups
 
 The Karn RTT correction rejects samples from retransmitted sequences
-and duplicate probes while retaining all ACK accounting. Reusing the latest
-timestamp for an older copy's ACK could invent a sub-path-delay RTT and falsely
-exclude a healthy link. `packet_log` retains ambiguous entries without an RTT
-timestamp; existing ACK/NAK/sweep/recovery removal still owns their lifetime.
+and duplicate probes while retaining all ACK accounting. It fixes a deterministic
+RTT-attribution bug: a late ACK for an original copy was measured against the
+retransmit's send time. One such sample pinned the link's RTT floor down for the
+30 s minimum window introduced by upstream `e40e1fa`, potentially excluding a
+healthy link. The regression is
+`retransmitted_sequence_ack_preserves_rtt_floor_and_delivery_accounting` in
+`crates/srtla-core/src/connection/ack_nak.rs`. `packet_log` retains ambiguous
+entries without an RTT timestamp; existing ACK/NAK/sweep/recovery removal still
+owns their lifetime. Probe ACKs now prove delivery only; held-out links get RTT
+from keepalive echoes, roughly once per 4 s. Readmission with only that RTT source
+is untested.
 
 The wire-loss caller now uses equal 4000 kbps bounds, below either 6 Mbps path.
 Its former adaptive 500–16000 kbps bounds stopped near 1.7 Mbps total because the
-low-water mark counts unacknowledged packets. Neither correction alone sufficed:
-fixed load without Karn still starved a link, and Karn with adaptive load still
-missed the bonding floor. The 45-second run, 10-second warm-up and strict
->500000/>300000 bps assertions are unchanged.
+low-water mark counts unacknowledged packets. Fixed load alone also passed on old
+main, so this fixture does not by itself guard Karn or exercise adaptive-demand
+recovery. The 45-second run, 10-second warm-up and strict >500000/>300000 bps
+assertions are unchanged.
+
+Two campaigns each interleaved 40 runs across five states, eight runs per state,
+with the same fixed 4000/4000 kbps caller. With the harness's stock receiver
+(Arch `srt-live-transmit`, `lossmaxttl=0`, no reorder freeze), the clean 0%-loss
+link logged several times more NAKs than the 2%-loss link: that receiver NAKs every
+cross-link reordering, so these counts do not meaningfully measure per-link loss.
+With a production-like receiver (CeraLive libsrt `1.5.6+ceralive.1`,
+`lossmaxttl=200`, `reorderfreeze=1`), the lossy link had more NAKs in 40/40 runs.
+Per-state medians ranged from 12–92 on the clean link and 112–270 on the lossy
+link. The pre-Karn starved-lossy-link failure (43 kbps) still occurred in 1/8 runs
+without Karn and 0/8 with it. These are small samples: eight per state on one host.
 
 Changed test expectations:
 - `test_packet_tracking`: a positive timestamp remains required; it is now
@@ -193,11 +211,10 @@ Changed test expectations:
   The ACK cannot distinguish duplicate copies. In-flight and delivery assertions
   are retained; the baseline test name is retained.
 - **Tracked known risk: rare stall-gate fast-engagement flake.**
-  Two failures occurred in roughly fifty runs across the lane's history, at the
-  `silence pull engaged` assertion (original line 80). Consolidated pristine
-  `bd04719` controls passed 46/46 isolated runs and one full suite's stall test;
-  the latest matched cohorts passed 20/20 on both trees. The stall fixture,
-  assertions and phase durations remain unchanged.
+  The fixture fix in `bd04719` reduced the flake but did not make
+  `netns_stall_gate` reliable. It can still rarely fail at `silence pull engaged`
+  because the dead link's backlog may stay below `--stall-min-in-flight` (32).
+  Pinning and explicit precondition work remain follow-ups.
 - **Wire-loss regression: `tests/netns_wire_loss.rs::wire_loss_link_is_not_ratcheted_out_of_the_bond`.**
   It failed 1 run in 3 both before the bind-map fix (at `88cca14`) and after it.
   The RTT correction above addresses retransmission-copy ambiguity; the original
@@ -216,3 +233,15 @@ Changed test expectations:
 - **CeraUI CI capture bump.** CeraUI's CI still proves against the 4.1.0 sender binary and
   captures. A CeraUI PR should move them to 4.2.0 in `.github/workflows/build-check.yml`,
   `scripts/ci/build-check-contract.mjs` and `docs/BUILD_PIPELINE.md` (all in `CERALIVE/CeraUI`).
+
+### Known follow-ups
+
+- Make the fallback scan in `src/sender/packet_handler.rs` prune only: no delivery
+  proof, window updates or RTT samples on links the ACK did not arrive on.
+- Exclude duplicate-probed sequences from cumulative RTT ownership.
+- Base stall detection on data sent since the last delivery proof rather than
+  instantaneous in-flight counts; pin the stall fixture's backlog precondition.
+- Use production-like receiver options (`lossmaxttl=200`, `reorderfreeze=1`) in
+  the wire-loss test and harness.
+- Repair adaptive caller pacing and cover adaptive-demand recovery.
+- Test held-out link readmission with keepalive-only RTT.

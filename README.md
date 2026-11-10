@@ -252,7 +252,7 @@ Two workflows, both on the pinned nightly:
 The package is **`srtla`**, the binary installs at `/usr/bin/srtla_send`, and the artifact is named `srtla_<version>_<arch>.deb` (`srtla_4.2.0_arm64.deb`, `srtla_4.2.0_amd64.deb`). `ci/build-deb.sh` is the single source of truth for that metadata and re-runs the device image builder's fetch glob against the real filename as a self-test. A release tag must be `v<version>` with the version taken from `Cargo.toml`.
 
 Privileged network-namespace tests (`tests/netns_*.rs`, including the duplicate-IP twin-modem scenarios in `tests/netns_twin.rs`) self-skip on ordinary runners and are run locally through `scripts/netns_test_gate.sh`.
-The stall-latch scenario uses sequenced SRT DATA and enough load for batched probe ACKs, with a focused sender log filter that retains the lifecycle evidence.
+The stall-latch fixture fix reduced the flake, but `silence pull engaged` can still rarely fail when the dead link's backlog stays below `--stall-min-in-flight` (32); pinning and backlog preconditions remain follow-ups.
 ACKs for retransmitted sequences and duplicate probes retain delivery/accounting effects but do not sample RTT, because a sequence ACK cannot identify which copy arrived.
 The wire-loss fixture holds the real SRT caller at 4 Mbps below either 6 Mbps path, preserving its original per-link and CC thresholds.
 

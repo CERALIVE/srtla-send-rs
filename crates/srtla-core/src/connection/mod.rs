@@ -819,12 +819,10 @@ impl SrtlaConnection {
     ///
     /// The echo is an RTT sample only when the tracker armed a measurement,
     /// but it is delivery proof for `stall_deselect` every time. Arming waits
-    /// for 3 s without any RTT sample, which a stall-latched link fed only by
-    /// sparse probe ACKs rarely reaches; tying proof to it would leave the
-    /// latch's rejoin dwell, which needs fresh proof throughout, unable to
-    /// complete. Pairs with the earned-ACK site (see `ack_nak.rs`); together
-    /// they let a recovered link un-gate itself without the scheduler probing
-    /// blindly.
+    /// for 3 s without any RTT sample. Probe ACKs prove delivery only, so a
+    /// held-out link gets RTT from keepalive echoes. Delivery proof must stay
+    /// independent of RTT arming to remain fresh throughout the rejoin dwell.
+    /// Pairs with the earned-ACK site (see `ack_nak.rs`).
     pub fn handle_keepalive_echo(&mut self, data: &[u8], now_ms: u64) {
         if self
             .rtt

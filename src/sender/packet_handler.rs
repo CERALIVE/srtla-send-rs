@@ -487,9 +487,9 @@ pub async fn forward_via_connection(
 /// *also* queued on each held-out link. The copy reuses the original SRT
 /// sequence number: the SRT receiver dedups it, so a lost or late probe can
 /// never stall the receiver buffer, while a delivered one earns the link an
-/// SRTLA ACK on its own socket — both the sustained delivery proof the rejoin
-/// dwell requires and (since the ACK carries a round trip) the RTT sample the
-/// recovery decision reads.
+/// SRTLA ACK on its own socket — the sustained delivery proof the rejoin
+/// dwell requires. Probe ACKs do not sample RTT; held-out links get the RTT
+/// used by recovery from keepalive echoes.
 ///
 /// Covers both reasons a link is held out: the stall gate, and the quality
 /// exclusion for a link that is *late* rather than merely under-used. The

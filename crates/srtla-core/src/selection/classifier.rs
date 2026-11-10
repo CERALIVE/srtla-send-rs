@@ -885,8 +885,8 @@ mod tests {
     #[test]
     fn a_link_that_is_late_never_earns_a_probation_window() {
         // Delay weakness must not arm probation in the first place: it clears
-        // from live RTT, which keepalive echoes and probe ACKs keep supplying
-        // even while the link is held out of the rotation.
+        // from RTT supplied by keepalive echoes while the link is held out
+        // of the rotation. Probe ACKs prove delivery only.
         let mut conns = starved_pair();
         let id = conns[1].conn_id;
         set_rtt(&mut conns[1], 3000.0);

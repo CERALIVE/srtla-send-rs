@@ -22,8 +22,12 @@
 //! below either link's 6 Mbps capacity, leaving room for retransmits.
 //! Its adaptive send-buffer controller otherwise holds the whole bond
 //! near 1.7 Mbps at this RTT: unacknowledged packets count toward its
-//! low-water mark even when neither path is congested. That makes a
-//! 0.5 Mbps per-link assertion depend on incidental scheduler shares.
+//! low-water mark even when neither path is congested. Fixed load does not
+//! exercise adaptive-demand recovery; caller pacing is a follow-up.
+//! The scheduler also sees link index, and batch flush order is fixed.
+//! The stock receiver NAKs cross-link reordering, so its NAK counts are
+//! not meaningful per-link loss measurements. Production-like receiver
+//! options (lossmaxttl=200, reorderfreeze=1) remain a harness follow-up.
 //!
 //! The lossy CC target must not ratchet to the floor, and both links
 //! must carry a real share. Aggregate goodput is logged, not asserted.
@@ -68,8 +72,8 @@ fn wire_loss_link_is_not_ratcheted_out_of_the_bond() {
     let mut stack =
         SrtlaTestStack::start("wireloss", 2, &["--control-socket", &sock]).expect("start stack");
 
-    // Same delay on both, so RTT cannot be what separates them: the only
-    // difference the scheduler can see is loss.
+    // Equal configured delay and capacity isolate the imposed 2% wire loss,
+    // but link index, fixed batch flush order and receiver reordering also matter.
     stack
         .impair_link(
             0,
