@@ -633,6 +633,7 @@ pub async fn read_ip_list(path: &str) -> Result<SmallVec<IpAddr, 4>> {
 
 /// `ip weight` pairs for a log line, e.g. `192.168.0.15 (weight 10), 192.168.0.2
 /// (weight 1)`.
+#[cfg(unix)]
 fn describe_weights(ips: &[IpAddr], weights: &[u8]) -> String {
     ips.iter()
         .enumerate()
