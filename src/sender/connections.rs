@@ -25,8 +25,19 @@ pub struct PendingConnectionChanges {
 
 /// Legacy shape: uplinks identified by source IP alone, no bind-map.
 #[must_use]
-pub fn specs_from_ips(ips: &[IpAddr]) -> SmallVec<UplinkSpec, 4> {
-    ips.iter().copied().map(UplinkSpec::unmapped).collect()
+pub fn specs_from_ips(ips: &[IpAddr], weights: &[u8]) -> SmallVec<UplinkSpec, 4> {
+    ips.iter()
+        .zip(
+            weights
+                .iter()
+                .copied()
+                .chain(std::iter::repeat(srtla_core::connection::LINK_WEIGHT_MIN)),
+        )
+        .map(|(&ip, weight)| UplinkSpec {
+            weight,
+            ..UplinkSpec::unmapped(ip)
+        })
+        .collect()
 }
 
 /// Turn a resolved bind-map decision into uplink specs, in file order.
@@ -95,7 +106,19 @@ pub async fn apply_connection_changes(
 
     for (spec, existing) in desired.iter().zip(claimed) {
         match existing {
-            Some(conn) => connections.push(conn),
+            Some(mut conn) => {
+                if conn.link_weight != spec.weight {
+                    info!(
+                        "uplink {} weight {} -> {}",
+                        conn.label, conn.link_weight, spec.weight
+                    );
+                    conn.link_weight = spec.weight;
+                }
+                if let Some(io) = conn_io.get_mut(&conn.conn_id) {
+                    io.spec = spec.clone();
+                }
+                connections.push(conn);
+            }
             None => {
                 if let Some(conn) = fresh.remove(&spec.socket_key()) {
                     connections.push(conn);
@@ -229,13 +252,14 @@ async fn create_missing(
 
 pub async fn create_connections_from_ips(
     ips: &[IpAddr],
+    weights: &[u8],
     receiver_host: &str,
     receiver_port: u16,
     binder: &Arc<dyn UplinkBinder>,
     conn_io: &mut ConnIoMap,
 ) -> SmallVec<SrtlaConnection, 4> {
     create_connections_from_links(
-        &specs_from_ips(ips),
+        &specs_from_ips(ips, weights),
         receiver_host,
         receiver_port,
         binder,
@@ -254,8 +278,9 @@ pub async fn create_connections_from_links(
     let mut connections = SmallVec::new();
     for spec in links {
         match connect_uplink(spec, receiver_host, receiver_port, binder).await {
-            Ok((conn, io)) => {
-                info!("added uplink {}", conn.label);
+            Ok((mut conn, io)) => {
+                conn.link_weight = spec.weight;
+                info!("added uplink {} (weight {})", conn.label, conn.link_weight);
                 conn_io.insert(conn.conn_id, io);
                 connections.push(conn);
             }
@@ -400,8 +425,6 @@ pub(super) fn rebuild_uplink_socket(
     // problem `recover_connection` exists for, and a full socket reconnection is
     // the harder reset of the two.
     seq_tracker.remove_connection(conn.conn_id);
-    // Don't reset connection_established_ms for reconnections — only set on REG3.
-    conn.mark_reconnect_success();
     conn.reconnection.reset_startup_grace(now);
     Ok(())
 }

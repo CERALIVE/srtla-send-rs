@@ -153,18 +153,28 @@ Nth accepted entry of `BIND_IPS_FILE`.**
 This is what disambiguates duplicate IPs: two rows may both say `192.168.8.100`, and
 they are told apart by *position*, exactly as the sender's own pool is.
 
-"Nth accepted entry" is defined by the **legacy parsing rules, unchanged**, i.e. the
-exact behavior of `read_ip_list`:
+"Nth accepted entry" uses the sender's shared line parser, i.e. the exact behavior
+of `read_ip_list` and `read_weighted_ip_list`:
 
 1. split the file into lines;
 2. trim each line;
 3. skip empty lines;
-4. parse the rest as an IP address; **skip** (with a warning) anything that fails.
+4. accept `<ip>` or `<ip> <weight>`, with whitespace separating fields;
+5. skip an invalid IP or a line with more than two fields;
+6. a missing weight is 1; a bad weight (`0`, negative or non-numeric) warns and
+   reads as 1 without invalidating the IP; weights above 10 warn and clamp to 10;
+7. normalise accepted weights so the lowest is 1.
 
 The resulting ordered list of accepted IPs — duplicates preserved — is the sequence the
 sidecar must match. A parser divergence here would silently mis-map every row, so the
 implementation shares one definition and a test pins it against `read_ip_list` output
 over a fixture matrix.
+
+Each mapped row carries its accepted entry's normalised weight by position, so
+twins may have different weights. A degraded startup representative keeps its own
+entry's weight; a degraded reload retains the last valid pool's weights. Weights
+are not sidecar fields and do not participate in link identity or the socket key.
+The digest still covers the raw IP-file bytes, including weights and whitespace.
 
 Correspondence is valid only when **both** hold:
 

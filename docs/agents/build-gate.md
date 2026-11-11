@@ -8,11 +8,11 @@ Run the full gate green on the pinned nightly before every PR (auto-selected via
 ```bash
 cargo build --release
 cargo fmt --all -- --check
-cargo clippy -- -D warnings
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo check && cargo check --release
 cargo test --lib
-timeout --foreground --kill-after=10s 600s cargo test --all-features
-timeout --foreground --kill-after=10s 600s cargo test --features test-internals
+timeout --foreground --kill-after=10s 600s cargo test --workspace --all-features --verbose
+timeout --foreground --kill-after=10s 600s cargo test --workspace --features test-internals
 cargo audit && cargo deny check advisories sources
 ```
 
@@ -23,6 +23,28 @@ privileged supplements (Linux network namespaces, passwordless `sudo`, `srtla_re
 CI run does not prove the privileged topology. Run them only through
 `scripts/netns_test_gate.sh` (90 s per target; `netns_twin` gets 420 s via
 `NETNS_TWIN_TEST_TIMEOUT_SECONDS` because it waits out real sender timers).
+
+`netns_stall_gate` injects sequenced SRT DATA at 2000 packets/s, continuing sequence
+numbers across its unchanged 2/3/8-second phases. Unsequenced payload cannot build
+the required 32-packet backlog. At the 1-in-100 probe rate, 2000 packets/s supplies
+twenty probes/s, so ten-packet receiver ACK batches keep delivery proof fresh
+through the dwell. Its focused log filter keeps lifecycle debug events on stdout
+without evicting them from the bounded capture with per-packet debug noise.
+The fixture fix in `bd04719` reduced the flake, but `silence pull engaged` can
+still rarely fail when the dead link's backlog stays below
+`--stall-min-in-flight` (32). Pinning and explicit backlog preconditions remain
+follow-up work.
+
+RTT sampling follows Karn's ambiguity rule: repeated sequences, R-bit retransmits
+and duplicate probes cannot supply an RTT sample. Their ACK pruning, in-flight
+accounting, delivery proof and congestion/window updates remain unchanged.
+Unambiguous DATA ACKs and echoed keepalives still sample RTT. The wire-loss test
+holds the existing real SRT caller at 4 Mbps, below either 6 Mbps shaper: its
+adaptive unacknowledged-packet limit otherwise stops the load near 1.7 Mbps.
+Its sampling window and thresholds remain unchanged. Fixed load alone also
+passed on old main, so this test does not by itself guard Karn. Stock-receiver
+NAK counts reflect cross-link reordering; production-like receiver options and
+adaptive-demand recovery coverage remain follow-ups.
 
 **`tests/netns_twin.rs`** (8 scenarios) is the only target that reproduces two uplinks
 sharing one source address, built on `crates/network-sim/src/twin/` (one NAT carrier

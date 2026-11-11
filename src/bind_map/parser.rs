@@ -11,12 +11,12 @@
 //! stale.
 
 use std::net::IpAddr;
-use std::str::FromStr;
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use super::error::BindMapError;
+use crate::sender::{normalise_link_weights, parse_ip_line};
 
 /// The sidecar `schema_version` this build reads and writes.
 pub const BIND_MAP_SCHEMA_VERSION: u32 = 1;
@@ -99,6 +99,8 @@ pub struct BindMapRow {
     pub link_id: LinkId,
     pub ip: IpAddr,
     pub iface: IfaceName,
+    /// Normalised weight from the corresponding IP-file entry, never the sidecar.
+    pub weight: u8,
     /// Opaque writer provenance. Never opened, stat-ed, or resolved.
     pub id_path: Option<String>,
 }
@@ -135,13 +137,15 @@ pub struct MappedPool {
 pub struct IpsFile {
     sha256: String,
     accepted: Vec<IpAddr>,
+    weights: Vec<u8>,
 }
 
 impl IpsFile {
     /// Parse and hash one read of the IP list.
     ///
-    /// The accepted-IP rules are **identical** to `sender::read_ip_list`: trim,
-    /// skip blank lines, skip unparseable lines. Duplicates are preserved,
+    /// Uses the sender's shared `parse_ip_line` and `normalise_link_weights`:
+    /// skip blank or invalid lines; preserve valid IPs with a bad weight as 1.
+    /// Duplicates are preserved,
     /// because position is what disambiguates them (ADR-003 §2).
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, BindMapError> {
         let text = std::str::from_utf8(bytes).map_err(|e| BindMapError::Unreadable {
@@ -149,16 +153,17 @@ impl IpsFile {
             detail: format!("not valid UTF-8: {e}"),
         })?;
 
-        let accepted = text
+        let (accepted, mut weights): (Vec<_>, Vec<_>) = text
             .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .filter_map(|line| IpAddr::from_str(line).ok())
-            .collect();
+            .enumerate()
+            .filter_map(|(index, line)| parse_ip_line(line.trim(), index + 1))
+            .unzip();
+        normalise_link_weights(&mut weights);
 
         Ok(Self {
             sha256: hex_digest(bytes),
             accepted,
+            weights,
         })
     }
 
@@ -172,6 +177,12 @@ impl IpsFile {
     #[must_use]
     pub fn accepted(&self) -> &[IpAddr] {
         &self.accepted
+    }
+
+    /// Normalised weights in accepted-entry order, including duplicate IPs.
+    #[must_use]
+    pub fn weights(&self) -> &[u8] {
+        &self.weights
     }
 }
 

@@ -59,62 +59,63 @@ The sender supports two mutually exclusive scheduling modes:
 
 This tool assumes that data is streamed from a SRT _sender_ in _caller_ mode to a SRT _receiver_ in _listener_ mode. To get any benefit over using SRT directly, the _sender_ should have 2 or more network links to the SRT listener (in the typical application, these would be internet-connected 4G modems). The sender needs to have [source routing](https://tldp.org/HOWTO/Adv-Routing-HOWTO/lartc.rpdb.simple.html) configured, as srtla uses `bind()` to map UDP sockets to a given connection.
 
+## Install
+
+Each [release](https://github.com/CERALIVE/srtla-send-rs/releases) ships the `srtla` package as a `.deb` for `amd64` and `arm64`. It's built on Debian 12 (Bookworm) and needs glibc 2.36 or newer:
+
+```bash
+sudo dpkg -i srtla_*_arm64.deb
+```
+
+On other platforms, build from source.
+
 ## Requirements
 
-- **Rust nightly toolchain** and Cargo
+- Rust and Cargo. `rust-toolchain.toml` pins `nightly-2026-06-12` (see [Toolchain](#toolchain)), and rustup installs it on the first `cargo` command. `rustfmt.toml` uses unstable options, so formatting needs that nightly too.
 - Unix (Linux/macOS) or Windows
   - Note: SIGHUP-based IP reload is Unix-only; Windows runs without that arm
-
-**Important:** This project requires Rust nightly due to advanced rustfmt configuration options used in the codebase.
 
 ## Build
 
 ```bash
 cd srtla_send
-rustup install nightly
-rustup default nightly  # Set nightly as default for this project
 cargo build --release
 # binary at target/release/srtla_send
 ```
 
-Alternatively, you can use nightly for individual commands:
-
-```bash
-cargo +nightly build --release
-cargo +nightly fmt
-cargo +nightly test
-```
-
 ## Testing
 
-The project includes comprehensive test suites covering unit tests, integration tests, and end-to-end tests.
+The project includes test suites covering unit tests, integration tests, and end-to-end tests.
 
 ### Run Tests Locally
 
+The `xlint` and `xtest` aliases in `.cargo/config.toml` run the same commands as CI, across every crate in the workspace.
+
 ```bash
-# Run all tests (requires nightly)
-cargo test
+# Run all tests in the workspace, as CI does
+cargo xtest
 
-# Run with verbose output
-cargo test --verbose
+# Run clippy, as CI does
+cargo xlint
 
-# Run specific test
+# Run a specific test
 cargo test test_connection_score
 
-# Check formatting (requires nightly)
-cargo fmt --all -- --check
+# Format code (pinned nightly)
+cargo fmt --all
 ```
 
 ### CI/CD
 
-The project uses GitHub Actions for continuous integration with automated testing on every push and pull request, including:
+GitHub Actions runs on every push and pull request:
 
-- Multi-platform testing (Linux, Windows, macOS)
-- Code formatting and linting checks
-- Security vulnerability scanning
-- Build verification across multiple Rust versions
+- Formatting and clippy
+- Tests on Linux, Windows and macOS, plus Rust stable and beta
+- Miri over the unsafe batch-receive code, and Loom over the subscription hub
+- Supply chain checks with cargo-audit and cargo-deny
+- A `.deb` build for `arm64` and `amd64`
 
-The fork's workflows are described under [CI and packaging](#ci-and-packaging) in the CERALIVE section.
+Pushing a `v<version>` tag publishes the release. Both workflows are described under [CI and packaging](#ci-and-packaging) in the CERALIVE section.
 
 ## Usage
 
@@ -127,7 +128,13 @@ srtla_send [OPTIONS] SRT_LISTEN_PORT SRTLA_HOST SRTLA_PORT BIND_IPS_FILE
 - `SRT_LISTEN_PORT`: UDP port on which to receive SRT packets locally
 - `SRTLA_HOST`: hostname or IP of the SRTLA receiver (e.g., srtla_rec)
 - `SRTLA_PORT`: UDP port of the SRTLA receiver
-- `BIND_IPS_FILE`: path to a file with newline-separated local source IPs (uplinks)
+- `BIND_IPS_FILE`: path to a file with newline-separated local source IPs (uplinks). Each line is `<ip>[ <weight>]`: the optional
+  weight (integer 1..10, default 1) is a link priority in the style of Moblin's
+  "connection priorities". Weights are normalised so the lowest link is 1; in
+  classic mode a link's score is multiplied by its weight while its window is
+  above 20 000, the multiplier fades linearly to 1 between 20 000 and 10 000,
+  and is ignored below. Enhanced mode ignores weights. Exported per link as
+  `srtla_send_link_weight`.
 
 ### Options
 
@@ -136,10 +143,10 @@ srtla_send [OPTIONS] SRT_LISTEN_PORT SRTLA_HOST SRTLA_PORT BIND_IPS_FILE
 - `--no-stall-deselect`: Disable the stalled-link deselect guard (on by default). The guard skips a link whose in-flight backlog is high while its last delivery proof (an earned ACK or keepalive round-trip) has gone stale, provided a healthier link can carry the traffic. The link recovers automatically on its next keepalive round-trip, so nothing is probed blindly. This mainly helps satellite links (Starlink obstructions and handovers) that keep a large backlog while briefly delivering nothing.
 - `--stall-min-in-flight <N>`: In-flight backlog (packets) at or above which a link becomes a stall candidate (default 32)
 - `--stall-ack-stale-ms <MS>`: Delivery-proof staleness window in milliseconds after which a stall candidate is deselected (default 3000)
+- `--conn-timeout-ms <MS>`: Per-link liveness timeout. Silence past this tears the link down and re-registers it (default 5000, clamped to 1000..=60000, also settable at runtime with `set_conn_timeout`). A timed-out link that was registered before makes its first 4 reconnect attempts 1 s apart, so a short modem or tether blip re-registers before SRT's 5 s peer-idle timeout ends the session. After that it retries every 5 s until it registers again.
 - `--no-rehome`: Disable whole-bond re-home (on by default). When every uplink has been down for longer than the all-links-failed window *and* the receiver hostname no longer resolves to the address the bond is pinned to, the sender moves every uplink together to the newly-resolved address and re-registers from scratch over the ordinary REG1/REG2/REG3 flow. It is deliberately conservative: a bond with any live uplink is never touched, a merely reordered DNS answer is not a move, a failed lookup is not a move, and at most one migration is attempted per minute. Pass this to keep the old behaviour of staying on the cached address until the process is restarted.
-- `--config <PATH>`: Path to a TOML config file (reloaded on SIGHUP)
+- `--config <PATH>`: Path to a TOML config file, read once at startup. Each key is the long flag name with underscores (for example `stall_ack_stale_ms = 2000`), and a flag given on the command line wins over the file. The supported keys are `mode`, `no_quality`, `no_stall_deselect`, `stall_min_in_flight`, `stall_ack_stale_ms` and `conn_timeout_ms`. An unknown key or a file that fails to parse stops startup.
 - `--control-socket <PATH>`: Unix domain socket path for remote control (e.g., `/tmp/srtla.sock`)
-- `--conn-timeout-ms <MS>`: Per-link liveness timeout (default 5000, clamped to 1000..=60000; also settable at runtime via `set_conn_timeout`)
 - `--priority-bind <ADDR:PORT>`: UDP sidecar address for encoder keyframe priority hints
 - `--metrics-bind <ADDR:PORT>`: Expose a Prometheus scrape endpoint at `/metrics`
 - `-v, --version`: Print version and exit (see [Version output](#version-output))
@@ -152,17 +159,17 @@ The CERALIVE fork adds `--verbose`, `--dry-run`, `--stats-file`, `--stats-file-i
 
 ```bash
 $ ./target/release/srtla_send -v
-4.1.0 (main@974c8b9) [srtla_send]
+4.2.0 (main@974c8b9) [srtla_send]
 ```
 
 The parenthetical is emitted only when the build could resolve a commit. Building outside a git checkout (an exported source tarball, a container that copies only `src/`, a vendored crate) is a normal build with nothing to name, so the metadata is omitted entirely rather than filled with a placeholder:
 
 ```bash
 $ ./target/release/srtla_send -v
-4.1.0 [srtla_send]
+4.2.0 [srtla_send]
 ```
 
-A tag build (detached HEAD) reports the bare hash, `4.1.0 (974c8b9) [srtla_send]`, and a build from a modified working tree suffixes the hash with `-dirty`.
+A tag build (detached HEAD) reports the bare hash, `4.2.0 (974c8b9) [srtla_send]`, and a build from a modified working tree suffixes the hash with `-dirty`.
 
 ## The CERALIVE layer
 
@@ -170,7 +177,7 @@ Everything in this section is CERALIVE's addition on top of upstream. It exists 
 
 ### Version and upstream sync
 
-The fork is based on upstream `df0b3938791ff24eced4aed8b29e3d49d0efb639` (v4.0.1) and ships as **`4.1.0`**. The version follows upstream's semver line, not CalVer, so a CERALIVE release stays traceable to the upstream release it builds on. Upstream merges are manual and gated: they land in a dedicated PR, run the full gate on the pinned toolchain, and must not regress the contract below. There is no automatic sync. The upstream remote is added only for the duration of a merge and removed before the PR is opened.
+The fork is based on upstream `df0b3938791ff24eced4aed8b29e3d49d0efb639` (v4.0.1). The last-merged upstream commit is `9e63d8f` (the 2026-11 sync, recorded in [`docs/notes/upstream-sync-2026-11.md`](docs/notes/upstream-sync-2026-11.md)). It ships as **`4.2.0`**. The version follows upstream's semver line, not CalVer, so a CERALIVE release stays traceable to the upstream release it builds on. Upstream merges are manual and gated: they land in a dedicated PR, run the full gate on the pinned toolchain, and must not regress the contract below. There is no automatic sync. The upstream remote is added only for the duration of a merge and removed before the PR is opened.
 
 ### Toolchain
 
@@ -218,7 +225,7 @@ A supervisor has to decide **before spawning** whether the installed binary unde
 
 ```bash
 $ srtla_send --capabilities-json
-{"schema_version":1,"binary":"srtla_send","version":"4.1.0","capabilities":{"bind_map":true,"stats_file":true,"dry_run":true,"control_socket_jsonrpc":true,"conn_timeout_ms":true,"modes":["classic","enhanced"]}}
+{"schema_version":1,"binary":"srtla_send","version":"4.2.0","capabilities":{"bind_map":true,"stats_file":true,"dry_run":true,"control_socket_jsonrpc":true,"conn_timeout_ms":true,"modes":["classic","enhanced"]}}
 ```
 
 The `get_capabilities` JSON-RPC method on `--control-socket` returns the same document plus a `methods` array. A binary that predates the flag rejects it with a usage error and a non-zero exit; callers treat **any** non-zero exit, unparseable output, or timeout as "no support" and fall back to the plain spawn. See [ADR-004](docs/adr/ADR-004-control-dialect.md).
@@ -242,9 +249,12 @@ Two workflows, both on the pinned nightly:
 - `ci.yml` (push and PR): formatting, clippy with warnings as errors, the bounded test suite, `cargo audit` and `cargo deny`, upstream's stable/beta/Windows/macOS lanes, a blocking **Loom** lane over the subscription hub (`RUSTFLAGS="--cfg loom" cargo test --test subscription_loom`, 2 tests), a blocking **Miri** lane over the five pure pointer-logic tests in `src/net/batch_recv.rs`, and a `.deb` build matrix for `arm64` and `amd64` so a packaging break is caught before any tag.
 - `release.yml` (tag `v*`): the same gate, then both `.deb`s built inside `debian:bookworm-slim` with a **`GLIBC_2.36`** ceiling check on each binary (Debian 12 is the device image), attached to the GitHub release with their `.sha256` files.
 
-The package is **`srtla`**, the binary installs at `/usr/bin/srtla_send`, and the artifact is named `srtla_<version>_<arch>.deb` (`srtla_4.1.0_arm64.deb`, `srtla_4.1.0_amd64.deb`). `ci/build-deb.sh` is the single source of truth for that metadata and re-runs the device image builder's fetch glob against the real filename as a self-test. A release tag must be `v<version>` with the version taken from `Cargo.toml`.
+The package is **`srtla`**, the binary installs at `/usr/bin/srtla_send`, and the artifact is named `srtla_<version>_<arch>.deb` (`srtla_4.2.0_arm64.deb`, `srtla_4.2.0_amd64.deb`). `ci/build-deb.sh` is the single source of truth for that metadata and re-runs the device image builder's fetch glob against the real filename as a self-test. A release tag must be `v<version>` with the version taken from `Cargo.toml`.
 
 Privileged network-namespace tests (`tests/netns_*.rs`, including the duplicate-IP twin-modem scenarios in `tests/netns_twin.rs`) self-skip on ordinary runners and are run locally through `scripts/netns_test_gate.sh`.
+The stall-latch fixture fix reduced the flake, but `silence pull engaged` can still rarely fail when the dead link's backlog stays below `--stall-min-in-flight` (32); pinning and backlog preconditions remain follow-ups.
+ACKs for retransmitted sequences and duplicate probes retain delivery/accounting effects but do not sample RTT, because a sequence ACK cannot identify which copy arrived.
+The wire-loss fixture holds the real SRT caller at 4 Mbps below either 6 Mbps path, preserving its original per-link and CC thresholds.
 
 ### License
 
@@ -391,7 +401,7 @@ Normal registration:
 
 ### Implementation Details
 
-- For each IP in `BIND_IPS_FILE`, the sender binds a UDP socket and connects to `SRTLA_HOST:SRTLA_PORT`.
+- For each IP in `BIND_IPS_FILE`, the sender binds a UDP socket to that source address and sends to `SRTLA_HOST:SRTLA_PORT` with `sendto`. The socket is deliberately left unconnected, so it still accepts replies from a multi-homed receiver that answers from another address, or through a NAT that rewrites the reply source (`src/net/batch_recv.rs`).
 - Incoming SRT UDP packets are read on `SRT_LISTEN_PORT` and forwarded over the currently selected uplink based on the score `window / (in_flight + 1)`.
 - ACKs are applied to all uplinks to reduce in-flight counts; NAKs are attributed to the uplink that originally sent the sequence (tracked), falling back to the receiver uplink if unknown.
 - **Burst NAK Detection**: The system tracks NAK bursts (multiple NAKs within 1 second) per connection. When quality scoring is enabled, connections with recent NAK bursts (≥5 NAKs in burst, within last 3 seconds) receive an additional 0.7x multiplier (30% reduction) to their quality score, helping avoid connections experiencing packet loss issues.

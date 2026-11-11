@@ -67,6 +67,17 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         self.assertTrue(gate.has_command("cargo", "test", "--lib"))
         self.assertTrue(gate.has_command("cargo", "test", "--all-features"))
         self.assertTrue(gate.has_command("cargo", "test", "test-internals"))
+        self.assertTrue(
+            gate.has_command(
+                "cargo", "clippy", "--workspace", "--all-targets", "--all-features"
+            )
+        )
+        self.assertTrue(
+            gate.has_command("cargo", "test", "--workspace", "--all-features")
+        )
+        self.assertTrue(
+            gate.has_command("cargo", "test", "--workspace", "test-internals")
+        )
         self.assertTrue(gate.has_command("cargo", "audit"))
         self.assertTrue(gate.has_command("cargo", "deny", "advisories", "sources"))
         bounded_tests = tuple(
@@ -190,6 +201,12 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         gate = workflow.job("test")
 
         self.assertTrue(
+            gate.has_command(
+                "cargo", "clippy", "--workspace", "--all-targets", "--all-features"
+            ),
+            "CI gate clippy must lint the whole workspace, all targets and features",
+        )
+        self.assertTrue(
             gate.has_command("uv", "run", "scripts/release_workflow_contract_test.py")
         )
         self.assertTrue(
@@ -204,6 +221,7 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
             if command.has_arguments("test", "--all-features")
         )
         self.assertEqual(len(all_features), 1)
+        self.assertTrue(all_features[0].has_arguments("--workspace"))
         self.assertTrue(all_features[0].is_bounded)
 
     def test_ci_declares_no_javascript_runtime(self) -> None:

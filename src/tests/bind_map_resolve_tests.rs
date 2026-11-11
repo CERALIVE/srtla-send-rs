@@ -24,7 +24,11 @@ fn ips(bytes: &[u8]) -> IpsFile {
 
 /// A valid twin mapping, as if a coherent pair had just been read.
 fn twin_pool(generation: u64) -> MappedPool {
-    let ips = ips(TWIN_IPS);
+    twin_pool_for(TWIN_IPS, generation)
+}
+
+fn twin_pool_for(bytes: &[u8], generation: u64) -> MappedPool {
+    let ips = ips(bytes);
     let sha = ips.sha256();
     let body = format!(
         r#"{{"schema_version":1,"generation":{generation},"ips_file_sha256":"{sha}","links":[
@@ -42,6 +46,49 @@ fn twin_pool(generation: u64) -> MappedPool {
         },
     )
     .expect("fixture pair is valid")
+}
+
+#[test]
+fn bind_map_twin_weights_follow_positions_through_specs_and_fallback() {
+    let ips = ips(b"192.168.8.100 3\n192.168.8.100 1\n");
+    let mapped = resolve(
+        Ok(twin_pool_for(b"192.168.8.100 3\n192.168.8.100 1\n", 1)),
+        &ips,
+        ResolvePhase::Startup,
+    );
+    let specs = crate::sender::specs_from_effective_links(&mapped.links);
+    assert_eq!(specs.iter().map(|s| s.weight).collect::<Vec<_>>(), [3, 1]);
+    assert_ne!(specs[0].socket_key(), specs[1].socket_key());
+
+    let absent = resolve_absent(&ips);
+    let specs = crate::sender::specs_from_effective_links(&absent.links);
+    assert_eq!(specs.iter().map(|s| s.weight).collect::<Vec<_>>(), [3, 1]);
+
+    let fallback = resolve(Err(degraded()), &ips, ResolvePhase::Startup);
+    let specs = crate::sender::specs_from_effective_links(&fallback.links);
+    assert_eq!(specs.iter().map(|s| s.weight).collect::<Vec<_>>(), [3]);
+    assert_eq!(fallback.excluded[0].effective_index, 0);
+    assert_eq!(fallback.excluded[0].excluded_indices, [1]);
+}
+
+#[test]
+fn bind_map_degraded_reload_keeps_last_valid_positional_weights() {
+    let last_valid = twin_pool_for(b"192.168.8.100 3\n192.168.8.100 1\n", 1);
+    assert_eq!(
+        last_valid.rows.iter().map(|r| r.weight).collect::<Vec<_>>(),
+        [3, 1]
+    );
+    let changed = ips(b"192.168.8.100 1\n192.168.8.100 7\n");
+    let out = resolve(
+        Err(degraded()),
+        &changed,
+        ResolvePhase::Reload {
+            last_valid: &last_valid,
+        },
+    );
+    assert_eq!(out.disposition, BindMapDisposition::RetainedLastValid);
+    let specs = crate::sender::specs_from_effective_links(&out.links);
+    assert_eq!(specs.iter().map(|s| s.weight).collect::<Vec<_>>(), [3, 1]);
 }
 
 fn degraded() -> BindMapError {

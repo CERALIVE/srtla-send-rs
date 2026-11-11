@@ -58,21 +58,27 @@ fn twin_sha() -> String {
 
 // ---- the ips file: legacy parsing rules, shared verbatim --------------
 
+const IPS_CASES: [&str; 14] = [
+    "10.0.0.1\n10.0.1.2\n",
+    "10.0.0.1\n\n  \nnot-an-ip\n10.0.2.3\n",
+    "  10.0.0.1  \n\t10.0.0.2\t\n",
+    "192.168.8.100\n192.168.8.100\n",
+    "",
+    "garbage\nstill-garbage\n",
+    "10.0.0.1 5\n10.0.0.2\n",
+    "10.0.0.1 0\n10.0.0.2 abc\n",
+    "10.0.0.1 99\n",
+    "10.0.0.1 2 extra\n10.0.0.2\n",
+    "\t10.0.0.1\t3\t\n",
+    "10.0.0.1  4\n",
+    "10.0.0.1 -1\n",
+    "10.0.0.1 2\r\n10.0.0.2\r\n",
+];
+
 #[tokio::test]
 async fn ips_file_parsing_matches_the_legacy_read_ip_list_verbatim() {
-    // "Identical parsing rules" (ADR-003 §2) is the load-bearing claim that makes
-    // positional row correspondence meaningful. Prove it against the real legacy
-    // parser over every shape it treats specially.
-    let cases: [&str; 6] = [
-        "10.0.0.1\n10.0.1.2\n",
-        "10.0.0.1\n\n  \nnot-an-ip\n10.0.2.3\n",
-        "  10.0.0.1  \n\t10.0.0.2\t\n",
-        "192.168.8.100\n192.168.8.100\n",
-        "",
-        "garbage\nstill-garbage\n",
-    ];
-
-    for case in cases {
+    // "Identical parsing rules" (ADR-003 §2) makes positional rows meaningful.
+    for case in IPS_CASES {
         let file = tempfile::NamedTempFile::new().expect("temp ips file");
         std::fs::write(file.path(), case).expect("write ips file");
         let legacy = crate::sender::read_ip_list(file.path().to_str().unwrap())
@@ -86,6 +92,19 @@ async fn ips_file_parsing_matches_the_legacy_read_ip_list_verbatim() {
             legacy.as_slice(),
             "bind-map ips parsing diverged from read_ip_list on {case:?}"
         );
+    }
+}
+
+#[tokio::test]
+async fn ips_file_weights_match_the_sender_normalisation() {
+    for case in IPS_CASES {
+        let file = tempfile::NamedTempFile::new().expect("temp ips file");
+        std::fs::write(file.path(), case).expect("write ips file");
+        let (_, weights) = crate::sender::read_weighted_ip_list(file.path().to_str().unwrap())
+            .await
+            .expect("sender reads fixture");
+        let parsed = IpsFile::from_bytes(case.as_bytes()).expect("bind-map reads fixture");
+        assert_eq!(parsed.weights(), weights.as_slice(), "weights for {case:?}");
     }
 }
 

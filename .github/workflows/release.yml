@@ -1,6 +1,6 @@
 name: Release
 
-# Tag-triggered release: pushing a version tag (e.g. v4.1.0) cross-builds both
+# Tag-triggered release: pushing a version tag (e.g. v4.2.0) cross-builds both
 # device architectures, packages the pipeline-compatible .debs, and attaches
 # them to the GitHub release for that tag. No crates.io publish, no scheduled
 # upstream sync — releases are cut deliberately by pushing a tag.
@@ -48,7 +48,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       - name: Check compilation
         run: cargo check
@@ -60,10 +60,10 @@ jobs:
         run: cargo test --lib
 
       - name: Run bounded all-features test command
-        run: timeout --foreground --kill-after=10s 600s cargo test --all-features --verbose
+        run: timeout --foreground --kill-after=10s 600s cargo test --workspace --all-features --verbose
 
       - name: Run test-internals suite
-        run: timeout --foreground --kill-after=10s 600s cargo test --features test-internals
+        run: timeout --foreground --kill-after=10s 600s cargo test --workspace --features test-internals
 
       - name: Install cargo-audit + cargo-deny (prebuilt)
         uses: taiki-e/install-action@v2

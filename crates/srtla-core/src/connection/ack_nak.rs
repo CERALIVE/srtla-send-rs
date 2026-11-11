@@ -20,11 +20,19 @@ impl SrtlaConnection {
     /// Register a packet as in-flight. O(1) insert.
     #[inline]
     pub fn register_packet(&mut self, seq: i32, send_time_ms: u64) {
-        self.packet_log.insert(seq, send_time_ms);
+        // ACKs identify sequences, so a second copy makes its RTT ambiguous.
+        self.packet_log
+            .entry(seq)
+            .and_modify(|sent| *sent = None)
+            .or_insert(Some(send_time_ms));
         self.in_flight_packets = self.packet_log.len() as i32;
     }
 
     /// Handle SRT cumulative ACK - clears all packets at or before `ack`.
+    ///
+    /// `ack` is the last sequence the receiver acknowledged, not the ACK's
+    /// wire field, which names the first sequence still owed; convert with
+    /// [`crate::seq::srt_ack_last_acked`].
     ///
     /// "At or before" is meant in *serial* order (mod 2^31, see [`crate::seq`]):
     /// SRT sequence numbers are 31 bits and wrap from a randomized start, so
@@ -66,7 +74,7 @@ impl SrtlaConnection {
         }
 
         // Get send time for RTT calculation before removing
-        let ack_send_time_ms = self.packet_log.get(&ack).copied();
+        let ack_send_time_ms = self.packet_log.get(&ack).copied().flatten();
 
         self.highest_acked_seq = ack;
 
@@ -117,14 +125,13 @@ impl SrtlaConnection {
     #[inline]
     pub fn handle_srtla_ack_specific(&mut self, seq: i32, classic_mode: bool, now_ms: u64) -> bool {
         // A probe this link sent, answered on this link. It proves the path
-        // delivered a data-sized packet and yields a real round trip, but it is
-        // not payload: it must not move the congestion window, or a held-out
+        // delivered a data-sized packet, but its ACK cannot identify which copy.
+        // It must not sample RTT or move the congestion window, or a held-out
         // link would inflate the very window that makes it seize the stream on
         // release. Checked first — the sweep-proof log is where a slow link's
         // probes actually survive to be answered.
-        if let Some(sent_ms) = self.probe_log.remove(&seq) {
+        if self.probe_log.remove(&seq).is_some() {
             self.last_ack_or_rtt_sample_ms = now_ms;
-            self.rtt.record_round_trip(sent_ms, now_ms);
             return true;
         }
 
@@ -138,11 +145,11 @@ impl SrtlaConnection {
             // generic inbound bytes, so a stalled-but-echoing link stays stale.
             self.last_ack_or_rtt_sample_ms = now_ms;
 
-            // ...and the same ACK is a per-link round trip: we sent this exact
-            // sequence on this exact socket and the receiver acknowledged it
-            // back on it. Dropping the send timestamp here used to throw that
-            // sample away.
-            self.rtt.record_round_trip(sent_ms, now_ms);
+            // Retransmitted sequences still earn delivery proof and accounting,
+            // but the ACK may belong to an older copy (Karn's ambiguity).
+            if let Some(sent_ms) = sent_ms {
+                self.rtt.record_round_trip(sent_ms, now_ms);
+            }
 
             if classic_mode {
                 self.congestion.handle_srtla_ack_specific_classic(
@@ -183,6 +190,43 @@ mod tests {
     /// Sequences around a wrap: the last two before `0x7fff_ffff` rolls over,
     /// then the first three of the new cycle.
     const ACROSS_WRAP: [i32; 5] = [SEQ_MASK - 1, SEQ_MASK, 0, 1, 2];
+
+    #[tokio::test]
+    async fn retransmitted_sequence_ack_preserves_rtt_floor_and_delivery_accounting() {
+        for (same_link, retransmit) in [(true, false), (true, true), (false, true)] {
+            for classic in [None, Some(false), Some(true)] {
+                let mut conn = create_test_connection().await;
+                conn.rtt.update_estimate(50, 950);
+                if same_link {
+                    conn.register_packet(30, 1_000);
+                }
+                let mut packet = [0u8; 16];
+                packet[..4].copy_from_slice(&30u32.to_be_bytes());
+                if retransmit {
+                    srtla_protocol::set_srt_data_retransmit(&mut packet);
+                }
+                conn.queue_data_packet(&packet, Some(30), 1_029);
+                assert_eq!(conn.take_batch(1_029).len(), 1);
+                conn.register_packet(31, 1_030);
+
+                // The old copy's ACK arrives before the new copy could traverse
+                // the 50 ms path. Sequence identity cannot identify the copy.
+                match classic {
+                    None => conn.handle_srt_ack(30, 1_031, true),
+                    Some(mode) => {
+                        assert!(conn.handle_srtla_ack_specific(30, mode, 1_031));
+                        assert_eq!(conn.last_ack_or_rtt_sample_ms, 1_031);
+                    }
+                }
+
+                assert_eq!(conn.in_flight_packets, 1);
+                assert!(!conn.packet_log.contains_key(&30));
+                assert!(conn.packet_log.contains_key(&31));
+                assert_eq!(conn.get_rtt_min_ms(), 50.0);
+                assert_eq!(conn.get_smooth_rtt_ms(), 50.0);
+            }
+        }
+    }
 
     #[tokio::test]
     async fn first_ack_after_sentinel_is_accepted() {

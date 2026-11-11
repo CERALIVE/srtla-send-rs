@@ -38,6 +38,8 @@ pub struct UplinkSpec {
     pub ip: IpAddr,
     pub iface: Option<IfaceName>,
     pub link_id: Option<LinkId>,
+    /// Operator preference, independent of link identity and socket binding.
+    pub weight: u8,
 }
 
 impl UplinkSpec {
@@ -48,6 +50,7 @@ impl UplinkSpec {
             ip,
             iface: None,
             link_id: None,
+            weight: srtla_core::connection::LINK_WEIGHT_MIN,
         }
     }
 
@@ -99,6 +102,7 @@ impl From<&EffectiveLink> for UplinkSpec {
             ip: link.ip,
             iface: link.iface.clone(),
             link_id: link.link_id.clone(),
+            weight: link.weight,
         }
     }
 }
@@ -134,11 +138,13 @@ mod tests {
             ip: ip(100),
             iface: Some(IfaceName::parse("wwan0").unwrap()),
             link_id: Some(LinkId::parse("modem-a").unwrap()),
+            weight: 1,
         };
         let b = UplinkSpec {
             ip: ip(100),
             iface: Some(IfaceName::parse("wwan1").unwrap()),
             link_id: Some(LinkId::parse("modem-b").unwrap()),
+            weight: 1,
         };
 
         // When/Then: the dedup key separates them.
@@ -153,11 +159,13 @@ mod tests {
             ip: ip(100),
             iface: Some(IfaceName::parse("wwan0").unwrap()),
             link_id: Some(link_id.clone()),
+            weight: 1,
         };
         let after = UplinkSpec {
             ip: ip(101),
             iface: Some(IfaceName::parse("wwan3").unwrap()),
             link_id: Some(link_id),
+            weight: 1,
         };
 
         // When/Then: the socket key moved but the identity did not.

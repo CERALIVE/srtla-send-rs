@@ -392,8 +392,8 @@ pub fn select_connection(
     //    second behind is a hole the receiver's reorder buffer has to wait on,
     //    so the demoted-but-still-carrying trickle is itself the glitch. Such
     //    a link is instead probed with duplicates by the shell, which costs
-    //    the receiver nothing (it dedups by sequence) and still earns the ACK
-    //    and RTT samples the recovery decision needs.
+    //    the receiver nothing (it dedups by sequence). Probe ACKs prove delivery
+    //    only; held-out links get RTT for recovery from keepalive echoes.
     //  - Anyone who lost the sole-carrier election.
     //
     // A link that is weak only for *share* reasons keeps its crushed-score

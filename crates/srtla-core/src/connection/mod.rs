@@ -125,6 +125,61 @@ impl Default for CachedQuality {
     }
 }
 
+/// Lowest operator link weight (the IPs file's optional second column).
+/// Weights are Moblin's "connection priorities": an integer 1..10.
+pub const LINK_WEIGHT_MIN: u8 = 1;
+/// Highest operator link weight.
+pub const LINK_WEIGHT_MAX: u8 = 10;
+/// Above this window a weighted link gets its full weight (Moblin's
+/// `windowStableMaximum * windowMultiply`, = `WINDOW_DEF * WINDOW_MULT`).
+pub const LINK_WEIGHT_FULL_ABOVE_WINDOW: i32 = 20 * WINDOW_MULT;
+/// At or below this window the weight is ignored (Moblin's
+/// `windowStableMinimum * windowMultiply`).
+pub const LINK_WEIGHT_NONE_AT_OR_BELOW_WINDOW: i32 = 10 * WINDOW_MULT;
+
+/// Score multiplier for a link with operator weight `weight` and congestion
+/// window `window`, copied from Moblin's `RemoteConnection.score()`:
+///
+/// - `window > 20 000` (healthy, room to spare): the full weight;
+/// - `10 000 < window <= 20 000` (the link is shedding): fades linearly from
+///   the weight down to 1;
+/// - `window <= 10 000`: 1 (the weight is ignored, plain capacity balancing).
+///
+/// A weight of 1 (the default for every link) is exactly 1.0 in every band, so
+/// an unweighted IPs file schedules byte-for-byte as before. Used by classic
+/// selection only.
+#[inline]
+pub fn link_weight_multiplier(window: i32, weight: u8) -> f32 {
+    let weight = f32::from(weight.clamp(LINK_WEIGHT_MIN, LINK_WEIGHT_MAX));
+    if window > LINK_WEIGHT_FULL_ABOVE_WINDOW {
+        weight
+    } else if window > LINK_WEIGHT_NONE_AT_OR_BELOW_WINDOW {
+        let factor = (window - LINK_WEIGHT_NONE_AT_OR_BELOW_WINDOW) as f32
+            / (LINK_WEIGHT_FULL_ABOVE_WINDOW - LINK_WEIGHT_NONE_AT_OR_BELOW_WINDOW) as f32;
+        1.0 + (weight - 1.0) * factor
+    } else {
+        1.0
+    }
+}
+
+/// Normalise operator weights so the lowest one is 1, keeping the differences
+/// (Moblin's `updateConnectionPriorities`: `priority - lowest + 1`). Only the
+/// ratio between links matters to the scheduler, and this keeps a file that
+/// says `5`/`5` from behaving any differently from one that says nothing.
+/// Inputs are clamped to `LINK_WEIGHT_MIN..=LINK_WEIGHT_MAX` first, so the
+/// result stays in that range.
+pub fn normalise_link_weights(weights: &mut [u8]) {
+    for w in weights.iter_mut() {
+        *w = (*w).clamp(LINK_WEIGHT_MIN, LINK_WEIGHT_MAX);
+    }
+    let Some(lowest) = weights.iter().copied().min() else {
+        return;
+    };
+    for w in weights.iter_mut() {
+        *w = *w - lowest + 1;
+    }
+}
+
 /// Share of its natural score a link should compete with while ramping back
 /// in after a stall gate, rising linearly from
 /// [`crate::config_snapshot::STALL_REJOIN_RAMP_FLOOR`] to `1.0` over `ramp_ms`.
@@ -243,12 +298,12 @@ pub struct SrtlaConnection {
     pub connected: bool,
     pub window: i32,
     pub in_flight_packets: i32,
-    /// Packet log: maps sequence number -> send timestamp (ms).
+    /// Packet log: sequence -> unambiguous send timestamp (ms), or None for copies.
     /// Uses FxHashMap for O(1) insert/remove instead of O(256) linear scan.
     #[cfg(feature = "test-internals")]
-    pub packet_log: FxHashMap<i32, u64>,
+    pub packet_log: FxHashMap<i32, Option<u64>>,
     #[cfg(not(feature = "test-internals"))]
-    pub(crate) packet_log: FxHashMap<i32, u64>,
+    pub(crate) packet_log: FxHashMap<i32, Option<u64>>,
     /// Send timestamps of this link's outstanding *duplicate probes*, kept
     /// apart from [`Self::packet_log`] on purpose.
     ///
@@ -258,10 +313,11 @@ pub struct SrtlaConnection {
     /// healthy round trip after the probe was sent, while the probing link's
     /// own SRTLA ACK is still in flight behind its much longer RTT. Sharing one
     /// log therefore deleted the probe's entry before its ACK could arrive, and
-    /// the ACK then matched nothing: no delivery proof, no RTT sample. The
+    /// the ACK then matched nothing: no delivery proof. The
     /// slower the link, the more reliably it lost the race — so the links whose
     /// recovery these probes exist to measure were the ones least likely to be
-    /// measured, and what did get through was biased toward the fastest probes.
+    /// measured. Probe ACKs prove delivery but never sample RTT: a sequence ACK
+    /// cannot identify which duplicate copy it acknowledges.
     ///
     /// Entries here are immune to the cumulative sweep and expire by age.
     /// Probes are also deliberately absent from the packet log's in-flight
@@ -447,6 +503,11 @@ pub struct SrtlaConnection {
     /// `is_timed_out`/`CONN_TIMEOUT`); a gated link keeps a trickle of
     /// traffic so the loss EWMA can recover and clear the latch.
     pub loss_degraded: bool,
+    /// Operator link weight from the IPs file (`<ip> <weight>`), normalised so
+    /// the lowest link is 1. Scales this link's classic score through
+    /// [`link_weight_multiplier`]. Survives recovery/reconnect resets: it is
+    /// configuration, not link state; only a reload changes it.
+    pub link_weight: u8,
 }
 
 impl SrtlaConnection {
@@ -505,7 +566,15 @@ impl SrtlaConnection {
             cc_backing_off: false,
             cc_target_bps: 0,
             loss_degraded: false,
+            link_weight: LINK_WEIGHT_MIN,
         }
+    }
+
+    /// Classic-mode score multiplier from this link's operator weight at its
+    /// current window (see [`link_weight_multiplier`]).
+    #[inline(always)]
+    pub fn weight_multiplier(&self) -> f32 {
+        link_weight_multiplier(self.window, self.link_weight)
     }
 
     #[inline(always)]
@@ -611,9 +680,13 @@ impl SrtlaConnection {
         if batch.is_empty() {
             return batch;
         }
-        for (_, seq, send_time_ms) in &batch {
+        for (data, seq, send_time_ms) in &batch {
             if let Some(s) = seq {
-                self.register_packet(*s as i32, *send_time_ms);
+                let seq = *s as i32;
+                self.register_packet(seq, *send_time_ms);
+                if is_srt_data_retransmit(data) {
+                    self.packet_log.insert(seq, None);
+                }
             }
         }
         batch
@@ -721,9 +794,13 @@ impl SrtlaConnection {
             return false;
         }
 
+        // A keepalive that slips a tick leaves a 2 s gap in the echoes, which
+        // is also the delivery proof a stall-gated link rejoins on.
         match self.last_keepalive_sent {
             None => true,
-            Some(last) => now_ms.saturating_sub(last) >= IDLE_TIME * 1000,
+            Some(last) => {
+                now_ms.saturating_sub(last) + reconnection::TICK_SLACK_MS >= IDLE_TIME * 1000
+            }
         }
     }
 
@@ -736,6 +813,27 @@ impl SrtlaConnection {
             &self.label,
             now_ms,
         );
+    }
+
+    /// Fold an echoed keepalive into RTT and stall-gate state.
+    ///
+    /// The echo is an RTT sample only when the tracker armed a measurement,
+    /// but it is delivery proof for `stall_deselect` every time. Arming waits
+    /// for 3 s without any RTT sample. Probe ACKs prove delivery only, so a
+    /// held-out link gets RTT from keepalive echoes. Delivery proof must stay
+    /// independent of RTT arming to remain fresh throughout the rejoin dwell.
+    /// Pairs with the earned-ACK site (see `ack_nak.rs`).
+    pub fn handle_keepalive_echo(&mut self, data: &[u8], now_ms: u64) {
+        if self
+            .rtt
+            .handle_keepalive_response(data, &self.label, now_ms)
+            .is_some()
+        {
+            self.record_rtt_probe();
+        }
+        if rtt::keepalive_echo_rtt_ms(data, now_ms).is_some() {
+            self.last_ack_or_rtt_sample_ms = now_ms;
+        }
     }
 
     /// Record an RTT probe and advance warming → live if enough probes collected.
@@ -910,11 +1008,15 @@ impl SrtlaConnection {
         }
 
         let stale_ms = self.effective_stall_stale_ms(stale_ceiling_ms);
+        // A gated link carries no payload, so its steady proof is the keepalive
+        // echo and freshness is judged on a window that outlasts one keepalive
+        // period (see `STALL_REJOIN_PROOF_FLOOR_MS`).
+        let proof_window_ms = stale_ms.max(crate::config_snapshot::STALL_REJOIN_PROOF_FLOOR_MS);
         // Recent *and* fast enough to matter: see `delivery_proof_is_timely`.
         // Both conditions restart the dwell, so a link only rejoins on a run of
         // proof that a packet of real payload could have ridden.
         let proof_fresh = self.last_ack_or_rtt_sample_ms != 0
-            && now_ms.saturating_sub(self.last_ack_or_rtt_sample_ms) < stale_ms
+            && now_ms.saturating_sub(self.last_ack_or_rtt_sample_ms) < proof_window_ms
             && delivery_proof_is_timely(self.get_smooth_rtt_ms(), self.delay_budget_ms);
         if !proof_fresh {
             self.stall_recovery_since_ms = 0;
@@ -1378,9 +1480,8 @@ impl SrtlaConnection {
 
     /// Reset connection state after the shell replaced this link's socket.
     /// Full reset: clears all state including congestion/bitrate stats. `now`
-    /// is the injected clock (was an ambient `now_ms()` read). Socket creation
-    /// and the `mark_reconnect_success`/grace-reset bookkeeping live in the
-    /// shell's `reconnect_uplink`.
+    /// is the injected clock. Socket creation and the grace-reset bookkeeping
+    /// live in the shell's `reconnect_uplink`.
     pub fn reset_for_reconnect(&mut self, now: u64) {
         self.last_received = None;
         self.reset_core_state();
@@ -1390,9 +1491,8 @@ impl SrtlaConnection {
         self.rtt.reset();
         self.bitrate.reset(now);
 
-        // Reset reconnection tracking
+        // The attempt count survives: only REG3 proves the link is back.
         self.reconnection.last_reconnect_attempt_ms = now;
-        self.reconnection.reconnect_failure_count = 0;
     }
 }
 

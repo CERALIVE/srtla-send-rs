@@ -20,6 +20,10 @@ use network_sim::{ImpairmentConfig, SrtlaTestStack};
 /// the whole point here is observing the latch survive to a warm rejoin.
 const STALE_CEILING_MS: &str = "1500";
 
+// A gated link gets 1-in-100 DATA probes; the receiver ACKs in batches of ten.
+// Twenty probes/s keeps earned proof fresh (~500 ms) throughout the rejoin dwell.
+const PACKETS_PER_SECOND: u32 = 2000;
+
 #[test]
 fn test_stall_gate_latches_and_rejoins_after_dwell() {
     if common::skip_without_impairment_deps() {
@@ -27,14 +31,21 @@ fn test_stall_gate_latches_and_rejoins_after_dwell() {
     }
     common::build_srtla_send();
 
-    let mut stack = SrtlaTestStack::start("stall", 2, &["--stall-ack-stale-ms", STALE_CEILING_MS])
-        .expect("start stack");
+    let mut stack = SrtlaTestStack::start_with_log_filter(
+        "stall",
+        2,
+        &["--stall-ack-stale-ms", STALE_CEILING_MS],
+        "info,srtla_core::connection=debug,srtla_core::connection::batch_send=info,\
+         srtla_core::connection::congestion=info",
+    )
+    .expect("start stack");
     common::wait_until_ready(&stack);
 
     // Continuous load throughout: selection (which drives the latch) runs per
     // routed packet, and the black-holed link must accumulate the >=32
     // in-flight backlog the stall signal requires.
-    common::inject_stream(&stack, 400, Duration::from_secs(2)).expect("warmup stream");
+    let next_seq = common::inject_stream(&stack, 0, PACKETS_PER_SECOND, Duration::from_secs(2))
+        .expect("warmup stream");
 
     stack
         .impair_link(
@@ -48,34 +59,41 @@ fn test_stall_gate_latches_and_rejoins_after_dwell() {
 
     // Latch expected after ~1.5 s of proof staleness; 3 s of load leaves
     // margin while keeping the blackhole shorter than CONN_TIMEOUT.
-    common::inject_stream(&stack, 400, Duration::from_secs(3)).expect("stream during blackhole");
+    let next_seq =
+        common::inject_stream(&stack, next_seq, PACKETS_PER_SECOND, Duration::from_secs(3))
+            .expect("stream during blackhole");
 
     stack
         .impair_link(0, ImpairmentConfig::default())
         .expect("restore link 0");
 
-    // Rejoin dwell is 2x the effective staleness window (3 s here). Keep the
+    // Rejoin dwell is 2x the effective staleness window (at most 3 s). Keep the
     // stream up so duplicate probes earn the gated link continuous ACK proof.
-    common::inject_stream(&stack, 400, Duration::from_secs(8)).expect("stream through recovery");
+    common::inject_stream(&stack, next_seq, PACKETS_PER_SECOND, Duration::from_secs(8))
+        .expect("stream through recovery");
 
     let output = stack.stop();
     common::dump_output(&output);
 
+    let stdout: String = output.srtla_send_stdout.join("\n");
     let stderr: String = output.srtla_send_stderr.join("\n");
     assert!(
-        stderr.contains("silence pull engaged"),
+        stdout.contains("silence pull engaged"),
         "black-holed link never hit the fast silence pull"
     );
     assert!(
-        stderr.contains("stall latch engaged"),
+        stdout.contains("stall latch engaged"),
         "black-holed link never engaged the stall latch"
     );
     assert!(
-        stderr.contains("stall latch released after sustained proof"),
+        stdout.contains("stall latch released after sustained proof"),
         "healed link never completed the rejoin dwell (is duplicate probing delivering proof?)"
     );
     assert!(
-        !stderr.contains("PANIC") && !stderr.contains("panic"),
+        !stdout.contains("PANIC")
+            && !stdout.contains("panic")
+            && !stderr.contains("PANIC")
+            && !stderr.contains("panic"),
         "srtla_send panicked during the stall-gate lifecycle"
     );
 }

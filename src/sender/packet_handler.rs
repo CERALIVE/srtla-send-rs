@@ -5,10 +5,12 @@ use smallvec::SmallVec;
 use srtla_core::connection::{SrtlaConnection, SrtlaIncoming};
 use srtla_core::registration::SrtlaRegistrationManager;
 use srtla_core::selection::select_connection_idx;
+use srtla_core::seq::srt_ack_last_acked;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tracing::{debug, info, trace, warn};
 
+use super::client_dedup::ClientDedup;
 use super::connections::recover_connection;
 use super::sequence::SequenceTracker;
 use super::uplink::{ConnIo, ConnIoMap, UplinkPacket};
@@ -75,16 +77,17 @@ pub async fn process_connection_events(
     let current_time_ms = srtla_core::utils::now_ms();
 
     for ack in incoming.ack_numbers.iter() {
+        let last_acked = srt_ack_last_acked(*ack);
         // Every link prunes on a cumulative ACK — the receiver has the data,
         // whichever link carried it — but only the link that carried the
         // unique copy may take an RTT sample from it. The tracker never
         // records duplicate probes, so a probing link resolves to `None` here
         // and keeps its estimator free of round trips earned by the link that
         // actually delivered.
-        let owner = seq_tracker.get(*ack, current_time_ms);
+        let owner = seq_tracker.get(last_acked as u32, current_time_ms);
         for c in connections.iter_mut() {
             let owns = owner == Some(c.conn_id);
-            c.handle_srt_ack(*ack as i32, current_time_ms, owns);
+            c.handle_srt_ack(last_acked, current_time_ms, owns);
         }
     }
 
@@ -134,6 +137,7 @@ pub async fn handle_uplink_packet(
     conn_io: &ConnIoMap,
     reg: &mut SrtlaRegistrationManager,
     instant_tx: &InstantForwarder,
+    client_dedup: &mut ClientDedup,
     last_client_addr: Option<SocketAddr>,
     local_listener: &UdpSocket,
     seq_tracker: &SequenceTracker,
@@ -151,6 +155,7 @@ pub async fn handle_uplink_packet(
             local_listener,
             instant_tx,
             last_client_addr,
+            client_dedup,
             &packet.bytes,
         )
         .await
@@ -213,6 +218,7 @@ pub async fn drain_packet_queue(
     conn_io: &ConnIoMap,
     reg: &mut SrtlaRegistrationManager,
     instant_tx: &InstantForwarder,
+    client_dedup: &mut ClientDedup,
     last_client_addr: Option<SocketAddr>,
     local_listener: &UdpSocket,
     seq_tracker: &SequenceTracker,
@@ -231,6 +237,7 @@ pub async fn drain_packet_queue(
                     conn_io,
                     reg,
                     instant_tx,
+                    client_dedup,
                     last_client_addr,
                     local_listener,
                     seq_tracker,
@@ -346,11 +353,23 @@ pub async fn handle_srt_packet(
             //   routing has mostly moved off it.
             //
             // Only data packets have seq != None (control packets have MSB set).
+            //
+            // The override is enhanced-only: classic mode never consults the
+            // quality cache, which only enhanced selection refreshes (and which
+            // a runtime switch to classic leaves stale). In enhanced mode
+            // `select_best_quality_idx` still declines (None) when every
+            // eligible link is equally good, so the override only fires when
+            // one path is actually better; otherwise these packets are
+            // scheduled like any other (window / in-flight, times the link
+            // weight).
             if seq.is_some()
                 && (critical_window.is_critical_now(packet_time_ms)
                     || srtla_protocol::is_srt_data_retransmit(pkt))
-                && let Some(best_idx) =
-                    srtla_core::priority::select_best_quality_idx(connections, packet_time_ms)
+                && let Some(best_idx) = srtla_core::priority::select_best_path_override_idx(
+                    connections,
+                    packet_time_ms,
+                    config_snap.mode,
+                )
                 && sel_idx != Some(best_idx)
             {
                 trace!(
@@ -468,9 +487,9 @@ pub async fn forward_via_connection(
 /// *also* queued on each held-out link. The copy reuses the original SRT
 /// sequence number: the SRT receiver dedups it, so a lost or late probe can
 /// never stall the receiver buffer, while a delivered one earns the link an
-/// SRTLA ACK on its own socket — both the sustained delivery proof the rejoin
-/// dwell requires and (since the ACK carries a round trip) the RTT sample the
-/// recovery decision reads.
+/// SRTLA ACK on its own socket — the sustained delivery proof the rejoin
+/// dwell requires. Probe ACKs do not sample RTT; held-out links get the RTT
+/// used by recovery from keepalive echoes.
 ///
 /// Covers both reasons a link is held out: the stall gate, and the quality
 /// exclusion for a link that is *late* rather than merely under-used. The
@@ -706,6 +725,7 @@ mod tests {
                     ip: IpAddr::V6(Ipv6Addr::LOCALHOST),
                     iface: iface.clone(),
                     link_id: None,
+                    weight: 1,
                 },
                 egress: EgressLifecycle::for_spec(iface.as_ref()),
                 route_health: RouteHealth::Unknown,

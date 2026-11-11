@@ -42,3 +42,12 @@ pub mod integration_tests;
 
 #[cfg(test)]
 pub mod end_to_end_tests;
+
+#[cfg(test)]
+pub mod recovery_limbo_tests;
+
+#[cfg(test)]
+pub mod client_forward_dedup_tests;
+
+#[cfg(test)]
+pub mod link_weight_tests;

@@ -241,7 +241,7 @@ fn output_lines(tail: &OutputTail) -> Vec<String> {
 /// list is authoritative and needs no such assumption.
 enum ProcessScope {
     Namespace(String),
-    #[cfg(test)]
+    #[cfg(all(test, target_os = "linux"))]
     Pids(Vec<u32>),
 }
 
@@ -399,7 +399,7 @@ impl NamespaceProcess {
                 command.args(["-n", "kill"]);
                 command
             }
-            #[cfg(test)]
+            #[cfg(all(test, target_os = "linux"))]
             ProcessScope::Pids(_) => Command::new("kill"),
         };
         command.args([signal, "--"]);
@@ -440,7 +440,7 @@ impl NamespaceProcess {
                     .filter_map(|pid| pid.parse().ok())
                     .collect()
             }
-            #[cfg(test)]
+            #[cfg(all(test, target_os = "linux"))]
             ProcessScope::Pids(pids) => pids
                 .iter()
                 .copied()
@@ -799,10 +799,9 @@ pub fn wait_for_udp_listener(ns: &Namespace, port: u16, timeout: Duration) -> Re
 }
 
 /// Poll `ss -uan` inside `ns` until at least `min_count` UDP sockets are
-/// connected to `peer_ip:peer_port`. The sender `connect()`s one socket per
-/// source IP to the receiver as it brings each uplink online, so a connected
-/// peer entry is the observable readiness signal that replaces a fixed
-/// registration sleep — it returns as soon as the state appears.
+/// connected to `peer_ip:peer_port`. This only observes explicitly connected
+/// sockets; srtla_send leaves its uplinks unconnected, so sender readiness uses
+/// [`wait_for_registered_uplinks`] instead.
 pub fn wait_for_connected_uplinks(
     ns: &Namespace,
     peer_ip: &str,
@@ -955,6 +954,17 @@ impl SrtlaTestStack {
     ///
     /// `sender_extra_args` are appended to the srtla_send command line.
     pub fn start(test_name: &str, num_links: usize, sender_extra_args: &[&str]) -> Result<Self> {
+        Self::start_with_log_filter(test_name, num_links, sender_extra_args, "debug")
+    }
+
+    /// Start a stack with a sender log filter that keeps lifecycle evidence
+    /// from being evicted by per-packet debug logs in the bounded output tail.
+    pub fn start_with_log_filter(
+        test_name: &str,
+        num_links: usize,
+        sender_extra_args: &[&str],
+        log_filter: &str,
+    ) -> Result<Self> {
         let topo = SrtlaTestTopology::new(test_name, num_links)?;
         let ip_list_path = topo.write_ip_list()?;
 
@@ -1024,7 +1034,7 @@ impl SrtlaTestStack {
             &topo.sender_ns,
             &bin_str,
             &send_args,
-            &[("RUST_LOG", "debug")],
+            &[("RUST_LOG", log_filter)],
         )
         .context("start srtla_send")?;
 
@@ -1164,6 +1174,17 @@ impl SrtlaTestStack {
     /// Apply impairment to sender-side link at `idx`.
     pub fn impair_link(&self, idx: usize, config: ImpairmentConfig) -> Result<()> {
         self.topo.impair_link(idx, config)
+    }
+
+    /// Wait until every sender uplink has completed SRTLA registration.
+    pub fn wait_for_registered_uplinks(&self, timeout: Duration) -> Result<()> {
+        wait_for_registered_uplinks(
+            self.srtla_send
+                .as_ref()
+                .context("srtla_send is not running")?,
+            self.topo.sender_ips.len(),
+            timeout,
+        )
     }
 
     /// The local SRT port that srtla_send listens on (for injecting test data).
