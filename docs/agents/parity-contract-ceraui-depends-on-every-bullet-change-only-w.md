@@ -23,7 +23,7 @@
   `docs/CONTROL_PROTOCOL.md`, `docs/adr/ADR-004-control-dialect.md`.
 - **`--capabilities-json` is the pre-spawn probe.** One line of JSON on stdout, exit
   `0`, before logging is initialized, no socket bound, no file written. Frozen key set:
-  `bind_map`, `bind_map_required`, `bind_map_required_empty_reload`, `stats_file`, `dry_run`, `control_socket_jsonrpc`, `conn_timeout_ms`,
+  `bind_map`, `bind_map_contract`, `bind_map_required`, `bind_map_required_empty_reload`, `stats_file`, `dry_run`, `control_socket_jsonrpc`, `conn_timeout_ms`,
   `modes`. The runtime `get_capabilities` returns the **same document plus `methods`**,
   pinned by `get_capabilities_matches_the_pre_spawn_probe_document`. The load-bearing
   half is the caller's: any non-zero exit, unparseable output, or timeout means NO
@@ -151,3 +151,8 @@
   verifies the actual local source and link-local scope. Required reloads report
   `pending_apply` until reader cancellation is joined and connection/report
   snapshots are committed together. Empty active/mapped is a completed receipt.
+
+- **Required-binding contract revision:** require integer `bind_map_contract >= 1`
+  alongside both required-binding booleans for §9.4 guarantees. Linux advertises
+  1; other platforms 0. Missing/zero is unverified; future revisions retain the
+  earlier behavior guarantees. Schema versions are independent.
