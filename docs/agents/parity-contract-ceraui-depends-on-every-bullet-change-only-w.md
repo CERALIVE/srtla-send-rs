@@ -134,7 +134,6 @@
 - **Scheduling modes are upstream's two:** `classic` and `enhanced` (default). No other
   value is accepted, pinned by `mode_accepts_only_the_upstream_value_set`.
 
-
 - **Required binding (ADR-003 §9)** is opt-in via `--require-bind-map` with
   `--bind-map`. Probe `bind_map_required == true` first. Degraded first reads
   run no uplinks; SIGHUP can recover. Degraded reload retains mapped sockets.
@@ -144,7 +143,6 @@
   empty mappings remove all links; degraded reads retain, and later re-add
   starts fresh registration. Default empty-reload behavior is unchanged.
 
-
 - **Required source/receipt checks (ADR-003 §9.4):** canonical unicast only;
   limited/multicast and determinable directed broadcasts refused. Runtime and
   dry-run require assignment to the selected interface. Checked device binding
@@ -152,7 +150,13 @@
   `pending_apply` until reader cancellation is joined and connection/report
   snapshots are committed together. Empty active/mapped is a completed receipt.
 
-- **Required-binding contract revision:** require integer `bind_map_contract >= 1`
+- **Required-binding contract revision:** require integer `bind_map_contract >= 2`
   alongside both required-binding booleans for §9.4 guarantees. Linux advertises
-  1; other platforms 0. Missing/zero is unverified; future revisions retain the
+  2; other platforms 0. Missing/zero is unverified; future revisions retain the
   earlier behavior guarantees. Schema versions are independent.
+
+- **Revision 2 (ADR-003 §9.5)** identifies applied and pending maps by generation
+  and exact IP-file SHA. Strict generations never regress within one producer
+  lifetime; a same-generation no-op cannot overtake newer ingress/pending work.
+  Request ingress and joined publication share a gate. Consumers require
+  `bind_map_contract >= 2` and exact applied identity, not wall-clock freshness.
