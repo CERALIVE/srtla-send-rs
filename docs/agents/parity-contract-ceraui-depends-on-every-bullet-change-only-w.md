@@ -50,17 +50,21 @@
   when a SIGHUP reload drops a link (the bond figure is a delta-banking accumulator,
   `SessionBytes` in `src/stats.rs`, not a sum of the live links). `schema_version` stays
   `1`. Absent means unknown, never zero.
-- **ADR-003 telemetry echo: four OPTIONAL additive fields, `schema_version` stays 1.**
+- **ADR-003 telemetry echo: OPTIONAL additive fields, `schema_version` stays 1.**
   Per connection `iface` and `link_id` (echoed from the sidecar, never minted here); top
   level `bind_map_status {state: active|absent|degraded, reason?}` (seven frozen
   reasons) and `disposition {state: mapped|retained_last_valid|legacy_unique_only|
-  startup_collision_excluded|required_binding_refused, collisions?}`. The top-level pair is always present (an
+  startup_collision_excluded|required_binding_refused|pending_apply, collisions?}`. The top-level pair is always present (an
   unmapped run reads `absent` / `legacy_unique_only`); the per-connection pair and
   `reason`/`collisions` are omitted (never `null`, never `""`) when they do not apply, so
   an unmapped run's document is the pre-ADR-003 producer's plus the top-level pair.
   `schema_version` names the shape of the REQUIRED fields;
   never bump it for an additive field. Types are projected from `src/bind_map/report.rs`;
   do not introduce a parallel status type.
+  Required revision-2 snapshots also carry optional `bind_map_applied` and
+  `bind_map_pending` publication identities, each `{generation, ips_file_sha256}`;
+  unknown identities are omitted and pending never acknowledges application.
+
 - **Fixtures.** `tests/fixtures/*.json` are the producer goldens, written by
   `tests/telemetry_fixtures.rs` (regenerate deliberately with
   `UPDATE_GOLDEN=1 cargo test --test telemetry_fixtures`). `telemetry-legacy-producer.json`
