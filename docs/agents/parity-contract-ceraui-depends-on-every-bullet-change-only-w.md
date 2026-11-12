@@ -143,3 +143,11 @@
   `bind_map_required_empty_reload == true` and required mode. Only validated
   empty mappings remove all links; degraded reads retain, and later re-add
   starts fresh registration. Default empty-reload behavior is unchanged.
+
+
+- **Required source/receipt checks (ADR-003 §9.4):** canonical unicast only;
+  limited/multicast and determinable directed broadcasts refused. Runtime and
+  dry-run require assignment to the selected interface. Checked device binding
+  verifies the actual local source and link-local scope. Required reloads report
+  `pending_apply` until reader cancellation is joined and connection/report
+  snapshots are committed together. Empty active/mapped is a completed receipt.
