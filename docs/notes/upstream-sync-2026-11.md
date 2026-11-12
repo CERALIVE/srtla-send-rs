@@ -110,11 +110,14 @@ Removed from the merge result; the fork keeps its own CI, release and packaging:
 
 ## Adapted upstream tests
 
-Upstream tests that met the fork's contract were adapted, never dropped. Test names are
-unchanged and no assertion was removed. The list is complete: every one of the 570
-`#[test]`/`#[tokio::test]` functions under `src/`, `crates/` and `tests/` at `9e63d8f` was
-compared body by body with `38cd628`, and with the branch tip, which matches `38cd628`
-for all of them.
+At the original merge review, upstream tests that met the fork's contract were
+adapted, never dropped; names were unchanged and no assertion was removed. All 570
+`#[test]`/`#[tokio::test]` functions under `src/`, `crates/` and `tests/` at `9e63d8f`
+were compared body by body with `38cd628`; the nine differences are listed below.
+Later fork commits changed existing test bodies: the classifier comment, packet-log
+timestamp assertion, probe RTT expectation, and stall/wire-loss fixtures. The released
+tree therefore does not match `38cd628` for every test body; the follow-ups below
+describe the changed expectations and fixture limits.
 
 ### Adapted in the merge
 
@@ -156,6 +159,17 @@ Upstream is still red on RUSTSEC-2026-0386 at `9e63d8f` (`Cargo.lock` pins tokio
 The fork fixed it in `3c0381c` (tokio 1.54.1) without a new `[[advisories.ignore]]` entry;
 `cargo audit` and `cargo deny check advisories sources` pass.
 
+## Board bench
+
+The November 10 S2 run used a single-uplink Rock board. Both 4.1.0 and 4.2.0
+reported `timed_out_during_drop=false` through the 30 s blackhole. After fault
+removal, polls showed `connected=false`, `timed_out=true` and `active_links=0`
+at about 0.5 s, then `connected=true` again at about 2.5 s after removal.
+Sender logs confirm socket reconnection and re-registration; receiver flow resumed
+at about 4.0 s in both arms. The during-drop timeout condition was not met, but
+single-uplink timeout/reconnect recovery was exercised after the outage.
+Multi-link, cellular and handover cases remain unqualified on hardware.
+
 ## Recorded exception: upstream co-author trailers
 
 Approved by the owner on 2026-11-08, against the authorship rule in the workspace
@@ -164,10 +178,16 @@ Approved by the owner on 2026-11-08, against the authorship rule in the workspac
 trailers that upstream added. They're imported verbatim, because rewriting them would change
 upstream SHAs and break the merge base. Every commit the fork authors carries none.
 
-## Upstream tags
+Upstream `d75c271` also carries Simon's human co-author trailer, preserved as upstream history.
+
+## Tags and delivery
 
 The fetch auto-followed upstream's tags `v4.0.0` and `v4.0.1` into the local repo.
-`origin` carries only `v4.1.0`. Never push tags from a sync worktree.
+At that fetch, `origin` carried only `v4.1.0`. PR #34 subsequently merged as
+`1b5febb`, and `v4.2.0` was published. Never push tags from a sync worktree.
+
+Root pin PR #206 merged as `947e383`. Image pipeline PR #247 merged as `36aef71`,
+selecting srtla 4.2.0 and moving CeraUI to `v2026.11.2`.
 
 ## Follow-ups
 
@@ -230,8 +250,8 @@ Changed test expectations:
 - **Codespell lane.** Upstream's `.codespellrc` and spell-check job were not adopted.
 - **MSRV lane.** `Cargo.toml` declares `rust-version = "1.88"`, but no fork lane builds on it.
 - **Newer upstream commits.** Anything on upstream after `9e63d8f` is for the next sync.
-- **CeraUI CI capture bump.** CeraUI's CI still proves against the 4.1.0 sender binary and
-  captures. A CeraUI PR should move them to 4.2.0 in `.github/workflows/build-check.yml`,
+- **Completed CeraUI CI capture bump.** CeraUI PR #512 merged as `3e1ff5e`,
+  moving the sender binary and captures to 4.2.0 in `.github/workflows/build-check.yml`,
   `scripts/ci/build-check-contract.mjs` and `docs/BUILD_PIPELINE.md` (all in `CERALIVE/CeraUI`).
 
 ### Known follow-ups
