@@ -23,7 +23,7 @@
   `docs/CONTROL_PROTOCOL.md`, `docs/adr/ADR-004-control-dialect.md`.
 - **`--capabilities-json` is the pre-spawn probe.** One line of JSON on stdout, exit
   `0`, before logging is initialized, no socket bound, no file written. Frozen key set:
-  `bind_map`, `stats_file`, `dry_run`, `control_socket_jsonrpc`, `conn_timeout_ms`,
+  `bind_map`, `bind_map_required`, `stats_file`, `dry_run`, `control_socket_jsonrpc`, `conn_timeout_ms`,
   `modes`. The runtime `get_capabilities` returns the **same document plus `methods`**,
   pinned by `get_capabilities_matches_the_pre_spawn_probe_document`. The load-bearing
   half is the caller's: any non-zero exit, unparseable output, or timeout means NO
@@ -54,7 +54,7 @@
   Per connection `iface` and `link_id` (echoed from the sidecar, never minted here); top
   level `bind_map_status {state: active|absent|degraded, reason?}` (seven frozen
   reasons) and `disposition {state: mapped|retained_last_valid|legacy_unique_only|
-  startup_collision_excluded, collisions?}`. The top-level pair is always present (an
+  startup_collision_excluded|required_binding_refused, collisions?}`. The top-level pair is always present (an
   unmapped run reads `absent` / `legacy_unique_only`); the per-connection pair and
   `reason`/`collisions` are omitted (never `null`, never `""`) when they do not apply, so
   an unmapped run's document is the pre-ADR-003 producer's plus the top-level pair.
@@ -134,3 +134,7 @@
 - **Scheduling modes are upstream's two:** `classic` and `enhanced` (default). No other
   value is accepted, pinned by `mode_accepts_only_the_upstream_value_set`.
 
+
+- **Required binding (ADR-003 §9)** is opt-in via `--require-bind-map` with
+  `--bind-map`. Probe `bind_map_required == true` first. Degraded first reads
+  run no uplinks; SIGHUP can recover. Degraded reload retains mapped sockets.
