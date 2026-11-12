@@ -23,7 +23,7 @@
   `docs/CONTROL_PROTOCOL.md`, `docs/adr/ADR-004-control-dialect.md`.
 - **`--capabilities-json` is the pre-spawn probe.** One line of JSON on stdout, exit
   `0`, before logging is initialized, no socket bound, no file written. Frozen key set:
-  `bind_map`, `bind_map_required`, `stats_file`, `dry_run`, `control_socket_jsonrpc`, `conn_timeout_ms`,
+  `bind_map`, `bind_map_required`, `bind_map_required_empty_reload`, `stats_file`, `dry_run`, `control_socket_jsonrpc`, `conn_timeout_ms`,
   `modes`. The runtime `get_capabilities` returns the **same document plus `methods`**,
   pinned by `get_capabilities_matches_the_pre_spawn_probe_document`. The load-bearing
   half is the caller's: any non-zero exit, unparseable output, or timeout means NO
@@ -138,3 +138,8 @@
 - **Required binding (ADR-003 §9)** is opt-in via `--require-bind-map` with
   `--bind-map`. Probe `bind_map_required == true` first. Degraded first reads
   run no uplinks; SIGHUP can recover. Degraded reload retains mapped sockets.
+
+- **Final-link withdrawal (ADR-003 §9.3)** requires
+  `bind_map_required_empty_reload == true` and required mode. Only validated
+  empty mappings remove all links; degraded reads retain, and later re-add
+  starts fresh registration. Default empty-reload behavior is unchanged.
