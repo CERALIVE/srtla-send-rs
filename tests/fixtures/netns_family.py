@@ -2,8 +2,8 @@
 """Run as root in fresh mount/PID/network namespaces. Synthetic links only.
 
 SRTLA_SEND, SRTLA_RECEIVER (dual-stack), SRTLA_IPV4_RECEIVER, TAYGA_BIN,
-and PROOF_OUTPUT are explicit local binary/output paths. The CLAT status fixture
-uses the image's schema v1; no service or host device is passed into the lab.
+and PROOF_OUTPUT are explicit binary/output paths. All interfaces and TUN nodes
+are created privately; no service or host device is passed into the lab.
 """
 import json
 import os
@@ -119,6 +119,15 @@ while True:
     run('ip','route','del','192.0.2.2/32','dev',tun)
     run('ip','addr','add','192.0.2.1/24','dev','wan0')
     run(*P('ip','addr','add','192.0.2.2/24','dev','srv0'))
+    # Family selection alone recovers through the existing five-second grace
+    # retry. Keep this eventual-recovery case independent of prompt reconciliation.
+    sender=start({'ip':'fd51::1'})
+    packets('reload-family-before', {'ip':'fd51::1'}, sender)
+    publish({'ip':'192.0.2.1'})
+    sender.send_signal(signal.SIGHUP)
+    time.sleep(8)
+    packets('reload-family-after', {'ip':'192.0.2.1'}, sender)
+    sender.terminate();sender.wait()
     # Both sources at startup against dual DNS, with IPv6 first in the answer.
     (R/'ips').write_text('192.0.2.1\nfd51::1\n')
     sender=spawn([os.environ['SRTLA_SEND'],'--verbose','9001','mixed.test','9000',str(R/'ips')], 'sender-mixed-start')

@@ -65,9 +65,15 @@ budget_for() {
 
 for TARGET in "${TARGETS[@]}"; do
   BUDGET="$(budget_for "${TARGET}")"
+  CARGO_ARGS=()
+  TEST_ARGS=(--nocapture)
+  if [[ "${TARGET}" == netns_family ]]; then
+    CARGO_ARGS=(-j1)
+    TEST_ARGS+=(--test-threads=1)
+  fi
   set +e
   timeout --foreground --kill-after=10s "${BUDGET}s" \
-    cargo test -j1 --all-features --test "${TARGET}" -- --nocapture --test-threads=1
+    cargo test "${CARGO_ARGS[@]}" --all-features --test "${TARGET}" -- "${TEST_ARGS[@]}"
   STATUS=$?
   set -e
   if [[ "${STATUS}" -eq 124 ]]; then
