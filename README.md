@@ -399,8 +399,6 @@ Normal registration:
 - Sender (conn n): `SRTLA_REG2(full_id)`
 - Receiver: `SRTLA_REG3`
 
-Namespace family acceptance and prerequisites: [family acceptance](docs/notes/family-acceptance.md).
-
 ### Implementation Details
 
 - For each IP in `BIND_IPS_FILE`, the sender binds a UDP socket to that source address and sends to `SRTLA_HOST:SRTLA_PORT` with `sendto`. The socket is deliberately left unconnected, so it still accepts replies from a multi-homed receiver that answers from another address, or through a NAT that rewrites the reply source (`src/net/batch_recv.rs`).
