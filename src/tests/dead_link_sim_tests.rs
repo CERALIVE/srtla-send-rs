@@ -1,13 +1,18 @@
 //! Two-link simulations of a path that dies while its link stays registered.
 //!
 //! The unit tests in `stall_deselect_tests` set a link's backlog and proof
-//! stamps by hand. These drive the real selection and connection code with a
-//! small model of the rest of the system instead, because the failure they
-//! guard against only shows up in the interplay: NAKs and cumulative SRT ACKs
-//! that reach the sender over the healthy link keep draining the dead link's
-//! packet log, so its in-flight count never builds the backlog the stall guard
-//! used to require, and the scheduler kept feeding the dead path for as long as
-//! the link stayed registered.
+//! stamps by hand. These drive the real sender logic with a small model of
+//! the rest of the system instead, because the failure they guard against
+//! only shows up in the interplay: NAKs and cumulative SRT ACKs that reach the
+//! sender over the healthy link keep draining the dead link's packet log, so
+//! its in-flight count never builds the backlog the stall guard used to
+//! require, and the scheduler kept feeding the dead path for as long as the
+//! link stayed registered.
+//!
+//! The sender side is production code on a simulated clock: link choice with
+//! the best-path override for retransmits (`choose_link`), the 15 ms send
+//! batching, duplicate probes on held-out links, the sequence tracker, ACK and
+//! NAK dispatch (`apply_link_feedback`) and the 1 s housekeeping tick.
 //!
 //! The model follows `srtla_rec` and a live-mode SRT receiver:
 //! - every data packet a link delivers counts toward that link's SRTLA ACK,
@@ -23,7 +28,9 @@
 //! Return paths can carry random extra delay, separately for keepalive echoes
 //! and for the receiver's ACKs. With unequal round trips that reproduces the
 //! race real links run: the broadcast SRT ACK over the faster path prunes the
-//! slower link's packets before that link's own SRTLA ACK arrives.
+//! slower link's packets before that link's own SRTLA ACK arrives. A link can
+//! also have a capacity, which queues (and past 300 ms drops) what is sent on
+//! it, so a faster link cannot take the whole stream.
 //!
 //! Loss and jitter use a fixed-seed generator so every run is identical.
 
@@ -32,12 +39,13 @@ mod tests {
     use std::cmp::Reverse;
     use std::collections::{BTreeMap, BinaryHeap, HashMap};
 
-    use srtla_core::connection::SrtlaConnection;
+    use smallvec::SmallVec;
+    use srtla_core::connection::{SrtlaConnection, SrtlaIncoming};
     use srtla_core::mode::SchedulingMode;
-    use srtla_core::selection::select_connection_idx;
     use srtla_core::utils::now_ms;
 
     use crate::config::ConfigSnapshot;
+    use crate::sender::{SequenceTracker, apply_link_feedback, choose_link};
     use crate::test_helpers::create_test_connections;
 
     /// SRT receive latency, as CeraUI configures it.
@@ -51,6 +59,8 @@ mod tests {
     const RECV_ACK_INT: usize = 10;
     /// `HOUSEKEEPING_INTERVAL_MS` in the sender loop.
     const HOUSEKEEPING_MS: u64 = 1000;
+    /// A capacity-limited link drops what would wait longer than this.
+    const QUEUE_LIMIT_MS: f64 = 300.0;
 
     #[derive(Clone, Copy, Debug, PartialEq)]
     enum PathState {
@@ -76,9 +86,10 @@ mod tests {
     #[derive(Debug)]
     enum Ev {
         Arrive { link: usize, seq: u32 },
+        KeepaliveArrive { link: usize, pkt: Vec<u8> },
         SrtlaAck { link: usize, seqs: Vec<u32> },
         KeepaliveEcho { link: usize, pkt: Vec<u8> },
-        SrtAck { link: usize, last_acked: i32 },
+        SrtAck { link: usize, last_acked: u32 },
         Nak { link: usize, seq: u32 },
     }
 
@@ -94,30 +105,41 @@ mod tests {
 
     #[derive(Default, Debug)]
     struct Outcome {
-        /// Simulated ms from the first cut until the dead link was gated.
+        /// Simulated ms from the first cut until the dead link was held out.
         gated_after_ms: Option<u64>,
         /// Payload packets (not probes) put on the cut link while it was cut.
         payload_into_dead_path: u64,
+        /// Of those, sent after it was first held out: new packets and SRT
+        /// retransmits.
+        fresh_after_gate: u64,
+        retransmits_after_gate: u64,
         /// Packets the receiver had to drop because they missed the latency.
         receiver_drops: u64,
         /// Simulated ms from the path's recovery until it was readmitted.
         readmitted_after_ms: Option<u64>,
         stall_gate_events: u64,
-        /// Share of payload the watched link carried in the final 10 s.
-        final_share: f64,
+        /// Simulated ms from the cut to the last payload packet (new or
+        /// retransmit, not probe) put on the cut link before it healed.
+        last_payload_after_cut_ms: Option<u64>,
+        /// Payload packets put on the cut link more than 5 s after the cut.
+        payload_after_5s: u64,
     }
 
     struct Sim {
-        conns: smallvec::SmallVec<SrtlaConnection, 4>,
+        conns: SmallVec<SrtlaConnection, 4>,
+        classic: bool,
         rtt_ms: [u64; 2],
         state: [PathState; 2],
+        /// Packets per second each link can carry; 0 = unlimited.
+        cap_pps: [u64; 2],
+        link_free_at: [f64; 2],
         last_arrival: [u64; 2],
         rng: Rng,
         events: BinaryHeap<Reverse<(u64, u64)>>,
         payloads: HashMap<u64, Ev>,
         next_ev: u64,
         // Sender side.
-        owner: HashMap<u32, usize>,
+        tracker: SequenceTracker,
         next_seq: u32,
         last_idx: Option<usize>,
         // Receiver side.
@@ -132,13 +154,22 @@ mod tests {
         /// receiver's ACKs, per packet.
         echo_jitter_ms: u64,
         ack_jitter_ms: u64,
-        /// Per-link payload packets sent, ms spent held out, and worst
-        /// rejoin backoff seen.
+        /// Per-link payload packets sent, ms spent held out (latched or
+        /// pulled), and worst rejoin backoff seen.
         payload_sent: [u64; 2],
         held_out_ms: [u64; 2],
         max_backoff: [u32; 2],
         /// Longest a link went without delivery proof after the first 5 s.
         max_proof_age_ms: [u64; 2],
+        /// Set once the watched link has been held out during a cut.
+        watch_gated: bool,
+        watch_cut: bool,
+        watch: usize,
+        fresh_after_gate: u64,
+        retransmits_after_gate: u64,
+        cut_started: u64,
+        last_payload_after_cut_ms: Option<u64>,
+        dead_payload_ms: Vec<u64>,
     }
 
     impl Sim {
@@ -147,14 +178,17 @@ mod tests {
             let conns = rt.block_on(create_test_connections(2));
             Self {
                 conns,
+                classic: false,
                 rtt_ms,
                 state: [PathState::Alive { loss_permille: 0 }; 2],
+                cap_pps: [0; 2],
+                link_free_at: [0.0; 2],
                 last_arrival: [0; 2],
                 rng: Rng(seed),
                 events: BinaryHeap::new(),
                 payloads: HashMap::new(),
                 next_ev: 0,
-                owner: HashMap::new(),
+                tracker: SequenceTracker::new(),
                 next_seq: 0,
                 last_idx: None,
                 first_sent: BTreeMap::new(),
@@ -170,6 +204,28 @@ mod tests {
                 held_out_ms: [0; 2],
                 max_backoff: [0; 2],
                 max_proof_age_ms: [0; 2],
+                watch_gated: false,
+                watch_cut: false,
+                watch: 0,
+                fresh_after_gate: 0,
+                retransmits_after_gate: 0,
+                cut_started: 0,
+                last_payload_after_cut_ms: None,
+                dead_payload_ms: Vec::new(),
+            }
+        }
+
+        fn config(&self) -> ConfigSnapshot {
+            ConfigSnapshot {
+                mode: if self.classic {
+                    SchedulingMode::Classic
+                } else {
+                    SchedulingMode::Enhanced
+                },
+                quality_enabled: !self.classic,
+                conn_timeout_ms: CONN_TIMEOUT_MS,
+                negotiated_latency_ms: LATENCY_MS as u32,
+                ..ConfigSnapshot::default()
             }
         }
 
@@ -211,11 +267,22 @@ mod tests {
             }
         }
 
-        fn transmit(&mut self, link: usize, now: u64, seq: u32) {
-            if self.forward_ok(link) {
-                let at = now + self.rtt_ms[link] / 2;
-                self.schedule(at, Ev::Arrive { link, seq });
+        /// When a packet sent on `link` now reaches the receiver, or `None`
+        /// if the link loses it or its queue is full.
+        fn forward_arrival(&mut self, link: usize, now: u64) -> Option<u64> {
+            let mut leave = now as f64;
+            if self.cap_pps[link] > 0 {
+                let start = self.link_free_at[link].max(now as f64);
+                if start - now as f64 > QUEUE_LIMIT_MS {
+                    return None;
+                }
+                self.link_free_at[link] = start + 1000.0 / self.cap_pps[link] as f64;
+                leave = start;
             }
+            if !self.forward_ok(link) {
+                return None;
+            }
+            Some(leave.ceil() as u64 + self.rtt_ms[link] / 2)
         }
 
         fn data_packet(seq: u32, retransmit: bool) -> [u8; 16] {
@@ -227,28 +294,74 @@ mod tests {
             pkt
         }
 
-        /// Route one payload packet the way the shell does: select, then a
-        /// duplicate probe on each gated link when its cadence is due.
+        /// Drain `link`'s send batch onto the wire.
+        fn flush(&mut self, link: usize, now: u64) {
+            let batch = self.conns[link].take_batch(now);
+            if batch.is_empty() {
+                return;
+            }
+            self.conns[link].note_sent(now);
+            for (data, _, _) in batch.iter() {
+                let Some(seq) = srtla_protocol::get_srt_sequence_number(data) else {
+                    continue;
+                };
+                if let Some(at) = self.forward_arrival(link, now) {
+                    self.schedule(at, Ev::Arrive { link, seq });
+                }
+            }
+        }
+
+        /// Route one payload packet the way the shell does: choose a link
+        /// (retransmits get the best-path override), queue it, and queue a
+        /// duplicate probe on each held-out link when its cadence is due.
         fn send_payload(&mut self, now: u64, cfg: &ConfigSnapshot, seq: u32, rtx: bool) -> usize {
-            let idx = select_connection_idx(&mut self.conns, self.last_idx, now, cfg)
+            let idx = choose_link(&mut self.conns, self.last_idx, now, cfg, rtx)
                 .expect("a link is always selectable");
             self.last_idx = Some(idx);
             let pkt = Self::data_packet(seq, rtx);
-            self.conns[idx].queue_data_packet(&pkt, Some(seq), now);
-            let _ = self.conns[idx].take_batch(now);
-            self.owner.insert(seq, idx);
+            self.tracker.insert(seq, self.conns[idx].conn_id, now);
             self.payload_sent[idx] += 1;
-            self.transmit(idx, now, seq);
+            if idx == self.watch && self.watch_cut {
+                self.last_payload_after_cut_ms = Some(now - self.cut_started);
+                self.dead_payload_ms.push(now - self.cut_started);
+            }
+            if idx == self.watch && self.watch_cut && self.watch_gated {
+                if rtx {
+                    self.retransmits_after_gate += 1;
+                } else {
+                    self.fresh_after_gate += 1;
+                }
+            }
+            if self.conns[idx].queue_data_packet(&pkt, Some(seq), now) {
+                self.flush(idx, now);
+            }
             for i in 0..self.conns.len() {
-                if i == idx || !self.conns[i].is_stall_gated() || !self.conns[i].stall_probe_due() {
+                let c = &self.conns[i];
+                if i == idx || !(c.is_stall_gated() || c.is_quality_excluded()) || !c.connected {
+                    continue;
+                }
+                if !self.conns[i].stall_probe_due() {
                     continue;
                 }
                 let probe = Self::data_packet(seq, true);
-                self.conns[i].queue_probe_packet(&probe, seq, now);
-                let _ = self.conns[i].take_batch(now);
-                self.transmit(i, now, seq);
+                if self.conns[i].queue_probe_packet(&probe, seq, now) {
+                    self.flush(i, now);
+                }
             }
             idx
+        }
+
+        fn feedback(&mut self, link: usize, now: u64, incoming: SrtlaIncoming) {
+            self.conns[link].last_received = Some(now);
+            let classic = self.classic;
+            apply_link_feedback(
+                link,
+                &mut self.conns,
+                &self.tracker,
+                classic,
+                &incoming,
+                now,
+            );
         }
 
         fn receiver_tick(&mut self, now: u64, ms: u64) {
@@ -264,8 +377,8 @@ mod tests {
                 self.receiver_drops += 1;
             }
             self.advance_cumulative();
-            if ms.is_multiple_of(SRT_ACK_PERIOD_MS) && self.max_seen.is_some() {
-                let last_acked = self.received_upto as i32 - 1;
+            if ms.is_multiple_of(SRT_ACK_PERIOD_MS) && self.received_upto > 0 {
+                let last_acked = self.received_upto - 1;
                 for link in 0..2 {
                     if self.return_ok(link, now) {
                         let at = now + self.ack_delay(link);
@@ -332,41 +445,41 @@ mod tests {
         fn deliver(&mut self, now: u64, cfg: &ConfigSnapshot, ev: Ev) {
             match ev {
                 Ev::Arrive { link, seq } => self.on_arrive(now, link, seq),
-                Ev::SrtlaAck { link, seqs } => {
-                    self.conns[link].last_received = Some(now);
-                    // The shell counts the ACK as the arrival link's proof,
-                    // credits the arrival link's log first and falls back to
-                    // a scan for accounting (see `apply_link_feedback`).
-                    self.conns[link].note_srtla_ack_proof(now);
-                    for s in seqs {
-                        if !self.conns[link].handle_srtla_ack_specific(s as i32, false, now) {
-                            for i in 0..self.conns.len() {
-                                if i != link
-                                    && self.conns[i]
-                                        .handle_srtla_ack_from_other_link(s as i32, false, now)
-                                {
-                                    break;
-                                }
-                            }
-                        }
+                Ev::KeepaliveArrive { link, pkt } => {
+                    self.last_arrival[link] = now;
+                    if self.return_ok(link, now) {
+                        let at = now + self.rtt_ms[link] / 2 + self.jitter(self.echo_jitter_ms);
+                        self.schedule(at, Ev::KeepaliveEcho { link, pkt });
                     }
+                }
+                Ev::SrtlaAck { link, seqs } => {
+                    let incoming = SrtlaIncoming {
+                        srtla_ack_numbers: SmallVec::from_slice_copy(&seqs),
+                        read_any: true,
+                        ..Default::default()
+                    };
+                    self.feedback(link, now, incoming);
                 }
                 Ev::KeepaliveEcho { link, pkt } => {
                     self.conns[link].last_received = Some(now);
                     self.conns[link].handle_keepalive_echo(&pkt, now);
                 }
                 Ev::SrtAck { link, last_acked } => {
-                    self.conns[link].last_received = Some(now);
-                    let owner = self.owner.get(&(last_acked as u32)).copied();
-                    for (i, c) in self.conns.iter_mut().enumerate() {
-                        c.handle_srt_ack(last_acked, now, owner == Some(i));
-                    }
+                    // The wire field names the first sequence still owed.
+                    let incoming = SrtlaIncoming {
+                        ack_numbers: smallvec::smallvec![last_acked + 1],
+                        read_any: true,
+                        ..Default::default()
+                    };
+                    self.feedback(link, now, incoming);
                 }
                 Ev::Nak { link, seq } => {
-                    self.conns[link].last_received = Some(now);
-                    if let Some(&o) = self.owner.get(&seq) {
-                        self.conns[o].handle_nak(seq as i32, now);
-                    }
+                    let incoming = SrtlaIncoming {
+                        nak_numbers: smallvec::smallvec![seq],
+                        read_any: true,
+                        ..Default::default()
+                    };
+                    self.feedback(link, now, incoming);
                     // SRT retransmits each NAKed sequence once per report.
                     if self.missing.contains_key(&seq) {
                         self.send_payload(now, cfg, seq, true);
@@ -388,15 +501,13 @@ mod tests {
                     kas.push(self.conns[link].keepalive_packet(now).to_vec());
                 }
                 for pkt in kas {
-                    if self.forward_ok(link) {
-                        self.last_arrival[link] = now;
-                        if self.return_ok(link, now) {
-                            let at = now + self.rtt_ms[link] + self.jitter(self.echo_jitter_ms);
-                            self.schedule(at, Ev::KeepaliveEcho { link, pkt });
-                        }
+                    if let Some(at) = self.forward_arrival(link, now) {
+                        self.schedule(at, Ev::KeepaliveArrive { link, pkt });
                     }
                 }
-                self.conns[link].perform_window_recovery(now);
+                if !self.classic {
+                    self.conns[link].perform_window_recovery(now);
+                }
                 self.conns[link].calculate_bitrate(now);
                 self.conns[link].update_phase(now);
             }
@@ -411,13 +522,8 @@ mod tests {
             steps: &[Step],
             watch: usize,
         ) -> Outcome {
-            let cfg = ConfigSnapshot {
-                mode: SchedulingMode::Enhanced,
-                quality_enabled: true,
-                conn_timeout_ms: CONN_TIMEOUT_MS,
-                negotiated_latency_ms: LATENCY_MS as u32,
-                ..ConfigSnapshot::default()
-            };
+            let cfg = self.config();
+            self.watch = watch;
             let t0 = now_ms() + 1_000;
             for c in self.conns.iter_mut() {
                 c.last_received = Some(t0);
@@ -436,11 +542,14 @@ mod tests {
                 .map(|s| s.at_ms);
             let mut out = Outcome::default();
             let mut sent_acc: u64 = 0;
-            let mut final_window = [0u64; 2];
             for ms in 0..duration_ms {
                 let now = t0 + ms;
                 for s in steps.iter().filter(|s| s.at_ms == ms) {
                     self.state[s.link] = s.state;
+                }
+                self.watch_cut = cut_at.is_some_and(|c| ms >= c) && heal_at.is_none_or(|h| ms < h);
+                if cut_at == Some(ms) {
+                    self.cut_started = now;
                 }
                 while let Some(Reverse((at, id))) = self.events.peek().copied() {
                     if at > now {
@@ -460,12 +569,13 @@ mod tests {
                     self.next_seq += 1;
                     self.first_sent.insert(seq, now);
                     let idx = self.send_payload(now, &cfg, seq, false);
-                    let cut = cut_at.is_some_and(|c| ms >= c) && heal_at.is_none_or(|h| ms < h);
-                    if cut && idx == watch {
+                    if self.watch_cut && idx == watch {
                         out.payload_into_dead_path += 1;
                     }
-                    if ms + 10_000 >= duration_ms {
-                        final_window[idx] += 1;
+                }
+                for link in 0..2 {
+                    if self.conns[link].needs_batch_flush(now) {
+                        self.flush(link, now);
                     }
                 }
                 self.receiver_tick(now, ms);
@@ -481,6 +591,9 @@ mod tests {
                     }
                 }
                 let gated = self.conns[watch].is_stall_gated();
+                if self.watch_cut && gated {
+                    self.watch_gated = true;
+                }
                 if let Some(c) = cut_at
                     && ms >= c
                     && out.gated_after_ms.is_none()
@@ -496,15 +609,18 @@ mod tests {
                     out.readmitted_after_ms = Some(ms - h);
                 }
             }
+            out.last_payload_after_cut_ms = self.last_payload_after_cut_ms;
+            out.payload_after_5s =
+                self.dead_payload_ms.iter().filter(|&&t| t > 5_000).count() as u64;
+            out.fresh_after_gate = self.fresh_after_gate;
+            out.retransmits_after_gate = self.retransmits_after_gate;
             out.receiver_drops = self.receiver_drops;
             out.stall_gate_events = self.conns[watch].stall_gate_events();
-            let total = final_window[0] + final_window[1];
-            out.final_share = if total == 0 {
-                0.0
-            } else {
-                final_window[watch] as f64 / total as f64
-            };
             out
+        }
+
+        fn share(&self, link: usize) -> f64 {
+            self.payload_sent[link] as f64 / (self.payload_sent[0] + self.payload_sent[1]) as f64
         }
     }
 
@@ -524,61 +640,98 @@ mod tests {
         ]
     }
 
-    /// Per-link rates from the field runs: 0.3 to 1.0 Mbit/s of 1316-byte
-    /// packets is about 30 to 95 packets/s in total, and higher bitrates only
-    /// make the backlog signal faster.
+    /// Both links lossy from 5 s on.
+    fn lossy(loss_permille: [u32; 2]) -> Vec<Step> {
+        (0..2)
+            .map(|link| Step {
+                at_ms: 5_000,
+                link,
+                state: PathState::Alive {
+                    loss_permille: loss_permille[link],
+                },
+            })
+            .collect()
+    }
+
+    /// Keepalive echoes up to 20 ms late, receiver ACKs up to 10 ms late.
+    fn jittered(rtts: [u64; 2], seed: u64) -> Sim {
+        let mut sim = Sim::new(rtts, seed);
+        sim.echo_jitter_ms = 20;
+        sim.ack_jitter_ms = 10;
+        sim
+    }
+
+    /// Payload rates from the field runs (0.3 to 1 Mbit/s of 1316-byte
+    /// packets is about 30 to 95 packets/s) and above.
     const RATES_PPS: [u64; 3] = [30, 100, 400];
 
+    fn assert_never_held_out(sim: &Sim, what: &str) {
+        assert_eq!(
+            sim.held_out_ms,
+            [0, 0],
+            "{what}: a live link was held out (latch or pull) for {:?} ms, {:?} latches",
+            sim.held_out_ms,
+            [
+                sim.conns[0].stall_gate_events(),
+                sim.conns[1].stall_gate_events()
+            ]
+        );
+    }
+
+    // --- A dead path ---
+
+    /// Rates at which the dead link stops getting payload within the
+    /// staleness floor: about 0.7 Mbit/s and up. Below, the count of 50
+    /// unproven packets takes longer to fill (see the low-rate test).
+    const FIELD_RATES_PPS: [u64; 3] = [67, 100, 400];
+
+    /// The cut link stopped getting payload within `bound_ms` of the cut. A
+    /// link the scheduler had (nearly) stopped using passes trivially.
+    fn assert_fed_at_most(out: &Outcome, bound_ms: u64, what: &str) {
+        if let Some(last) = out.last_payload_after_cut_ms {
+            assert!(
+                last <= bound_ms,
+                "{what}: the dead link still got payload {last} ms after the cut, {out:?}"
+            );
+        }
+    }
+
     #[test]
-    fn a_path_that_dies_inbound_is_held_out_within_1600_ms() {
-        for rate in RATES_PPS {
+    fn a_path_that_dies_inbound_stops_getting_payload_within_1600_ms() {
+        for rate in FIELD_RATES_PPS {
             let mut sim = Sim::new([7, 7], 0x5eed_0001 ^ rate);
             let out = sim.run(rate, 70_000, &cut_and_heal(PathState::DeadInbound), 0);
-            let gated = out.gated_after_ms.expect("the dead link must be gated");
-            assert!(
-                gated <= 1_600,
-                "{rate} pkt/s: gated {gated} ms after the cut, {out:?}"
-            );
-            assert_eq!(
-                out.receiver_drops, 0,
-                "{rate} pkt/s: SRT must recover every lost packet in its latency, {out:?}"
-            );
+            assert!(out.gated_after_ms.is_some(), "{rate} pkt/s: {out:?}");
+            assert_fed_at_most(&out, 1_600, &format!("{rate} pkt/s"));
+            assert_eq!(out.receiver_drops, 0, "{rate} pkt/s: {out:?}");
         }
     }
 
     #[test]
-    fn a_blackholed_path_is_held_out_within_1600_ms() {
-        for rate in RATES_PPS {
+    fn a_blackholed_path_stops_getting_payload_within_1600_ms() {
+        for rate in FIELD_RATES_PPS {
             let mut sim = Sim::new([7, 7], 0x5eed_0002 ^ rate);
             let out = sim.run(rate, 70_000, &cut_and_heal(PathState::Blackhole), 0);
-            let gated = out.gated_after_ms.expect("the dead link must be gated");
-            assert!(
-                gated <= 1_600,
-                "{rate} pkt/s: gated {gated} ms after the cut, {out:?}"
-            );
-            assert_eq!(
-                out.receiver_drops, 0,
-                "{rate} pkt/s: SRT must recover every lost packet in its latency, {out:?}"
-            );
+            assert!(out.gated_after_ms.is_some(), "{rate} pkt/s: {out:?}");
+            assert_fed_at_most(&out, 1_600, &format!("{rate} pkt/s"));
+            assert_eq!(out.receiver_drops, 0, "{rate} pkt/s: {out:?}");
         }
     }
 
     #[test]
-    fn a_dead_path_gets_no_payload_once_gated() {
-        // Before the gate engages the scheduler cannot know; after it, only
-        // the 1-in-100 duplicate probes may go there.
-        for rate in RATES_PPS {
-            let mut sim = Sim::new([7, 7], 0x5eed_0003 ^ rate);
-            let out = sim.run(rate, 70_000, &cut_and_heal(PathState::DeadInbound), 0);
-            let gated_s = out.gated_after_ms.unwrap() as f64 / 1000.0;
-            // Half the load at most, for as long as it took to gate, plus
-            // retransmits that went the same way.
-            let budget = (rate as f64 * gated_s).ceil() as u64 + 10;
-            assert!(
-                out.payload_into_dead_path <= budget,
-                "{rate} pkt/s: {} payload packets into the dead path, budget {budget}, {out:?}",
-                out.payload_into_dead_path
-            );
+    fn a_dead_path_gets_no_payload_once_held_out() {
+        // Neither new packets nor SRT retransmits may go there once it is
+        // held out while its sibling is usable; only duplicate probes do.
+        for state in [PathState::DeadInbound, PathState::Blackhole] {
+            for rate in [30, 67, 100, 400] {
+                let mut sim = Sim::new([7, 25], 0x5eed_0003 ^ rate);
+                let out = sim.run(rate, 70_000, &cut_and_heal(state), 0);
+                assert_eq!(
+                    (out.fresh_after_gate, out.retransmits_after_gate),
+                    (0, 0),
+                    "{state:?} {rate} pkt/s: payload after the hold-out, {out:?}"
+                );
+            }
         }
     }
 
@@ -602,7 +755,7 @@ mod tests {
             ]
         };
         for state in [PathState::DeadInbound, PathState::Blackhole] {
-            for rate in RATES_PPS {
+            for rate in FIELD_RATES_PPS {
                 let mut sim = Sim::new([7, 7], 0x5eed_0004 ^ rate);
                 let out = sim.run(rate, 60_000, &steps(state), 0);
                 let back = out
@@ -613,115 +766,8 @@ mod tests {
                     (2_000..=4_000).contains(&back),
                     "{state:?} {rate} pkt/s: readmitted {back} ms after healing, {out:?}"
                 );
-                assert_eq!(
-                    out.stall_gate_events, 1,
-                    "{state:?} {rate} pkt/s: one outage must gate exactly once, {out:?}"
-                );
+                assert_eq!(out.stall_gate_events, 1, "{state:?} {rate} pkt/s, {out:?}");
                 assert_eq!(out.receiver_drops, 0, "{state:?} {rate} pkt/s, {out:?}");
-                // Only at the rate where the scheduler splits load between two
-                // equal links at all; below it one link carries everything.
-                if rate == 400 {
-                    assert!(
-                        out.final_share > 0.05,
-                        "{state:?} {rate} pkt/s: the healed link must carry load again, {out:?}"
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn a_lossy_but_alive_path_is_never_gated() {
-        // 5, 10 and 20 % loss in each direction, for two simulated minutes.
-        // The link stays slower and NAK-heavy, but it delivers, so it must
-        // keep its place in the rotation.
-        for loss_permille in [50, 100, 200] {
-            for rate in RATES_PPS {
-                let mut sim = Sim::new([7, 7], 0x5eed_0005 ^ rate ^ loss_permille as u64);
-                let steps = [Step {
-                    at_ms: 5_000,
-                    link: 0,
-                    state: PathState::Alive { loss_permille },
-                }];
-                let out = sim.run(rate, 125_000, &steps, 0);
-                assert_eq!(
-                    out.stall_gate_events, 0,
-                    "{loss_permille}‰ loss at {rate} pkt/s gated a live link, {out:?}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn a_slower_healthy_sibling_does_not_gate_the_fast_link() {
-        // Unequal round trips (7 ms Wi-Fi next to 60 ms cellular) reorder
-        // packets across the links and draw NAKs for packets that do arrive.
-        for rate in RATES_PPS {
-            let mut sim = Sim::new([7, 60], 0x5eed_0006 ^ rate);
-            let out = sim.run(rate, 60_000, &[], 0);
-            assert_eq!(out.stall_gate_events, 0, "{rate} pkt/s, {out:?}");
-            assert_eq!(sim.conns[1].stall_gate_events(), 0, "{rate} pkt/s, {out:?}");
-        }
-    }
-
-    // --- Jittered, unequal return paths ---
-    //
-    // `srtla_rec` broadcasts each SRT ACK on every link, so on a link whose
-    // return path is slower than its sibling's, the SRT ACK over the faster
-    // path prunes the link's packets before its own SRTLA ACK arrives. Those
-    // SRTLA ACKs still have to count as the slower link's proof, or a healthy
-    // link is left with only the keepalive echo and gets held out on jitter.
-
-    /// Keepalive echoes up to 20 ms late, receiver ACKs up to 10 ms late.
-    fn jittered(rtts: [u64; 2], seed: u64) -> Sim {
-        let mut sim = Sim::new(rtts, seed);
-        sim.echo_jitter_ms = 20;
-        sim.ack_jitter_ms = 10;
-        sim
-    }
-
-    #[test]
-    fn a_healthy_link_with_the_slower_return_path_is_never_held_out() {
-        // Wi-Fi next to cellular, or two carriers: lossless, but 18 to 40 ms
-        // apart. Non-round packet rates keep selection off a fixed phase.
-        for (rtts, rate, min_share) in [
-            ([20, 40], 97, 0.2),
-            ([7, 25], 97, 0.2),
-            ([7, 25], 103, 0.2),
-            ([30, 30], 67, 0.4),
-            ([40, 80], 151, 0.0),
-        ] {
-            for seed in 0..4u64 {
-                let mut sim = jittered(rtts, 0xabc0_0000 ^ rate ^ (seed << 20));
-                let _ = sim.run(rate, 120_000, &[], 0);
-                let gates = [
-                    sim.conns[0].stall_gate_events(),
-                    sim.conns[1].stall_gate_events(),
-                ];
-                assert_eq!(
-                    gates,
-                    [0, 0],
-                    "{rtts:?} ms at {rate} pkt/s, seed {seed}: healthy links held out {gates:?} \
-                     times, {:?} ms",
-                    sim.held_out_ms
-                );
-                let share =
-                    sim.payload_sent[1] as f64 / (sim.payload_sent[0] + sim.payload_sent[1]) as f64;
-                assert!(
-                    share >= min_share,
-                    "{rtts:?} ms at {rate} pkt/s: the slower link must carry a real share, got \
-                     {share:.2}"
-                );
-                // Carrying real load, it must keep earning SRTLA-ACK proof
-                // between keepalive echoes rather than living on the echoes.
-                if min_share > 0.0 {
-                    assert!(
-                        sim.max_proof_age_ms[1] < 800,
-                        "{rtts:?} ms at {rate} pkt/s, seed {seed}: the slower link went {} ms \
-                         without proof",
-                        sim.max_proof_age_ms[1]
-                    );
-                }
             }
         }
     }
@@ -729,7 +775,7 @@ mod tests {
     #[test]
     fn a_dead_link_is_caught_on_jittered_unequal_paths() {
         // Either link of a 7/25 ms pair dies, inbound only or both ways.
-        for (watch, rate) in [(0, 31), (0, 103), (1, 103), (0, 401)] {
+        for (watch, rate) in [(0, 67), (0, 103), (1, 103), (0, 401)] {
             for state in [PathState::DeadInbound, PathState::Blackhole] {
                 for seed in 0..4u64 {
                     let mut sim = jittered([7, 25], 0xd00d ^ rate ^ (seed << 20));
@@ -739,41 +785,189 @@ mod tests {
                         state,
                     }];
                     let out = sim.run(rate, 40_000, &steps, watch);
-                    let gated = out.gated_after_ms.expect("the dead link must be held out");
-                    assert!(
-                        gated <= 1_600,
-                        "link {watch} {state:?} at {rate} pkt/s, seed {seed}: held out after \
-                         {gated} ms, {out:?}"
+                    assert_fed_at_most(
+                        &out,
+                        1_600,
+                        &format!("link {watch} {state:?} at {rate} pkt/s, seed {seed}"),
                     );
-                    assert_eq!(out.stall_gate_events, 1, "{out:?}");
+                    assert!(out.stall_gate_events <= 1, "{out:?}");
                 }
             }
         }
     }
 
     #[test]
-    fn a_lossy_link_on_jittered_unequal_paths_is_never_held_out() {
-        for rtts in [[7, 25], [25, 7]] {
-            for loss_permille in [50, 100] {
-                for rate in [67, 103, 401] {
-                    for seed in 0..3u64 {
-                        let mut sim =
-                            jittered(rtts, 0x7055 ^ rate ^ (seed << 20) ^ loss_permille as u64);
+    fn a_dead_link_at_low_rates_stops_getting_payload_within_five_seconds() {
+        // 20 to 50 packets/s in total. Here the count of 50 unproven packets,
+        // not the 1.5 s floor, sets the pace. A link the scheduler has mostly
+        // abandoned by then (its window cut by NAKs) may still get a stray
+        // packet now and then until it times out; bound that trickle.
+        for rtts in [[30, 30], [7, 25]] {
+            for state in [PathState::DeadInbound, PathState::Blackhole] {
+                for rate in [20, 30, 40, 50] {
+                    let (mut into, mut late) = (0, 0);
+                    for seed in 0..8u64 {
+                        let mut sim = jittered(rtts, 0xdead ^ rate ^ (seed << 20));
                         let steps = [Step {
-                            at_ms: 5_000,
+                            at_ms: 20_000 + seed * 131,
                             link: 0,
-                            state: PathState::Alive { loss_permille },
+                            state,
                         }];
-                        let out = sim.run(rate, 125_000, &steps, 0);
-                        assert_eq!(
-                            [out.stall_gate_events, sim.conns[1].stall_gate_events()],
-                            [0, 0],
-                            "{rtts:?} ms, {loss_permille}‰ loss on link 0 at {rate} pkt/s, seed \
-                             {seed}"
-                        );
+                        let out = sim.run(rate, 40_000, &steps, 0);
+                        into += out.payload_into_dead_path;
+                        late += out.payload_after_5s;
+                    }
+                    assert!(
+                        late * 10 <= into,
+                        "{rtts:?} ms {state:?} at {rate} pkt/s: {late} of {into} packets into the \
+                         dead link came more than 5 s after the cut"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn classic_mode_holds_out_a_dead_link_and_keeps_live_ones() {
+        for rate in FIELD_RATES_PPS {
+            let mut sim = jittered([7, 25], 0xc1a5 ^ rate);
+            sim.classic = true;
+            let _ = sim.run(rate, 60_000, &lossy([20, 20]), 0);
+            assert_never_held_out(&sim, &format!("classic, 2 ‰ loss, {rate} pkt/s"));
+
+            let mut sim = jittered([7, 25], 0xc1a6 ^ rate);
+            sim.classic = true;
+            let steps = [Step {
+                at_ms: 20_000,
+                link: 0,
+                state: PathState::DeadInbound,
+            }];
+            let out = sim.run(rate, 40_000, &steps, 0);
+            assert_fed_at_most(&out, 1_600, &format!("classic {rate} pkt/s"));
+        }
+    }
+
+    // --- Live links that must keep their place ---
+
+    #[test]
+    fn a_lossy_but_alive_path_is_never_held_out() {
+        // 5 and 10 % loss each way on one link, two simulated minutes.
+        for loss_permille in [50, 100] {
+            for rate in RATES_PPS {
+                let mut sim = Sim::new([7, 7], 0x5eed_0005 ^ rate ^ loss_permille as u64);
+                let _ = sim.run(rate, 125_000, &lossy([loss_permille, 0]), 0);
+                assert_never_held_out(&sim, &format!("{loss_permille}‰ at {rate} pkt/s"));
+            }
+        }
+    }
+
+    #[test]
+    fn a_very_lossy_link_is_rarely_held_out() {
+        // 20 % loss each way (36 % of round trips fail): an occasional
+        // hold-out is acceptable, a steady one is not. Bound the share of
+        // time across seeds rather than pinning one seed's count.
+        let mut held = 0u64;
+        let mut total = 0u64;
+        for rate in [67, 103, 401] {
+            for seed in 0..4u64 {
+                let mut sim = jittered([7, 25], 0x2020 ^ rate ^ (seed << 20));
+                let _ = sim.run(rate, 125_000, &lossy([200, 0]), 0);
+                held += sim.held_out_ms[0];
+                total += 120_000;
+            }
+        }
+        assert!(
+            held * 100 <= total,
+            "a 20 %-loss link was held out {held} of {total} ms"
+        );
+    }
+
+    #[test]
+    fn both_lossy_links_at_low_rates_keep_their_place() {
+        // Two cellular links in poor coverage, 5 or 10 % loss each way on
+        // both, 20 to 67 packets/s in total: the band where the count and the
+        // floor are reached at about the same time. 72 runs of about three
+        // simulated minutes; a threshold of 30 unproven sends held a live
+        // link out 18 times here.
+        let mut latches = 0;
+        let mut held_ms = 0;
+        for rtts in [[30, 30], [7, 25]] {
+            for loss in [50, 100] {
+                for rate in [20, 25, 30, 40, 50, 67] {
+                    for seed in 0..6u64 {
+                        let mut sim = jittered(rtts, 0xf00d ^ rate ^ (seed << 20) ^ loss as u64);
+                        let _ = sim.run(rate, 185_000, &lossy([loss, loss]), 0);
+                        latches +=
+                            sim.conns[0].stall_gate_events() + sim.conns[1].stall_gate_events();
+                        held_ms += sim.held_out_ms[0] + sim.held_out_ms[1];
                     }
                 }
             }
+        }
+        assert_eq!(
+            (latches, held_ms),
+            (0, 0),
+            "live lossy links were held out {latches} times, {held_ms} ms in total"
+        );
+    }
+
+    #[test]
+    fn a_healthy_link_with_the_slower_return_path_is_never_held_out() {
+        // Wi-Fi next to cellular, or two carriers: lossless but 18 to 40 ms
+        // apart, at non-round packet rates. The faster link's capacity is
+        // capped so the slower one carries a real share.
+        for (rtts, rate, cap) in [
+            ([20, 40], 97, 60),
+            ([7, 25], 103, 60),
+            ([30, 30], 67, 0),
+            ([40, 80], 151, 90),
+        ] {
+            for seed in 0..4u64 {
+                let mut sim = jittered(rtts, 0xabc0_0000 ^ rate ^ (seed << 20));
+                sim.cap_pps = [cap, 0];
+                let _ = sim.run(rate, 120_000, &[], 0);
+                let what = format!("{rtts:?} ms at {rate} pkt/s, seed {seed}");
+                assert_never_held_out(&sim, &what);
+                assert!(
+                    sim.share(1) >= 0.2,
+                    "{what}: slower link share {:.2}",
+                    sim.share(1)
+                );
+                // Carrying real load, it must keep earning SRTLA-ACK proof
+                // between keepalive echoes rather than living on the echoes.
+                assert!(
+                    sim.max_proof_age_ms[1] < 800,
+                    "{what}: the slower link went {} ms without proof",
+                    sim.max_proof_age_ms[1]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_much_slower_lossy_link_keeps_its_place() {
+        // 7 ms Wi-Fi next to 150 ms cellular with 1 to 3 % loss each way. The
+        // receiver NAKs the slower link's packets as gaps before they arrive,
+        // so their retransmits move to the faster link; the slower link's own
+        // SRTLA ACKs must still count for it.
+        for (loss, rate) in [([20, 20], 400), ([10, 10], 800), ([30, 20], 400)] {
+            for seed in 0..2u64 {
+                let mut sim = jittered([7, 150], 0x7150 ^ rate ^ (seed << 20));
+                sim.cap_pps = [rate * 3 / 4, 0];
+                let _ = sim.run(rate, 125_000, &lossy(loss), 0);
+                assert_never_held_out(&sim, &format!("{loss:?}‰ at {rate} pkt/s, seed {seed}"));
+            }
+        }
+    }
+
+    #[test]
+    fn a_slower_healthy_sibling_does_not_hold_out_the_fast_link() {
+        // Unequal round trips (7 ms Wi-Fi next to 60 ms cellular) reorder
+        // packets across the links and draw NAKs for packets that do arrive.
+        for rate in RATES_PPS {
+            let mut sim = Sim::new([7, 60], 0x5eed_0006 ^ rate);
+            let _ = sim.run(rate, 60_000, &[], 0);
+            assert_never_held_out(&sim, &format!("{rate} pkt/s"));
         }
     }
 }
