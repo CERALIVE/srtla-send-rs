@@ -768,7 +768,7 @@ mod tests {
         Some(planned.to())
     }
 
-    /// Reviewers' case: three answers, only the last one live, and a resolver
+    /// Three answers, only the last one live, and a resolver
     /// that alternates between two orders. Every answer must get its turn.
     #[test]
     fn a_reordering_resolver_cannot_make_the_bond_skip_an_answer() {
