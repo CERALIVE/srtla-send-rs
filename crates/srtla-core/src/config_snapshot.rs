@@ -25,14 +25,15 @@ pub const RECEIVER_ACK_INTERVAL_PACKETS: u32 = 10;
 /// count stays far below [`STALL_MIN_IN_FLIGHT_PACKETS`] while every packet it
 /// carries is lost. This counter only resets on proof the link itself earned.
 ///
-/// Three receiver ACK intervals. A live link earns an SRTLA ACK for every ten
-/// packets it delivers (the shell credits it even when a cumulative ACK over a
-/// faster sibling pruned those packets first) and a keepalive echo once a
-/// second. Reaching this count with [`STALL_UNPROVEN_STALE_FLOOR_MS`] elapsed
-/// therefore takes two SRTLA ACKs in a row and a keepalive echo all going
-/// missing. In simulation with jittered, unequal return paths that never
-/// happened at 5 or 10 % loss each way, and about twice an hour at 20 %.
-pub const STALL_MIN_UNPROVEN_SENDS: u32 = 3 * RECEIVER_ACK_INTERVAL_PACKETS;
+/// Five receiver ACK intervals. A live link earns an SRTLA ACK for every ten
+/// packets it delivers and a keepalive echo once a second, so reaching this
+/// count with [`STALL_UNPROVEN_STALE_FLOOR_MS`] elapsed takes a keepalive echo
+/// and several SRTLA ACKs in a row going missing. With fewer, a link carrying
+/// 15 to 30 packets/s with a few percent loss on both links could be held out
+/// on one lost echo and two lost ACKs, because at that rate the count and the
+/// floor are reached at about the same time. A dead link is not caught later
+/// at higher rates: the retransmits routed to it fill the count quickly.
+pub const STALL_MIN_UNPROVEN_SENDS: u32 = 5 * RECEIVER_ACK_INTERVAL_PACKETS;
 
 /// Floor (ms) on the staleness window for the unproven-send arm of the stall
 /// signal: one keepalive period plus half of one.

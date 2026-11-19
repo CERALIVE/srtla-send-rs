@@ -137,7 +137,7 @@ struct Cli {
     no_quality: bool,
 
     /// Disable the stalled-link deselect guard (on by default). The guard skips
-    /// a link whose in-flight backlog is high, or that was handed 30 payload
+    /// a link whose in-flight backlog is high, or that was handed 50 payload
     /// packets since its last delivery proof, while that proof has gone stale,
     /// provided a healthier link can carry the traffic. While
     /// gated the link carries keepalives plus a sparse duplicate-packet probe
@@ -146,7 +146,7 @@ struct Cli {
     #[arg(long = "no-stall-deselect")]
     no_stall_deselect: bool,
     /// In-flight packet backlog at or above which a link becomes a stall
-    /// candidate for `--no-stall-deselect`. A link handed 30 payload packets
+    /// candidate for `--no-stall-deselect`. A link handed 50 payload packets
     /// since its last delivery proof is a candidate whatever its backlog.
     #[arg(long = "stall-min-in-flight", default_value_t = config::STALL_MIN_IN_FLIGHT_PACKETS)]
     stall_min_in_flight: i32,

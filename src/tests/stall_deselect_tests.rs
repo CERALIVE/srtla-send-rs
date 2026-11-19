@@ -1261,6 +1261,20 @@ mod tests {
         let _ = conn.take_batch(now);
     }
 
+    /// Route `n` payload packets onto `conn` at `at`, then let a cumulative
+    /// SRT ACK (arriving over a sibling) clear them from its log: the link
+    /// owes their proof, but carries no backlog.
+    fn send_drained(
+        conn: &mut srtla_core::connection::SrtlaConnection,
+        first: u32,
+        n: u32,
+        at: u64,
+    ) {
+        send_payload(conn, first, n, at);
+        conn.handle_srt_ack((first + n - 1) as i32, at, false);
+        assert_eq!(conn.in_flight_packets, 0);
+    }
+
     #[test]
     fn a_dead_link_drained_by_naks_and_acks_still_stalls() {
         // The field failure: NAKs and cumulative SRT ACKs reach the sender
@@ -1299,7 +1313,7 @@ mod tests {
         let mut conns = rt.block_on(create_test_connections(2));
         let now = now_ms();
         conns[0].rtt.update_estimate(7, now);
-        send_payload(&mut conns[0], 100, STALL_MIN_UNPROVEN_SENDS, now);
+        send_drained(&mut conns[0], 100, STALL_MIN_UNPROVEN_SENDS, now - 1_000);
         make_healthy_busy(&mut conns[1], now);
 
         conns[0].last_ack_or_rtt_sample_ms = now - 1_100;
@@ -1322,7 +1336,12 @@ mod tests {
         let mut conns = rt.block_on(create_test_connections(2));
         let now = now_ms();
         conns[0].last_ack_or_rtt_sample_ms = now.saturating_sub(STALL_ACK_STALE_MS + 1000);
-        send_payload(&mut conns[0], 100, STALL_MIN_UNPROVEN_SENDS - 1, now);
+        send_drained(
+            &mut conns[0],
+            100,
+            STALL_MIN_UNPROVEN_SENDS - 1,
+            now - 1_000,
+        );
         make_healthy_busy(&mut conns[1], now);
 
         let _ = select_connection_idx(&mut conns, None, now, &enhanced());
