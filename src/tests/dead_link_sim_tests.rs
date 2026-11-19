@@ -334,16 +334,12 @@ mod tests {
                 Ev::Arrive { link, seq } => self.on_arrive(now, link, seq),
                 Ev::SrtlaAck { link, seqs } => {
                     self.conns[link].last_received = Some(now);
-                    // The shell credits the arrival link first, counts an ACK
-                    // for a pruned sequence the arrival link carried as its
-                    // proof, and falls back to a scan for accounting (see
-                    // `process_connection_events`; `owner` plays the sequence
-                    // tracker, which never records probes).
+                    // The shell counts the ACK as the arrival link's proof,
+                    // credits the arrival link's log first and falls back to
+                    // a scan for accounting (see `apply_link_feedback`).
+                    self.conns[link].note_srtla_ack_proof(now);
                     for s in seqs {
                         if !self.conns[link].handle_srtla_ack_specific(s as i32, false, now) {
-                            if self.owner.get(&s) == Some(&link) {
-                                self.conns[link].note_srtla_ack_proof(now);
-                            }
                             for i in 0..self.conns.len() {
                                 if i != link
                                     && self.conns[i]

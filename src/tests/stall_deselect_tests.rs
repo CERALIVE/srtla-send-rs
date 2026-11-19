@@ -980,71 +980,49 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn an_ack_for_a_pruned_sequence_still_proves_the_link_that_carried_it() {
-        // Link 0 has the slower return path. The cumulative SRT ACK that came
-        // back over link 1 already pruned link 0's packet, so link 0's own
-        // SRTLA ACK matches nothing in its log. It is still link 0's proof.
+    #[test]
+    fn an_srtla_ack_proves_the_link_it_arrived_on() {
+        // Link 0 has the much slower return path. The receiver NAKed its
+        // packet as a gap before it arrived; the NAK cleared it from link 0's
+        // log and the retransmit went over link 1, so the tracker now names
+        // link 1. Link 0's own SRTLA ACK for it still proves link 0.
         use srtla_core::connection::SrtlaIncoming;
 
-        use crate::sender::{SequenceTracker, process_connection_events};
+        use crate::sender::{SequenceTracker, apply_link_feedback};
 
-        let mut conns = create_test_connections(2).await;
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut conns = rt.block_on(create_test_connections(2));
         let now = now_ms();
         let seq: u32 = 500;
-        let mut pkt = [0u8; 16];
-        pkt[..4].copy_from_slice(&seq.to_be_bytes());
-        conns[0].queue_data_packet(&pkt, Some(seq), now);
-        let _ = conns[0].take_batch(now);
+        send_payload(&mut conns[0], seq, 1, now);
         let mut seq_tracker = SequenceTracker::new();
         seq_tracker.insert(seq, conns[0].conn_id, now);
+        assert!(conns[0].handle_nak(seq as i32, now + 5));
+        send_payload(&mut conns[1], seq, 1, now + 5);
+        seq_tracker.insert(seq, conns[1].conn_id, now + 5);
         for c in conns.iter_mut() {
-            c.handle_srt_ack(seq as i32, now, false);
             c.last_ack_or_rtt_sample_ms = 1;
         }
-        assert_eq!(conns[0].in_flight_packets, 0, "precondition: pruned");
         assert_eq!(conns[0].unproven_sends, 1);
-
-        let listener = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        let incoming = || SrtlaIncoming {
+        let ack = SrtlaIncoming {
             srtla_ack_numbers: smallvec::smallvec![seq],
             read_any: true,
             ..Default::default()
         };
 
-        // The same ACK arriving on link 1 proves nothing about either link.
-        process_connection_events(
-            1,
-            &mut conns,
-            None,
-            &listener,
-            &seq_tracker,
-            false,
-            incoming(),
-        )
-        .await
-        .unwrap();
-        assert_eq!(conns[0].last_ack_or_rtt_sample_ms, 1);
-        assert_eq!(conns[1].last_ack_or_rtt_sample_ms, 1);
-
-        // On link 0, which carried the sequence, it is link 0's proof.
-        process_connection_events(
-            0,
-            &mut conns,
-            None,
-            &listener,
-            &seq_tracker,
-            false,
-            incoming(),
-        )
-        .await
-        .unwrap();
-        assert!(
-            conns[0].last_ack_or_rtt_sample_ms > 1,
-            "the carrying link earns proof"
-        );
+        apply_link_feedback(0, &mut conns, &seq_tracker, false, &ack, now + 150);
+        assert_eq!(conns[0].last_ack_or_rtt_sample_ms, now + 150);
         assert_eq!(conns[0].unproven_sends, 0);
-        assert_eq!(conns[1].last_ack_or_rtt_sample_ms, 1);
+        assert_eq!(
+            conns[1].last_ack_or_rtt_sample_ms, 1,
+            "the arrival link earns the proof, not the link the tracker names"
+        );
+
+        // The same ACK arriving on link 1 is link 1's proof, and only its.
+        conns[0].last_ack_or_rtt_sample_ms = 1;
+        apply_link_feedback(1, &mut conns, &seq_tracker, false, &ack, now + 160);
+        assert_eq!(conns[1].last_ack_or_rtt_sample_ms, now + 160);
+        assert_eq!(conns[0].last_ack_or_rtt_sample_ms, 1);
     }
 
     // --- Cross-mechanism blackout immunity (librist !375 field lesson,

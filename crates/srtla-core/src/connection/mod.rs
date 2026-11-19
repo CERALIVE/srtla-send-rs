@@ -858,17 +858,17 @@ impl SrtlaConnection {
         self.unproven_sends = 0;
     }
 
-    /// Delivery proof from an SRTLA ACK that came back on this link for a
-    /// sequence this link carried, but that a cumulative SRT ACK had already
-    /// pruned from the packet log.
+    /// Delivery proof from an SRTLA ACK packet that arrived on this link.
     ///
-    /// That is the normal case on a link whose return path is slower than a
-    /// sibling's: `srtla_rec` broadcasts each SRT ACK on every link, so the one
-    /// over the faster path prunes the slower link's packets before the slower
-    /// link's own SRTLA ACK arrives. The ACK still proves this path delivered.
-    /// The shell decides ownership from its sequence tracker, which never
-    /// records duplicate probes. No RTT sample is taken: the send time went
-    /// with the pruned log entry.
+    /// `srtla_rec` sends one on a link only after packets arrived on that
+    /// link, so it proves the path delivers even when none of its sequences
+    /// are still in this link's packet log. That is the normal case on a link
+    /// whose return path is slower than a sibling's: the SRT ACK `srtla_rec`
+    /// sends on every link prunes the packets over the faster path first, and
+    /// NAKs can clear and re-route them before the slower link's own ACK
+    /// arrives. No RTT sample is taken here. A delayed duplicate of an old
+    /// ACK would also count; the signal is recent per-link feedback from the
+    /// receiver, not a per-packet delivery receipt.
     #[inline]
     pub fn note_srtla_ack_proof(&mut self, now_ms: u64) {
         self.note_delivery_proof(now_ms);

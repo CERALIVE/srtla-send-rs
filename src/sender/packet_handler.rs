@@ -82,6 +82,15 @@ pub(crate) fn apply_link_feedback(
         }
     }
 
+    // `srtla_rec` sends an SRTLA ACK on a link only after packets arrived on
+    // that link, so its arrival is that link's delivery proof whatever the
+    // sequences now map to. Matching sequences is not enough: with a large
+    // round-trip gap, the slower link's packets are often NAKed, cleared from
+    // its log and retransmitted elsewhere before its own SRTLA ACK arrives.
+    if !incoming.srtla_ack_numbers.is_empty() {
+        connections[idx].note_srtla_ack_proof(current_time_ms);
+    }
+
     for srtla_ack in incoming.srtla_ack_numbers.iter() {
         // Match the arrival link's packet log FIRST. The receiver sends an
         // SRTLA ACK back on the link that delivered the packet, and with
@@ -96,13 +105,6 @@ pub(crate) fn apply_link_feedback(
         let found_on_arrival =
             connections[idx].handle_srtla_ack_specific(*srtla_ack as i32, classic, current_time_ms);
         if !found_on_arrival {
-            // A cumulative SRT ACK that came back over a faster sibling already
-            // pruned the sequence here. If this link carried it, the ACK on
-            // this link is still this link's delivery proof; without it a
-            // healthy link with the slower return path never earns any.
-            if seq_tracker.get(*srtla_ack, current_time_ms) == Some(connections[idx].conn_id) {
-                connections[idx].note_srtla_ack_proof(current_time_ms);
-            }
             for (i, c) in connections.iter_mut().enumerate() {
                 if i == idx {
                     continue;
