@@ -1329,6 +1329,83 @@ mod tests {
     }
 
     #[test]
+    fn a_pull_on_unproven_sends_alone_waits_for_the_floor_and_releases_on_an_echo() {
+        // Two live 20 ms links. Link 0 sends a full count over 120 ms, link
+        // 1's cumulative ACK clears it at 140 ms, then link 0's return traffic
+        // pauses until a keepalive echo at 1.1 s. The fast pull may take it out
+        // for that gap, but the gap is not a dead path: no latch, and the echo
+        // gives it back at once.
+        use srtla_core::config_snapshot::STALL_MIN_UNPROVEN_SENDS;
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut conns = rt.block_on(create_test_connections(2));
+        let t = now_ms();
+        conns[0].rtt.update_estimate(20, t);
+        conns[0].last_ack_or_rtt_sample_ms = t;
+        for i in 0..STALL_MIN_UNPROVEN_SENDS {
+            send_payload(
+                &mut conns[0],
+                100 + i,
+                1,
+                t + (i as u64 * 120) / STALL_MIN_UNPROVEN_SENDS as u64,
+            );
+        }
+        conns[0].handle_srt_ack((100 + STALL_MIN_UNPROVEN_SENDS - 1) as i32, t + 140, false);
+        conns[0].last_received = Some(t + 140);
+        assert_eq!(conns[0].in_flight_packets, 0);
+
+        let select_at = |conns: &mut smallvec::SmallVec<_, 4>, at: u64| {
+            make_healthy_busy(&mut conns[1], at);
+            conns[1].last_received = Some(at);
+            let _ = select_connection_idx(conns, None, at, &enhanced());
+        };
+        select_at(&mut conns, t + 400);
+        assert!(
+            conns[0].stall_gated,
+            "the fast pull takes the silent link out"
+        );
+        assert_eq!(conns[0].silence_pulls(), 1);
+
+        select_at(&mut conns, t + 1_000);
+        assert!(
+            !conns[0].stall_latched(),
+            "a pull on unproven sends alone must not latch before the floor"
+        );
+
+        let ka = conns[0].keepalive_packet(t + 1_080);
+        conns[0].handle_keepalive_echo(&ka, t + 1_100);
+        conns[0].last_received = Some(t + 1_100);
+        select_at(&mut conns, t + 1_100);
+        assert!(!conns[0].stall_gated, "the echo gives the link back");
+        assert_eq!(conns[0].stall_gate_events(), 0);
+        assert_eq!(conns[0].silence_pulls(), 1);
+    }
+
+    #[test]
+    fn a_pull_on_a_full_backlog_keeps_the_rtt_window_after_draining() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut conns = rt.block_on(create_test_connections(2));
+        let t = now_ms();
+        conns[0].rtt.update_estimate(20, t);
+        conns[0].last_ack_or_rtt_sample_ms = t;
+        send_payload(&mut conns[0], 100, STALL_MIN_IN_FLIGHT_PACKETS as u32, t);
+        conns[0].last_received = Some(t);
+        make_healthy_busy(&mut conns[1], t + 300);
+        conns[1].last_received = Some(t + 300);
+        let _ = select_connection_idx(&mut conns, None, t + 300, &enhanced());
+        assert!(conns[0].stall_gated);
+
+        conns[0].handle_srt_ack(100 + STALL_MIN_IN_FLIGHT_PACKETS - 1, t + 500, false);
+        make_healthy_busy(&mut conns[1], t + 1_000);
+        conns[1].last_received = Some(t + 1_000);
+        let _ = select_connection_idx(&mut conns, None, t + 1_000, &enhanced());
+        assert!(
+            conns[0].stall_latched(),
+            "a backlog pull still escalates once proof is one staleness window old"
+        );
+    }
+
+    #[test]
     fn fewer_unproven_sends_than_the_threshold_do_not_stall() {
         use srtla_core::config_snapshot::STALL_MIN_UNPROVEN_SENDS;
 
