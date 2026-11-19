@@ -47,6 +47,16 @@ pub const STALL_MIN_UNPROVEN_SENDS: u32 = 5 * RECEIVER_ACK_INTERVAL_PACKETS;
 /// its last proof. The backlog arm keeps the RTT-scaled window.
 pub const STALL_UNPROVEN_STALE_FLOOR_MS: u64 = srtla_protocol::IDLE_TIME * 1000 + 500;
 
+/// Time a burst of unproven sends must have had to draw feedback before it
+/// counts: this multiple of the smoothed RTT, measured from the oldest
+/// unproven send, and at least [`STALL_UNPROVEN_FEEDBACK_FLOOR_MS`]. One
+/// round trip plus the same again for the receiver's ACK batching and jitter.
+pub const STALL_UNPROVEN_FEEDBACK_RTT_MULT: u64 = 2;
+
+/// Floor (ms) on that feedback time, for links with a very short or not yet
+/// measured round trip.
+pub const STALL_UNPROVEN_FEEDBACK_FLOOR_MS: u64 = 100;
+
 /// Ceiling (ms) on the delivery-proof staleness window under
 /// `stall_deselect`. The effective window is RTT-adaptive —
 /// `clamp(STALL_STALE_RTT_MULT x smoothed RTT, STALL_STALE_FLOOR_MS, this)` —

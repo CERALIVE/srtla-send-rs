@@ -1287,7 +1287,7 @@ mod tests {
         let mut conns = rt.block_on(create_test_connections(2));
         let now = now_ms();
         conns[0].last_ack_or_rtt_sample_ms = now.saturating_sub(STALL_ACK_STALE_MS + 1000);
-        send_payload(&mut conns[0], 100, STALL_MIN_UNPROVEN_SENDS, now);
+        send_payload(&mut conns[0], 100, STALL_MIN_UNPROVEN_SENDS, now - 1_000);
         for seq in 100..110 {
             conns[0].handle_nak(seq, now);
         }
@@ -1406,6 +1406,42 @@ mod tests {
     }
 
     #[test]
+    fn a_burst_on_a_quiet_link_waits_one_feedback_round_trip() {
+        // A low-share 50 ms link lost its last keepalive echo (proof 1.6 s
+        // old) and is handed a keyframe burst. No ACK for the burst can be
+        // back yet, so it must not count until a round trip (and the margin)
+        // has passed; after that, with still no proof, it does.
+        use srtla_core::config_snapshot::{
+            STALL_MIN_UNPROVEN_SENDS, STALL_UNPROVEN_FEEDBACK_RTT_MULT,
+        };
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut conns = rt.block_on(create_test_connections(2));
+        let t = now_ms();
+        conns[0].rtt.update_estimate(50, t - 2_000);
+        conns[0].last_ack_or_rtt_sample_ms = t - 1_600;
+        send_drained(&mut conns[0], 100, STALL_MIN_UNPROVEN_SENDS, t);
+        let select_at = |conns: &mut smallvec::SmallVec<_, 4>, at: u64| {
+            make_healthy_busy(&mut conns[1], at);
+            conns[0].last_received = Some(at);
+            conns[1].last_received = Some(at);
+            let _ = select_connection_idx(conns, None, at, &enhanced());
+        };
+
+        select_at(&mut conns, t + 1);
+        assert!(
+            !conns[0].stall_gated,
+            "the burst cannot have been answered yet"
+        );
+        let rtt = conns[0].get_smooth_rtt_ms() as u64;
+        select_at(&mut conns, t + rtt * STALL_UNPROVEN_FEEDBACK_RTT_MULT + 1);
+        assert!(
+            conns[0].stall_latched(),
+            "unanswered after a round trip, it counts"
+        );
+    }
+
+    #[test]
     fn fewer_unproven_sends_than_the_threshold_do_not_stall() {
         use srtla_core::config_snapshot::STALL_MIN_UNPROVEN_SENDS;
 
@@ -1435,7 +1471,7 @@ mod tests {
         let now = now_ms();
 
         // A keepalive echo.
-        send_payload(&mut conns[0], 100, STALL_MIN_UNPROVEN_SENDS, now);
+        send_payload(&mut conns[0], 100, STALL_MIN_UNPROVEN_SENDS, now - 1_000);
         let ka = conns[0].keepalive_packet(now);
         conns[0].handle_keepalive_echo(&ka, now + 5);
         assert_eq!(conns[0].unproven_sends, 0);
@@ -1488,7 +1524,7 @@ mod tests {
         let now = now_ms();
         conns[0].last_ack_or_rtt_sample_ms = now;
         conns[0].last_received = Some(now - 300);
-        send_payload(&mut conns[0], 100, STALL_MIN_UNPROVEN_SENDS, now);
+        send_payload(&mut conns[0], 100, STALL_MIN_UNPROVEN_SENDS, now - 1_000);
         for seq in 100..100 + STALL_MIN_UNPROVEN_SENDS as i32 {
             conns[0].handle_nak(seq, now);
         }

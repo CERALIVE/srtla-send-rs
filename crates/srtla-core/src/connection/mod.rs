@@ -365,6 +365,10 @@ pub struct SrtlaConnection {
     pub unproven_sends: u32,
     #[cfg(not(any(test, feature = "test-internals")))]
     pub(crate) unproven_sends: u32,
+    /// Send time of the oldest of those unproven packets; `0` when there are
+    /// none. A burst only counts once its first packet has had a feedback
+    /// round trip to be answered (see [`Self::unproven_sends_due`]).
+    pub(crate) first_unproven_send_ms: u64,
     /// Transient per-select flag: set by `select_connection_idx` when
     /// `stall_deselect` is on and this link's stall latch is engaged while a
     /// healthier link exists. Recomputed every select call and read only by the
@@ -549,6 +553,7 @@ impl SrtlaConnection {
             last_keepalive_sent: None,
             last_ack_or_rtt_sample_ms: 0,
             unproven_sends: 0,
+            first_unproven_send_ms: 0,
             stall_gated: false,
             stall_latched_since_ms: 0,
             stall_recovery_since_ms: 0,
@@ -702,6 +707,9 @@ impl SrtlaConnection {
             if let Some(s) = seq {
                 let seq = *s as i32;
                 self.register_packet(seq, *send_time_ms);
+                if self.unproven_sends == 0 {
+                    self.first_unproven_send_ms = *send_time_ms;
+                }
                 self.unproven_sends = self.unproven_sends.saturating_add(1);
                 if is_srt_data_retransmit(data) {
                     self.packet_log.insert(seq, None);
@@ -861,6 +869,7 @@ impl SrtlaConnection {
     pub(crate) fn note_delivery_proof(&mut self, now_ms: u64) {
         self.last_ack_or_rtt_sample_ms = now_ms;
         self.unproven_sends = 0;
+        self.first_unproven_send_ms = 0;
     }
 
     /// Delivery proof from an SRTLA ACK packet that arrived on this link.
@@ -881,15 +890,38 @@ impl SrtlaConnection {
 
     /// Whether this link carries enough unanswered payload for silence or
     /// stale proof to mean a stall: an in-flight backlog of at least
-    /// `min_in_flight`, or [`crate::config_snapshot::STALL_MIN_UNPROVEN_SENDS`]
-    /// packets sent since its last delivery proof. The second arm is what sees
-    /// a dead path at moderate rates, where NAKs and cumulative ACKs arriving
-    /// over the healthy links keep draining the first. An idle link meets
-    /// neither, so its keepalive cadence alone never gates it.
+    /// `min_in_flight`, or unproven sends that are due (see
+    /// [`Self::unproven_sends_due`]). The second arm is what sees a dead path
+    /// at moderate rates, where NAKs and cumulative ACKs arriving over the
+    /// healthy links keep draining the first. An idle link meets neither, so
+    /// its keepalive cadence alone never gates it.
     #[inline]
-    pub fn has_stall_load(&self, min_in_flight: i32) -> bool {
-        self.in_flight_packets >= min_in_flight
-            || self.unproven_sends >= crate::config_snapshot::STALL_MIN_UNPROVEN_SENDS
+    pub fn has_stall_load(&self, min_in_flight: i32, now_ms: u64) -> bool {
+        self.in_flight_packets >= min_in_flight || self.unproven_sends_due(now_ms)
+    }
+
+    /// Whether this link owes proof for
+    /// [`crate::config_snapshot::STALL_MIN_UNPROVEN_SENDS`] payload packets,
+    /// the oldest of which has had a feedback round trip to be answered.
+    ///
+    /// The second condition keeps a burst handed to a quiet link (a keyframe
+    /// after a lost keepalive echo, say) from counting before any ACK for it
+    /// could have come back. On a link that carries traffic steadily the
+    /// oldest unproven packet is about as old as its last proof, so this costs
+    /// a dead link no detection time.
+    #[inline]
+    pub fn unproven_sends_due(&self, now_ms: u64) -> bool {
+        use crate::config_snapshot::{
+            STALL_MIN_UNPROVEN_SENDS, STALL_UNPROVEN_FEEDBACK_FLOOR_MS,
+            STALL_UNPROVEN_FEEDBACK_RTT_MULT,
+        };
+        if self.unproven_sends < STALL_MIN_UNPROVEN_SENDS {
+            return false;
+        }
+        let feedback_ms = ((self.get_smooth_rtt_ms().max(0.0) as u64)
+            .saturating_mul(STALL_UNPROVEN_FEEDBACK_RTT_MULT))
+        .max(STALL_UNPROVEN_FEEDBACK_FLOOR_MS);
+        now_ms.saturating_sub(self.first_unproven_send_ms) >= feedback_ms
     }
 
     /// Record an RTT probe and advance warming → live if enough probes collected.
@@ -1033,7 +1065,7 @@ impl SrtlaConnection {
         // is the keepalive echo, so its window must clear the keepalive
         // period with room for echo jitter (see
         // `STALL_UNPROVEN_STALE_FLOOR_MS`).
-        (self.unproven_sends >= crate::config_snapshot::STALL_MIN_UNPROVEN_SENDS
+        (self.unproven_sends_due(now_ms)
             && proof_age_ms >= stale_ms.max(crate::config_snapshot::STALL_UNPROVEN_STALE_FLOOR_MS))
         .then_some("unproven sends")
     }
@@ -1326,7 +1358,7 @@ impl SrtlaConnection {
         min_in_flight: i32,
         stale_ceiling_ms: u64,
     ) -> bool {
-        if !self.connected || !self.has_stall_load(min_in_flight) {
+        if !self.connected || !self.has_stall_load(min_in_flight, now_ms) {
             return false;
         }
         let Some(last_received) = self.last_received else {
@@ -1477,6 +1509,7 @@ impl SrtlaConnection {
         // of the stall it just latched on.
         self.last_ack_or_rtt_sample_ms = 0;
         self.unproven_sends = 0;
+        self.first_unproven_send_ms = 0;
         self.stall_gated = false;
         self.stall_latched_since_ms = 0;
         self.stall_recovery_since_ms = 0;
