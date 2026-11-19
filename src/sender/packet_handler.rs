@@ -50,6 +50,80 @@ pub(crate) fn attribute_nak(
     None
 }
 
+/// Apply the SRT ACKs, SRTLA ACKs and NAKs that arrived on link `idx` at
+/// `current_time_ms`.
+///
+/// Pure state transition, split from [`process_connection_events`] so tests
+/// can drive the real dispatch on their own clock.
+pub(crate) fn apply_link_feedback(
+    idx: usize,
+    connections: &mut [SrtlaConnection],
+    seq_tracker: &SequenceTracker,
+    classic: bool,
+    incoming: &SrtlaIncoming,
+    current_time_ms: u64,
+) {
+    if idx >= connections.len() {
+        return;
+    }
+
+    for ack in incoming.ack_numbers.iter() {
+        let last_acked = srt_ack_last_acked(*ack);
+        // Every link prunes on a cumulative ACK — the receiver has the data,
+        // whichever link carried it — but only the link that carried the
+        // unique copy may take an RTT sample from it. The tracker never
+        // records duplicate probes, so a probing link resolves to `None` here
+        // and keeps its estimator free of round trips earned by the link that
+        // actually delivered.
+        let owner = seq_tracker.get(last_acked as u32, current_time_ms);
+        for c in connections.iter_mut() {
+            let owns = owner == Some(c.conn_id);
+            c.handle_srt_ack(last_acked, current_time_ms, owns);
+        }
+    }
+
+    // `srtla_rec` sends an SRTLA ACK on a link only after packets arrived on
+    // that link, so its arrival is that link's delivery proof whatever the
+    // sequences now map to. Matching sequences is not enough: with a large
+    // round-trip gap, the slower link's packets are often NAKed, cleared from
+    // its log and retransmitted elsewhere before its own SRTLA ACK arrives.
+    if !incoming.srtla_ack_numbers.is_empty() {
+        connections[idx].note_srtla_ack_proof(current_time_ms);
+    }
+
+    for srtla_ack in incoming.srtla_ack_numbers.iter() {
+        // Match the arrival link's packet log FIRST. The receiver sends an
+        // SRTLA ACK back on the link that delivered the packet, and with
+        // duplicate probing the same sequence can sit in two links' logs (the
+        // unique copy and a probe). A first-log-wins scan would let the healthy
+        // link's ACK stamp delivery proof on the gated link — falsely warming
+        // its rejoin dwell. The fallback scan is kept for ACKs whose owner
+        // can't be resolved from the arrival link (e.g. after a reconnect
+        // cleared its log, or a cumulative SRT ACK pruned the copy first). It
+        // only settles accounting: an ACK that came back on another link is
+        // no proof that this one delivers, and must not match its probes.
+        let found_on_arrival =
+            connections[idx].handle_srtla_ack_specific(*srtla_ack as i32, classic, current_time_ms);
+        if !found_on_arrival {
+            for (i, c) in connections.iter_mut().enumerate() {
+                if i == idx {
+                    continue;
+                }
+                if c.handle_srtla_ack_from_other_link(*srtla_ack as i32, classic, current_time_ms) {
+                    break;
+                }
+            }
+        }
+        for c in connections.iter_mut() {
+            c.handle_srtla_ack_global();
+        }
+    }
+
+    for nak in incoming.nak_numbers.iter() {
+        attribute_nak(connections, seq_tracker, *nak, current_time_ms);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn process_connection_events(
     idx: usize,
@@ -75,51 +149,14 @@ pub async fn process_connection_events(
 
     // One monotonic read drives every ACK/NAK handler in this receive batch.
     let current_time_ms = srtla_core::utils::now_ms();
-
-    for ack in incoming.ack_numbers.iter() {
-        let last_acked = srt_ack_last_acked(*ack);
-        // Every link prunes on a cumulative ACK — the receiver has the data,
-        // whichever link carried it — but only the link that carried the
-        // unique copy may take an RTT sample from it. The tracker never
-        // records duplicate probes, so a probing link resolves to `None` here
-        // and keeps its estimator free of round trips earned by the link that
-        // actually delivered.
-        let owner = seq_tracker.get(last_acked as u32, current_time_ms);
-        for c in connections.iter_mut() {
-            let owns = owner == Some(c.conn_id);
-            c.handle_srt_ack(last_acked, current_time_ms, owns);
-        }
-    }
-
-    for srtla_ack in incoming.srtla_ack_numbers.iter() {
-        // Match the arrival link's packet log FIRST. The receiver sends an
-        // SRTLA ACK back on the link that delivered the packet, and with
-        // duplicate probing the same sequence can sit in two links' logs (the
-        // unique copy and a probe). A first-log-wins scan would let the healthy
-        // link's ACK stamp delivery proof on the gated link — falsely warming
-        // its rejoin dwell. The fallback scan is kept for ACKs whose owner
-        // can't be resolved from the arrival link (e.g. after a reconnect
-        // cleared its log).
-        let found_on_arrival =
-            connections[idx].handle_srtla_ack_specific(*srtla_ack as i32, classic, current_time_ms);
-        if !found_on_arrival {
-            for (i, c) in connections.iter_mut().enumerate() {
-                if i == idx {
-                    continue;
-                }
-                if c.handle_srtla_ack_specific(*srtla_ack as i32, classic, current_time_ms) {
-                    break;
-                }
-            }
-        }
-        for c in connections.iter_mut() {
-            c.handle_srtla_ack_global();
-        }
-    }
-
-    for nak in incoming.nak_numbers.iter() {
-        attribute_nak(connections, seq_tracker, *nak, current_time_ms);
-    }
+    apply_link_feedback(
+        idx,
+        connections,
+        seq_tracker,
+        classic,
+        &incoming,
+        current_time_ms,
+    );
 
     if let Some(client) = last_client_addr {
         for pkt in incoming.forward_to_client.iter() {
@@ -280,6 +317,60 @@ fn select_pre_registration_connection(
         .map(|(i, _)| i)
 }
 
+/// Pick the link for one packet from the local SRT client: normal
+/// selection, then the best-path override for must-land traffic
+/// (`must_land`: a data packet inside a keyframe window, or an SRT
+/// retransmit).
+pub(crate) fn choose_link(
+    connections: &mut [SrtlaConnection],
+    last_selected_idx: Option<usize>,
+    now_ms: u64,
+    config_snap: &ConfigSnapshot,
+    must_land: bool,
+) -> Option<usize> {
+    let mut sel_idx = select_connection_idx(connections, last_selected_idx, now_ms, config_snap);
+
+    // Best-path override for must-land traffic. Two triggers share it:
+    //
+    // - Keyframe priority: the critical time window is opened over the
+    //   priority sidecar by the encoder front-end, which parses NAL
+    //   units and knows exactly when a keyframe / parameter set is in
+    //   flight (see srtla_core::priority). srtla_send sees only opaque
+    //   SRT payloads, so it never guesses at keyframes itself.
+    // - SRT retransmits (R bit in the data header): a retransmit fills
+    //   an existing hole in the receiver buffer, so it must not ride a
+    //   score-crushed link — recovery traffic that arrives late is the
+    //   steady-state glitch a degraded leg keeps causing even after
+    //   routing has mostly moved off it.
+    //
+    // Only data packets have seq != None (control packets have MSB set).
+    //
+    // The override is enhanced-only: classic mode never consults the
+    // quality cache, which only enhanced selection refreshes (and which
+    // a runtime switch to classic leaves stale). In enhanced mode
+    // `select_best_quality_idx` still declines (None) when every
+    // eligible link is equally good, so the override only fires when
+    // one path is actually better; otherwise these packets are
+    // scheduled like any other (window / in-flight, times the link
+    // weight).
+    if must_land
+        && let Some(best_idx) = srtla_core::priority::select_best_path_override_idx(
+            connections,
+            now_ms,
+            config_snap.mode,
+        )
+        && sel_idx != Some(best_idx)
+    {
+        trace!(
+            "critical override (window/retransmit): link {} -> {}",
+            sel_idx.map_or(-1, |i| i as i64),
+            best_idx as i64
+        );
+        sel_idx = Some(best_idx);
+    }
+    sel_idx
+}
+
 /// Handle incoming SRT packet
 ///
 /// Uses a pre-cached `ConfigSnapshot` to avoid atomic loads per packet.
@@ -335,50 +426,15 @@ pub async fn handle_srt_packet(
                 return;
             }
 
-            // Normal scheduler selection
-            let mut sel_idx =
-                select_connection_idx(connections, *last_selected_idx, packet_time_ms, config_snap);
-
-            // Best-path override for must-land traffic. Two triggers share it:
-            //
-            // - Keyframe priority: the critical time window is opened over the
-            //   priority sidecar by the encoder front-end, which parses NAL
-            //   units and knows exactly when a keyframe / parameter set is in
-            //   flight (see srtla_core::priority). srtla_send sees only opaque
-            //   SRT payloads, so it never guesses at keyframes itself.
-            // - SRT retransmits (R bit in the data header): a retransmit fills
-            //   an existing hole in the receiver buffer, so it must not ride a
-            //   score-crushed link — recovery traffic that arrives late is the
-            //   steady-state glitch a degraded leg keeps causing even after
-            //   routing has mostly moved off it.
-            //
-            // Only data packets have seq != None (control packets have MSB set).
-            //
-            // The override is enhanced-only: classic mode never consults the
-            // quality cache, which only enhanced selection refreshes (and which
-            // a runtime switch to classic leaves stale). In enhanced mode
-            // `select_best_quality_idx` still declines (None) when every
-            // eligible link is equally good, so the override only fires when
-            // one path is actually better; otherwise these packets are
-            // scheduled like any other (window / in-flight, times the link
-            // weight).
-            if seq.is_some()
-                && (critical_window.is_critical_now(packet_time_ms)
-                    || srtla_protocol::is_srt_data_retransmit(pkt))
-                && let Some(best_idx) = srtla_core::priority::select_best_path_override_idx(
-                    connections,
-                    packet_time_ms,
-                    config_snap.mode,
-                )
-                && sel_idx != Some(best_idx)
-            {
-                trace!(
-                    "critical override (window/retransmit): link {} -> {}",
-                    sel_idx.map_or(-1, |i| i as i64),
-                    best_idx as i64
-                );
-                sel_idx = Some(best_idx);
-            }
+            let sel_idx = choose_link(
+                connections,
+                *last_selected_idx,
+                packet_time_ms,
+                config_snap,
+                seq.is_some()
+                    && (critical_window.is_critical_now(packet_time_ms)
+                        || srtla_protocol::is_srt_data_retransmit(pkt)),
+            );
 
             if let Some(sel_idx) = sel_idx {
                 forward_via_connection(
