@@ -170,8 +170,9 @@ struct Cli {
     /// re-registers from scratch over the ordinary REG1/REG2/REG3 flow. It
     /// never touches a bond with a live uplink, never follows a merely
     /// reordered DNS answer, and attempts at most one migration per minute.
-    /// Pass this to keep the pre-existing behaviour of staying on the cached
-    /// address until the process is restarted.
+    /// Also turns off per-link failover between the receiver hostname's
+    /// addresses (see the README). Pass this to keep the pre-existing behaviour
+    /// of staying on the cached address until the process is restarted.
     #[arg(long = "no-rehome")]
     no_rehome: bool,
 
