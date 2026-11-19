@@ -1442,6 +1442,34 @@ mod tests {
     }
 
     #[test]
+    fn a_short_stale_override_does_not_shorten_the_unproven_floor() {
+        // `--stall-ack-stale-ms 750` caps the backlog window, not the
+        // unproven-send floor.
+        use srtla_core::config_snapshot::{
+            STALL_MIN_UNPROVEN_SENDS, STALL_UNPROVEN_STALE_FLOOR_MS,
+        };
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut conns = rt.block_on(create_test_connections(2));
+        let now = now_ms();
+        conns[0].rtt.update_estimate(7, now - 2_000);
+        send_drained(&mut conns[0], 100, STALL_MIN_UNPROVEN_SENDS, now - 1_400);
+        make_healthy_busy(&mut conns[1], now);
+        let short = ConfigSnapshot {
+            stall_ack_stale_ms: 750,
+            ..enhanced()
+        };
+
+        conns[0].last_ack_or_rtt_sample_ms = now - 1_000;
+        let _ = select_connection_idx(&mut conns, None, now, &short);
+        assert!(!conns[0].stall_gated);
+
+        conns[0].last_ack_or_rtt_sample_ms = now - STALL_UNPROVEN_STALE_FLOOR_MS;
+        let _ = select_connection_idx(&mut conns, None, now, &short);
+        assert!(conns[0].stall_gated);
+    }
+
+    #[test]
     fn fewer_unproven_sends_than_the_threshold_do_not_stall() {
         use srtla_core::config_snapshot::STALL_MIN_UNPROVEN_SENDS;
 

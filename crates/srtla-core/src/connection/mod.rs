@@ -1028,8 +1028,8 @@ impl SrtlaConnection {
     /// `stall_deselect` signal (pure read; never mutates). True for a connected
     /// link that carries stall load ([`Self::has_stall_load`]: an in-flight
     /// backlog of at least `min_in_flight`, or enough payload sent since its
-    /// last proof) AND whose
-    /// last delivery proof (earned-ACK or keepalive-RTT sample) is older than
+    /// last proof) AND whose last delivery proof (earned-ACK or keepalive-RTT
+    /// sample) is older than
     /// the effective staleness window ([`Self::effective_stall_stale_ms`] of
     /// `stale_ceiling_ms`). `now_ms` is the selection clock.
     ///

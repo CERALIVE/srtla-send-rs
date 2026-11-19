@@ -153,7 +153,8 @@ struct Cli {
     /// Ceiling (ms) on the delivery-proof staleness window after which a
     /// stall-candidate link is deselected. The effective window is
     /// RTT-adaptive (4x smoothed RTT, floored at 1000 ms) and this value caps
-    /// it; links without an RTT baseline use the ceiling directly.
+    /// it; links without an RTT baseline use the ceiling directly. The
+    /// 50-packet condition always waits at least 1500 ms regardless.
     #[arg(long = "stall-ack-stale-ms", default_value_t = config::STALL_ACK_STALE_MS)]
     stall_ack_stale_ms: u64,
     /// Per-link liveness timeout (ms): silence past this tears the link down
