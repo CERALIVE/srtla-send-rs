@@ -7,7 +7,7 @@ use srtla_core::registration::SrtlaRegistrationManager;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{debug, error, info, warn};
 
-use super::connections::{reconnect_uplink, recover_connection};
+use super::connections::{reconnect_uplink_to, recover_connection};
 use super::egress_tick;
 use super::receiver_addrs::{proven_for, registered_remotes};
 use super::rehome::{RehomeGate, try_rehome};
@@ -60,6 +60,11 @@ pub async fn handle_housekeeping(
     // state: a failing link prefers the address the bond already lives on.
     let failover = rehome.addresses.applies_to(receiver_host);
     let registered = if failover {
+        if rehome.addresses.answers().is_empty() {
+            for io in conn_io.values() {
+                rehome.addresses.seed(&io.dial_answers);
+            }
+        }
         if let Some(port) = conn_io.values().next().map(|io| io.remote.port()) {
             rehome.addresses.poll(receiver_host, port, current_ms);
         }
@@ -118,28 +123,51 @@ pub async fn handle_housekeeping(
                         // A hostname with several addresses: rebuild against
                         // the one the bond is (or was recently) registered
                         // on, or, with no registration, the address the
-                        // bond is trying (see `super::receiver_addrs`).
-                        if failover
-                            && let Some(next) = rehome.addresses.choose_for(
-                                &label,
+                        // bond is trying (see `super::receiver_addrs`). The
+                        // move only happens if the new socket is built.
+                        let planned = if failover {
+                            rehome.addresses.choose_for(
                                 io.remote,
                                 io.remote_since_ms,
                                 conn.local_ip,
                                 &proven_for(&registered, conn.conn_id),
                                 current_ms,
                             )
-                        {
-                            io.remote = next;
-                            io.remote_since_ms = current_ms;
-                        }
-                        if let Err(e) =
-                            reconnect_uplink(conn, io, receiver_host, seq_tracker, current_ms).await
-                        {
-                            warn!("{} failed to reconnect: {}", label, e);
-                            // Fall back to recovery if reconnect fails
-                            recover_connection(conn, seq_tracker);
                         } else {
-                            restart_reader_for(conn, io.socket.clone(), reader_handles, packet_tx);
+                            None
+                        };
+                        let target = planned.map_or(io.remote, |p| p.to());
+                        // With failover on, the address book already watches
+                        // the hostname; otherwise keep the detect-only drift
+                        // check, through the book's resolver.
+                        let drift = (!failover).then(|| rehome.addresses.resolver());
+                        match reconnect_uplink_to(
+                            conn,
+                            io,
+                            target,
+                            receiver_host,
+                            seq_tracker,
+                            current_ms,
+                            drift,
+                        ) {
+                            Err(e) => {
+                                warn!("{} failed to reconnect: {}", label, e);
+                                // Fall back to recovery if reconnect fails. The
+                                // old socket, and the address it sends to, stay.
+                                recover_connection(conn, seq_tracker);
+                            }
+                            Ok(()) => {
+                                if let Some(planned) = planned {
+                                    io.remote_since_ms = current_ms;
+                                    rehome.addresses.commit_move(&label, planned);
+                                }
+                                restart_reader_for(
+                                    conn,
+                                    io.socket.clone(),
+                                    reader_handles,
+                                    packet_tx,
+                                );
+                            }
                         }
                     }
                     None => {
@@ -914,8 +942,10 @@ mod tests {
         assert_eq!(gate.addresses().move_count(), 0);
     }
 
-    /// An IP-literal receiver and `--no-rehome` keep the old behaviour: no
-    /// lookups and no moves.
+    /// An IP-literal receiver and `--no-rehome` keep the old behaviour: the
+    /// address book never resolves and nothing moves. (The detect-only drift
+    /// check on reconnect still asks the book's resolver, a stub here, so no
+    /// test reaches the real resolver.)
     #[tokio::test]
     async fn ip_literal_receivers_and_the_opt_out_never_fail_over() {
         for (enabled, host) in [(true, "203.0.113.1"), (false, "rec.example.com")] {
@@ -930,7 +960,140 @@ mod tests {
             fixture.never_registered(1);
             fixture.tick_host(&mut gate, host, t0).await.unwrap();
             assert_eq!(fixture.remote_of(1), remote(2), "{host}: link stays put");
-            assert_eq!(addresses.calls(), 0, "{host}: no lookup");
+            assert!(
+                gate.addresses().answers().is_empty() && !gate.addresses().lookup_pending(),
+                "{host}: the address book never resolves"
+            );
+            assert_eq!(gate.addresses().move_count(), 0, "{host}: no move");
+            assert!(addresses.calls() <= 1, "{host}: at most the drift check");
         }
+    }
+
+    /// A move whose socket rebuild fails must not record the new address: the
+    /// old socket is still the one sending, and the handshake that follows
+    /// goes to the old peer. Recording the new one would credit it with a
+    /// registration the old peer granted.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_failed_rebuild_keeps_the_address_the_socket_sends_to() {
+        use socket2::{Domain, Protocol, Socket, Type};
+
+        use crate::net::{BatchUdpSocket, CallbackBinder};
+
+        let listener = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        listener
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        let old_peer = listener.local_addr().unwrap();
+        let bond_address = remote(1);
+
+        let mut fixture = RehomeFixture::new(bond_address).await;
+        // Link 1 talks to the loopback listener and cannot build a new socket.
+        {
+            let io = fixture
+                .conn_io
+                .get_mut(&fixture.connections[1].conn_id)
+                .unwrap();
+            let sock = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)).unwrap();
+            sock.bind(&"127.0.0.1:0".parse::<SocketAddr>().unwrap().into())
+                .unwrap();
+            sock.set_nonblocking(true).unwrap();
+            io.socket = std::sync::Arc::new(BatchUdpSocket::new(sock, old_peer).unwrap());
+            io.remote = old_peer;
+            io.binder = std::sync::Arc::new(CallbackBinder(|_, _| {
+                Err(std::io::Error::other("bind refused for the test"))
+            }));
+        }
+        let addresses = StubResolver::new(vec![]);
+        let mut gate = RehomeGate::with_resolvers(true, StubResolver::new(vec![]), addresses);
+
+        let t0 = now_ms();
+        fixture.live(0, t0);
+        fixture.never_registered(1);
+        fixture.tick(&mut gate, t0).await.unwrap();
+
+        assert_eq!(
+            fixture.remote_of(1),
+            old_peer,
+            "the recorded peer stays the one the socket sends to"
+        );
+        assert_eq!(gate.addresses().move_count(), 0);
+        let mut buf = [0u8; 64];
+        let (n, _) = listener
+            .recv_from(&mut buf)
+            .expect("the handshake still went to the old peer");
+        assert!(n >= 2);
+    }
+
+    /// The timing the docs promise: a bond registered on `old` loses it, the
+    /// name also lists `new`, and nothing comes back. The first attempt on
+    /// `new` comes 18 s after the last packet at the default 5 s link timeout
+    /// and 28 s at 15 s, even with retries stamped a millisecond early.
+    #[tokio::test]
+    async fn a_moved_receiver_is_tried_after_the_hold_on_the_retry_cadence() {
+        for (timeout_ms, expected_s) in [(5_000u64, 18u64), (15_000, 28)] {
+            let old = remote(1);
+            let new = remote(2);
+            let mut fixture = RehomeFixture::new(old).await;
+            // The sender applies `--conn-timeout-ms` through the selection
+            // pass; do the same here.
+            let config = srtla_core::config_snapshot::ConfigSnapshot {
+                conn_timeout_ms: timeout_ms,
+                ..Default::default()
+            };
+            let _ = srtla_core::selection::select_connection_idx(
+                &mut fixture.connections,
+                None,
+                now_ms(),
+                &config,
+            );
+            let addresses = StubResolver::new(vec![Some(vec![old, new])]);
+            let mut gate = RehomeGate::with_resolvers(true, StubResolver::new(vec![]), addresses);
+
+            let t0 = now_ms();
+            fixture.live(0, t0);
+            fixture.live(1, t0);
+            let mut moved_at = None;
+            for s in 0..60u64 {
+                // Alternate the service jitter: odd ticks a millisecond late.
+                let now = t0 + s * 1_000 + (s % 2);
+                fixture.tick(&mut gate, now).await.ok();
+                if s == 0 {
+                    fixture.settle_lookup(&mut gate, now).await;
+                }
+                if fixture.remotes() != vec![old] {
+                    moved_at = Some(s);
+                    break;
+                }
+            }
+            assert_eq!(
+                moved_at,
+                Some(expected_s),
+                "first attempt on the other address, link timeout {timeout_ms}ms"
+            );
+        }
+    }
+
+    /// The dialed answer seeds the address book, so a DNS outage right after
+    /// startup does not hide the alternative from a link stuck on a dead one.
+    #[tokio::test]
+    async fn the_dial_answer_survives_a_dns_outage() {
+        let dead = remote(1);
+        let live = remote(2);
+        let mut fixture = RehomeFixture::new(dead).await;
+        for io in fixture.conn_io.values_mut() {
+            io.dial_answers = smallvec::SmallVec::from_slice_copy(&[dead, live]);
+            io.remote_since_ms = 0;
+        }
+        // Every lookup the book makes fails.
+        let addresses = StubResolver::new(vec![]);
+        let mut gate = RehomeGate::with_resolvers(true, StubResolver::new(vec![]), addresses);
+
+        let t0 = now_ms();
+        fixture.never_registered(0);
+        fixture.never_registered(1);
+        fixture.tick(&mut gate, t0).await.unwrap();
+        assert_eq!(gate.addresses().answers(), &[dead, live]);
+        assert_eq!(fixture.remotes(), vec![live]);
     }
 }

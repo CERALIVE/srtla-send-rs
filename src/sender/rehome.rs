@@ -47,8 +47,9 @@
 //! first answer in the source socket's family, just as this module does, so a
 //! same-family link joins the bond at the address the bond just moved to. If it
 //! does not, it fails to register there and the address book moves it to the
-//! address the bond is registered on. Neither order can leave uplinks split
-//! across two receivers.
+//! address the bond is registered on. The bond keeps one group id throughout,
+//! and a receiver instance that does not know it answers REG2 with REG_NGP,
+//! which is ignored while any link is registered.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -327,8 +328,9 @@ pub(super) async fn try_rehome(
         now,
     )
     .await;
-    // The old address's registrations no longer describe this bond.
-    gate.addresses.forget_registrations();
+    // The address book adopts this answer: the old address's registrations no
+    // longer describe the bond, and an older lookup must not undo the move.
+    gate.addresses.adopt_rehome(&fresh, now);
     gate.rehomes = gate.rehomes.saturating_add(1);
     true
 }

@@ -9,12 +9,14 @@ use srtla_core::connection::SrtlaConnection;
 use srtla_core::utils::now_ms;
 use tracing::{debug, info, warn};
 
+use super::receiver_addrs::AddressBookDns;
+use super::rehome::ReceiverResolver;
 use super::sequence::SequenceTracker;
 use super::uplink::{ConnIo, ConnIoMap};
 use crate::bind_map::EffectiveLink;
 use crate::net::{
     BatchUdpSocket, EgressLifecycle, RouteHealth, SocketKey, SystemIfaceResolver, UplinkBinder,
-    UplinkSpec, create_uplink_socket, resolve_remote_all, resolve_remote_for_source,
+    UplinkSpec, create_uplink_socket, resolve_remote_all, select_remote_for_source,
 };
 
 pub struct PendingConnectionChanges {
@@ -312,8 +314,10 @@ async fn connect_uplink(
 
     // Only the first dial is chosen here. If this address never answers, the
     // receiver address book moves the link on to another answer (see
-    // `super::receiver_addrs`).
-    let remote = resolve_remote_for_source(receiver_host, receiver_port, spec.ip).await?;
+    // `super::receiver_addrs`); it keeps the whole answer so the alternatives
+    // survive a later DNS outage.
+    let answers = resolve_remote_all(receiver_host, receiver_port).await?;
+    let remote = select_remote_for_source(&answers, spec.ip)?;
     let mut egress = EgressLifecycle::for_spec(spec.iface.as_ref());
     // Re-resolve the interface by NAME before every socket creation: a replug
     // leaves the old ifindex describing nothing, and SO_BINDTODEVICE freezes
@@ -337,6 +341,7 @@ async fn connect_uplink(
         binder: link_binder,
         remote,
         remote_since_ms: now_ms(),
+        dial_answers: answers,
         spec: spec.clone(),
         egress,
         route_health,
@@ -393,8 +398,37 @@ pub async fn reconnect_uplink(
     seq_tracker: &mut SequenceTracker,
     now: u64,
 ) -> Result<()> {
-    rebuild_uplink_socket(conn, io, seq_tracker, now)?;
-    spawn_receiver_dns_drift_check(receiver_host, io.remote, now);
+    let remote = io.remote;
+    reconnect_uplink_to(
+        conn,
+        io,
+        remote,
+        receiver_host,
+        seq_tracker,
+        now,
+        Some(Arc::new(AddressBookDns)),
+    )
+}
+
+/// [`reconnect_uplink`] toward `remote`, which becomes `io.remote` only if the
+/// new socket is actually built: on failure the old socket and the address it
+/// sends to stay as they were, so the recorded peer never names an address the
+/// link is not talking to. `drift` is the resolver for the detect-only DNS
+/// drift check, or `None` when the receiver address book already watches the
+/// hostname.
+pub(super) fn reconnect_uplink_to(
+    conn: &mut SrtlaConnection,
+    io: &mut ConnIo,
+    remote: SocketAddr,
+    receiver_host: &str,
+    seq_tracker: &mut SequenceTracker,
+    now: u64,
+    drift: Option<Arc<dyn ReceiverResolver>>,
+) -> Result<()> {
+    rebuild_uplink_socket_to(conn, io, remote, seq_tracker, now)?;
+    if let Some(resolver) = drift {
+        spawn_receiver_dns_drift_check(resolver, receiver_host, io.remote, now);
+    }
     Ok(())
 }
 
@@ -413,8 +447,21 @@ pub(super) fn rebuild_uplink_socket(
     seq_tracker: &mut SequenceTracker,
     now: u64,
 ) -> Result<()> {
+    let remote = io.remote;
+    rebuild_uplink_socket_to(conn, io, remote, seq_tracker, now)
+}
+
+/// [`rebuild_uplink_socket`] toward `remote`. The socket and `io.remote` change
+/// together, and only once the new socket exists.
+pub(super) fn rebuild_uplink_socket_to(
+    conn: &mut SrtlaConnection,
+    io: &mut ConnIo,
+    remote: SocketAddr,
+    seq_tracker: &mut SequenceTracker,
+    now: u64,
+) -> Result<()> {
     anyhow::ensure!(
-        conn.local_ip.to_canonical().is_ipv4() == io.remote.is_ipv4(),
+        conn.local_ip.to_canonical().is_ipv4() == remote.is_ipv4(),
         "receiver destination does not match source family; skipping {}",
         conn.local_ip
     );
@@ -429,7 +476,8 @@ pub(super) fn rebuild_uplink_socket(
     let sock = create_uplink_socket(conn.local_ip)?;
     io.binder.bind(&sock, conn.local_ip)?;
     sock.set_nonblocking(true)?;
-    io.socket = Arc::new(BatchUdpSocket::new(sock, io.remote)?);
+    io.socket = Arc::new(BatchUdpSocket::new(sock, remote)?);
+    io.remote = remote;
 
     conn.reset_for_reconnect(now);
     // A reconnected link comes back with an empty packet log, so the tracker
@@ -519,14 +567,19 @@ pub(super) fn receiver_moved(current: &[SocketAddr], fresh: &[SocketAddr]) -> bo
 /// Runs detached so a slow or hanging resolver cannot delay the reconnect it was
 /// triggered by — the reconnect is on the housekeeping tick of the main event
 /// loop, and this is diagnostics.
-fn spawn_receiver_dns_drift_check(receiver_host: &str, cached: SocketAddr, now: u64) {
+fn spawn_receiver_dns_drift_check(
+    resolver: Arc<dyn ReceiverResolver>,
+    receiver_host: &str,
+    cached: SocketAddr,
+    now: u64,
+) {
     let host = receiver_host.to_string();
     tokio::spawn(async move {
         // A failed lookup is not a reconnect failure: DNS is often the first
         // thing to break when an uplink flaps, and the cached address is still
-        // the best guess we have. Log at debug and stay put.
-        match resolve_remote_all(&host, cached.port()).await {
-            Ok(fresh) => {
+        // the best guess we have. The resolver logs it at debug; stay put.
+        match resolver.resolve(host.clone(), cached.port()).await {
+            Some(fresh) => {
                 if dns_drift_detected(cached, &fresh) && claim_dns_drift_warning(now) {
                     let answers: SmallVec<String, 4> =
                         fresh.iter().map(|a| a.to_string()).collect();
@@ -538,7 +591,7 @@ fn spawn_receiver_dns_drift_check(receiver_host: &str, cached: SocketAddr, now: 
                     );
                 }
             }
-            Err(e) => debug!("could not re-resolve {host} on reconnect ({e}); keeping {cached}"),
+            None => debug!("could not re-resolve {host} on reconnect; keeping {cached}"),
         }
     });
 }

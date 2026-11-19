@@ -734,6 +734,7 @@ mod tests {
                 binder: Arc::new(SourceIpBinder),
                 remote,
                 remote_since_ms: 0,
+                dial_answers: SmallVec::new(),
                 spec: UplinkSpec {
                     ip: IpAddr::V6(Ipv6Addr::LOCALHOST),
                     iface: iface.clone(),

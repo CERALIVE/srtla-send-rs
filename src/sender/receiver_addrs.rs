@@ -1,26 +1,27 @@
-//! Per-link receiver address failover for a hostname that answers with more
-//! than one address.
+//! Per-link receiver address failover for a receiver given as a hostname.
 //!
 //! # The problem
 //!
-//! Every uplink resolves the receiver hostname when it is first dialed and,
-//! before this module, stayed on that answer for the life of the process. A name
+//! Every uplink resolves the receiver hostname when it is first dialed and
+//! would otherwise stay on that answer for the life of the process. A name
 //! with two A records where one is stale (a moved server, a leftover record)
-//! could put one uplink on the dead address for the whole session: it never
-//! registers, carries nothing, and the bond silently runs on fewer links than it
-//! has. Nobody notices until the links that did land on the live address go
-//! down, and then the outage is total although a working path is right there.
-//! The whole-bond re-home in [`super::rehome`] does not help: it only fires
-//! once *every* address the bond is on has left DNS, and a stale record that
-//! stays published never leaves.
+//! can put one uplink on the dead address for the whole session: it never
+//! registers, carries nothing, and the bond silently runs on fewer links than
+//! it has. Nobody notices until the links on the live address go down, and
+//! then the outage is total although a working path is right there. The
+//! whole-bond re-home in [`super::rehome`] does not help: it only fires once
+//! *every* address the bond is on has left DNS, and a stale record that stays
+//! published never leaves.
 //!
 //! # The policy
 //!
-//! The address book keeps the hostname's current answers fresh (a lookup every
-//! [`REFRESH_INTERVAL_MS`], sooner after the bond runs out of addresses to try)
-//! without ever blocking the housekeeping tick on DNS. Each time a failing link
-//! is about to rebuild its socket (the existing timed-out reconnect path), it
-//! picks the address to rebuild against, within its own address family:
+//! The address book keeps the hostname's answers fresh (a lookup every
+//! [`REFRESH_INTERVAL_MS`], sooner after the bond has tried every answer)
+//! without ever blocking the housekeeping tick on DNS, and keeps them in a
+//! stable, de-duplicated order so a resolver that reorders its answers cannot
+//! make the bond skip one. Each time a failing link is about to rebuild its
+//! socket (the existing timed-out reconnect path), it picks the address to
+//! rebuild against, within its own address family:
 //!
 //! 1. If other uplinks are registered (REG3) on an address, that is where the
 //!    bond lives. A link not already there moves to it straight away, whether
@@ -29,28 +30,39 @@
 //!    [`REGISTRATION_HOLD_MS`] (this link included), the link stays on or
 //!    returns to it. A blip that takes every link down at once (a tunnel, a
 //!    shared backhaul, a single-uplink bond) therefore retries the address
-//!    that just worked instead of wandering off to another answer. Only once
-//!    the bond has gone the whole hold without any registration does it fall
-//!    back to the shared trial below.
-//! 3. Otherwise (the bond has not registered in this family, for example at
-//!    startup with a stale first answer), every link follows one shared trial
-//!    cursor: the bond gives an address [`ADDRESS_TRIAL_MS`] and then moves the
-//!    cursor to the next answer in DNS order, wrapping around. Sharing the
-//!    cursor keeps the unregistered links on the same address, so failover
-//!    does not spread them across the receiver instances a name may front.
+//!    that just worked instead of wandering off to another answer.
+//! 3. Otherwise (the bond has no registration in this family, at startup with
+//!    a stale first answer or after the hold), every link follows one shared
+//!    trial cursor: the bond gives an address at least [`ADDRESS_TRIAL_MS`],
+//!    then moves the cursor to the next answer at the next retry, wrapping
+//!    around. Sharing the cursor keeps unregistered links on the same address
+//!    as far as their retry times allow.
 //!
 //! A registered link is never touched, and nothing here sends anything: a moved
 //! link goes through the same socket rebuild and REG1/REG2 resend it would have
-//! made against its old address. A receiver given as an IP literal is left as
-//! before, and `--no-rehome` turns all of this off.
+//! made against its old address, and the move only counts once that rebuild
+//! succeeded. A receiver given as an IP literal is left as before, and
+//! `--no-rehome` turns all of this off.
 //!
-//! Limits: a link dialed before its first retry still uses the first answer it
-//! resolved, as before, so links started while nothing is registered can sit
-//! on different answers until they first time out. Once a link has joined the
-//! address the rest of the bond is registered on, it stays there even if only
-//! its previous address was reachable over its own carrier. And a receiver
-//! that moved while its old record still answers costs about 20 s: the hold on
-//! the old address, then one trial step of the shared cursor.
+//! # Timing
+//!
+//! The hold counts from the last housekeeping tick on which a link was
+//! registered, which is about the moment the link timeout declares it lost.
+//! Reconnect attempts after that come at +0, 1, 2 and 3 s, then every 5 s, so
+//! with a 10 s hold the first attempt on another address is the one at +13 s.
+//! For a receiver that really moved while its old record still answers, that
+//! is about 18 s after the last packet at the default 5 s link timeout, and
+//! 28 s with `--conn-timeout-ms 15000`.
+//!
+//! # Limits
+//!
+//! A link dialed before its first retry still uses the first answer it
+//! resolved, so links started while nothing is registered can sit on
+//! different answers until they first time out. Links retry at different
+//! times, so even after that they can briefly try different answers. Rule 1
+//! is one-way: a link that joined the address the rest of the bond is
+//! registered on stays there, even if only its previous address was reachable
+//! over its own carrier.
 
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
@@ -63,33 +75,44 @@ use tokio::sync::oneshot;
 use tokio::time::Duration;
 use tracing::{debug, info};
 
+use super::housekeeping::GLOBAL_TIMEOUT_MS;
 use super::rehome::{ReceiverResolver, ResolvedAddrs};
 use super::uplink::ConnIoMap;
 use crate::net::{resolve_remote_all, same_family};
 
-/// How long the bond gives an address to produce a registration before the
-/// shared cursor moves to the next answer, when the bond has no registration
-/// in that family. Long enough for a REG2/REG3 round trip over a slow cellular
-/// link, short enough that a two-address name settles within a few retries.
+/// The shortest time the bond gives an address to produce a registration
+/// before the shared cursor moves to the next answer, when the bond has no
+/// registration in that family. The move itself happens at the next reconnect
+/// attempt after that. Long enough for a REG2/REG3 round trip over a slow
+/// cellular link.
 pub const ADDRESS_TRIAL_MS: u64 = 5_000;
 
+/// Slack on the trial check. Reconnect attempts after the fast ones are also
+/// 5 s apart and stamped with the time their housekeeping tick was serviced,
+/// so a strict comparison would miss by a millisecond about half the time and
+/// double the step to 10 s. The retry pacing in `srtla-core` uses the same
+/// half-tick slack for the same reason.
+const TRIAL_SLACK_MS: u64 = 500;
+
 /// How long an address the bond was registered on keeps counting as proven
-/// after the last link registered there went quiet. Three slow reconnect
-/// periods: a blip that takes every link down retries the address that worked
-/// through all of its fast retries and a few slow ones before the bond looks
-/// at any other answer. The cost is the case where the receiver really moved
-/// while its old record still answers: the bond spends the hold on the old
-/// address first.
-pub const REGISTRATION_HOLD_MS: u64 = 15_000;
+/// after the last link registered there was declared lost. The same 10 s as
+/// the all-links-failed window (`GLOBAL_TIMEOUT_MS`), which is this sender's
+/// existing line between "a blip" and "the bond is down", and as the stock
+/// `srtla_rec` group timeout, after which the old address has no group left
+/// to resume anyway. It covers every fast retry and the first slow one.
+pub const REGISTRATION_HOLD_MS: u64 = GLOBAL_TIMEOUT_MS;
 
 /// Routine re-resolution interval. A fixed interval rather than the record TTL:
-/// `getaddrinfo` does not report one, and the system resolver cache honours it
-/// for us anyway.
+/// `getaddrinfo` does not report one. Whether a lookup is answered from a
+/// cache, and for how long, depends on the host's resolver.
 pub const REFRESH_INTERVAL_MS: u64 = 30_000;
 
-/// Floor between lookups asked for because the bond ran out of addresses to
-/// try.
+/// Floor between lookups asked for because the bond has tried every answer.
 pub const URGENT_REFRESH_MIN_MS: u64 = 5_000;
+
+/// Floor between info-level "resolves to" lines. A name that hands out
+/// rotating subsets of a pool changes its answer set on most lookups.
+const CHANGE_LOG_INTERVAL_MS: u64 = 600_000;
 
 /// Ceiling on one background lookup.
 const LOOKUP_TIMEOUT: Duration = Duration::from_secs(3);
@@ -105,6 +128,17 @@ pub(super) enum RemoteChoice {
     Recent(SocketAddr),
     /// Follow the bond's shared trial cursor.
     Cursor(SocketAddr),
+}
+
+impl RemoteChoice {
+    fn target(self) -> Option<SocketAddr> {
+        match self {
+            RemoteChoice::Stay => None,
+            RemoteChoice::Registered(a) | RemoteChoice::Recent(a) | RemoteChoice::Cursor(a) => {
+                Some(a)
+            }
+        }
+    }
 }
 
 /// Pure address choice for one failing link, within its own family.
@@ -154,14 +188,17 @@ pub(super) enum CursorStep {
     /// Still inside the current address's trial.
     Held,
     /// Moved to another answer (trial over, or the address left DNS).
-    Advanced,
+    /// `wrapped` is set when the step went back to the start of the list,
+    /// i.e. the bond has been through every answer.
+    Advanced { wrapped: bool },
     /// Trial over but there is no other answer to try.
     Exhausted,
 }
 
 /// Advance the bond's trial cursor `(address, trial start)`. An unset cursor is
 /// seeded from the asking link: its address, and the time it was pointed there
-/// or last registered there. `candidates` is the latest answer in the family.
+/// or last registered there. `candidates` is the book's answer list in the
+/// family, de-duplicated and in stable order.
 pub(super) fn advance_cursor(
     cursor: Option<(SocketAddr, u64)>,
     seed: (SocketAddr, u64),
@@ -172,19 +209,40 @@ pub(super) fn advance_cursor(
     if let Some(first) = candidates.first()
         && !candidates.contains(&addr)
     {
-        return ((*first, now), CursorStep::Advanced);
+        return ((*first, now), CursorStep::Advanced { wrapped: false });
     }
-    if now.saturating_sub(start) < ADDRESS_TRIAL_MS {
+    if now.saturating_sub(start) + TRIAL_SLACK_MS < ADDRESS_TRIAL_MS {
         return ((addr, start), CursorStep::Held);
     }
-    let next = candidates
-        .iter()
-        .position(|a| *a == addr)
-        .map(|i| candidates[(i + 1) % candidates.len()]);
-    match next {
-        Some(next) if next != addr => ((next, now), CursorStep::Advanced),
+    match candidates.iter().position(|a| *a == addr) {
+        Some(i) if candidates.len() > 1 => {
+            let j = (i + 1) % candidates.len();
+            (
+                (candidates[j], now),
+                CursorStep::Advanced { wrapped: j == 0 },
+            )
+        }
         _ => ((addr, start), CursorStep::Exhausted),
     }
+}
+
+/// Merge a fresh answer into the book's list: drop duplicates and addresses
+/// that are gone, keep the survivors in the order they already had, and append
+/// new ones in resolver order. A resolver that reorders an unchanged answer
+/// therefore changes nothing, and the cursor's "next" stays well defined.
+pub(super) fn merge_answers(current: &[SocketAddr], fresh: &[SocketAddr]) -> ResolvedAddrs {
+    let mut merged: ResolvedAddrs = current
+        .iter()
+        .copied()
+        .filter(|a| fresh.contains(a))
+        .collect();
+    merged.dedup();
+    for a in fresh {
+        if !merged.contains(a) {
+            merged.push(*a);
+        }
+    }
+    merged
 }
 
 /// Every uplink that is registered and not timed out, with its address.
@@ -256,22 +314,43 @@ fn family_slot(source: IpAddr) -> usize {
 }
 
 fn same_set(a: &[SocketAddr], b: &[SocketAddr]) -> bool {
-    let mut a: SmallVec<SocketAddr, 4> = SmallVec::from_slice_copy(a);
-    let mut b: SmallVec<SocketAddr, 4> = SmallVec::from_slice_copy(b);
-    a.sort();
-    b.sort();
-    a == b
+    a.len() == b.len() && a.iter().all(|x| b.contains(x))
+}
+
+fn join(addrs: &[SocketAddr]) -> String {
+    addrs
+        .iter()
+        .map(|a| a.to_string())
+        .collect::<SmallVec<String, 4>>()
+        .join(", ")
 }
 
 type Lookup = oneshot::Receiver<Option<ResolvedAddrs>>;
+
+/// A move the address book planned for a failing link. It only takes effect
+/// through [`ReceiverAddresses::commit_move`], once the socket toward `to` has
+/// been built.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct PlannedMove {
+    pub from: SocketAddr,
+    pub choice: RemoteChoice,
+}
+
+impl PlannedMove {
+    pub fn to(&self) -> SocketAddr {
+        self.choice.target().unwrap_or(self.from)
+    }
+}
 
 /// The receiver hostname's latest answers, refreshed off the housekeeping tick,
 /// plus the bond's recent registrations and its shared trial cursors.
 pub struct ReceiverAddresses {
     enabled: bool,
     resolver: Arc<dyn ReceiverResolver>,
+    /// De-duplicated, in stable order (see [`merge_answers`]).
     answers: ResolvedAddrs,
     last_lookup_ms: Option<u64>,
+    last_change_log_ms: Option<u64>,
     refresh_wanted: bool,
     pending: Option<Lookup>,
     /// Addresses the bond was registered on, with the last tick it was.
@@ -288,6 +367,7 @@ impl ReceiverAddresses {
             resolver,
             answers: SmallVec::new(),
             last_lookup_ms: None,
+            last_change_log_ms: None,
             refresh_wanted: false,
             pending: None,
             recent: SmallVec::new(),
@@ -302,6 +382,37 @@ impl ReceiverAddresses {
         self.enabled && host.parse::<IpAddr>().is_err()
     }
 
+    /// The resolver behind the book, for other detect-only lookups of the same
+    /// name.
+    pub(super) fn resolver(&self) -> Arc<dyn ReceiverResolver> {
+        self.resolver.clone()
+    }
+
+    /// Install a fresh answer, logging a changed set (rate-limited).
+    fn install(&mut self, host: &str, fresh: &[SocketAddr], now: u64) {
+        let merged = merge_answers(&self.answers, fresh);
+        if !same_set(&merged, &self.answers) {
+            let due = self
+                .last_change_log_ms
+                .is_none_or(|last| now.saturating_sub(last) >= CHANGE_LOG_INTERVAL_MS);
+            if due {
+                self.last_change_log_ms = Some(now);
+                info!("receiver {host} resolves to {}", join(&merged));
+            } else {
+                debug!("receiver {host} resolves to {}", join(&merged));
+            }
+        }
+        self.answers = merged;
+    }
+
+    /// Before the book's own first successful lookup, adopt the answer the
+    /// uplinks were dialed from, so its alternatives survive a DNS outage.
+    pub(super) fn seed(&mut self, dialed: &[SocketAddr]) {
+        if self.answers.is_empty() {
+            self.answers = merge_answers(&[], dialed);
+        }
+    }
+
     /// Once per housekeeping tick: collect a finished lookup and start the next
     /// one when it is due. Never waits on DNS.
     pub fn poll(&mut self, host: &str, port: u16, now: u64) {
@@ -313,19 +424,7 @@ impl ReceiverAddresses {
                 Ok(answer) => {
                     self.pending = None;
                     if let Some(fresh) = answer {
-                        // A round-robin name reorders its answer constantly;
-                        // only a changed set is news.
-                        if !same_set(&fresh, &self.answers) {
-                            info!(
-                                "receiver {host} resolves to {}",
-                                fresh
-                                    .iter()
-                                    .map(|a| a.to_string())
-                                    .collect::<SmallVec<String, 4>>()
-                                    .join(", ")
-                            );
-                        }
-                        self.answers = fresh;
+                        self.install(host, &fresh, now);
                     }
                 }
                 Err(oneshot::error::TryRecvError::Empty) => return,
@@ -353,7 +452,7 @@ impl ReceiverAddresses {
         self.pending = Some(rx);
     }
 
-    /// The latest successful answer (empty until the first lookup lands).
+    /// The latest answer (empty until the first lookup lands or a seed).
     pub fn answers(&self) -> &[SocketAddr] {
         &self.answers
     }
@@ -373,26 +472,31 @@ impl ReceiverAddresses {
             .retain(|(_, at)| now.saturating_sub(*at) < REGISTRATION_HOLD_MS);
     }
 
-    /// Forget every registration and trial: the whole bond was just re-homed
-    /// to a new receiver address and registers from scratch.
-    pub(super) fn forget_registrations(&mut self) {
+    /// The whole bond was just re-homed to an answer from `fresh` and
+    /// registers from scratch: adopt that answer, forget the old address's
+    /// registrations and trials, and discard any lookup still in flight, which
+    /// was started before the move and must not undo it.
+    pub(super) fn adopt_rehome(&mut self, fresh: &[SocketAddr], now: u64) {
+        self.answers = merge_answers(&[], fresh);
+        self.pending = None;
+        self.last_lookup_ms = Some(now);
+        self.refresh_wanted = false;
         self.recent.clear();
         self.cursors = [None, None];
     }
 
-    /// Pick the address a failing link rebuilds against. `since_ms` is when the
-    /// link was pointed at `current` or last registered there; `registered` is
-    /// [`proven_for`] this link. Returns the new address when the link should
-    /// move, `None` to stay.
+    /// Plan the address a failing link rebuilds against. `since_ms` is when
+    /// the link was pointed at `current` or last registered there;
+    /// `registered` is [`proven_for`] this link. `None` means stay. Nothing is
+    /// counted or logged until [`Self::commit_move`].
     pub(super) fn choose_for(
         &mut self,
-        label: &str,
         current: SocketAddr,
         since_ms: u64,
         source: IpAddr,
         registered: &[SocketAddr],
         now: u64,
-    ) -> Option<SocketAddr> {
+    ) -> Option<PlannedMove> {
         let mut recent: SmallVec<(SocketAddr, u64), 4> = self
             .recent
             .iter()
@@ -421,9 +525,11 @@ impl ReceiverAddresses {
             self.cursors[slot] = Some(cursor);
             match step {
                 CursorStep::Held => {}
-                CursorStep::Exhausted => self.refresh_wanted = true,
-                CursorStep::Advanced => {
-                    self.refresh_wanted = true;
+                CursorStep::Advanced { wrapped } => {
+                    // Every answer has had its trial: ask DNS again early.
+                    if wrapped {
+                        self.refresh_wanted = true;
+                    }
                     let (old, start) = before.unwrap_or((current, since_ms));
                     info!(
                         "no registration from receiver address {old} in {}ms; the bond tries {} \
@@ -432,36 +538,35 @@ impl ReceiverAddresses {
                         cursor.0
                     );
                 }
+                CursorStep::Exhausted => self.refresh_wanted = true,
             }
             Some(cursor.0)
         };
 
-        match choose_remote(current, source, registered, &recent, cursor) {
-            RemoteChoice::Stay => {
-                debug!("{label}: staying on receiver address {current}");
-                None
+        let choice = choose_remote(current, source, registered, &recent, cursor);
+        choice.target().map(|_| PlannedMove {
+            from: current,
+            choice,
+        })
+    }
+
+    /// Record a planned move whose socket rebuild succeeded.
+    pub(super) fn commit_move(&mut self, label: &str, planned: PlannedMove) {
+        self.moves = self.moves.saturating_add(1);
+        let (from, to) = (planned.from, planned.to());
+        match planned.choice {
+            RemoteChoice::Registered(_) => info!(
+                "{label}: not registered on receiver address {from}; moved to {to}, where other \
+                 uplinks are registered"
+            ),
+            RemoteChoice::Recent(_) => info!(
+                "{label}: moved from receiver address {from} back to {to}, where the bond was \
+                 registered until recently"
+            ),
+            RemoteChoice::Cursor(_) => {
+                info!("{label}: moved from receiver address {from} to {to}")
             }
-            RemoteChoice::Registered(addr) => {
-                self.moves = self.moves.saturating_add(1);
-                info!(
-                    "{label}: not registered on receiver address {current}; moving to {addr}, \
-                     where other uplinks are registered"
-                );
-                Some(addr)
-            }
-            RemoteChoice::Recent(addr) => {
-                self.moves = self.moves.saturating_add(1);
-                info!(
-                    "{label}: returning from receiver address {current} to {addr}, where the bond \
-                     was registered until recently"
-                );
-                Some(addr)
-            }
-            RemoteChoice::Cursor(addr) => {
-                self.moves = self.moves.saturating_add(1);
-                info!("{label}: moving from receiver address {current} to {addr}");
-                Some(addr)
-            }
+            RemoteChoice::Stay => {}
         }
     }
 
@@ -568,7 +673,7 @@ mod tests {
     fn the_cursor_seeds_from_the_link_and_gives_each_address_its_trial() {
         let answers = [a(1), a(2), a(3)];
         // Seeded from the asking link; its trial is still running.
-        let since = T - ADDRESS_TRIAL_MS + 1;
+        let since = T - ADDRESS_TRIAL_MS + TRIAL_SLACK_MS + 1;
         assert_eq!(
             advance_cursor(None, (a(1), since), &answers, T),
             ((a(1), since), CursorStep::Held)
@@ -576,22 +681,22 @@ mod tests {
         // Trial over: next answer, new trial.
         assert_eq!(
             advance_cursor(None, (a(1), since - 1), &answers, T),
-            ((a(2), T), CursorStep::Advanced)
+            ((a(2), T), CursorStep::Advanced { wrapped: false })
         );
         // An existing cursor wins over the seed: one trial for the bond.
         assert_eq!(
             advance_cursor(Some((a(2), T)), (a(1), 0), &answers, T + 1_000),
             ((a(2), T), CursorStep::Held)
         );
-        // Wrap-around.
+        // Wrap-around marks a full pass.
         assert_eq!(
             advance_cursor(Some((a(3), 0)), (a(3), 0), &answers, T),
-            ((a(1), T), CursorStep::Advanced)
+            ((a(1), T), CursorStep::Advanced { wrapped: true })
         );
         // An address that left DNS is replaced by the first answer at once.
         assert_eq!(
             advance_cursor(Some((a(9), T)), (a(9), T), &answers, T),
-            ((a(1), T), CursorStep::Advanced)
+            ((a(1), T), CursorStep::Advanced { wrapped: false })
         );
         // Nothing else to try.
         assert_eq!(
@@ -604,46 +709,129 @@ mod tests {
         );
     }
 
+    /// A retry stamped a millisecond early must still end a 5 s trial; the
+    /// retries themselves are 5 s apart.
+    #[test]
+    fn the_trial_has_the_same_slack_as_the_retry_pacing() {
+        let answers = [a(1), a(2)];
+        let start = T;
+        assert_eq!(
+            advance_cursor(Some((a(1), start)), (a(1), start), &answers, start + 4_999).1,
+            CursorStep::Advanced { wrapped: false }
+        );
+        assert_eq!(
+            advance_cursor(
+                Some((a(1), start)),
+                (a(1), start),
+                &answers,
+                start + ADDRESS_TRIAL_MS - TRIAL_SLACK_MS - 1
+            )
+            .1,
+            CursorStep::Held
+        );
+    }
+
+    #[test]
+    fn answers_merge_into_a_stable_deduplicated_order() {
+        assert_eq!(
+            merge_answers(&[], &[a(1), a(1), a(3)]).as_slice(),
+            &[a(1), a(3)]
+        );
+        // A reordered answer changes nothing.
+        assert_eq!(
+            merge_answers(&[a(1), a(2), a(3)], &[a(2), a(1), a(3)]).as_slice(),
+            &[a(1), a(2), a(3)]
+        );
+        // Removals drop out, additions append in resolver order.
+        assert_eq!(
+            merge_answers(&[a(1), a(2), a(3)], &[a(5), a(3), a(4), a(1)]).as_slice(),
+            &[a(1), a(3), a(5), a(4)]
+        );
+    }
+
     fn book_with(answers: &[SocketAddr]) -> ReceiverAddresses {
         let mut book = ReceiverAddresses::new(true, StubResolver::new(vec![]));
-        book.answers = SmallVec::from_slice_copy(answers);
+        book.answers = merge_answers(&[], answers);
         book
     }
 
+    /// Plan and commit, as housekeeping does when the rebuild succeeds.
+    fn step(
+        book: &mut ReceiverAddresses,
+        current: SocketAddr,
+        since: u64,
+        source: IpAddr,
+        now: u64,
+    ) -> Option<SocketAddr> {
+        let planned = book.choose_for(current, since, source, &[], now)?;
+        book.commit_move("l", planned);
+        Some(planned.to())
+    }
+
+    /// Reviewers' case: three answers, only the last one live, and a resolver
+    /// that alternates between two orders. Every answer must get its turn.
+    #[test]
+    fn a_reordering_resolver_cannot_make_the_bond_skip_an_answer() {
+        let mut book = book_with(&[a(1), a(2), a(3)]);
+        let orders = [[a(1), a(2), a(3)], [a(2), a(1), a(3)]];
+        let mut current = a(1);
+        let mut visited = vec![current];
+        let mut now = T;
+        for n in 0..6 {
+            book.install("rec.example.com", &orders[n % 2], now);
+            if let Some(next) = step(&mut book, current, 0, SRC4, now) {
+                current = next;
+                visited.push(next);
+            }
+            now += ADDRESS_TRIAL_MS;
+        }
+        assert!(
+            visited[..4].contains(&a(3)),
+            "the live third answer is reached within one pass: {visited:?}"
+        );
+    }
+
+    #[test]
+    fn a_duplicated_answer_does_not_trap_the_cursor() {
+        let mut book = ReceiverAddresses::new(true, StubResolver::new(vec![]));
+        book.install("rec.example.com", &[a(1), a(1), a(3)], T);
+        assert_eq!(book.answers(), &[a(1), a(3)]);
+        assert_eq!(step(&mut book, a(1), 0, SRC4, T), Some(a(3)));
+    }
+
     /// A bond registered on a(1) for a long time loses every link at once. It
-    /// must keep retrying a(1) through its fast and slow retries, not jump to
-    /// the stale answer.
+    /// keeps retrying a(1) through the hold, not jump to the stale answer.
     #[test]
     fn a_whole_bond_blip_keeps_retrying_the_address_that_worked() {
         let mut book = book_with(&[a(1), a(2)]);
-        let link1 = (1, a(1));
-        let link2 = (2, a(1));
-        book.note_registered(&[link1, link2], T);
-        // Every link has timed out: nobody is registered any more.
-        for dt in [1_000, 2_000, 3_000, 4_000, 9_000, 14_000] {
+        book.note_registered(&[(1, a(1)), (2, a(1))], T);
+        // Every link has timed out: nobody is registered any more. These are
+        // the reconnect attempts of a link that lost registration at T.
+        for dt in [1_000, 2_000, 3_000, 4_000, 9_000] {
             book.note_registered(&[], T + dt);
             assert_eq!(
-                book.choose_for("l1", a(1), T, SRC4, &[], T + dt),
+                step(&mut book, a(1), T, SRC4, T + dt),
                 None,
                 "{dt}ms into the blip the link stays on the address that worked"
             );
         }
         assert_eq!(book.move_count(), 0);
         // A link that had wandered off comes back.
-        assert_eq!(
-            book.choose_for("l2", a(2), T, SRC4, &[], T + 2_000),
-            Some(a(1))
-        );
+        assert_eq!(step(&mut book, a(2), T, SRC4, T + 2_000), Some(a(1)));
     }
 
     #[test]
-    fn the_hold_expires_and_then_the_cursor_takes_over() {
+    fn the_hold_lasts_the_all_failed_window_and_then_the_cursor_takes_over() {
+        assert_eq!(REGISTRATION_HOLD_MS, GLOBAL_TIMEOUT_MS);
         let mut book = book_with(&[a(1), a(2)]);
         book.note_registered(&[(1, a(1))], T);
+        let inside = T + REGISTRATION_HOLD_MS - 1;
+        book.note_registered(&[], inside);
+        assert_eq!(step(&mut book, a(1), T, SRC4, inside), None);
         let after = T + REGISTRATION_HOLD_MS;
         book.note_registered(&[], after);
         // Trial counted from the last registration, which is long over.
-        assert_eq!(book.choose_for("l1", a(1), T, SRC4, &[], after), Some(a(2)));
+        assert_eq!(step(&mut book, a(1), T, SRC4, after), Some(a(2)));
     }
 
     #[test]
@@ -651,44 +839,85 @@ mod tests {
         // Links dialed at different times still try addresses together.
         let mut book = book_with(&[a(1), a(2), a(3)]);
         // Link 1 (dialed long ago) seeds the cursor and moves it to a(2).
-        assert_eq!(book.choose_for("l1", a(1), 0, SRC4, &[], T), Some(a(2)));
+        assert_eq!(step(&mut book, a(1), 0, SRC4, T), Some(a(2)));
         // Link 2, freshly dialed on a(3), follows the bond rather than
         // running its own trial on a(3).
-        assert_eq!(
-            book.choose_for("l2", a(3), T - 100, SRC4, &[], T + 500),
-            Some(a(2))
-        );
+        assert_eq!(step(&mut book, a(3), T - 100, SRC4, T + 500), Some(a(2)));
         // Link 3, already dialed on a(2), stays.
-        assert_eq!(book.choose_for("l3", a(2), 0, SRC4, &[], T + 600), None);
+        assert_eq!(step(&mut book, a(2), 0, SRC4, T + 600), None);
         // One trial later the whole bond moves on together.
         let t2 = T + ADDRESS_TRIAL_MS;
-        assert_eq!(book.choose_for("l3", a(2), 0, SRC4, &[], t2), Some(a(3)));
-        assert_eq!(
-            book.choose_for("l1", a(2), T, SRC4, &[], t2 + 1),
-            Some(a(3))
-        );
+        assert_eq!(step(&mut book, a(2), 0, SRC4, t2), Some(a(3)));
+        assert_eq!(step(&mut book, a(2), T, SRC4, t2 + 1), Some(a(3)));
     }
 
     #[test]
-    fn a_registration_clears_the_cursor_and_rehome_forgets_everything() {
+    fn a_planned_move_counts_only_when_committed() {
         let mut book = book_with(&[a(1), a(2)]);
-        assert_eq!(book.choose_for("l1", a(1), 0, SRC4, &[], T), Some(a(2)));
+        let planned = book.choose_for(a(1), 0, SRC4, &[], T).unwrap();
+        assert_eq!(planned.to(), a(2));
+        assert_eq!(book.move_count(), 0, "planning alone is not a move");
+        book.commit_move("l", planned);
+        assert_eq!(book.move_count(), 1);
+    }
+
+    #[test]
+    fn a_registration_clears_the_cursor() {
+        let mut book = book_with(&[a(1), a(2)]);
+        assert_eq!(step(&mut book, a(1), 0, SRC4, T), Some(a(2)));
         book.note_registered(&[(1, a(2))], T + 1_000);
         assert_eq!(book.cursors, [None, None]);
-        book.forget_registrations();
-        assert!(book.recent.is_empty());
+    }
+
+    /// Re-home moved the bond to b; the book must not send it back to the
+    /// answer it cached before, nor let an older lookup overwrite the move.
+    #[tokio::test]
+    async fn a_rehome_is_not_undone_by_the_older_answer() {
+        let old = a(1);
+        let new = a(9);
+        let resolver = StubResolver::new(vec![Some(vec![old])]);
+        let mut book = ReceiverAddresses::new(true, resolver.clone());
+        book.answers = merge_answers(&[], &[old]);
+        book.note_registered(&[(1, old)], T - 60_000);
+        // A routine lookup is in flight when the re-home lands.
+        book.poll("rec.example.com", 5000, T);
+        assert!(book.lookup_pending());
+        book.adopt_rehome(&[new], T);
+        assert!(!book.lookup_pending(), "the pre-move lookup is discarded");
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+        book.poll("rec.example.com", 5000, T + 1_000);
+        assert_eq!(book.answers(), &[new]);
+        assert_eq!(
+            resolver.calls(),
+            1,
+            "the refresh clock restarted at the move"
+        );
+        // B's first handshake needs a retry: it stays on B.
+        assert_eq!(step(&mut book, new, T, SRC4, T + 1_000), None);
+    }
+
+    #[test]
+    fn the_dial_answer_seeds_an_empty_book_only() {
+        let mut book = ReceiverAddresses::new(true, StubResolver::new(vec![]));
+        book.seed(&[a(1), a(1), a(2)]);
+        assert_eq!(book.answers(), &[a(1), a(2)]);
+        book.seed(&[a(7)]);
+        assert_eq!(
+            book.answers(),
+            &[a(1), a(2)],
+            "a populated book keeps its answer"
+        );
     }
 
     #[test]
     fn families_keep_separate_cursors() {
         let mut book = book_with(&[v6(1), a(1), v6(2), a(2)]);
-        assert_eq!(book.choose_for("v4", a(1), 0, SRC4, &[], T), Some(a(2)));
-        assert_eq!(book.choose_for("v6", v6(2), 0, src6(), &[], T), Some(v6(1)));
+        assert_eq!(step(&mut book, a(1), 0, SRC4, T), Some(a(2)));
+        assert_eq!(step(&mut book, v6(2), 0, src6(), T), Some(v6(1)));
         let mapped: IpAddr = "::ffff:10.0.0.2".parse().unwrap();
-        assert_eq!(
-            book.choose_for("mapped", a(1), 0, mapped, &[], T),
-            Some(a(2))
-        );
+        assert_eq!(step(&mut book, a(1), 0, mapped, T), Some(a(2)));
     }
 
     #[test]
@@ -749,7 +978,7 @@ mod tests {
         // The bond running out of addresses asks for an early refresh, which
         // is still floored.
         book.answers = SmallVec::from_slice_copy(&[a(2)]);
-        let _ = book.choose_for("l", a(2), 0, SRC4, &[], t1);
+        let _ = book.choose_for(a(2), 0, SRC4, &[], t1);
         book.poll("rec.example.com", 5000, t1 + URGENT_REFRESH_MIN_MS - 1);
         assert_eq!(resolver.calls(), 2);
         book.poll("rec.example.com", 5000, t1 + URGENT_REFRESH_MIN_MS);

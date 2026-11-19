@@ -35,6 +35,9 @@ pub struct ConnIo {
     /// link on to the next one (see `super::receiver_addrs`). `0` means "long
     /// ago": the address has had its chance.
     pub remote_since_ms: u64,
+    /// The receiver hostname's answer this link was first dialed from. Seeds
+    /// the receiver address book if its own lookups have not succeeded yet.
+    pub dial_answers: SmallVec<SocketAddr, 4>,
     /// Identity (`link_id`) plus current socket key (`ip`, `iface`).
     pub spec: UplinkSpec,
     /// Ifindex staleness for a device-bound link; inert for an unmapped one.
@@ -61,6 +64,7 @@ impl ConnIo {
             binder,
             remote,
             remote_since_ms: 0,
+            dial_answers: SmallVec::new(),
             spec: UplinkSpec::unmapped(ip),
             egress: EgressLifecycle::unmapped(),
             route_health: RouteHealth::Unknown,
