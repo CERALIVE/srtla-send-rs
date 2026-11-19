@@ -1480,6 +1480,10 @@ impl SrtlaConnection {
         self.packet_log.clear();
         self.probe_log.clear();
         self.in_flight_packets = 0;
+        // Packets forwarded before REG3 were sent before the receiver knew the
+        // link; it owes no proof for them.
+        self.unproven_sends = 0;
+        self.first_unproven_send_ms = 0;
         self.highest_acked_seq = NO_ACK_YET;
         self.congestion.reset();
         self.batch_sender.reset();

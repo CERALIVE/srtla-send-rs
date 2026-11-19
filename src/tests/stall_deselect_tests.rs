@@ -1514,6 +1514,27 @@ mod tests {
     }
 
     #[test]
+    fn registration_clears_unproven_sends() {
+        // The shell can forward payload before REG3. Those packets owe no
+        // proof once the link registers: a freshly warming link with nothing
+        // in flight must not be pulled for them.
+        use srtla_core::config_snapshot::STALL_MIN_UNPROVEN_SENDS;
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut conns = rt.block_on(create_test_connections(2));
+        let t = now_ms();
+        send_payload(&mut conns[0], 100, STALL_MIN_UNPROVEN_SENDS, t - 1_000);
+        conns[0].clear_pre_registration_state(t - 500);
+        assert_eq!(conns[0].unproven_sends, 0);
+        conns[0].last_received = Some(t - 251);
+        make_healthy_busy(&mut conns[1], t);
+        conns[1].last_received = Some(t);
+        let _ = select_connection_idx(&mut conns, None, t, &enhanced());
+        assert_eq!(conns[0].silence_pulls(), 0);
+        assert!(!conns[0].stall_gated);
+    }
+
+    #[test]
     fn a_silent_link_with_unproven_payload_is_pulled() {
         // A full blackhole: nothing at all comes back, and the backlog has
         // been drained by NAKs arriving over the healthy link.
