@@ -93,6 +93,11 @@ pub type ConnIoMap = HashMap<ConnectionId, ConnIo>;
 
 pub struct UplinkPacket {
     pub conn_id: ConnectionId,
+    /// [`BatchUdpSocket::generation`] of the socket that received it. A link
+    /// whose socket has since been rebuilt (possibly toward another receiver
+    /// address) ignores it: a reply queued from the old socket must not count
+    /// for the new one.
+    pub generation: u64,
     pub bytes: SmallVec<u8, 64>,
 }
 
@@ -112,6 +117,7 @@ pub fn spawn_reader(
     socket: Arc<BatchUdpSocket>,
     packet_tx: UnboundedSender<UplinkPacket>,
 ) -> ReaderHandle {
+    let generation = socket.generation();
     let handle = tokio::spawn(async move {
         // Allocate batch receive buffer on heap (large structure ~50KB on Unix)
         let mut recv_buffer = RecvMmsgBuffer::new();
@@ -129,6 +135,7 @@ pub fn spawn_reader(
                         if packet_tx
                             .send(UplinkPacket {
                                 conn_id,
+                                generation,
                                 bytes: packet,
                             })
                             .is_err()
@@ -146,6 +153,7 @@ pub fn spawn_reader(
                     if packet_tx
                         .send(UplinkPacket {
                             conn_id,
+                            generation,
                             bytes: SmallVec::new(),
                         })
                         .is_err()
