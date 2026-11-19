@@ -148,8 +148,9 @@ pub fn create_uplink_socket(domain_for: IpAddr) -> Result<Socket> {
 /// Every address the receiver's hostname currently answers with.
 ///
 /// [`resolve_remote_for_source`] picks the first compatible address to dial.
-/// The reconnect and whole-bond re-home paths compare pinned addresses against
-/// this fresh answer set to detect receiver DNS drift (see
+/// The full set also feeds the sender's receiver address book, which moves a
+/// link that cannot register on its address on to another answer, and the
+/// reconnect and whole-bond re-home paths' DNS drift checks (see
 /// `sender::connections`).
 pub async fn resolve_remote_all(host: &str, port: u16) -> Result<SmallVec<SocketAddr, 4>> {
     let addrs = tokio::net::lookup_host((host, port))
@@ -164,6 +165,14 @@ pub async fn resolve_remote(host: &str, port: u16) -> Result<SocketAddr> {
         .first()
         .copied()
         .ok_or_else(|| anyhow::anyhow!("no DNS result for {}", host))
+}
+
+/// Whether `remote` is in the same address family as the uplink source `source`.
+///
+/// An IPv4-mapped IPv6 source (`::ffff:a.b.c.d`) counts as IPv4, matching
+/// [`create_uplink_socket`] and [`select_remote_for_source`].
+pub fn same_family(remote: SocketAddr, source: IpAddr) -> bool {
+    remote.is_ipv4() == source.to_canonical().is_ipv4()
 }
 
 /// Select the first answer compatible with the source socket's address family.
