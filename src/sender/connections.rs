@@ -866,6 +866,130 @@ mod tests {
         }
     }
 
+    /// An IPv4-mapped IPv6 source (`::ffff:a.b.c.d`) is an IPv4 address in
+    /// IPv6 notation. It gets an IPv4 socket and dials the receiver's IPv4
+    /// answer, so a receiver with only an A record still takes it, and a
+    /// reconnect rebuilds it the same way.
+    #[tokio::test]
+    async fn a_mapped_ipv4_source_dials_the_ipv4_answer() {
+        use crate::net::SourceIpBinder;
+
+        let binder: Arc<dyn UplinkBinder> = Arc::new(SourceIpBinder);
+        let mapped: IpAddr = "::ffff:127.0.0.1".parse().unwrap();
+        let v4: SocketAddr = "127.0.0.1:9000".parse().unwrap();
+        let v6: SocketAddr = "[::1]:9000".parse().unwrap();
+        assert_eq!(
+            crate::net::select_remote_for_source(&[v6, v4], mapped).unwrap(),
+            v4
+        );
+
+        let mut io = ConnIoMap::new();
+        let connections =
+            create_connections_from_ips(&[mapped], &[], &[v4], "127.0.0.1", 9000, &binder, &mut io)
+                .await;
+        assert_eq!(connections.len(), 1, "the mapped source must be dialed");
+        let mut conn = connections.into_iter().next().unwrap();
+        let entry = io.get_mut(&conn.conn_id).unwrap();
+        assert_eq!(entry.remote, v4);
+
+        rebuild_uplink_socket(&mut conn, entry, &mut SequenceTracker::new(), 100).unwrap();
+        assert_eq!(entry.remote, v4);
+    }
+
+    /// The written form stays the link's identity, while the socket is bound to
+    /// the plain IPv4 address and its datagrams really reach an IPv4-only
+    /// receiver.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_mapped_ipv4_source_binds_ipv4_and_reaches_an_ipv4_receiver() {
+        use crate::net::SourceIpBinder;
+
+        let receiver = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let at = receiver.local_addr().unwrap();
+        let binder: Arc<dyn UplinkBinder> = Arc::new(SourceIpBinder);
+        let mapped: IpAddr = "::ffff:127.0.0.1".parse().unwrap();
+        let mut io = ConnIoMap::new();
+        let connections = create_connections_from_ips(
+            &[mapped],
+            &[],
+            &[at],
+            "127.0.0.1",
+            at.port(),
+            &binder,
+            &mut io,
+        )
+        .await;
+        assert_eq!(connections.len(), 1);
+        assert_eq!(
+            connections[0].local_ip, mapped,
+            "the written form is the identity"
+        );
+        assert!(
+            connections[0].label.contains("::ffff:127.0.0.1"),
+            "{}",
+            connections[0].label
+        );
+        let entry = &io[&connections[0].conn_id];
+        let local = entry.socket.get_ref().local_addr().unwrap();
+        assert!(local.is_ipv4(), "bound as {local}");
+        entry.socket.send(b"hello").await.unwrap();
+        let mut buf = [0u8; 16];
+        let (n, from) = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            receiver.recv_from(&mut buf),
+        )
+        .await
+        .expect("the IPv4 receiver got nothing")
+        .unwrap();
+        assert_eq!(&buf[..n], b"hello");
+        assert_eq!(from.ip(), "127.0.0.1".parse::<IpAddr>().unwrap());
+    }
+
+    /// The device binder binds the same plain IPv4 address as the source binder.
+    /// Needs `SO_BINDTODEVICE`, which unprivileged processes may use on current
+    /// kernels; where it is refused the test says so and checks nothing else.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_device_binder_binds_a_mapped_ipv4_source_as_ipv4() {
+        use crate::net::{DeviceBinder, create_uplink_socket};
+
+        let mapped: IpAddr = "::ffff:127.0.0.1".parse().unwrap();
+        let sock = create_uplink_socket(mapped).unwrap();
+        let binder = DeviceBinder::new("lo".to_string());
+        match binder.bind(&sock, mapped) {
+            Ok(()) => {
+                let local = sock.local_addr().unwrap().as_socket().unwrap();
+                assert_eq!(local.ip(), "127.0.0.1".parse::<IpAddr>().unwrap());
+            }
+            Err(e) if format!("{e:#}").contains("bind socket to device") => {
+                eprintln!("SO_BINDTODEVICE refused here, device binder not exercised: {e:#}");
+            }
+            Err(e) => panic!("binding a mapped source failed: {e:#}"),
+        }
+    }
+
+    /// A reload that adds a mapped source to an IPv4 bond pins it to the bond's
+    /// IPv4 address, even when the answers list the AAAA record first.
+    #[tokio::test]
+    async fn reload_pin_dials_a_mapped_ipv4_source_at_the_bond_address() {
+        let (mut connections, mut conn_io) = pinned_bond().await;
+        let added: IpAddr = "::ffff:127.0.0.1".parse().unwrap();
+        let new_ips = [connections[0].local_ip, connections[1].local_ip, added];
+        let resolver = super::super::rehome::StubResolver::new(vec![Some(vec![
+            "[::1]:9999".parse().unwrap(),
+            "127.0.0.1:9999".parse().unwrap(),
+        ])]);
+
+        reload(&mut connections, &mut conn_io, &new_ips, &*resolver).await;
+
+        assert_eq!(connections.len(), 3);
+        assert_eq!(
+            remote_via(&connections, &conn_io, added),
+            Some(bond_remote())
+        );
+        assert_eq!(resolver.calls(), 0, "the bond has an IPv4 address already");
+    }
+
     /// The failure family matching prevents: an IPv4 socket cannot send to an
     /// IPv6 receiver address at all.
     #[cfg(target_os = "linux")]
