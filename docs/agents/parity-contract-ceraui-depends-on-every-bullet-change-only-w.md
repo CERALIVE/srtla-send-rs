@@ -107,15 +107,21 @@
   crash loop). An IPv4-mapped source (`::ffff:a.b.c.d`) counts as IPv4: it gets an IPv4
   socket bound to the plain address by both the source-IP and the device binder, and
   keeps its written form as identity and label (`src/net/socket.rs`,
-  `src/sender/connections.rs`).
-- **The local listener follows one SRT client session (upstream `c1327dc`).** Once an
-  encoder session is pinned, datagrams from another source port are dropped until a new
-  session starts; CeraUI's encoder sends from one socket. `--listen-addr` (upstream)
-  defaults to `::`, the fork's previous bind; CeraUI does not pass it.
-- **The control socket is created owner-only (0600)** and never replaces a path that is
-  not a socket (upstream `5ab397a`); a consumer connects as the sender's user. CeraUI
-  spawns the sender and connects as the same user. Subscriptions are capped (upstream
-  `aab1f0c`), see `docs/CONTROL_PROTOCOL.md`.
+  `src/sender/connections.rs`). A host callback binder still receives the written
+  address and must normalise it itself if it binds an address.
+- **The local listener is pinned to one encoder source (upstream `c1327dc`).** The pin
+  is the full source address and port. Datagrams from any other source are dropped,
+  including the same encoder after a port change mid-stream; another source takes the
+  pin over only with an SRT caller induction after the pinned source has been silent for
+  at least 1000 ms (`src/sender/client_pin.rs`). A new session resets the sender's ACK
+  state (upstream `fdded82`). CeraUI's encoder sends from one socket. `--listen-addr`
+  (upstream) defaults to `::`, the fork's previous bind; CeraUI does not pass it.
+- **The control socket is chmodded to 0600 right after bind** and never replaces a path
+  that is not a socket (upstream `5ab397a`); a consumer connects as the sender's user,
+  and the socket belongs in a private directory (`docs/CONTROL_PROTOCOL.md`). CeraUI
+  spawns the sender and connects as the same user. Request lines are capped at 64 KiB,
+  subscriptions at 64, and a connection can only unsubscribe its own ids (upstream
+  `4734f01`, `aab1f0c`, `915b309`).
 - **IPs-file lines may carry an optional upstream weight, `<ip> <weight>`** (integer
   1..10, used in classic mode only). CeraUI's bare-IP lines read as weight 1. One shared
   parser (`parse_ip_line`, `src/sender/reload.rs`) serves startup, `SIGHUP`, `--dry-run`

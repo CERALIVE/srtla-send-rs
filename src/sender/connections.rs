@@ -969,16 +969,15 @@ mod tests {
     }
 
     /// A reload that adds a mapped source to an IPv4 bond pins it to the bond's
-    /// IPv4 address, even when the answers list the AAAA record first.
+    /// IPv4 address without a lookup: the bond already has an address in that
+    /// family. Choosing the IPv4 answer from an AAAA-first list is a separate
+    /// check, in `a_mapped_ipv4_source_dials_the_ipv4_answer`.
     #[tokio::test]
     async fn reload_pin_dials_a_mapped_ipv4_source_at_the_bond_address() {
         let (mut connections, mut conn_io) = pinned_bond().await;
         let added: IpAddr = "::ffff:127.0.0.1".parse().unwrap();
         let new_ips = [connections[0].local_ip, connections[1].local_ip, added];
-        let resolver = super::super::rehome::StubResolver::new(vec![Some(vec![
-            "[::1]:9999".parse().unwrap(),
-            "127.0.0.1:9999".parse().unwrap(),
-        ])]);
+        let resolver = super::super::rehome::StubResolver::new(vec![]);
 
         reload(&mut connections, &mut conn_io, &new_ips, &*resolver).await;
 

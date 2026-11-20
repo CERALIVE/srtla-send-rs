@@ -218,8 +218,9 @@ IPv4 receiver. Upstream's per-family selection matched the written family, so su
 source was skipped against an A-only receiver and dialed an unreachable AAAA record
 against a dual-stack one. The follow-up commit canonicalises the source for the socket
 family, the answer match and the bind address in both the source-IP and the device
-binder, with tests for startup, a pinned reload with the AAAA answer first, a rebuild,
-the bound family and delivery to an IPv4-only receiver. The source-IP part is proposed
+binder. Separate tests check: picking the IPv4 answer from an AAAA-first list and a
+rebuild; a pinned reload that adds the mapped source with no lookup; the bound family and
+delivery to an IPv4-only receiver; the device binder on `lo` where the kernel allows it. The source-IP part is proposed
 upstream; the device binder is the fork's.
 
 ## Follow-ups
