@@ -181,10 +181,14 @@ On the pinned toolchain: `cargo fmt --all -- --check`,
 `cargo clippy --workspace --all-targets --all-features -- -D warnings` and
 `cargo test --workspace --all-features` pass, except the two Linux `device_binding`
 flush tests, which need a send from `[::1]` to be refused and fail the same way on
-unchanged `main` on the merge host. The Loom lane builds and passes. The `tests/netns_*`
-targets self-skipped (no `srtla_rec` on the host), so the privileged topology is
-not proven by this run. `cargo audit` and `cargo deny` were not installed on the merge
-host.
+unchanged `main` on the merge host. The Loom lane builds and passes. `cargo audit` and
+`cargo deny` were not installed on the merge host.
+
+The privileged topology ran separately against a real irlserver `srtla_rec` built at
+`877dc16` (the commit upstream's CI pins), with `NETNS_REQUIRED=1` so nothing could
+skip: `netns_basic` 2, `netns_failure` 2, `netns_impairment` 3, `netns_scenario` 2,
+`netns_stall_gate` 1, `netns_twin` 8 and `netns_wire_loss` 4, 22 passed and none failed.
+That covers the stall-gate, wire-loss and twin-modem fixtures this merge changed.
 
 ## Open decision: upstream co-author trailers
 
@@ -196,8 +200,6 @@ Every commit the fork authors carries none.
 
 ## Follow-ups
 
-- Run `scripts/netns_test_gate.sh` on a host with `srtla_rec` before release; the
-  stall-gate and wire-loss fixtures changed in this merge.
 - Upstream `201e948` adds three pure pointer tests in `src/net/batch_recv.rs`
   (`pointers_follow_the_buffer_after_a_move_out_of_the_box`,
   `pointers_follow_both_buffers_after_a_swap`, `forged_packet_reads_correctly_after_a_move`);
