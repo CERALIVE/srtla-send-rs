@@ -97,6 +97,25 @@
   re-handshake) and rebuilds the pool in file order. A reload resolving to zero valid
   source IPs is refused with a specific log and the stream keeps running on the
   existing links (`src/sender/reload.rs`).
+- **Receiver address per family (upstream `5a9ae03`, `208fb98`, `46d3c99`).** The
+  receiver name is looked up once for the bond, and each uplink dials the first answer in
+  its own address family; an uplink whose family the answers lack is not dialed. A reload
+  pins new uplinks to the bond's current address in their family and looks up only a
+  family the bond has no address in. A re-home whose answer lacks a family drops that
+  family's uplinks until the next reload, and an answer no uplink can reach is refused.
+  A failed lookup at startup dials nothing and waits for `SIGHUP` (fork behaviour, no
+  crash loop). An IPv4-mapped source (`::ffff:a.b.c.d`) counts as IPv4: it gets an IPv4
+  socket bound to the plain address by both the source-IP and the device binder, and
+  keeps its written form as identity and label (`src/net/socket.rs`,
+  `src/sender/connections.rs`).
+- **The local listener follows one SRT client session (upstream `c1327dc`).** Once an
+  encoder session is pinned, datagrams from another source port are dropped until a new
+  session starts; CeraUI's encoder sends from one socket. `--listen-addr` (upstream)
+  defaults to `::`, the fork's previous bind; CeraUI does not pass it.
+- **The control socket is created owner-only (0600)** and never replaces a path that is
+  not a socket (upstream `5ab397a`); a consumer connects as the sender's user. CeraUI
+  spawns the sender and connects as the same user. Subscriptions are capped (upstream
+  `aab1f0c`), see `docs/CONTROL_PROTOCOL.md`.
 - **IPs-file lines may carry an optional upstream weight, `<ip> <weight>`** (integer
   1..10, used in classic mode only). CeraUI's bare-IP lines read as weight 1. One shared
   parser (`parse_ip_line`, `src/sender/reload.rs`) serves startup, `SIGHUP`, `--dry-run`

@@ -82,6 +82,7 @@ Five Miri filters, cross-channel/OS lanes, privileged netns prerequisites, stall
 - --bind-map stays optional; IP-list bytes stay unchanged; degraded reload retains the last valid mapped pool.
 - Stable identity is link_id, not IP or (ip, iface); mapped sockets bind both interface and source IP.
 - Never install policy routes or silently source-filter upstream's unconnected uplink sockets.
+- Each uplink dials the receiver answer in its own family (an IPv4-mapped source is IPv4, in both binders); reloads pin to the bond's address per family; one SRT client session is pinned at a time; the control socket is owner-only. Details: parity contract.
 - Bind the local listener before reading the IP list or dialing uplinks; empty startup waits for SIGHUP, never crash-loops.
 - Refuse zero-valid-IP reload while keeping live links; clean SIGTERM/SIGINT exits 0 within the device's 10 s window.
 - Control frames are padded to at least 32 bytes; DATA is never padded.

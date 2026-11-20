@@ -190,13 +190,37 @@ skip: `netns_basic` 2, `netns_failure` 2, `netns_impairment` 3, `netns_scenario`
 `netns_stall_gate` 1, `netns_twin` 8 and `netns_wire_loss` 4, 22 passed and none failed.
 That covers the stall-gate, wire-loss and twin-modem fixtures this merge changed.
 
-## Open decision: upstream co-author trailers
+Further checks on the merge plus the compatibility fix below:
+
+- Miri, `cargo miri test --lib --no-default-features --features test-internals <filter>`
+  on the pinned nightly: the lane's five filters and upstream `201e948`'s three new
+  pointer tests (`pointers_follow_the_buffer_after_a_move_out_of_the_box`,
+  `pointers_follow_both_buffers_after_a_swap`, `forged_packet_reads_correctly_after_a_move`)
+  all pass. The CI lane still runs exactly the five filters its contract test pins;
+  adding the three is a separate CI change.
+- `cargo deny check advisories sources bans`: ok, including the advisory ignore upstream
+  dropped from `deny.toml`. `licenses` fails the same way on unchanged `main` and is not
+  part of this repository's gate. `cargo audit` was not run.
+- Not run: the release and platform build matrix.
+
+## Upstream co-author trailers
 
 Upstream commits `4ba1d31` and `87c0304` carry co-author trailers that upstream added.
-A merge imports them verbatim, because rewriting them would change upstream SHAs and
-break the merge base. The previous sync recorded the owner's approval of the same
-exception for its range; this range needs that approval again before it merges.
-Every commit the fork authors carries none.
+The merge keeps them verbatim, as the previous sync did for its range, because
+rewriting them would change upstream SHAs and break the merge base. Every commit the
+fork authors carries none.
+
+## Compatibility fix on top of the merge
+
+Before this sync an IPv4-mapped IPv6 source (`::ffff:a.b.c.d`) dialed the first
+receiver answer and worked, because a dual-stack socket bound to it can send to an
+IPv4 receiver. Upstream's per-family selection matched the written family, so such a
+source was skipped against an A-only receiver and dialed an unreachable AAAA record
+against a dual-stack one. The follow-up commit canonicalises the source for the socket
+family, the answer match and the bind address in both the source-IP and the device
+binder, with tests for startup, a pinned reload with the AAAA answer first, a rebuild,
+the bound family and delivery to an IPv4-only receiver. The source-IP part is proposed
+upstream; the device binder is the fork's.
 
 ## Follow-ups
 
@@ -206,8 +230,7 @@ Every commit the fork authors carries none.
   the fork Miri lane still runs the original five.
 - Upstream's CI netns lane against `srtla_rec` (`52ac081`, `9411b7c`) is not adopted;
   the fork has no privileged CI lane.
-- `select_remote_for_source` compares families without canonicalising an IPv4-mapped
-  IPv6 source (`::ffff:a.b.c.d`). Such a source creates an IPv6 socket and dials only
-  IPv6 receiver addresses.
+- Add upstream `201e948`'s three pointer tests to the Miri lane and its contract test.
+- Run `cargo audit` and the release/platform matrix in CI.
 - A re-home whose answer lacks a family drops that family's uplinks from the bond
   (upstream `46d3c99` and `5a9ae03`); they return on the next IP-list reload.
