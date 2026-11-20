@@ -178,7 +178,7 @@ Everything in this section is CERALIVE's addition on top of upstream. It exists 
 
 ### Version and upstream sync
 
-The fork is based on upstream `df0b3938791ff24eced4aed8b29e3d49d0efb639` (v4.0.1). The last-merged upstream commit is `9e63d8f` (the 2026-11 sync, recorded in [`docs/notes/upstream-sync-2026-11.md`](docs/notes/upstream-sync-2026-11.md)). It ships as **`4.2.0`**. The version follows upstream's semver line, not CalVer, so a CERALIVE release stays traceable to the upstream release it builds on. Upstream merges are manual and gated: they land in a dedicated PR, run the full gate on the pinned toolchain, and must not regress the contract below. There is no automatic sync. The upstream remote is added only for the duration of a merge and removed before the PR is opened.
+The fork is based on upstream `df0b3938791ff24eced4aed8b29e3d49d0efb639` (v4.0.1). The last-merged upstream commit is `8db546c` (the second 2026-11 sync, recorded in [`docs/notes/upstream-sync-2026-11-8db546c.md`](docs/notes/upstream-sync-2026-11-8db546c.md); the first is [`docs/notes/upstream-sync-2026-11.md`](docs/notes/upstream-sync-2026-11.md)). It ships as **`4.2.0`**. The version follows upstream's semver line, not CalVer, so a CERALIVE release stays traceable to the upstream release it builds on. Upstream merges are manual and gated: they land in a dedicated PR, run the full gate on the pinned toolchain, and must not regress the contract below. There is no automatic sync. The upstream remote is added only for the duration of a merge and removed before the PR is opened.
 
 ### Toolchain
 
@@ -253,9 +253,9 @@ Two workflows, both on the pinned nightly:
 The package is **`srtla`**, the binary installs at `/usr/bin/srtla_send`, and the artifact is named `srtla_<version>_<arch>.deb` (`srtla_4.2.0_arm64.deb`, `srtla_4.2.0_amd64.deb`). `ci/build-deb.sh` is the single source of truth for that metadata and re-runs the device image builder's fetch glob against the real filename as a self-test. A release tag must be `v<version>` with the version taken from `Cargo.toml`.
 
 Privileged network-namespace tests (`tests/netns_*.rs`, including the duplicate-IP twin-modem scenarios in `tests/netns_twin.rs`) self-skip on ordinary runners and are run locally through `scripts/netns_test_gate.sh`.
-The stall-latch fixture fix reduced the flake, but `silence pull engaged` can still rarely fail when the dead link's backlog stays below `--stall-min-in-flight` (32); pinning and backlog preconditions remain follow-ups.
-ACKs for retransmitted sequences and duplicate probes retain delivery/accounting effects but do not sample RTT, because a sequence ACK cannot identify which copy arrived.
-The wire-loss fixture holds the real SRT caller at 4 Mbps below either 6 Mbps path, preserving its original per-link and CC thresholds.
+The stall-gate fixture lowers `--stall-min-in-flight` to 8 and waits for both links to leave Warming, so the silence pull no longer depends on the dead link reaching the default 32-packet backlog.
+ACKs for retransmitted sequences retain delivery/accounting effects but do not sample RTT, because a sequence ACK cannot identify which copy arrived; a probe samples RTT only when its link has sent that sequence once.
+The wire-loss fixture holds the real SRT caller at 4 Mbps below either 6 Mbps path; each link must clear both its original absolute floor and a share of the bond.
 
 ### License
 
