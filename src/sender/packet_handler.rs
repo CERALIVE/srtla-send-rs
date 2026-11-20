@@ -11,7 +11,9 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tracing::{debug, info, trace, warn};
 
 use super::client_dedup::ClientDedup;
+use super::client_pin::{ClientPin, ClientVerdict};
 use super::connections::recover_connection;
+use super::no_link_log::{NoLinkLog, log_event};
 use super::sequence::SequenceTracker;
 use super::uplink::{ConnIo, ConnIoMap, UplinkPacket};
 use crate::config::{ConfigSnapshot, DynamicConfig};
@@ -19,35 +21,70 @@ use crate::config::{ConfigSnapshot, DynamicConfig};
 /// Type alias for instant ACK forwarding: (client_addr, packet_data)
 pub type InstantForwarder = UnboundedSender<(SocketAddr, SmallVec<u8, 64>)>;
 
-/// Attribute a NAK to the uplink that sent the lost packet and shrink its window.
+/// Attribute a NAK to the uplink that sent the packet and hand it to that link.
 ///
-/// Prefers the O(1) sequence-tracker mapping (the link that actually sent `nak`);
-/// once that link is found we never fall through, so a duplicate NAK for an
-/// already-cleared sequence can't be re-counted against a different link. Only
-/// when the tracker has no record do we fall back to the first link that still
-/// recognizes the sequence in its own packet log. Returns the index of the link
-/// that counted the NAK, or `None` if none did. Production ignores the return;
-/// it exists so the attribution path is unit-testable directly instead of mirrored.
+/// Classic mode charges the NAK to the link's window at once. Enhanced mode
+/// parks a first send until that link's own SRTLA ACKs show whether the packet
+/// was lost or only reordered, and a NAK for a resend only clears the entry
+/// because it repeats a loss already reported (see
+/// [`SrtlaConnection::handle_nak`]).
+///
+/// Prefers the O(1) sequence-tracker mapping (the link that actually sent
+/// `nak`). Once that link is found we never fall through, so a duplicate NAK
+/// for an already-cleared sequence can't be attributed to a different link.
+/// Only when the tracker has no record do we fall back to the first link that
+/// still recognizes the sequence in its own packet log. Returns the index of
+/// the link that took the NAK, or `None` if none did. Production ignores the
+/// return. It exists so the attribution path is unit-testable directly instead
+/// of mirrored.
 pub(crate) fn attribute_nak(
     connections: &mut [SrtlaConnection],
     seq_tracker: &SequenceTracker,
     nak: u32,
+    classic: bool,
     current_time_ms: u64,
 ) -> Option<usize> {
     if let Some(conn_id) = seq_tracker.get(nak, current_time_ms)
         && let Some(pos) = connections.iter().position(|c| c.conn_id == conn_id)
     {
-        return connections[pos]
-            .handle_nak(nak as i32, current_time_ms)
-            .then_some(pos);
+        let conn = &mut connections[pos];
+        let logged = conn.logged_send(nak as i32);
+        let held = conn.handle_nak(nak as i32, classic, current_time_ms);
+        if held {
+            log_attributed_nak(conn, nak, logged, current_time_ms, true);
+        }
+        return held.then_some(pos);
     }
 
     for (i, conn) in connections.iter_mut().enumerate() {
-        if conn.handle_nak(nak as i32, current_time_ms) {
+        let logged = conn.logged_send(nak as i32);
+        if conn.handle_nak(nak as i32, classic, current_time_ms) {
+            log_attributed_nak(conn, nak, logged, current_time_ms, false);
             return Some(i);
         }
     }
     None
+}
+
+/// A NAK for a packet younger than the link's RTT cannot be a loss the
+/// receiver had time to detect and report, so `age_ms` next to `rtt_ms`
+/// separates reorder NAKs from real loss.
+fn log_attributed_nak(
+    conn: &SrtlaConnection,
+    nak: u32,
+    logged: Option<Option<u64>>,
+    current_time_ms: u64,
+    from_tracker: bool,
+) {
+    debug!(
+        link = %conn.label,
+        seq = nak,
+        age_ms = ?logged.flatten().map(|sent| current_time_ms.saturating_sub(sent)),
+        rtt_ms = conn.get_smooth_rtt_ms() as u64,
+        resend = logged == Some(None),
+        via = if from_tracker { "tracker" } else { "scan" },
+        "nak attributed"
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -83,10 +120,13 @@ pub async fn process_connection_events(
         // unique copy may take an RTT sample from it. The tracker never
         // records duplicate probes, so a probing link resolves to `None` here
         // and keeps its estimator free of round trips earned by the link that
-        // actually delivered.
+        // actually delivered. The receiver sends each SRT ACK down every
+        // uplink, and only the first copy advances the cumulative state. A
+        // copy timed off another link's downlink measures that downlink, not
+        // the owner's, so the owner samples only from a copy on its own link.
         let owner = seq_tracker.get(last_acked as u32, current_time_ms);
-        for c in connections.iter_mut() {
-            let owns = owner == Some(c.conn_id);
+        for (i, c) in connections.iter_mut().enumerate() {
+            let owns = owner == Some(c.conn_id) && i == idx;
             c.handle_srt_ack(last_acked, current_time_ms, owns);
         }
     }
@@ -99,7 +139,9 @@ pub async fn process_connection_events(
         // link's ACK stamp delivery proof on the gated link — falsely warming
         // its rejoin dwell. The fallback scan is kept for ACKs whose owner
         // can't be resolved from the arrival link (e.g. after a reconnect
-        // cleared its log).
+        // cleared its log), but it is bookkeeping only: an ACK that arrived on
+        // another link proves that link, so the owner gets no delivery proof,
+        // RTT sample or window growth from it (`handle_srtla_ack_foreign`).
         let found_on_arrival =
             connections[idx].handle_srtla_ack_specific(*srtla_ack as i32, classic, current_time_ms);
         if !found_on_arrival {
@@ -107,7 +149,7 @@ pub async fn process_connection_events(
                 if i == idx {
                     continue;
                 }
-                if c.handle_srtla_ack_specific(*srtla_ack as i32, classic, current_time_ms) {
+                if c.handle_srtla_ack_foreign(*srtla_ack as i32) {
                     break;
                 }
             }
@@ -118,7 +160,7 @@ pub async fn process_connection_events(
     }
 
     for nak in incoming.nak_numbers.iter() {
-        attribute_nak(connections, seq_tracker, *nak, current_time_ms);
+        attribute_nak(connections, seq_tracker, *nak, classic, current_time_ms);
     }
 
     if let Some(client) = last_client_addr {
@@ -150,7 +192,6 @@ pub async fn handle_uplink_packet(
     if let Some(idx) = connections.iter().position(|c| c.conn_id == packet.conn_id) {
         match super::uplink_recv::process_uplink_packet(
             &mut connections[idx],
-            idx,
             reg,
             local_listener,
             instant_tx,
@@ -280,15 +321,38 @@ fn select_pre_registration_connection(
         .map(|(i, _)| i)
 }
 
+/// Reset every link's cumulative ACK state when the encoder opens a new SRT
+/// session. Returns `true` when `isn` differs from the last session seen,
+/// which is when the caller logs. The encoder resends its induction about
+/// every 250 ms until answered, so the same ISN arrives several times.
+pub(crate) fn note_srt_session_start(
+    isn: u32,
+    connections: &mut [SrtlaConnection],
+    last_session_isn: &mut Option<u32>,
+) -> bool {
+    // A resent induction carries no data, so repeating the reset is harmless.
+    for conn in connections.iter_mut() {
+        conn.reset_srt_session();
+    }
+    if *last_session_isn == Some(isn) {
+        return false;
+    }
+    *last_session_isn = Some(isn);
+    info!(
+        "encoder started a new SRT session (isn {isn}), resetting ACK state on {} links",
+        connections.len()
+    );
+    true
+}
+
 /// Handle incoming SRT packet
 ///
 /// Uses a pre-cached `ConfigSnapshot` to avoid atomic loads per packet.
 /// The caller should create a snapshot once per select iteration for optimal performance.
 ///
-/// When a keyframe burst is detected (runs of consecutive max-MTU 1316-byte data
-/// packets), the scheduler overrides normal selection and routes to the
-/// highest-quality link. This ensures I-frame data — which is critical for
-/// decoder recovery — travels over the most reliable path.
+/// While the encoder's priority-sidecar window is open, or when the packet is
+/// an SRT retransmit, the best-path override routes it to the highest-quality
+/// link (see the comment at the override below).
 #[allow(clippy::too_many_arguments)]
 pub async fn handle_srt_packet(
     res: Result<(usize, SocketAddr), std::io::Error>,
@@ -297,7 +361,9 @@ pub async fn handle_srt_packet(
     conn_io: &mut ConnIoMap,
     last_selected_idx: &mut Option<usize>,
     seq_tracker: &mut SequenceTracker,
-    last_client_addr: &mut Option<SocketAddr>,
+    client_pin: &mut ClientPin,
+    no_link_log: &mut NoLinkLog,
+    last_session_isn: &mut Option<u32>,
     registration_complete: bool,
     config_snap: &ConfigSnapshot,
     critical_window: &srtla_core::priority::CriticalWindow,
@@ -311,6 +377,32 @@ pub async fn handle_srt_packet(
             let packet_time_ms = srtla_core::utils::now_ms();
 
             let pkt = &recv_buf[..n];
+            let session_isn = srtla_protocol::parse_srt_session_start(pkt);
+            let previous = client_pin.addr();
+            match client_pin.admit(src, session_isn.is_some(), packet_time_ms) {
+                ClientVerdict::Drop => {
+                    if let Some(dropped) = client_pin.should_log_drop(packet_time_ms) {
+                        warn!(
+                            pinned = ?previous,
+                            %src,
+                            dropped,
+                            "dropping SRT packets from a source other than the pinned client"
+                        );
+                    }
+                    return;
+                }
+                ClientVerdict::Accept { repinned: true } => {
+                    info!(
+                        previous = ?previous,
+                        new = %src,
+                        "SRT client opened a new session from a new source; following it"
+                    );
+                }
+                ClientVerdict::Accept { repinned: false } => {}
+            }
+            if let Some(isn) = session_isn {
+                note_srt_session_start(isn, connections, last_session_isn);
+            }
             let seq = srtla_protocol::get_srt_sequence_number(pkt);
             if !registration_complete {
                 let sel_idx = select_pre_registration_connection(
@@ -331,7 +423,6 @@ pub async fn handle_srt_packet(
                     )
                     .await;
                 }
-                *last_client_addr = Some(src);
                 return;
             }
 
@@ -354,12 +445,13 @@ pub async fn handle_srt_packet(
             //
             // Only data packets have seq != None (control packets have MSB set).
             //
-            // The override is enhanced-only: classic mode never consults the
-            // quality cache, which only enhanced selection refreshes (and which
-            // a runtime switch to classic leaves stale). In enhanced mode
-            // `select_best_quality_idx` still declines (None) when every
-            // eligible link is equally good, so the override only fires when
-            // one path is actually better; otherwise these packets are
+            // The override runs only while quality scoring is active. Only
+            // enhanced selection with quality scoring on refreshes the quality
+            // cache, so in classic mode and in enhanced mode with quality off
+            // the multipliers are defaults or frozen leftovers. With scoring
+            // active, `select_best_quality_idx` still declines (None) when
+            // every eligible link is equally good, so the override only fires
+            // when one path is actually better. Otherwise these packets are
             // scheduled like any other (window / in-flight, times the link
             // weight).
             if seq.is_some()
@@ -368,7 +460,7 @@ pub async fn handle_srt_packet(
                 && let Some(best_idx) = srtla_core::priority::select_best_path_override_idx(
                     connections,
                     packet_time_ms,
-                    config_snap.mode,
+                    config_snap.effective_quality_enabled(),
                 )
                 && sel_idx != Some(best_idx)
             {
@@ -381,6 +473,9 @@ pub async fn handle_srt_packet(
             }
 
             if let Some(sel_idx) = sel_idx {
+                if let Some(event) = no_link_log.on_forwarded(packet_time_ms) {
+                    log_event(event, src);
+                }
                 forward_via_connection(
                     sel_idx,
                     pkt,
@@ -404,10 +499,9 @@ pub async fn handle_srt_packet(
                     )
                     .await;
                 }
-            } else {
-                warn!("no available connection to forward packet from {}", src);
+            } else if let Some(event) = no_link_log.on_dropped(packet_time_ms) {
+                log_event(event, src);
             }
-            *last_client_addr = Some(src);
         }
         Err(e) => warn!("error reading local SRT: {}", e),
     }
@@ -432,9 +526,10 @@ pub async fn forward_via_connection(
             if prev_idx < connections.len() {
                 // Deliberately does not flush the previous link's batch. Each
                 // connection owns its BatchSender and drains it with a single
-                // `sendmmsg` on its own size threshold or 15ms timer, so
-                // interleaved routing just fills several per-link batches
-                // concurrently instead of one serially — no syscall is lost.
+                // `sendmmsg` on its own size threshold, on the 15ms timer, or
+                // when another link fills its batch (the ordering flush below).
+                // Interleaved routing therefore fills several per-link batches
+                // concurrently instead of one serially, and no syscall is lost.
                 //
                 // Flushing here emitted a one-packet batch on every switch,
                 // which made per-packet scheduling expensive and is what the
@@ -470,10 +565,27 @@ pub async fn forward_via_connection(
         seq_tracker.insert(s, conn_id, packet_time_ms);
     }
 
-    // Flush if batch threshold reached
-    if needs_flush && let Some(io) = conn_io.get_mut(&conn_id) {
-        let conn = &mut connections[sel_idx];
-        flush_connection(conn, io, seq_tracker, "batch flush").await;
+    if needs_flush {
+        // Every packet queued on another link was routed before the one that
+        // filled this batch, so it carries an earlier sequence. Left waiting for
+        // the 15ms timer, it reaches the receiver behind this batch, which
+        // reports it lost and charges that link for a reorder. Draining those
+        // queues first keeps the encoder's order on the wire. This runs only on
+        // the size threshold, so it does not bring back the one-packet batches
+        // a flush on every link switch would emit.
+        for (i, conn) in connections.iter_mut().enumerate() {
+            if i == sel_idx || !conn.has_queued_packets() {
+                continue;
+            }
+            if let Some(io) = conn_io.get_mut(&conn.conn_id) {
+                flush_connection(conn, io, seq_tracker, "ordering flush").await;
+            }
+        }
+
+        if let Some(io) = conn_io.get_mut(&conn_id) {
+            let conn = &mut connections[sel_idx];
+            flush_connection(conn, io, seq_tracker, "batch flush").await;
+        }
     }
 }
 
@@ -487,9 +599,9 @@ pub async fn forward_via_connection(
 /// *also* queued on each held-out link. The copy reuses the original SRT
 /// sequence number: the SRT receiver dedups it, so a lost or late probe can
 /// never stall the receiver buffer, while a delivered one earns the link an
-/// SRTLA ACK on its own socket — the sustained delivery proof the rejoin
-/// dwell requires. Probe ACKs do not sample RTT; held-out links get the RTT
-/// used by recovery from keepalive echoes.
+/// SRTLA ACK on its own socket — both the sustained delivery proof the rejoin
+/// dwell requires and (since the ACK carries a round trip) the RTT sample the
+/// recovery decision reads.
 ///
 /// Covers both reasons a link is held out: the stall gate, and the quality
 /// exclusion for a link that is *late* rather than merely under-used. The
@@ -844,5 +956,175 @@ mod tests {
         assert!(connections[0].connected);
         assert!(connections[0].last_sent.is_some());
         assert_eq!(seq_tracker.get(7, now), Some(conn_id));
+    }
+
+    /// Whichever link carries a retransmit takes over the sequence in the
+    /// tracker, so later NAKs for it resolve to that link. The retransmit's
+    /// own packet log entry only appears at batch flush, which leaves a gap in
+    /// which a NAK resolves to the new link but finds nothing to charge. This
+    /// does not exercise the best-path override that picks the link.
+    #[tokio::test]
+    async fn retransmit_link_switch_moves_tracker_ownership() {
+        let mut connections = crate::test_helpers::create_test_connections(2).await;
+        let mut conn_io = crate::test_helpers::create_test_conn_io_map(&connections);
+        let mut seq_tracker = SequenceTracker::new();
+        let mut last_selected_idx = None;
+        let base = srtla_core::utils::now_ms();
+        let seq: u32 = 901;
+
+        let mut original = [0u8; 24];
+        original[..4].copy_from_slice(&seq.to_be_bytes());
+        original[16..].copy_from_slice(b"payload!");
+        let mut retransmit = original;
+        retransmit[4] |= 0x04;
+        assert!(!srtla_protocol::is_srt_data_retransmit(&original));
+        assert!(srtla_protocol::is_srt_data_retransmit(&retransmit));
+
+        forward_via_connection(
+            0,
+            &original,
+            Some(seq),
+            &mut connections,
+            &mut conn_io,
+            &mut last_selected_idx,
+            &mut seq_tracker,
+            base,
+        )
+        .await;
+        assert_eq!(seq_tracker.get(seq, base), Some(connections[0].conn_id));
+
+        forward_via_connection(
+            1,
+            &retransmit,
+            Some(seq),
+            &mut connections,
+            &mut conn_io,
+            &mut last_selected_idx,
+            &mut seq_tracker,
+            base + 40,
+        )
+        .await;
+        assert_eq!(
+            seq_tracker.get(seq, base + 60),
+            Some(connections[1].conn_id),
+            "the retransmit carrier overwrites the original owner"
+        );
+        assert_eq!(
+            connections[1].in_flight_packets, 0,
+            "the retransmit is only queued, not yet in link 1's packet log"
+        );
+
+        flush_all_batches(&mut connections, &mut conn_io, &mut seq_tracker).await;
+        assert_eq!(
+            connections[1].in_flight_packets, 1,
+            "the flush registers the retransmit on link 1"
+        );
+        assert_eq!(
+            seq_tracker.get(seq, base + 60),
+            Some(connections[1].conn_id)
+        );
+    }
+
+    fn data_packet(seq: u32) -> [u8; 24] {
+        let mut pkt = [0u8; 24];
+        pkt[..4].copy_from_slice(&seq.to_be_bytes());
+        pkt[16..].copy_from_slice(b"payload!");
+        pkt
+    }
+
+    /// A packet waiting on a quieter link was routed before the packets that
+    /// fill a busy link's batch. It must reach the wire when that batch does,
+    /// not on the 15ms timer, or the receiver sees a reorder hole.
+    #[tokio::test]
+    async fn full_batch_flushes_older_packets_on_other_links_first() {
+        let mut connections = crate::test_helpers::create_test_connections(2).await;
+        let mut conn_io = crate::test_helpers::create_test_conn_io_map(&connections);
+        let mut seq_tracker = SequenceTracker::new();
+        let mut last_selected_idx = None;
+        let base = srtla_core::utils::now_ms();
+
+        forward_via_connection(
+            1,
+            &data_packet(100),
+            Some(100),
+            &mut connections,
+            &mut conn_io,
+            &mut last_selected_idx,
+            &mut seq_tracker,
+            base,
+        )
+        .await;
+        assert!(connections[1].has_queued_packets());
+
+        let mut seq: u32 = 101;
+        loop {
+            assert!(
+                seq < 101 + 64,
+                "link 0 never filled a batch within 64 packets"
+            );
+            forward_via_connection(
+                0,
+                &data_packet(seq),
+                Some(seq),
+                &mut connections,
+                &mut conn_io,
+                &mut last_selected_idx,
+                &mut seq_tracker,
+                base + u64::from(seq - 100),
+            )
+            .await;
+            seq += 1;
+            if !connections[0].has_queued_packets() {
+                break;
+            }
+        }
+
+        assert!(
+            !connections[1].has_queued_packets(),
+            "the older packet on link 1 must go out with link 0's full batch"
+        );
+        assert!(
+            connections[1].connected,
+            "the ordering flush must not have failed on link 1's socket"
+        );
+        assert_eq!(
+            connections[1].in_flight_packets, 1,
+            "the flush registers the older packet on link 1"
+        );
+    }
+
+    /// Routing that alternates between links below the size threshold leaves
+    /// every batch queued for the timer. Flushing on the switch would emit one
+    /// packet batches again.
+    #[tokio::test]
+    async fn a_link_switch_below_the_threshold_does_not_flush() {
+        let mut connections = crate::test_helpers::create_test_connections(2).await;
+        let mut conn_io = crate::test_helpers::create_test_conn_io_map(&connections);
+        let mut seq_tracker = SequenceTracker::new();
+        let mut last_selected_idx = None;
+        let base = srtla_core::utils::now_ms();
+
+        for (offset, (idx, seq)) in [(1, 200u32), (0, 201)].into_iter().enumerate() {
+            forward_via_connection(
+                idx,
+                &data_packet(seq),
+                Some(seq),
+                &mut connections,
+                &mut conn_io,
+                &mut last_selected_idx,
+                &mut seq_tracker,
+                base + offset as u64,
+            )
+            .await;
+        }
+
+        for conn in &connections {
+            assert!(
+                conn.has_queued_packets(),
+                "{} flushed below its threshold",
+                conn.label
+            );
+            assert_eq!(conn.in_flight_packets, 0);
+        }
     }
 }

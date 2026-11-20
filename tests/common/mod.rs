@@ -9,7 +9,7 @@ use network_sim::{
 
 /// Bounded readiness gate replacing a fixed "sleep N seconds for registration".
 /// Returns once srtla_send's local SRT listener is up and every uplink has
-/// completed registration, so callers wait on observed state, not a timer.
+/// registered with the receiver, so callers wait on observed state, not a timer.
 pub fn wait_until_ready(stack: &SrtlaTestStack) {
     wait_for_udp_listener(
         &stack.topo.sender_ns,
@@ -22,15 +22,23 @@ pub fn wait_until_ready(stack: &SrtlaTestStack) {
         .expect("srtla_send uplinks registered with receiver");
 }
 
+/// Under `NETNS_REQUIRED=1` (the CI netns job) a missing dependency is a broken
+/// runner, not a reason to skip: fail loudly so the job cannot pass green with
+/// nothing run.
+pub fn skip_or_fail(reason: impl std::fmt::Display) -> bool {
+    if std::env::var_os("NETNS_REQUIRED").is_some_and(|v| v == "1") {
+        panic!("NETNS_REQUIRED=1 but a dependency is missing: {reason}");
+    }
+    eprintln!("Skipping: {reason}");
+    true
+}
+
 /// Check all integration test dependencies. Returns `true` if tests should
 /// be skipped (prints the reason to stderr). Use at the top of every test.
 pub fn skip_without_deps() -> bool {
     match check_integration_deps() {
         Ok(()) => false,
-        Err(reason) => {
-            eprintln!("Skipping: {reason}");
-            true
-        }
+        Err(reason) => skip_or_fail(reason),
     }
 }
 
@@ -38,21 +46,41 @@ pub fn skip_without_deps() -> bool {
 pub fn skip_without_impairment_deps() -> bool {
     match check_impairment_deps() {
         Ok(()) => false,
-        Err(reason) => {
-            eprintln!("Skipping: {reason}");
-            true
-        }
+        Err(reason) => skip_or_fail(reason),
     }
 }
 
-/// Build the srtla_send binary (debug mode). Call once before tests that
-/// need the binary. Panics if the build fails.
-pub fn build_srtla_send() {
-    let status = std::process::Command::new("cargo")
-        .args(["build", "--bin", "srtla_send"])
-        .status()
-        .expect("failed to run cargo build");
-    assert!(status.success(), "cargo build failed");
+/// Start the netns stack against the srtla_send binary cargo built for this
+/// test run.
+pub fn start_stack(
+    test_name: &str,
+    num_links: usize,
+    sender_extra_args: &[&str],
+) -> anyhow::Result<SrtlaTestStack> {
+    SrtlaTestStack::start(
+        std::path::Path::new(env!("CARGO_BIN_EXE_srtla_send")),
+        test_name,
+        num_links,
+        sender_extra_args,
+    )
+}
+
+/// Like [`start_stack`], with a sender `RUST_LOG` filter that keeps lifecycle
+/// evidence from being evicted by per-packet debug logs in the bounded output
+/// tail.
+pub fn start_stack_with_log_filter(
+    test_name: &str,
+    num_links: usize,
+    sender_extra_args: &[&str],
+    log_filter: &str,
+) -> anyhow::Result<SrtlaTestStack> {
+    SrtlaTestStack::start_with_log_filter(
+        std::path::Path::new(env!("CARGO_BIN_EXE_srtla_send")),
+        test_name,
+        num_links,
+        sender_extra_args,
+        log_filter,
+    )
 }
 
 /// Inject `count` UDP packets to srtla_send's local SRT port from within
@@ -66,31 +94,24 @@ pub fn inject_packets(stack: &SrtlaTestStack, count: usize) -> anyhow::Result<()
     )
 }
 
-/// Inject sequenced SRT DATA into the bond for `duration`, returning the next
-/// sequence so a later phase cannot reuse an already acknowledged packet.
-/// Synthetic DATA isolates the SRTLA guard from SRT retransmission feedback.
+/// Inject a steady stream of SRT DATA into srtla_send for `duration`. The
+/// injector sends from `ENCODER_SOURCE_PORT` with clock-based sequence numbers,
+/// so successive calls look like one encoder session and never reuse a
+/// sequence the receiver already acknowledged.
 #[allow(dead_code)]
 pub fn inject_stream(
     stack: &SrtlaTestStack,
-    first_seq: u32,
     packets_per_sec: u32,
     duration: Duration,
-) -> anyhow::Result<u32> {
-    let port = stack.sender_srt_port();
-    let seconds = duration.as_secs_f64();
-    let script = format!(
-        "import socket,time\ns=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)\nstart=time.\
-         monotonic(); i=0\nwhile time.monotonic()-start < {seconds}:\n\x20   \
-         data=({first_seq}+i).to_bytes(4,'big')+bytes(184)\n\x20   \
-         s.sendto(data,('127.0.0.1',{port}))\n\x20   i+=1\n\x20   \
-         delay=start+i/{packets_per_sec}-time.monotonic()\n\x20   if delay>0: \
-         time.sleep(delay)\ns.close()\nprint({first_seq}+i)"
-    );
-    let output = stack
-        .topo
-        .sender_ns
-        .exec_checked("python3", &["-c", &script])?;
-    Ok(String::from_utf8(output.stdout)?.trim().parse()?)
+) -> anyhow::Result<()> {
+    network_sim::inject_udp_stream(
+        &stack.topo.sender_ns,
+        "127.0.0.1",
+        stack.sender_srt_port(),
+        packets_per_sec,
+        network_sim::TS_PACKET_BYTES,
+        duration,
+    )
 }
 
 /// Collect and print all process output for debugging failed tests.

@@ -219,6 +219,8 @@ mod tests {
             &mut selection,
             &mut tracker,
             &binder,
+            &*crate::sender::StubResolver::new(vec![]),
+            &mut srtla_core::registration::SrtlaRegistrationManager::new(),
         ));
         assert_eq!((conns[0].link_weight, conns[1].link_weight), (10, 1));
 
@@ -232,6 +234,8 @@ mod tests {
             &mut selection,
             &mut tracker,
             &binder,
+            &*crate::sender::StubResolver::new(vec![]),
+            &mut srtla_core::registration::SrtlaRegistrationManager::new(),
         ));
         assert_eq!((conns[0].link_weight, conns[1].link_weight), (1, 1));
 
@@ -245,6 +249,8 @@ mod tests {
             &mut selection,
             &mut tracker,
             &binder,
+            &*crate::sender::StubResolver::new(vec![]),
+            &mut srtla_core::registration::SrtlaRegistrationManager::new(),
         ));
         assert_eq!((conns[0].link_weight, conns[1].link_weight), (1, 7));
 
@@ -258,6 +264,8 @@ mod tests {
             &mut selection,
             &mut tracker,
             &binder,
+            &*crate::sender::StubResolver::new(vec![]),
+            &mut srtla_core::registration::SrtlaRegistrationManager::new(),
         ));
         assert_eq!((conns[0].link_weight, conns[1].link_weight), (1, 1));
     }
@@ -307,8 +315,15 @@ mod tests {
         );
         let binder: std::sync::Arc<dyn UplinkBinder> = std::sync::Arc::new(SourceIpBinder);
         let mut io = ConnIoMap::new();
-        let mut conns =
-            create_connections_from_links(&initial, "127.0.0.1", 9999, &binder, &mut io).await;
+        let mut conns = create_connections_from_links(
+            &initial,
+            &[std::net::SocketAddr::from(([127, 0, 0, 1], 9999))],
+            "127.0.0.1",
+            9999,
+            &binder,
+            &mut io,
+        )
+        .await;
         assert_eq!(conns.len(), 2);
         assert_eq!((conns[0].link_weight, conns[1].link_weight), (10, 1));
         for conn in &mut conns {
@@ -336,6 +351,8 @@ mod tests {
             &mut selection,
             &mut tracker,
             &binder,
+            &*crate::sender::StubResolver::new(vec![]),
+            &mut srtla_core::registration::SrtlaRegistrationManager::new(),
         )
         .await;
 
@@ -408,8 +425,15 @@ mod tests {
         let receiver = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let port = receiver.local_addr().unwrap().port();
         let mut io = ConnIoMap::new();
-        let mut conns =
-            create_connections_from_links(&initial, "127.0.0.1", port, &binder, &mut io).await;
+        let mut conns = create_connections_from_links(
+            &initial,
+            &[std::net::SocketAddr::from(([127, 0, 0, 1], port))],
+            "127.0.0.1",
+            port,
+            &binder,
+            &mut io,
+        )
+        .await;
         assert_eq!(conns.len(), 2);
         for conn in &mut conns {
             conn.connected = true;
@@ -448,6 +472,8 @@ mod tests {
             &mut selection,
             &mut tracker,
             &binder,
+            &*crate::sender::StubResolver::new(vec![]),
+            &mut srtla_core::registration::SrtlaRegistrationManager::new(),
         )
         .await;
         assert_eq!(
@@ -473,6 +499,8 @@ mod tests {
             &mut selection,
             &mut tracker,
             &binder,
+            &*crate::sender::StubResolver::new(vec![]),
+            &mut srtla_core::registration::SrtlaRegistrationManager::new(),
         )
         .await;
 
@@ -526,6 +554,8 @@ mod tests {
             &mut None,
             &mut SequenceTracker::new(),
             &binder,
+            &*crate::sender::StubResolver::new(vec![]),
+            &mut srtla_core::registration::SrtlaRegistrationManager::new(),
         )
         .await;
         assert_eq!(conns.len(), 1, "the survivor must be claimed");

@@ -39,9 +39,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(loom)]
 use loom_sync::{Mutex, mpsc};
-use serde_json::{Value, json};
+use serde_json::Value;
 #[cfg(not(loom))]
 use tokio::sync::{Mutex, mpsc};
+
+/// Most subscriptions the hub holds at once. `publish` runs on the same loop
+/// that forwards every SRT packet and does work per subscriber, so this bounds
+/// what a local client can add to each tick.
+pub const MAX_SUBSCRIPTIONS: usize = 64;
 
 /// One registered subscription. The sender is the *connection's* push
 /// channel — all subscriptions multiplex over a single mpsc to the
@@ -70,17 +75,22 @@ impl SubscriptionHub {
     }
 
     /// Register a subscription. Returns the subscription id the client
-    /// should use to unsubscribe. Caller supplies their push channel;
+    /// should use to unsubscribe, or `None` when the hub already holds
+    /// [`MAX_SUBSCRIPTIONS`]. Caller supplies their push channel, and
     /// every published event on the topic is written to it.
     #[cfg(unix)]
-    pub async fn subscribe(&self, topic: &str, push_tx: mpsc::Sender<String>) -> String {
+    pub async fn subscribe(&self, topic: &str, push_tx: mpsc::Sender<String>) -> Option<String> {
+        let mut entries = self.entries.lock().await;
+        if entries.len() >= MAX_SUBSCRIPTIONS {
+            return None;
+        }
         let id = format!("sub-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
-        self.entries.lock().await.push(Entry {
+        entries.push(Entry {
             id: id.clone(),
             topic: topic.to_string(),
             sender: push_tx,
         });
-        id
+        Some(id)
     }
 
     /// Remove a subscription by id. Returns true if it was present.
@@ -100,22 +110,27 @@ impl SubscriptionHub {
         let mut to_prune = Vec::new();
         {
             let entries = self.entries.lock().await;
+            if !entries.iter().any(|e| e.topic == topic) {
+                return;
+            }
+            // The payload is the same for every subscriber, so it is
+            // serialized once and only the subscription id differs per line.
+            let Ok(data_json) = serde_json::to_string(&data) else {
+                return;
+            };
+            let Ok(method_json) = serde_json::to_string(&format!("{topic}.update")) else {
+                return;
+            };
             for entry in entries.iter() {
                 if entry.topic != topic {
                     continue;
                 }
-                let envelope = json!({
-                    "jsonrpc": "2.0",
-                    "method": format!("{topic}.update"),
-                    "params": {
-                        "subscription_id": entry.id,
-                        "data": data,
-                    },
-                });
-                let line = match serde_json::to_string(&envelope) {
-                    Ok(s) => s,
-                    Err(_) => continue,
+                let Ok(id_json) = serde_json::to_string(&entry.id) else {
+                    continue;
                 };
+                let line = format!(
+                    r#"{{"jsonrpc":"2.0","method":{method_json},"params":{{"subscription_id":{id_json},"data":{data_json}}}}}"#
+                );
                 match entry.sender.try_send(line) {
                     Ok(()) => {}
                     Err(mpsc::error::TrySendError::Full(_)) => {
@@ -281,13 +296,15 @@ pub mod loom_sync {
 // keep compiling on Windows.
 #[cfg(all(test, unix, not(loom)))]
 mod tests {
+    use serde_json::json;
+
     use super::*;
 
     #[tokio::test]
     async fn subscribe_publish_roundtrip() {
         let hub = SubscriptionHub::new();
         let (tx, mut rx) = mpsc::channel::<String>(8);
-        let id = hub.subscribe("stats", tx).await;
+        let id = hub.subscribe("stats", tx).await.unwrap();
         assert!(id.starts_with("sub-"));
 
         hub.publish("stats", json!({"active_links": 3})).await;
@@ -319,7 +336,7 @@ mod tests {
     async fn unsubscribe_removes_entry() {
         let hub = SubscriptionHub::new();
         let (tx, mut rx) = mpsc::channel::<String>(8);
-        let id = hub.subscribe("stats", tx).await;
+        let id = hub.subscribe("stats", tx).await.unwrap();
         assert!(hub.unsubscribe(&id).await);
         hub.publish("stats", json!({})).await;
         assert!(rx.try_recv().is_err());

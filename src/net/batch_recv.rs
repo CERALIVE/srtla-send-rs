@@ -30,9 +30,9 @@ mod unix_impl {
     use std::os::unix::io::{AsRawFd, RawFd};
     use std::task::{Context, Poll, ready};
 
-    use socket2::{SockAddr, Socket};
+    use socket2::{SockAddr, SockRef, Socket};
     use tokio::io::Interest;
-    use tokio::io::unix::AsyncFd;
+    use tokio::net::UdpSocket;
 
     use super::{BATCH_RECV_SIZE, BATCH_SEND_SIZE, MTU};
 
@@ -61,15 +61,15 @@ mod unix_impl {
 
     /// Async UDP socket with batch receive support via `recvmmsg`.
     ///
-    /// This wraps a `socket2::Socket` in tokio's `AsyncFd` for proper async
-    /// readability polling, then uses `recvmmsg` to receive multiple packets
-    /// in a single syscall.
+    /// Readiness comes from tokio's `UdpSocket`; the batch syscalls
+    /// (`recvmmsg`, `sendmmsg`) run inside its `try_io`, so a `WouldBlock`
+    /// clears readiness exactly as tokio's own I/O methods do.
     ///
     /// The socket is deliberately **not** connected: `peer` carries the receiver
     /// address explicitly on every send, and the receive path accepts datagrams
     /// from any source. See [`BatchUdpSocket::new`].
     pub struct BatchUdpSocket {
-        inner: AsyncFd<Socket>,
+        inner: UdpSocket,
         peer: SockAddr,
     }
 
@@ -87,17 +87,14 @@ mod unix_impl {
         /// behavior.
         pub fn new(socket: Socket, peer: SocketAddr) -> std::io::Result<Self> {
             Ok(Self {
-                // SAFETY: AsyncFd owns the Socket, so its fd stays open and unchanged for its lifetime, never closed or replaced elsewhere.
-                inner: unsafe {
-                    AsyncFd::register_with_interest(socket, Interest::READABLE | Interest::WRITABLE)
-                }?,
+                inner: UdpSocket::from_std(socket.into())?,
                 peer: peer.into(),
             })
         }
 
         /// Get the raw file descriptor.
         pub fn as_raw_fd(&self) -> RawFd {
-            self.inner.get_ref().as_raw_fd()
+            self.inner.as_raw_fd()
         }
 
         /// Poll for readability and receive multiple packets.
@@ -107,19 +104,22 @@ mod unix_impl {
             buffer: &mut RecvMmsgBuffer,
         ) -> Poll<std::io::Result<usize>> {
             loop {
-                let mut guard = ready!(self.inner.poll_read_ready(cx))?;
+                ready!(self.inner.poll_recv_ready(cx))?;
 
-                match buffer.recvmmsg(self.as_raw_fd()) {
+                let fd = self.as_raw_fd();
+                match self
+                    .inner
+                    .try_io(Interest::READABLE, || buffer.recvmmsg(fd))
+                {
                     Ok(count) => return Poll::Ready(Ok(count)),
                     Err(e) => match recv_retry_action(&e) {
                         // EINTR: re-issue without dropping readiness (the fd is
                         // still ready, so the next poll returns immediately). A
                         // signal — e.g. our own SIGHUP — must not kill the reader.
                         RecvAction::Retry => continue,
-                        RecvAction::WouldBlock => {
-                            guard.clear_ready();
-                            continue;
-                        }
+                        // `try_io` already cleared readiness, so the next poll
+                        // parks until the reactor reports the fd readable.
+                        RecvAction::WouldBlock => continue,
                         RecvAction::Hard => return Poll::Ready(Err(e)),
                     },
                 }
@@ -136,18 +136,11 @@ mod unix_impl {
 
         /// Send data to the peer asynchronously.
         pub async fn send(&self, buf: &[u8]) -> std::io::Result<usize> {
-            loop {
-                let mut guard = self.inner.ready(Interest::WRITABLE).await?;
-
-                match self.inner.get_ref().send_to(buf, &self.peer) {
-                    Ok(n) => return Ok(n),
-                    Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
-                        guard.clear_ready();
-                        continue;
-                    }
-                    Err(e) => return Err(e),
-                }
-            }
+            self.inner
+                .async_io(Interest::WRITABLE, || {
+                    SockRef::from(&self.inner).send_to(buf, &self.peer)
+                })
+                .await
         }
 
         /// Try to send data without blocking.
@@ -155,7 +148,9 @@ mod unix_impl {
         /// Returns WouldBlock if the socket is not ready.
         #[allow(dead_code)]
         pub fn try_send(&self, buf: &[u8]) -> std::io::Result<usize> {
-            self.inner.get_ref().send_to(buf, &self.peer)
+            self.inner.try_io(Interest::WRITABLE, || {
+                SockRef::from(&self.inner).send_to(buf, &self.peer)
+            })
         }
 
         /// Send several datagrams to the peer in one `sendmmsg` syscall.
@@ -169,19 +164,17 @@ mod unix_impl {
                 return Ok(0);
             }
             loop {
-                let mut guard = self.inner.ready(Interest::WRITABLE).await?;
-
-                match self.try_send_batch(bufs) {
-                    Ok(n) => return Ok(n),
-                    Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
-                        guard.clear_ready();
-                        continue;
-                    }
+                // `async_io` waits for writability and retries on `WouldBlock`.
+                match self
+                    .inner
+                    .async_io(Interest::WRITABLE, || self.try_send_batch(bufs))
+                    .await
+                {
                     // A signal can interrupt the syscall before any datagram is
                     // queued; that is not a send failure, so retry rather than
                     // tearing the link down.
                     Err(ref e) if e.kind() == ErrorKind::Interrupted => continue,
-                    Err(e) => return Err(e),
+                    result => return result,
                 }
             }
         }
@@ -238,29 +231,26 @@ mod unix_impl {
         /// Returns WouldBlock if no data is available.
         #[allow(dead_code)]
         pub fn try_recv(&self, buf: &mut [u8]) -> std::io::Result<usize> {
-            use std::mem::MaybeUninit;
-
-            // Safety: We're using MaybeUninit slice for the socket2 API,
-            // but the recv call will initialize the bytes it writes.
-            let buf_uninit: &mut [MaybeUninit<u8>] =
-                unsafe { &mut *(buf as *mut [u8] as *mut [MaybeUninit<u8>]) };
-            self.inner.get_ref().recv(buf_uninit)
+            self.inner.try_recv(buf)
         }
 
         /// Get a reference to the underlying socket.
         #[allow(dead_code)]
-        pub fn get_ref(&self) -> &Socket {
-            self.inner.get_ref()
+        pub fn get_ref(&self) -> &UdpSocket {
+            &self.inner
         }
     }
 
     impl AsRawFd for BatchUdpSocket {
         fn as_raw_fd(&self) -> RawFd {
-            self.inner.get_ref().as_raw_fd()
+            self.inner.as_raw_fd()
         }
     }
 
     /// Buffer for batch receiving multiple UDP packets via `recvmmsg`.
+    ///
+    /// The value may be moved freely, because the pointers the kernel uses
+    /// are rebuilt on every `recvmmsg` call.
     pub struct RecvMmsgBuffer {
         /// Storage for source addresses
         addr_storage: [libc::sockaddr_storage; BATCH_RECV_SIZE],
@@ -274,8 +264,9 @@ mod unix_impl {
         nrecv: u32,
     }
 
-    // Safety: All fields are either Copy types or raw pointers that point
-    // to data within this struct. The struct is self-contained.
+    // Safety: the struct holds raw pointers into its own fields and nothing
+    // else. `init` rewrites them before every syscall, so moving the value
+    // to another thread between calls is sound.
     unsafe impl Send for RecvMmsgBuffer {}
 
     impl RecvMmsgBuffer {
@@ -283,48 +274,32 @@ mod unix_impl {
         ///
         /// This allocates the buffer on the heap due to its large size (~50KB).
         pub fn new() -> Box<Self> {
-            // Safety: We're zeroing memory that will be properly initialized
-            // before use. The iov and mmsghdr pointers are set up below.
-            let mut ptr: Box<Self> = Box::new(unsafe { std::mem::zeroed() });
-
-            let buffers = ptr.buffers.as_mut_ptr();
-
-            // Set up IO vectors to point to packet buffers
-            ptr.iov.iter_mut().enumerate().for_each(|(index, iov)| {
-                let buffer = unsafe { &mut *buffers.add(index) };
-                *iov = libc::iovec {
-                    iov_base: buffer.as_mut_ptr() as *mut libc::c_void,
-                    iov_len: buffer.len(),
-                }
-            });
-
-            let addrs = ptr.addr_storage.as_mut_ptr();
-            let iov = ptr.iov.as_mut_ptr();
-
-            // Set up message headers
-            ptr.mmsghdr.iter_mut().enumerate().for_each(|(index, h)| {
-                *h = libc::mmsghdr {
-                    msg_hdr: libc::msghdr {
-                        msg_name: unsafe { addrs.add(index) as *mut libc::c_void },
-                        msg_namelen: SOCKADDR_STORAGE_LENGTH,
-                        msg_iov: unsafe { iov.add(index) },
-                        msg_iovlen: 1,
-                        msg_control: std::ptr::null_mut(),
-                        msg_controllen: 0,
-                        msg_flags: 0,
-                    },
-                    msg_len: 0,
-                }
-            });
-
-            ptr.nrecv = 0;
-            ptr
+            // Safety: every field is valid when zeroed (integers, byte arrays
+            // and null raw pointers). `init` points the headers at this value
+            // before each syscall, so the kernel never sees a null pointer.
+            Box::new(unsafe { std::mem::zeroed() })
         }
 
-        /// Reset the buffer for the next recvmmsg call.
+        /// Point every header at this buffer's current address and reset
+        /// `msg_namelen`. Runs before every syscall, because the value may
+        /// have moved since the last call.
         fn init(&mut self) {
-            self.mmsghdr.iter_mut().for_each(|h| {
+            let buffers = self.buffers.as_mut_ptr();
+
+            self.iov.iter_mut().enumerate().for_each(|(index, iov)| {
+                let buffer = unsafe { &mut *buffers.add(index) };
+                iov.iov_base = buffer.as_mut_ptr() as *mut libc::c_void;
+                iov.iov_len = buffer.len();
+            });
+
+            let addrs = self.addr_storage.as_mut_ptr();
+            let iov = self.iov.as_mut_ptr();
+
+            self.mmsghdr.iter_mut().enumerate().for_each(|(index, h)| {
+                h.msg_hdr.msg_name = unsafe { addrs.add(index) as *mut libc::c_void };
                 h.msg_hdr.msg_namelen = SOCKADDR_STORAGE_LENGTH;
+                h.msg_hdr.msg_iov = unsafe { iov.add(index) };
+                h.msg_hdr.msg_iovlen = 1;
             });
         }
 
@@ -382,6 +357,24 @@ mod unix_impl {
             self.mmsghdr[idx].msg_hdr.msg_namelen = SOCKADDR_STORAGE_LENGTH;
             self.mmsghdr[idx].msg_len = msg_len;
             self.nrecv = nrecv;
+        }
+
+        /// Test seam: whether every pointer `init` writes targets this value's
+        /// own fields at its current address. Compares addresses only and
+        /// dereferences nothing, so miri accepts it on stale pointers too.
+        #[cfg(test)]
+        pub fn test_pointers_target_self(&self) -> bool {
+            (0..BATCH_RECV_SIZE).all(|i| {
+                let hdr = &self.mmsghdr[i].msg_hdr;
+                self.iov[i].iov_base as *const u8 == self.buffers[i].as_ptr()
+                    && self.iov[i].iov_len == MTU
+                    && std::ptr::eq(hdr.msg_iov as *const libc::iovec, &self.iov[i])
+                    && hdr.msg_iovlen == 1
+                    && std::ptr::eq(
+                        hdr.msg_name as *const libc::sockaddr_storage,
+                        &self.addr_storage[i],
+                    )
+            })
         }
     }
 
@@ -448,12 +441,93 @@ mod unix_impl {
     mod tests {
         use std::io::{Error, ErrorKind};
         use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+        use std::time::Duration;
 
         use srtla_protocol::MTU;
 
         use super::{
-            RecvAction, RecvMmsgBuffer, recv_retry_action, sockaddr_storage_to_socket_addr,
+            BatchUdpSocket, RecvAction, RecvMmsgBuffer, recv_retry_action,
+            sockaddr_storage_to_socket_addr,
         };
+
+        fn loopback_socket() -> socket2::Socket {
+            let sock = socket2::Socket::new(
+                socket2::Domain::IPV4,
+                socket2::Type::DGRAM,
+                Some(socket2::Protocol::UDP),
+            )
+            .unwrap();
+            sock.set_nonblocking(true).unwrap();
+            sock.bind(&SocketAddr::from((Ipv4Addr::LOCALHOST, 0)).into())
+                .unwrap();
+            sock
+        }
+
+        fn local_addr(sock: &socket2::Socket) -> SocketAddr {
+            sock.local_addr().unwrap().as_socket().unwrap()
+        }
+
+        // The only test that drives the reactor readiness path end to end:
+        // `sendmmsg` and `send` out of one socket, `recvmmsg` into the other.
+        // Real syscalls, so not under miri.
+        #[tokio::test]
+        #[cfg_attr(miri, ignore)]
+        async fn batch_send_and_recv_round_trip_over_loopback() {
+            let a = loopback_socket();
+            let b = loopback_socket();
+            let (a_addr, b_addr) = (local_addr(&a), local_addr(&b));
+            let a = BatchUdpSocket::new(a, b_addr).unwrap();
+            let b = BatchUdpSocket::new(b, a_addr).unwrap();
+
+            let payloads: [&[u8]; 3] = [b"one", b"two", b"three"];
+            assert_eq!(a.send_batch(&payloads).await.unwrap(), 3);
+            assert_eq!(a.send(b"four").await.unwrap(), 4);
+
+            let mut buffer = RecvMmsgBuffer::new();
+            let mut received = Vec::new();
+            while received.len() < 4 {
+                let n = tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    b.recv_batch(&mut buffer),
+                )
+                .await
+                .expect("datagrams should arrive on loopback")
+                .unwrap();
+                assert!(n > 0);
+                for (from, data) in buffer.iter() {
+                    assert_eq!(from, Some(a_addr));
+                    received.push(data.to_vec());
+                }
+            }
+            assert_eq!(received, [&b"one"[..], b"two", b"three", b"four"]);
+        }
+
+        // Documents for plan 015 that loopback never applies send backpressure,
+        // so the head-of-line case cannot be reproduced here.
+        #[tokio::test]
+        #[cfg_attr(miri, ignore)]
+        async fn send_batch_does_not_wait_on_loopback_with_a_tiny_send_buffer() {
+            let a = loopback_socket();
+            let b = loopback_socket();
+            a.set_send_buffer_size(1).unwrap();
+            let a = BatchUdpSocket::new(a, local_addr(&b)).unwrap();
+
+            let payload = [0u8; 1316];
+            let batch = [&payload[..]; 32];
+            let mut timeouts = 0;
+            for _ in 0..125 {
+                match tokio::time::timeout(Duration::from_millis(100), a.send_batch(&batch)).await {
+                    Ok(result) => {
+                        result.expect("send_batch failed on loopback");
+                    }
+                    Err(_) => timeouts += 1,
+                }
+            }
+            assert_eq!(
+                timeouts, 0,
+                "send_batch waited past 100ms {timeouts} times on loopback"
+            );
+        }
 
         // Exercises the unsafe sockaddr_storage → SocketAddr pointer casts with
         // real AF_INET/AF_INET6 payloads (the iterator test only ever feeds
@@ -514,6 +588,51 @@ mod unix_impl {
             let (_addr, data) = iter.next().expect("one forged packet");
             assert_eq!(data.len(), MTU, "oversized msg_len must clamp to MTU");
             assert!(iter.next().is_none(), "only one packet was forged");
+        }
+
+        #[test]
+        fn pointers_follow_the_buffer_after_a_move_out_of_the_box() {
+            let mut boxed = RecvMmsgBuffer::new();
+            boxed.init();
+            assert!(boxed.test_pointers_target_self());
+
+            let mut moved: RecvMmsgBuffer = *boxed;
+            assert!(
+                !moved.test_pointers_target_self(),
+                "pointers written before the move must be stale",
+            );
+            moved.init();
+            assert!(moved.test_pointers_target_self());
+        }
+
+        #[test]
+        fn pointers_follow_both_buffers_after_a_swap() {
+            let mut a = RecvMmsgBuffer::new();
+            let mut b = RecvMmsgBuffer::new();
+            a.init();
+            b.init();
+
+            std::mem::swap(&mut *a, &mut *b);
+            assert!(!a.test_pointers_target_self());
+            assert!(!b.test_pointers_target_self());
+
+            a.init();
+            b.init();
+            assert!(a.test_pointers_target_self());
+            assert!(b.test_pointers_target_self());
+        }
+
+        #[test]
+        fn forged_packet_reads_correctly_after_a_move() {
+            let mut moved: RecvMmsgBuffer = *RecvMmsgBuffer::new();
+            moved.init();
+            moved.buffers[0][..4].copy_from_slice(&[1, 2, 3, 4]);
+            moved.test_forge_packet(0, 4, 1);
+
+            assert_eq!(
+                moved.iter().next().map(|(_, data)| data.to_vec()),
+                Some(vec![1, 2, 3, 4]),
+            );
         }
 
         #[test]

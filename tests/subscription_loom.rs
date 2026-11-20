@@ -50,7 +50,8 @@ fn publish_concurrent_with_subscribe_loses_neither_the_subscriber_nor_the_event(
         // Given a hub with one subscriber already registered.
         let hub = SubscriptionHub::new();
         let (settled_tx, settled_rx) = mpsc::channel::<String>(1);
-        let settled_id = block_on(hub.subscribe(TOPIC, settled_tx));
+        let settled_id =
+            block_on(hub.subscribe(TOPIC, settled_tx)).expect("hub is below its subscription cap");
 
         // When a second subscriber registers while a publish is in flight.
         let (racing_tx, racing_rx) = mpsc::channel::<String>(1);
@@ -62,7 +63,10 @@ fn publish_concurrent_with_subscribe_loses_neither_the_subscriber_nor_the_event(
             let hub = hub.clone();
             thread::spawn(move || block_on(hub.publish(TOPIC, json!({"frame": 1}))))
         };
-        let racing_id = subscriber.join().expect("subscriber thread completes");
+        let racing_id = subscriber
+            .join()
+            .expect("subscriber thread completes")
+            .expect("hub is below its subscription cap");
         publisher.join().expect("publisher thread completes");
 
         // Then the already-settled subscriber received the frame, on every
@@ -96,13 +100,15 @@ fn a_hung_up_subscriber_is_pruned_by_the_next_publish() {
         // concurrently with a publish.
         let hub = SubscriptionHub::new();
         let (survivor_tx, survivor_rx) = mpsc::channel::<String>(1);
-        let survivor_id = block_on(hub.subscribe(TOPIC, survivor_tx));
+        let survivor_id =
+            block_on(hub.subscribe(TOPIC, survivor_tx)).expect("hub is below its subscription cap");
 
         let (hangup_tx, hangup_rx) = mpsc::channel::<String>(1);
         let hangup = {
             let hub = hub.clone();
             thread::spawn(move || {
-                block_on(hub.subscribe(TOPIC, hangup_tx));
+                block_on(hub.subscribe(TOPIC, hangup_tx))
+                    .expect("hub is below its subscription cap");
                 drop(hangup_rx);
             })
         };

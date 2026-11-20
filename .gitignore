@@ -31,3 +31,4 @@ moblin/
 __pycache__/
 # Local .deb staging produced by ci/build-deb.sh
 /dist/
+/plans

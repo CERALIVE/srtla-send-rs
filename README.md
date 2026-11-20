@@ -50,7 +50,7 @@ The sender supports two mutually exclusive scheduling modes:
 
 - **What it does**: Temporarily excludes a link that is holding a large in-flight backlog while producing no fresh delivery proof (no earned ACK and no keepalive round-trip within the staleness window), as long as a healthier link can carry the traffic.
 - **Independent liveness signal**: The staleness clock is stamped only on an earned ACK or a completed keepalive round-trip, never on generic inbound bytes, so a link that merely echoes traffic while its data path is dead still goes stale.
-- **Self-recovering**: A deselected link keeps sending keepalives. Its next keepalive round-trip clears the stall on its own, so the scheduler never probes a dead link blindly. Genuinely dead links are still pruned by the normal 15 second connection timeout.
+- **Self-recovering**: While deselected, a link carries keepalives plus a sparse duplicate-packet probe (one copy of every 100th routed data packet). It rejoins after it has held fresh delivery proof for the rejoin dwell, which is twice the effective staleness window. If a rejoin does not hold, the next dwell doubles, up to 16 times the base dwell. Dead links are still pruned by the normal 5 second connection timeout (`--conn-timeout-ms`).
 - **Selection penalty only**: It never affects timeouts, re-registration, or connection liveness. It is a routing decision, nothing more.
 - **Disable via**: `--no-stall-deselect`, or the `set_stall_deselect` JSON-RPC method. Thresholds are tunable with `--stall-min-in-flight` and `--stall-ack-stale-ms`.
 - **Use Case**: Satellite links (Starlink) during obstructions or handovers, where a link keeps a backlog but briefly stops delivering.
@@ -140,13 +140,14 @@ srtla_send [OPTIONS] SRT_LISTEN_PORT SRTLA_HOST SRTLA_PORT BIND_IPS_FILE
 
 - `--mode <MODE>`: Scheduling mode: `classic`, `enhanced` (default)
 - `--no-quality`: Disable quality scoring (enhanced only)
-- `--no-stall-deselect`: Disable the stalled-link deselect guard (on by default). The guard skips a link whose in-flight backlog is high while its last delivery proof (an earned ACK or keepalive round-trip) has gone stale, provided a healthier link can carry the traffic. The link recovers automatically on its next keepalive round-trip, so nothing is probed blindly. This mainly helps satellite links (Starlink obstructions and handovers) that keep a large backlog while briefly delivering nothing.
+- `--no-stall-deselect`: Disable the stalled-link deselect guard (on by default). The guard skips a link whose in-flight backlog is high while its last delivery proof (an earned ACK or keepalive round-trip) has gone stale, provided a healthier link can carry the traffic. While deselected the link carries keepalives and a sparse duplicate-packet probe, and it rejoins after sustained delivery proof. This mainly helps satellite links (Starlink obstructions and handovers) that keep a large backlog while briefly delivering nothing.
 - `--stall-min-in-flight <N>`: In-flight backlog (packets) at or above which a link becomes a stall candidate (default 32)
-- `--stall-ack-stale-ms <MS>`: Delivery-proof staleness window in milliseconds after which a stall candidate is deselected (default 3000)
+- `--stall-ack-stale-ms <MS>`: Ceiling in milliseconds on the delivery-proof staleness window. The effective window is 4x the link's smoothed RTT, floored at 1000 ms and capped at this value. A link without an RTT baseline uses this value directly (default 3000).
 - `--conn-timeout-ms <MS>`: Per-link liveness timeout. Silence past this tears the link down and re-registers it (default 5000, clamped to 1000..=60000, also settable at runtime with `set_conn_timeout`). A timed-out link that was registered before makes its first 4 reconnect attempts 1 s apart, so a short modem or tether blip re-registers before SRT's 5 s peer-idle timeout ends the session. After that it retries every 5 s until it registers again.
-- `--no-rehome`: Disable whole-bond re-home (on by default). When every uplink has been down for longer than the all-links-failed window *and* the receiver hostname no longer resolves to the address the bond is pinned to, the sender moves every uplink together to the newly-resolved address and re-registers from scratch over the ordinary REG1/REG2/REG3 flow. It is deliberately conservative: a bond with any live uplink is never touched, a merely reordered DNS answer is not a move, a failed lookup is not a move, and at most one migration is attempted per minute. Pass this to keep the old behaviour of staying on the cached address until the process is restarted.
-- `--config <PATH>`: Path to a TOML config file, read once at startup. Each key is the long flag name with underscores (for example `stall_ack_stale_ms = 2000`), and a flag given on the command line wins over the file. The supported keys are `mode`, `no_quality`, `no_stall_deselect`, `stall_min_in_flight`, `stall_ack_stale_ms` and `conn_timeout_ms`. An unknown key or a file that fails to parse stops startup.
-- `--control-socket <PATH>`: Unix domain socket path for remote control (e.g., `/tmp/srtla.sock`)
+- `--no-rehome`: Disable whole-bond re-home (on by default). When every uplink has been down for longer than the all-links-failed window *and* the receiver hostname no longer resolves to the address the bond is pinned to, the sender moves every uplink together to the newly-resolved address in its own address family and re-registers from scratch over the ordinary REG1/REG2/REG3 flow. It is deliberately conservative: a bond with any live uplink is never touched, a merely reordered DNS answer is not a move, a failed lookup is not a move, and at most one migration is attempted per minute. Pass this to keep the old behaviour of staying on the cached address until the process is restarted.
+- `--config <PATH>`: Path to a TOML config file, read once at startup. Each key is the long flag name with underscores (for example `stall_ack_stale_ms = 2000`), and a flag given on the command line wins over the file. The supported keys are `mode`, `no_quality`, `no_stall_deselect`, `stall_min_in_flight`, `stall_ack_stale_ms`, `conn_timeout_ms` and `listen_addr`. An unknown key or a file that fails to parse stops startup.
+- `--control-socket <PATH>`: Unix domain socket path for remote control (e.g., `$XDG_RUNTIME_DIR/srtla.sock`)
+- `--listen-addr <IP>`: Address the local SRT listener binds. The default `::` accepts the encoder on any interface. Use `127.0.0.1` when the encoder runs on the same device. Once an encoder is adopted, packets from any other source are dropped until a new source opens a new SRT session.
 - `--priority-bind <ADDR:PORT>`: UDP sidecar address for encoder keyframe priority hints
 - `--metrics-bind <ADDR:PORT>`: Expose a Prometheus scrape endpoint at `/metrics`
 - `-v, --version`: Print version and exit (see [Version output](#version-output))
@@ -279,7 +280,7 @@ With `srtla_send` running on the sender, SRT-enabled applications should stream 
 **With logging and Unix socket control:**
 
 ```bash
-RUST_LOG=info ./target/release/srtla_send --control-socket /tmp/srtla.sock 6000 rec.example.com 5000 ./uplinks.txt
+RUST_LOG=info ./target/release/srtla_send --control-socket $XDG_RUNTIME_DIR/srtla.sock 6000 rec.example.com 5000 ./uplinks.txt
 ```
 
 **With classic mode:**
@@ -327,21 +328,23 @@ Use the `--control-socket` option to enable remote control via Unix socket. The 
 
 ```bash
 # Start with Unix socket control
-./target/release/srtla_send --control-socket /tmp/srtla.sock 6000 10.0.0.1 5000 /tmp/srtla_ips
+./target/release/srtla_send --control-socket $XDG_RUNTIME_DIR/srtla.sock 6000 10.0.0.1 5000 /tmp/srtla_ips
 
 # Fetch current status
 echo '{"jsonrpc":"2.0","id":1,"method":"get_status"}' \
-    | socat - UNIX-CONNECT:/tmp/srtla.sock
+    | socat - UNIX-CONNECT:$XDG_RUNTIME_DIR/srtla.sock
 
 # Switch scheduler mode
 echo '{"jsonrpc":"2.0","id":1,"method":"set_mode","params":{"mode":"classic"}}' \
-    | socat - UNIX-CONNECT:/tmp/srtla.sock
+    | socat - UNIX-CONNECT:$XDG_RUNTIME_DIR/srtla.sock
 ```
 
 ### Available Methods
 
 - `set_mode { "mode": "classic"|"enhanced" }`
 - `set_quality { "enabled": bool }`
+- `set_stall_deselect { "enabled": bool }`
+- `set_conn_timeout { "ms": u64 }` returns the applied value, clamped to 1000..=60000
 - `get_status` returns the full config snapshot and priority-sidecar counters
 - `get_stats` returns per-link telemetry JSON
 - `subscribe` / `unsubscribe` to a topic (`stats` or `priority.window`) for streamed updates
@@ -355,7 +358,7 @@ Pass `--metrics-bind ADDR:PORT` to expose a Prometheus scrape endpoint at `/metr
 ```
 srtla_send --metrics-bind 127.0.0.1:9099 \
            --priority-bind 127.0.0.1:7000 \
-           --control-socket /tmp/srtla.sock \
+           --control-socket $XDG_RUNTIME_DIR/srtla.sock \
            6000 rec.example.com 5000 /tmp/uplinks
 ```
 
@@ -484,7 +487,7 @@ With properly configured connections, you should observe:
 
 ### Constants (Advanced)
 
-If needed, these can be adjusted in `src/sender/selection/`:
+If needed, these can be adjusted in `crates/srtla-core/src/selection/`:
 
 **Enhanced Mode (`enhanced.rs`):**
 

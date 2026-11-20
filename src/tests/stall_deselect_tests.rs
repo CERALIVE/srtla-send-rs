@@ -450,9 +450,11 @@ mod tests {
     // --- Timeliness of the proof itself (librist !375, 6ed9d2a3: delivery on a
     // leg queued deeper than the receiver's buffer is not evidence of anything) ---
 
+    /// Settles the smoothed RTT and the recent minimum alike, as real samples would.
     fn set_rtt(conn: &mut srtla_core::connection::SrtlaConnection, rtt_ms: f64) {
-        for _ in 0..16 {
-            conn.rtt.kalman_rtt.update(rtt_ms);
+        let t0 = now_ms();
+        for i in 0..16 {
+            conn.rtt.update_estimate(rtt_ms as u64, t0 + i);
         }
         assert!(
             (conn.get_smooth_rtt_ms() - rtt_ms).abs() < rtt_ms * 0.1,
@@ -633,6 +635,88 @@ mod tests {
         // check against" rather than grounds to withhold proof.
         assert!(delivery_proof_is_timely(9999.0, 0));
         assert!(delivery_proof_is_timely(0.0, 10));
+    }
+
+    #[test]
+    fn one_batch_delayed_ack_does_not_hold_a_recovered_link_out() {
+        use srtla_core::connection::delivery_proof_is_timely;
+
+        // A receiver that batches SRTLA ACKs holds the ACK for a packet sent
+        // just before an outage until traffic resumes, so one sample comes back
+        // as long as the outage. It drags the smoothed RTT past the buffer,
+        // but the 80 ms path is still there in the recent floor.
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut conns = rt.block_on(create_test_connections(1));
+        let c = &mut conns[0];
+        let t0 = 1_000_000;
+        for i in 0..16 {
+            c.rtt.update_estimate(80, t0 + i * 100);
+        }
+        c.rtt.update_estimate(1_500, t0 + 1_700);
+
+        assert!(
+            c.get_smooth_rtt_ms() / 2.0 > 260.0,
+            "the delayed sample must push the smoothed RTT past the buffer, got {}",
+            c.get_smooth_rtt_ms()
+        );
+        assert!(c.rejoin_rtt_ms() <= 81.0, "got {}", c.rejoin_rtt_ms());
+        assert!(delivery_proof_is_timely(c.rejoin_rtt_ms(), 260));
+    }
+
+    #[test]
+    fn a_latched_link_rejoins_despite_an_inflated_smoothed_rtt() {
+        // The batch-delayed sample above, through the real latch: the
+        // smoothed RTT says the link misses a 260 ms buffer, the recent floor
+        // says it is an 80 ms path, and the floor decides.
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut conns = rt.block_on(create_test_connections(2));
+        let t0 = now_ms();
+        let config = with_budget(260);
+
+        for i in 0..16 {
+            conns[0].rtt.update_estimate(80, t0 + i * 100);
+        }
+        conns[0].rtt.update_estimate(1_500, t0 + 1_700);
+        assert!(
+            conns[0].get_smooth_rtt_ms() / 2.0 > 260.0,
+            "precondition: the smoothed RTT misses the buffer, got {}",
+            conns[0].get_smooth_rtt_ms()
+        );
+
+        let now = t0 + 1_800;
+        make_stalled(&mut conns[0], now);
+        make_healthy_busy(&mut conns[1], now);
+        let _ = select_connection_idx(&mut conns, None, now, &config);
+        assert!(conns[0].stall_latched(), "precondition: the latch engaged");
+
+        conns[0].in_flight_packets = 0;
+        let mut t = now;
+        while t <= now + dwell_ms() * 3 {
+            t += 100;
+            conns[0].last_ack_or_rtt_sample_ms = t;
+            conns[1].last_ack_or_rtt_sample_ms = t;
+            let _ = select_connection_idx(&mut conns, None, t, &config);
+            if !conns[0].stall_latched() {
+                return;
+            }
+        }
+        panic!("an 80 ms path must rejoin even while one delayed ACK inflates its smoothed RTT");
+    }
+
+    #[test]
+    fn a_link_with_only_late_samples_is_still_judged_late() {
+        use srtla_core::connection::delivery_proof_is_timely;
+
+        // With no fast sample in the window the floor is as late as the link.
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut conns = rt.block_on(create_test_connections(1));
+        let c = &mut conns[0];
+        let t0 = 1_000_000;
+        for i in 0..16 {
+            c.rtt.update_estimate(900, t0 + i * 100);
+        }
+
+        assert!(!delivery_proof_is_timely(c.rejoin_rtt_ms(), 260));
     }
 
     #[test]

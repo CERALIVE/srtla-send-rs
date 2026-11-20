@@ -224,15 +224,18 @@ fn wait_for<T>(timeout: Duration, mut probe: impl FnMut() -> Option<T>) -> Optio
 }
 
 /// Push `count` SRT-shaped data packets at the sender's local listener.
-fn inject(port: u16, first_seq: u32, count: u32) {
-    let socket = UdpSocket::bind("127.0.0.1:0").expect("bind injector");
+///
+/// Every burst goes out from the one `encoder` socket: the sender pins the
+/// first source it hears from and drops data from any other source, so a
+/// fresh injector socket per burst would look like a second encoder.
+fn inject(encoder: &UdpSocket, port: u16, first_seq: u32, count: u32) {
     let target: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
     let mut pkt = [0u8; PAYLOAD_LEN];
     for i in 0..count {
         // A clear high bit is what marks this an SRT DATA packet.
         let seq = (first_seq + i) & 0x7fff_ffff;
         pkt[0..4].copy_from_slice(&seq.to_be_bytes());
-        let _ = socket.send_to(&pkt, target);
+        let _ = encoder.send_to(&pkt, target);
         // Paced so the sender's batch flusher and the receiver's ACKs keep up;
         // a blind blast just overruns the loopback socket buffer.
         thread::sleep(Duration::from_micros(300));
@@ -248,6 +251,7 @@ fn bond_bytes_sent_total_is_monotonic_across_a_sighup_link_removal() {
     std::fs::write(&ips, "127.0.0.1\n127.0.0.2\n").expect("write ips file");
 
     let srt_port = free_udp_port();
+    let encoder = UdpSocket::bind("127.0.0.1:0").expect("bind injector");
     let child = Command::new(BIN)
         .args([
             &srt_port.to_string(),
@@ -282,7 +286,7 @@ fn bond_bytes_sent_total_is_monotonic_across_a_sighup_link_removal() {
     // Without this the SIGHUP below would remove an empty link and the
     // monotonicity assertion would hold vacuously.
     let first = wait_for(SNAPSHOT_TIMEOUT, || {
-        inject(srt_port, INJECT_SEQ_BASE, INJECT_BATCH);
+        inject(&encoder, srt_port, INJECT_SEQ_BASE, INJECT_BATCH);
         let snap = read_stats(&stats)?;
         let totals = link_totals(&snap);
         (totals.len() == 2 && totals.iter().all(|&b| b > 0)).then_some(snap)
@@ -308,9 +312,9 @@ fn bond_bytes_sent_total_is_monotonic_across_a_sighup_link_removal() {
     // than slept on: the snapshot only refreshes on a housekeeping tick, which
     // is coarser than the telemetry publish cadence, so a fixed sleep reads a
     // stale document with a fresh timestamp.
-    inject(srt_port, INJECT_SEQ_BASE * 2, INJECT_BATCH);
+    inject(&encoder, srt_port, INJECT_SEQ_BASE * 2, INJECT_BATCH);
     let second = wait_for(SNAPSHOT_TIMEOUT, || {
-        inject(srt_port, INJECT_SEQ_BASE * 3, INJECT_BATCH);
+        inject(&encoder, srt_port, INJECT_SEQ_BASE * 3, INJECT_BATCH);
         let snap = read_stats(&stats)?;
         (bond_total(&snap) > first_total).then_some(snap)
     })
