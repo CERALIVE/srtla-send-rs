@@ -50,7 +50,7 @@ The sender supports two mutually exclusive scheduling modes:
 
 - **What it does**: Temporarily excludes a link that is holding a large in-flight backlog while producing no fresh delivery proof (no earned ACK and no keepalive round-trip within the staleness window), as long as a healthier link can carry the traffic.
 - **Independent liveness signal**: The staleness clock is stamped only on an earned ACK or a completed keepalive round-trip, never on generic inbound bytes, so a link that merely echoes traffic while its data path is dead still goes stale.
-- **Self-recovering**: A deselected link keeps sending keepalives. Its next keepalive round-trip clears the stall on its own, so the scheduler never probes a dead link blindly. Genuinely dead links are still pruned by the normal 15 second connection timeout.
+- **Self-recovering**: While deselected, a link carries keepalives plus a sparse duplicate-packet probe (one copy of every 100th routed data packet). It rejoins after it has held fresh delivery proof for the rejoin dwell, which is twice the effective staleness window. If a rejoin does not hold, the next dwell doubles, up to 16 times the base dwell. Dead links are still pruned by the normal 5 second connection timeout (`--conn-timeout-ms`).
 - **Selection penalty only**: It never affects timeouts, re-registration, or connection liveness. It is a routing decision, nothing more.
 - **Disable via**: `--no-stall-deselect`, or the `set_stall_deselect` JSON-RPC method. Thresholds are tunable with `--stall-min-in-flight` and `--stall-ack-stale-ms`.
 - **Use Case**: Satellite links (Starlink) during obstructions or handovers, where a link keeps a backlog but briefly stops delivering.
@@ -140,13 +140,14 @@ srtla_send [OPTIONS] SRT_LISTEN_PORT SRTLA_HOST SRTLA_PORT BIND_IPS_FILE
 
 - `--mode <MODE>`: Scheduling mode: `classic`, `enhanced` (default)
 - `--no-quality`: Disable quality scoring (enhanced only)
-- `--no-stall-deselect`: Disable the stalled-link deselect guard (on by default). The guard skips a link whose in-flight backlog is high while its last delivery proof (an earned ACK or keepalive round-trip) has gone stale, provided a healthier link can carry the traffic. The link recovers automatically on its next keepalive round-trip, so nothing is probed blindly. This mainly helps satellite links (Starlink obstructions and handovers) that keep a large backlog while briefly delivering nothing.
+- `--no-stall-deselect`: Disable the stalled-link deselect guard (on by default). The guard skips a link whose in-flight backlog is high while its last delivery proof (an earned ACK or keepalive round-trip) has gone stale, provided a healthier link can carry the traffic. While deselected the link carries keepalives and a sparse duplicate-packet probe, and it rejoins after sustained delivery proof. This mainly helps satellite links (Starlink obstructions and handovers) that keep a large backlog while briefly delivering nothing.
 - `--stall-min-in-flight <N>`: In-flight backlog (packets) at or above which a link becomes a stall candidate (default 32)
-- `--stall-ack-stale-ms <MS>`: Delivery-proof staleness window in milliseconds after which a stall candidate is deselected (default 3000)
+- `--stall-ack-stale-ms <MS>`: Ceiling in milliseconds on the delivery-proof staleness window. The effective window is 4x the link's smoothed RTT, floored at 1000 ms and capped at this value. A link without an RTT baseline uses this value directly (default 3000).
 - `--conn-timeout-ms <MS>`: Per-link liveness timeout. Silence past this tears the link down and re-registers it (default 5000, clamped to 1000..=60000, also settable at runtime with `set_conn_timeout`). A timed-out link that was registered before makes its first 4 reconnect attempts 1 s apart, so a short modem or tether blip re-registers before SRT's 5 s peer-idle timeout ends the session. After that it retries every 5 s until it registers again.
-- `--no-rehome`: Disable whole-bond re-home (on by default). When every uplink has been down for longer than the all-links-failed window *and* the receiver hostname no longer resolves to the address the bond is pinned to, the sender moves every uplink together to the newly-resolved address and re-registers from scratch over the ordinary REG1/REG2/REG3 flow. It is deliberately conservative: a bond with any live uplink is never touched, a merely reordered DNS answer is not a move, a failed lookup is not a move, and at most one migration is attempted per minute. Pass this to keep the old behaviour of staying on the cached address until the process is restarted.
-- `--config <PATH>`: Path to a TOML config file, read once at startup. Each key is the long flag name with underscores (for example `stall_ack_stale_ms = 2000`), and a flag given on the command line wins over the file. The supported keys are `mode`, `no_quality`, `no_stall_deselect`, `stall_min_in_flight`, `stall_ack_stale_ms` and `conn_timeout_ms`. An unknown key or a file that fails to parse stops startup.
-- `--control-socket <PATH>`: Unix domain socket path for remote control (e.g., `/tmp/srtla.sock`)
+- `--no-rehome`: Disable whole-bond re-home (on by default). When every uplink has been down for longer than the all-links-failed window *and* the receiver hostname no longer resolves to the address the bond is pinned to, the sender moves every uplink together to the newly-resolved address in its own address family and re-registers from scratch over the ordinary REG1/REG2/REG3 flow. It is deliberately conservative: a bond with any live uplink is never touched, a merely reordered DNS answer is not a move, a failed lookup is not a move, and at most one migration is attempted per minute. Pass this to keep the old behaviour of staying on the cached address until the process is restarted.
+- `--config <PATH>`: Path to a TOML config file, read once at startup. Each key is the long flag name with underscores (for example `stall_ack_stale_ms = 2000`), and a flag given on the command line wins over the file. The supported keys are `mode`, `no_quality`, `no_stall_deselect`, `stall_min_in_flight`, `stall_ack_stale_ms`, `conn_timeout_ms` and `listen_addr`. An unknown key or a file that fails to parse stops startup.
+- `--control-socket <PATH>`: Unix domain socket path for remote control (e.g., `$XDG_RUNTIME_DIR/srtla.sock`)
+- `--listen-addr <IP>`: Address the local SRT listener binds. The default `::` accepts the encoder on any interface. Use `127.0.0.1` when the encoder runs on the same device. Once an encoder is adopted, packets from any other source are dropped until a new source opens a new SRT session.
 - `--priority-bind <ADDR:PORT>`: UDP sidecar address for encoder keyframe priority hints
 - `--metrics-bind <ADDR:PORT>`: Expose a Prometheus scrape endpoint at `/metrics`
 - `-v, --version`: Print version and exit (see [Version output](#version-output))
@@ -177,7 +178,7 @@ Everything in this section is CERALIVE's addition on top of upstream. It exists 
 
 ### Version and upstream sync
 
-The fork is based on upstream `df0b3938791ff24eced4aed8b29e3d49d0efb639` (v4.0.1). The last-merged upstream commit is `9e63d8f` (the 2026-11 sync, recorded in [`docs/notes/upstream-sync-2026-11.md`](docs/notes/upstream-sync-2026-11.md)). It ships as **`4.2.0`**. The version follows upstream's semver line, not CalVer, so a CERALIVE release stays traceable to the upstream release it builds on. Upstream merges are manual and gated: they land in a dedicated PR, run the full gate on the pinned toolchain, and must not regress the contract below. There is no automatic sync. The upstream remote is added only for the duration of a merge and removed before the PR is opened.
+The fork is based on upstream `df0b3938791ff24eced4aed8b29e3d49d0efb639` (v4.0.1). The last-merged upstream commit is `b1cf1f2` (the second 2026-11 sync, taken in two steps through `8db546c` and recorded in [`docs/notes/upstream-sync-2026-11-8db546c.md`](docs/notes/upstream-sync-2026-11-8db546c.md); the first is [`docs/notes/upstream-sync-2026-11.md`](docs/notes/upstream-sync-2026-11.md)). It ships as **`4.2.0`**. The version follows upstream's semver line, not CalVer, so a CERALIVE release stays traceable to the upstream release it builds on. Upstream merges are manual and gated: they land in a dedicated PR, run the full gate on the pinned toolchain, and must not regress the contract below. There is no automatic sync. The upstream remote is added only for the duration of a merge and removed before the PR is opened.
 
 ### Toolchain
 
@@ -211,7 +212,7 @@ If the OS cannot create the telemetry writer thread, startup exits non-zero with
 - `bind_map_status` and `disposition` are always present at the top level (an unmapped run reports `{"state":"absent"}` and `{"state":"legacy_unique_only"}`). The per-connection `iface` and `link_id` appear only for a mapped link and are omitted (never `null`, never `""`) otherwise, as is `bind_map_status.reason` when there is no degradation. See [ADR-003](docs/adr/ADR-003-bind-map-contract.md).
 - An idle sender publishes `"connections":[]`; it does not stop publishing.
 
-`docs/adr/ADR-001-control-protocol.md` holds the original schema record. Its control-socket transport section is superseded by [ADR-004](docs/adr/ADR-004-control-dialect.md): the sender uses upstream's JSON-RPC dialect as-is and extends it only additively. Note that `get_stats` and the `stats` subscription return upstream's richer stats snapshot (whose rate field is `bitrate_bytes_per_sec`, in bytes), extended with the same optional `bytes_sent_total`, `iface`, `link_id`, `bind_map_status`, and `disposition` fields. The file is the ADR-001 document; the socket is upstream's shape plus those additions.
+`docs/adr/ADR-001-control-protocol.md` holds the original schema record. Its control-socket transport section is superseded by [ADR-004](docs/adr/ADR-004-control-dialect.md): the sender uses upstream's JSON-RPC dialect as-is and extends it only additively. Note that `get_stats` and the `stats` subscription return upstream's richer stats snapshot (whose rate field is `bitrate_bytes_per_sec`, in bytes), extended with the same optional `bytes_sent_total`, `iface`, `link_id`, `bind_map_status`, and `disposition` fields, plus upstream's per-link arrival reports (`data_packets_queued_total`, `srtla_ack_entries_total`, `last_srtla_ack_age_ms`, `srtla_ack_epoch`, see "Arrival reports per link" in [docs/CONTROL_PROTOCOL.md](docs/CONTROL_PROTOCOL.md)). The file is the ADR-001 document; the socket is upstream's shape plus those additions.
 
 ### Bind-map sidecar
 
@@ -252,9 +253,9 @@ Two workflows, both on the pinned nightly:
 The package is **`srtla`**, the binary installs at `/usr/bin/srtla_send`, and the artifact is named `srtla_<version>_<arch>.deb` (`srtla_4.2.0_arm64.deb`, `srtla_4.2.0_amd64.deb`). `ci/build-deb.sh` is the single source of truth for that metadata and re-runs the device image builder's fetch glob against the real filename as a self-test. A release tag must be `v<version>` with the version taken from `Cargo.toml`.
 
 Privileged network-namespace tests (`tests/netns_*.rs`, including the duplicate-IP twin-modem scenarios in `tests/netns_twin.rs`) self-skip on ordinary runners and are run locally through `scripts/netns_test_gate.sh`.
-The stall-latch fixture fix reduced the flake, but `silence pull engaged` can still rarely fail when the dead link's backlog stays below `--stall-min-in-flight` (32); pinning and backlog preconditions remain follow-ups.
-ACKs for retransmitted sequences and duplicate probes retain delivery/accounting effects but do not sample RTT, because a sequence ACK cannot identify which copy arrived.
-The wire-loss fixture holds the real SRT caller at 4 Mbps below either 6 Mbps path, preserving its original per-link and CC thresholds.
+The stall-gate fixture lowers `--stall-min-in-flight` to 8 and waits for both links to leave Warming, so the silence pull no longer depends on the dead link reaching the default 32-packet backlog.
+ACKs for retransmitted sequences retain delivery/accounting effects but do not sample RTT, because a sequence ACK cannot identify which copy arrived; a probe samples RTT only when its link has sent that sequence once.
+The wire-loss fixture holds the real SRT caller at 4 Mbps below either 6 Mbps path; each link must clear both its original absolute floor and a share of the bond.
 
 ### License
 
@@ -279,7 +280,7 @@ With `srtla_send` running on the sender, SRT-enabled applications should stream 
 **With logging and Unix socket control:**
 
 ```bash
-RUST_LOG=info ./target/release/srtla_send --control-socket /tmp/srtla.sock 6000 rec.example.com 5000 ./uplinks.txt
+RUST_LOG=info ./target/release/srtla_send --control-socket $XDG_RUNTIME_DIR/srtla.sock 6000 rec.example.com 5000 ./uplinks.txt
 ```
 
 **With classic mode:**
@@ -327,21 +328,23 @@ Use the `--control-socket` option to enable remote control via Unix socket. The 
 
 ```bash
 # Start with Unix socket control
-./target/release/srtla_send --control-socket /tmp/srtla.sock 6000 10.0.0.1 5000 /tmp/srtla_ips
+./target/release/srtla_send --control-socket $XDG_RUNTIME_DIR/srtla.sock 6000 10.0.0.1 5000 /tmp/srtla_ips
 
 # Fetch current status
 echo '{"jsonrpc":"2.0","id":1,"method":"get_status"}' \
-    | socat - UNIX-CONNECT:/tmp/srtla.sock
+    | socat - UNIX-CONNECT:$XDG_RUNTIME_DIR/srtla.sock
 
 # Switch scheduler mode
 echo '{"jsonrpc":"2.0","id":1,"method":"set_mode","params":{"mode":"classic"}}' \
-    | socat - UNIX-CONNECT:/tmp/srtla.sock
+    | socat - UNIX-CONNECT:$XDG_RUNTIME_DIR/srtla.sock
 ```
 
 ### Available Methods
 
 - `set_mode { "mode": "classic"|"enhanced" }`
 - `set_quality { "enabled": bool }`
+- `set_stall_deselect { "enabled": bool }`
+- `set_conn_timeout { "ms": u64 }` returns the applied value, clamped to 1000..=60000
 - `get_status` returns the full config snapshot and priority-sidecar counters
 - `get_stats` returns per-link telemetry JSON
 - `subscribe` / `unsubscribe` to a topic (`stats` or `priority.window`) for streamed updates
@@ -355,7 +358,7 @@ Pass `--metrics-bind ADDR:PORT` to expose a Prometheus scrape endpoint at `/metr
 ```
 srtla_send --metrics-bind 127.0.0.1:9099 \
            --priority-bind 127.0.0.1:7000 \
-           --control-socket /tmp/srtla.sock \
+           --control-socket $XDG_RUNTIME_DIR/srtla.sock \
            6000 rec.example.com 5000 /tmp/uplinks
 ```
 
@@ -363,7 +366,7 @@ srtla_send --metrics-bind 127.0.0.1:9099 \
 curl -s 127.0.0.1:9099/metrics
 ```
 
-Exposed series include `srtla_send_link_up`, `srtla_send_link_rtt_ms`, `srtla_send_link_window`, `srtla_send_link_in_flight`, `srtla_send_link_nak_total`, `srtla_send_link_bitrate_bytes_per_second`, `srtla_send_link_quality_multiplier`, plus aggregate `srtla_send_active_links`, `srtla_send_total_window`, `srtla_send_critical_windows_total`, and the current `srtla_send_mode` as a numeric gauge.
+Exposed series include `srtla_send_link_up`, `srtla_send_link_rtt_ms`, `srtla_send_link_window`, `srtla_send_link_in_flight`, `srtla_send_link_nak_total`, `srtla_send_link_bitrate_bytes_per_second`, `srtla_send_link_quality_multiplier`, `srtla_send_link_data_packets_queued_total` and `srtla_send_link_srtla_ack_entries_total` (see "Arrival reports per link" in `docs/CONTROL_PROTOCOL.md`), plus aggregate `srtla_send_active_links`, `srtla_send_total_window`, `srtla_send_critical_windows_total`, and the current `srtla_send_mode` as a numeric gauge.
 
 ### Connection Selection Algorithm Details
 
@@ -484,7 +487,7 @@ With properly configured connections, you should observe:
 
 ### Constants (Advanced)
 
-If needed, these can be adjusted in `src/sender/selection/`:
+If needed, these can be adjusted in `crates/srtla-core/src/selection/`:
 
 **Enhanced Mode (`enhanced.rs`):**
 

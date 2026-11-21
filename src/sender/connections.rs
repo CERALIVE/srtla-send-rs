@@ -6,15 +6,17 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::Result;
 use smallvec::SmallVec;
 use srtla_core::connection::SrtlaConnection;
+use srtla_core::registration::SrtlaRegistrationManager;
 use srtla_core::utils::now_ms;
 use tracing::{debug, info, warn};
 
+use super::rehome::ReceiverResolver;
 use super::sequence::SequenceTracker;
 use super::uplink::{ConnIo, ConnIoMap};
 use crate::bind_map::EffectiveLink;
 use crate::net::{
     BatchUdpSocket, EgressLifecycle, RouteHealth, SocketKey, SystemIfaceResolver, UplinkBinder,
-    UplinkSpec, create_uplink_socket, resolve_remote, resolve_remote_all,
+    UplinkSpec, create_uplink_socket, resolve_remote_all, select_remote_for_source,
 };
 
 pub struct PendingConnectionChanges {
@@ -69,7 +71,13 @@ pub async fn apply_connection_changes(
     last_selected_idx: &mut Option<usize>,
     seq_tracker: &mut SequenceTracker,
     binder: &Arc<dyn UplinkBinder>,
+    resolver: &dyn ReceiverResolver,
+    reg: &mut SrtlaRegistrationManager,
 ) {
+    // Taken before stale links are removed, so a reload that replaces every
+    // uplink still dials the receiver instance the bond is registered with.
+    let pinned = pinned_remotes(connections, conn_io);
+
     // Dedup on the SOCKET KEY, not on the IP: that is what tells two twin
     // modems sharing 192.168.8.100 apart. Without a bind-map the key has no
     // interface and degenerates to the IP, which is the legacy behavior.
@@ -92,6 +100,8 @@ pub async fn apply_connection_changes(
     let mut fresh = create_missing(
         &desired,
         &claimed,
+        &pinned,
+        resolver,
         receiver_host,
         receiver_port,
         binder,
@@ -102,7 +112,7 @@ pub async fn apply_connection_changes(
 
     // Drop the leaving links' sequence entries and I/O halves so a stale NAK
     // cannot be misattributed to whichever uplink later reuses that index.
-    let removed = survivors.retire(seq_tracker, conn_io);
+    let removed = survivors.retire(seq_tracker, conn_io, reg);
 
     for (spec, existing) in desired.iter().zip(claimed) {
         match existing {
@@ -201,7 +211,12 @@ impl Survivors {
     }
 
     /// Retire everything left unclaimed, returning how many links left the pool.
-    fn retire(self, seq_tracker: &mut SequenceTracker, conn_io: &mut ConnIoMap) -> usize {
+    fn retire(
+        self,
+        seq_tracker: &mut SequenceTracker,
+        conn_io: &mut ConnIoMap,
+        reg: &mut SrtlaRegistrationManager,
+    ) -> usize {
         let leaving: SmallVec<u64, 4> = self
             .by_link_id
             .values()
@@ -209,6 +224,9 @@ impl Survivors {
             .chain(self.by_key.values())
             .map(|c| c.conn_id)
             .collect();
+        // Keyed by the stable conn_id, so this stays correct whatever order
+        // the pool is rebuilt in.
+        reg.forget_connections(&leaving, now_ms());
         for conn_id in &leaving {
             seq_tracker.remove_connection(*conn_id);
             conn_io.remove(conn_id);
@@ -217,10 +235,14 @@ impl Survivors {
     }
 }
 
-/// Dial every desired link that no survivor covers.
+/// Dial every desired link that no survivor covers, at the receiver addresses
+/// [`reload_answers`] picks for them.
+#[allow(clippy::too_many_arguments)]
 async fn create_missing(
     desired: &[UplinkSpec],
     claimed: &[Option<SrtlaConnection>],
+    pinned: &[SocketAddr],
+    resolver: &dyn ReceiverResolver,
     receiver_host: &str,
     receiver_port: u16,
     binder: &Arc<dyn UplinkBinder>,
@@ -235,9 +257,17 @@ async fn create_missing(
     if missing.is_empty() {
         return HashMap::new();
     }
-    let created =
-        create_connections_from_links(&missing, receiver_host, receiver_port, binder, conn_io)
-            .await;
+    let added: SmallVec<IpAddr, 4> = missing.iter().map(|spec| spec.ip).collect();
+    let answers = reload_answers(pinned, &added, resolver, receiver_host, receiver_port).await;
+    let created = create_connections_from_links(
+        &missing,
+        &answers,
+        receiver_host,
+        receiver_port,
+        binder,
+        conn_io,
+    )
+    .await;
     created
         .into_iter()
         .map(|conn| {
@@ -250,9 +280,44 @@ async fn create_missing(
         .collect()
 }
 
+/// Receiver addresses for the uplinks a reload adds.
+///
+/// An added uplink joins the bond at the address the bond already uses in its
+/// family, because registration ties the bond to one receiver instance. Only a
+/// family the bond has no address in costs a lookup, at most one per reload.
+/// A fresh answer contributes only addresses in such families. If the lookup
+/// fails, those uplinks are not dialed.
+async fn reload_answers(
+    pinned: &[SocketAddr],
+    added: &[IpAddr],
+    resolver: &dyn ReceiverResolver,
+    receiver_host: &str,
+    receiver_port: u16,
+) -> SmallVec<SocketAddr, 4> {
+    let mut answers: SmallVec<SocketAddr, 4> = pinned.iter().copied().collect();
+    if added
+        .iter()
+        .all(|ip| select_remote_for_source(pinned, *ip).is_ok())
+    {
+        return answers;
+    }
+    if let Some(fresh) = resolver
+        .resolve(receiver_host.to_string(), receiver_port)
+        .await
+    {
+        answers.extend(
+            fresh
+                .into_iter()
+                .filter(|addr| select_remote_for_source(pinned, addr.ip()).is_err()),
+        );
+    }
+    answers
+}
+
 pub async fn create_connections_from_ips(
     ips: &[IpAddr],
     weights: &[u8],
+    answers: &[SocketAddr],
     receiver_host: &str,
     receiver_port: u16,
     binder: &Arc<dyn UplinkBinder>,
@@ -260,6 +325,7 @@ pub async fn create_connections_from_ips(
 ) -> SmallVec<SrtlaConnection, 4> {
     create_connections_from_links(
         &specs_from_ips(ips, weights),
+        answers,
         receiver_host,
         receiver_port,
         binder,
@@ -268,8 +334,11 @@ pub async fn create_connections_from_ips(
     .await
 }
 
+/// Dial every link in `links`, each at the first of `answers` in its own
+/// address family. A link whose family the answers lack is not dialed.
 pub async fn create_connections_from_links(
     links: &[UplinkSpec],
+    answers: &[SocketAddr],
     receiver_host: &str,
     receiver_port: u16,
     binder: &Arc<dyn UplinkBinder>,
@@ -277,7 +346,11 @@ pub async fn create_connections_from_links(
 ) -> SmallVec<SrtlaConnection, 4> {
     let mut connections = SmallVec::new();
     for spec in links {
-        match connect_uplink(spec, receiver_host, receiver_port, binder).await {
+        let dialed = match select_remote_for_source(answers, spec.ip) {
+            Ok(remote) => connect_uplink(spec, remote, receiver_host, receiver_port, binder).await,
+            Err(e) => Err(e),
+        };
+        match dialed {
             Ok((mut conn, io)) => {
                 conn.link_weight = spec.weight;
                 info!("added uplink {} (weight {})", conn.label, conn.link_weight);
@@ -301,13 +374,13 @@ pub async fn create_connections_from_links(
 /// share a `conn_id` so the shell can key the I/O map by it.
 async fn connect_uplink(
     spec: &UplinkSpec,
+    remote: SocketAddr,
     receiver_host: &str,
     receiver_port: u16,
     binder: &Arc<dyn UplinkBinder>,
 ) -> Result<(SrtlaConnection, ConnIo)> {
     use rand::RngCore;
 
-    let remote = resolve_remote(receiver_host, receiver_port).await?;
     let mut egress = EgressLifecycle::for_spec(spec.iface.as_ref());
     // Re-resolve the interface by NAME before every socket creation: a replug
     // leaves the old ifindex describing nothing, and SO_BINDTODEVICE freezes
@@ -466,6 +539,23 @@ fn dns_drift_detected(cached: SocketAddr, fresh: &[SocketAddr]) -> bool {
     !fresh.is_empty() && !fresh.contains(&cached)
 }
 
+/// Every receiver address the bond's uplinks currently send to, deduplicated,
+/// in connection order.
+pub(super) fn pinned_remotes(
+    connections: &[SrtlaConnection],
+    conn_io: &ConnIoMap,
+) -> SmallVec<SocketAddr, 4> {
+    let mut pinned = SmallVec::new();
+    for conn in connections {
+        if let Some(io) = conn_io.get(&conn.conn_id)
+            && !pinned.contains(&io.remote)
+        {
+            pinned.push(io.remote);
+        }
+    }
+    pinned
+}
+
 /// Bond-wide form of [`dns_drift_detected`], used by the re-home trigger.
 ///
 /// True only when the hostname answered with something and *none* of the
@@ -548,6 +638,20 @@ mod tests {
         assert!(!dns_drift_detected(addr(1), &[]));
     }
 
+    #[tokio::test]
+    async fn pinned_remotes_dedups_in_connection_order() {
+        let connections = crate::test_helpers::create_test_connections(3).await;
+        let mut conn_io = crate::test_helpers::create_test_conn_io_map(&connections);
+        for (conn, remote) in connections.iter().zip([addr(2), addr(1), addr(2)]) {
+            conn_io.get_mut(&conn.conn_id).unwrap().remote = remote;
+        }
+
+        assert_eq!(
+            pinned_remotes(&connections, &conn_io).as_slice(),
+            &[addr(2), addr(1)]
+        );
+    }
+
     #[test]
     fn dns_drift_warning_is_rate_limited_across_the_process() {
         // The static is process-wide, so drive it from a base far past any
@@ -565,5 +669,367 @@ mod tests {
             claim_dns_drift_warning(base + DNS_DRIFT_WARN_INTERVAL_MS),
             "the warning is due again once the window has passed"
         );
+    }
+
+    #[test]
+    fn remote_selection_follows_the_source_family_in_answer_order() {
+        let v4a = addr(1);
+        let v4b = addr(2);
+        let v6: SocketAddr = "[2001:db8::1]:5000".parse().unwrap();
+        let answers = [v6, v4a, v4b];
+
+        assert_eq!(
+            crate::net::select_remote_for_source(&answers, v4a.ip()).unwrap(),
+            v4a
+        );
+        assert_eq!(
+            crate::net::select_remote_for_source(&answers, v6.ip()).unwrap(),
+            v6
+        );
+        assert!(crate::net::select_remote_for_source(&[v4a], v6.ip()).is_err());
+        assert!(crate::net::select_remote_for_source(&[v6], v4a.ip()).is_err());
+        assert!(crate::net::select_remote_for_source(&[], v4a.ip()).is_err());
+    }
+
+    const RELOAD_HOST: &str = "rec.example.com";
+    const RELOAD_PORT: u16 = 5000;
+
+    fn bond_remote() -> SocketAddr {
+        "127.0.0.1:7001".parse().unwrap()
+    }
+
+    /// Two IPv4 links pinned to [`bond_remote`], labelled so a reload against
+    /// [`RELOAD_HOST`] keeps them.
+    async fn pinned_bond() -> (SmallVec<SrtlaConnection, 4>, ConnIoMap) {
+        let mut connections = crate::test_helpers::create_test_connections(2).await;
+        let mut conn_io = crate::test_helpers::create_test_conn_io_map(&connections);
+        for conn in connections.iter_mut() {
+            conn.label = format!("{RELOAD_HOST}:{RELOAD_PORT} via {}", conn.local_ip);
+            conn_io.get_mut(&conn.conn_id).unwrap().remote = bond_remote();
+        }
+        (connections, conn_io)
+    }
+
+    async fn reload(
+        connections: &mut SmallVec<SrtlaConnection, 4>,
+        conn_io: &mut ConnIoMap,
+        new_ips: &[IpAddr],
+        resolver: &dyn ReceiverResolver,
+    ) {
+        use crate::net::SourceIpBinder;
+
+        let binder: Arc<dyn UplinkBinder> = Arc::new(SourceIpBinder);
+        apply_connection_changes(
+            connections,
+            conn_io,
+            &specs_from_ips(new_ips, &[]),
+            RELOAD_HOST,
+            RELOAD_PORT,
+            &mut None,
+            &mut SequenceTracker::new(),
+            &binder,
+            resolver,
+            &mut SrtlaRegistrationManager::new(),
+        )
+        .await;
+    }
+
+    fn remote_via(
+        connections: &[SrtlaConnection],
+        conn_io: &ConnIoMap,
+        ip: IpAddr,
+    ) -> Option<SocketAddr> {
+        connections
+            .iter()
+            .find(|c| c.local_ip == ip)
+            .map(|c| conn_io[&c.conn_id].remote)
+    }
+
+    #[tokio::test]
+    async fn reload_pin_dials_an_added_uplink_at_the_pinned_address() {
+        let (mut connections, mut conn_io) = pinned_bond().await;
+        let added: IpAddr = "127.0.0.1".parse().unwrap();
+        let new_ips = [connections[0].local_ip, connections[1].local_ip, added];
+        let resolver = super::super::rehome::StubResolver::new(vec![Some(vec![
+            "127.0.0.1:9999".parse().unwrap(),
+        ])]);
+
+        reload(&mut connections, &mut conn_io, &new_ips, &*resolver).await;
+
+        assert_eq!(connections.len(), 3);
+        assert_eq!(
+            remote_via(&connections, &conn_io, added),
+            Some(bond_remote())
+        );
+        assert_eq!(resolver.calls(), 0, "a family the bond has needs no lookup");
+    }
+
+    #[tokio::test]
+    async fn reload_pin_replacing_every_ip_stays_on_the_bond_receiver() {
+        let (mut connections, mut conn_io) = pinned_bond().await;
+        let added: IpAddr = "127.0.0.1".parse().unwrap();
+        let resolver = super::super::rehome::StubResolver::new(vec![Some(vec![
+            "127.0.0.1:9999".parse().unwrap(),
+        ])]);
+
+        reload(&mut connections, &mut conn_io, &[added], &*resolver).await;
+
+        assert_eq!(connections.len(), 1);
+        assert_eq!(connections[0].local_ip, added);
+        assert_eq!(conn_io[&connections[0].conn_id].remote, bond_remote());
+        assert_eq!(resolver.calls(), 0);
+    }
+
+    #[tokio::test]
+    async fn reload_pin_looks_up_a_family_new_to_the_bond_once() {
+        let (mut connections, mut conn_io) = pinned_bond().await;
+        let kept = [connections[0].local_ip, connections[1].local_ip];
+        let added: IpAddr = "::1".parse().unwrap();
+        let resolver = super::super::rehome::StubResolver::new(vec![Some(vec![
+            "127.0.0.1:9999".parse().unwrap(),
+            "[::1]:9999".parse().unwrap(),
+        ])]);
+
+        reload(
+            &mut connections,
+            &mut conn_io,
+            &[kept[0], kept[1], added],
+            &*resolver,
+        )
+        .await;
+
+        assert_eq!(connections.len(), 3);
+        assert_eq!(
+            remote_via(&connections, &conn_io, added),
+            Some("[::1]:9999".parse().unwrap())
+        );
+        for ip in kept {
+            assert_eq!(
+                remote_via(&connections, &conn_io, ip),
+                Some(bond_remote()),
+                "the fresh IPv4 answer must not move the bond"
+            );
+        }
+        assert_eq!(resolver.calls(), 1);
+    }
+
+    #[tokio::test]
+    async fn reload_pin_skips_a_new_family_when_the_lookup_fails() {
+        let (mut connections, mut conn_io) = pinned_bond().await;
+        let kept_ids: Vec<u64> = connections.iter().map(|c| c.conn_id).collect();
+        let kept = [connections[0].local_ip, connections[1].local_ip];
+        let added: IpAddr = "::1".parse().unwrap();
+        let resolver = super::super::rehome::StubResolver::new(vec![None]);
+
+        reload(
+            &mut connections,
+            &mut conn_io,
+            &[kept[0], kept[1], added],
+            &*resolver,
+        )
+        .await;
+
+        assert_eq!(
+            connections.iter().map(|c| c.conn_id).collect::<Vec<_>>(),
+            kept_ids
+        );
+        assert_eq!(remote_via(&connections, &conn_io, added), None);
+        for ip in kept {
+            assert_eq!(remote_via(&connections, &conn_io, ip), Some(bond_remote()));
+        }
+        assert_eq!(resolver.calls(), 1);
+    }
+
+    #[tokio::test]
+    async fn startup_dials_only_sources_the_receiver_has_a_family_for() {
+        use crate::net::SourceIpBinder;
+
+        let binder: Arc<dyn UplinkBinder> = Arc::new(SourceIpBinder);
+        let sources: [IpAddr; 2] = ["127.0.0.1".parse().unwrap(), "::1".parse().unwrap()];
+        for receiver in ["127.0.0.1", "::1"] {
+            let mut io = ConnIoMap::new();
+            let answers = [SocketAddr::new(receiver.parse().unwrap(), 9000)];
+            let connections = create_connections_from_ips(
+                &sources,
+                &[],
+                &answers,
+                receiver,
+                9000,
+                &binder,
+                &mut io,
+            )
+            .await;
+            assert_eq!(connections.len(), 1);
+            assert_eq!(connections[0].local_ip, receiver.parse::<IpAddr>().unwrap());
+            let remote = io[&connections[0].conn_id].remote;
+            assert_eq!(remote.ip(), receiver.parse::<IpAddr>().unwrap());
+        }
+    }
+
+    /// An IPv4-mapped IPv6 source (`::ffff:a.b.c.d`) is an IPv4 address in
+    /// IPv6 notation. It gets an IPv4 socket and dials the receiver's IPv4
+    /// answer, so a receiver with only an A record still takes it, and a
+    /// reconnect rebuilds it the same way.
+    #[tokio::test]
+    async fn a_mapped_ipv4_source_dials_the_ipv4_answer() {
+        use crate::net::SourceIpBinder;
+
+        let binder: Arc<dyn UplinkBinder> = Arc::new(SourceIpBinder);
+        let mapped: IpAddr = "::ffff:127.0.0.1".parse().unwrap();
+        let v4: SocketAddr = "127.0.0.1:9000".parse().unwrap();
+        let v6: SocketAddr = "[::1]:9000".parse().unwrap();
+        assert_eq!(
+            crate::net::select_remote_for_source(&[v6, v4], mapped).unwrap(),
+            v4
+        );
+
+        let mut io = ConnIoMap::new();
+        let connections =
+            create_connections_from_ips(&[mapped], &[], &[v4], "127.0.0.1", 9000, &binder, &mut io)
+                .await;
+        assert_eq!(connections.len(), 1, "the mapped source must be dialed");
+        let mut conn = connections.into_iter().next().unwrap();
+        let entry = io.get_mut(&conn.conn_id).unwrap();
+        assert_eq!(entry.remote, v4);
+
+        rebuild_uplink_socket(&mut conn, entry, &mut SequenceTracker::new(), 100).unwrap();
+        assert_eq!(entry.remote, v4);
+    }
+
+    /// The written form stays the link's identity, while the socket is bound to
+    /// the plain IPv4 address and its datagrams really reach an IPv4-only
+    /// receiver.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_mapped_ipv4_source_binds_ipv4_and_reaches_an_ipv4_receiver() {
+        use crate::net::SourceIpBinder;
+
+        let receiver = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let at = receiver.local_addr().unwrap();
+        let binder: Arc<dyn UplinkBinder> = Arc::new(SourceIpBinder);
+        let mapped: IpAddr = "::ffff:127.0.0.1".parse().unwrap();
+        let mut io = ConnIoMap::new();
+        let connections = create_connections_from_ips(
+            &[mapped],
+            &[],
+            &[at],
+            "127.0.0.1",
+            at.port(),
+            &binder,
+            &mut io,
+        )
+        .await;
+        assert_eq!(connections.len(), 1);
+        assert_eq!(
+            connections[0].local_ip, mapped,
+            "the written form is the identity"
+        );
+        assert!(
+            connections[0].label.contains("::ffff:127.0.0.1"),
+            "{}",
+            connections[0].label
+        );
+        let entry = &io[&connections[0].conn_id];
+        let local = entry.socket.get_ref().local_addr().unwrap();
+        assert!(local.is_ipv4(), "bound as {local}");
+        entry.socket.send(b"hello").await.unwrap();
+        let mut buf = [0u8; 16];
+        let (n, from) = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            receiver.recv_from(&mut buf),
+        )
+        .await
+        .expect("the IPv4 receiver got nothing")
+        .unwrap();
+        assert_eq!(&buf[..n], b"hello");
+        assert_eq!(from.ip(), "127.0.0.1".parse::<IpAddr>().unwrap());
+    }
+
+    /// The device binder binds the same plain IPv4 address as the source binder.
+    /// Needs `SO_BINDTODEVICE`, which unprivileged processes may use on current
+    /// kernels; where it is refused the test says so and checks nothing else.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_device_binder_binds_a_mapped_ipv4_source_as_ipv4() {
+        use crate::net::{DeviceBinder, create_uplink_socket};
+
+        let mapped: IpAddr = "::ffff:127.0.0.1".parse().unwrap();
+        let sock = create_uplink_socket(mapped).unwrap();
+        let binder = DeviceBinder::new("lo".to_string());
+        match binder.bind(&sock, mapped) {
+            Ok(()) => {
+                let local = sock.local_addr().unwrap().as_socket().unwrap();
+                assert_eq!(local.ip(), "127.0.0.1".parse::<IpAddr>().unwrap());
+            }
+            Err(e) if format!("{e:#}").contains("bind socket to device") => {
+                eprintln!("SO_BINDTODEVICE refused here, device binder not exercised: {e:#}");
+            }
+            Err(e) => panic!("binding a mapped source failed: {e:#}"),
+        }
+    }
+
+    /// A reload that adds a mapped source to an IPv4 bond pins it to the bond's
+    /// IPv4 address without a lookup: the bond already has an address in that
+    /// family. Choosing the IPv4 answer from an AAAA-first list is a separate
+    /// check, in `a_mapped_ipv4_source_dials_the_ipv4_answer`.
+    #[tokio::test]
+    async fn reload_pin_dials_a_mapped_ipv4_source_at_the_bond_address() {
+        let (mut connections, mut conn_io) = pinned_bond().await;
+        let added: IpAddr = "::ffff:127.0.0.1".parse().unwrap();
+        let new_ips = [connections[0].local_ip, connections[1].local_ip, added];
+        let resolver = super::super::rehome::StubResolver::new(vec![]);
+
+        reload(&mut connections, &mut conn_io, &new_ips, &*resolver).await;
+
+        assert_eq!(connections.len(), 3);
+        assert_eq!(
+            remote_via(&connections, &conn_io, added),
+            Some(bond_remote())
+        );
+        assert_eq!(resolver.calls(), 0, "the bond has an IPv4 address already");
+    }
+
+    /// A reload that adds a mapped source to an IPv6-only bond looks up the
+    /// family new to the bond once, and takes the A record even when the answer
+    /// lists the AAAA record first.
+    #[tokio::test]
+    async fn reload_looks_up_ipv4_for_a_mapped_source_new_to_an_ipv6_bond() {
+        let (mut connections, mut conn_io) = pinned_bond().await;
+        connections.truncate(1);
+        let v6_remote: SocketAddr = "[::1]:7001".parse().unwrap();
+        connections[0].local_ip = "::1".parse().unwrap();
+        connections[0].label = format!("{RELOAD_HOST}:{RELOAD_PORT} via ::1");
+        let id = connections[0].conn_id;
+        conn_io.retain(|k, _| *k == id);
+        conn_io.get_mut(&id).unwrap().remote = v6_remote;
+        let added: IpAddr = "::ffff:127.0.0.1".parse().unwrap();
+        let resolver = super::super::rehome::StubResolver::new(vec![Some(vec![
+            "[::1]:9999".parse().unwrap(),
+            "127.0.0.1:9999".parse().unwrap(),
+        ])]);
+        let kept = connections[0].local_ip;
+
+        reload(&mut connections, &mut conn_io, &[kept, added], &*resolver).await;
+
+        assert_eq!(resolver.calls(), 1, "IPv4 is new to the bond");
+        assert_eq!(
+            remote_via(&connections, &conn_io, added),
+            Some("127.0.0.1:9999".parse().unwrap())
+        );
+    }
+
+    /// The failure family matching prevents: an IPv4 socket cannot send to an
+    /// IPv6 receiver address at all.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn ipv4_socket_cannot_reach_an_ipv6_receiver_address() {
+        use crate::net::SourceIpBinder;
+
+        let source: IpAddr = "127.0.0.1".parse().unwrap();
+        let sock = create_uplink_socket(source).unwrap();
+        SourceIpBinder.bind(&sock, source).unwrap();
+        let v6: SocketAddr = "[::1]:9".parse().unwrap();
+        let err = sock.send_to(b"x", &v6.into()).unwrap_err();
+        assert_eq!(err.raw_os_error(), Some(libc::EAFNOSUPPORT));
     }
 }

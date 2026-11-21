@@ -288,9 +288,36 @@ pub fn delivery_proof_is_timely(smooth_rtt_ms: f64, budget_ms: u32) -> bool {
     (smooth_rtt_ms / 2.0) <= budget_ms as f64
 }
 
+/// One outstanding duplicate probe.
+#[derive(Debug, Clone, Copy)]
+pub struct ProbeRecord {
+    /// Latest send of this sequence on this link. Drives the age purge.
+    pub sent_ms: u64,
+    /// The sequence was probed more than once on this link, so its ACK
+    /// cannot say which copy it answers (Karn's ambiguity).
+    pub ambiguous: bool,
+}
+
+/// A first-send NAK on this link that is not charged yet.
+#[derive(Debug, Clone, Copy)]
+pub struct PendingNak {
+    pub sent_ms: u64,
+    pub nak_ms: u64,
+}
+
+/// Source of arrival-report epochs: unique across the process, never zero.
+static SRTLA_ACK_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+pub(crate) fn next_srtla_ack_epoch() -> u64 {
+    SRTLA_ACK_EPOCH.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// A NAK left unresolved this long is charged as a loss. This covers a link
+/// that goes quiet before its next SRTLA ACK could settle the NAK.
+pub const PENDING_NAK_TIMEOUT_MS: u64 = 1_000;
+
 pub struct SrtlaConnection {
     pub conn_id: u64,
-    #[allow(dead_code)]
     // Shell production API: the sender binds egress sockets to this IP and
     // reports it in stats, so it is unconditionally public across the crate seam.
     pub local_ip: IpAddr,
@@ -298,7 +325,12 @@ pub struct SrtlaConnection {
     pub connected: bool,
     pub window: i32,
     pub in_flight_packets: i32,
-    /// Packet log: sequence -> unambiguous send timestamp (ms), or None for copies.
+    /// Packet log: sequence -> send timestamp (ms), or `None` for a resend
+    /// (a repeat on this link or a retransmit-flagged copy), whose ACK may
+    /// belong to an earlier copy and so cannot time a round trip. In enhanced
+    /// mode a NAK for a `None` entry is not a congestion signal, since it
+    /// usually repeats a loss report for an earlier copy. A NAK for a first
+    /// send moves the entry to [`Self::pending_naks`] instead of charging it.
     /// Uses FxHashMap for O(1) insert/remove instead of O(256) linear scan.
     #[cfg(feature = "test-internals")]
     pub packet_log: FxHashMap<i32, Option<u64>>,
@@ -313,20 +345,29 @@ pub struct SrtlaConnection {
     /// healthy round trip after the probe was sent, while the probing link's
     /// own SRTLA ACK is still in flight behind its much longer RTT. Sharing one
     /// log therefore deleted the probe's entry before its ACK could arrive, and
-    /// the ACK then matched nothing: no delivery proof. The
+    /// the ACK then matched nothing: no delivery proof, no RTT sample. The
     /// slower the link, the more reliably it lost the race — so the links whose
     /// recovery these probes exist to measure were the ones least likely to be
-    /// measured. Probe ACKs prove delivery but never sample RTT: a sequence ACK
-    /// cannot identify which duplicate copy it acknowledges.
+    /// measured, and what did get through was biased toward the fastest probes.
     ///
     /// Entries here are immune to the cumulative sweep and expire by age.
     /// Probes are also deliberately absent from the packet log's in-flight
     /// accounting and from NAK attribution: a probe is not payload this link
-    /// owes anyone.
+    /// owes anyone. A sequence probed twice on this link is kept but marked
+    /// ambiguous, so its ACK still proves delivery and yields no RTT sample.
     #[cfg(feature = "test-internals")]
-    pub probe_log: FxHashMap<i32, u64>,
+    pub probe_log: FxHashMap<i32, ProbeRecord>,
     #[cfg(not(feature = "test-internals"))]
-    pub(crate) probe_log: FxHashMap<i32, u64>,
+    pub(crate) probe_log: FxHashMap<i32, ProbeRecord>,
+    /// Enhanced mode first-send NAKs that wait for this link's SRTLA ACKs to
+    /// say whether the packet was lost or only reordered across links. They
+    /// leave in-flight accounting at the NAK and are charged to the congestion
+    /// window only once the evidence shows a loss, or after
+    /// [`PENDING_NAK_TIMEOUT_MS`].
+    #[cfg(feature = "test-internals")]
+    pub pending_naks: FxHashMap<i32, PendingNak>,
+    #[cfg(not(feature = "test-internals"))]
+    pub(crate) pending_naks: FxHashMap<i32, PendingNak>,
     /// Highest sequence number that has been cumulatively ACKed, or
     /// [`NO_ACK_YET`] before the first ACK (and after every reset).
     ///
@@ -434,6 +475,23 @@ pub struct SrtlaConnection {
     /// Cumulative silence-pull engagements (rising edges). Expected to tick
     /// on routine cellular HARQ stalls; a high rate is telemetry, not alarm.
     pub(crate) silence_pulls: u64,
+    /// SRT DATA datagrams queued on this link: first sends, retransmits and
+    /// duplicate probes. SRT control traffic forwarded over the link is not
+    /// counted. Monotonic for the life of this connection object.
+    pub(crate) data_packets_queued_total: u64,
+    /// Sequence entries in SRTLA ACKs that arrived on this link while it was
+    /// registered. The receiver lists a sequence in an SRTLA ACK only on the
+    /// link the packet arrived on, so these are arrival reports for this
+    /// path. Every entry counts, duplicates included. Monotonic for the life
+    /// of this connection object.
+    pub(crate) srtla_ack_entries_total: u64,
+    /// When the last SRTLA ACK arrived on this link in the current epoch, `0`
+    /// before the first. Keepalive replies never stamp it.
+    pub(crate) last_srtla_ack_ms: u64,
+    /// Changes when this connection is created or its socket is replaced.
+    /// Unique across the process, so a link removed and re-added never
+    /// repeats an earlier epoch.
+    pub(crate) srtla_ack_epoch: u64,
     /// Per-link liveness timeout in ms. Refreshed from the config snapshot on
     /// every selection pass so `is_timed_out` (called from paths that do not
     /// carry a config) always sees the current runtime value.
@@ -527,6 +585,7 @@ impl SrtlaConnection {
             in_flight_packets: 0,
             packet_log: FxHashMap::with_capacity_and_hasher(PKT_LOG_SIZE, Default::default()),
             probe_log: FxHashMap::default(),
+            pending_naks: FxHashMap::default(),
             highest_acked_seq: NO_ACK_YET,
             last_received: None,
             last_sent: None,
@@ -548,6 +607,10 @@ impl SrtlaConnection {
             sole_carrier_elections: 0,
             silence_pulled: false,
             silence_pulls: 0,
+            data_packets_queued_total: 0,
+            srtla_ack_entries_total: 0,
+            last_srtla_ack_ms: 0,
+            srtla_ack_epoch: next_srtla_ack_epoch(),
             conn_timeout_ms: crate::config_snapshot::CONN_TIMEOUT_MS,
             delay_budget_ms: 0,
             rtt: RttTracker::default(),
@@ -600,6 +663,9 @@ impl SrtlaConnection {
     /// the flush timer fires.
     #[inline]
     pub fn queue_data_packet(&mut self, data: &[u8], seq: Option<u32>, send_time_ms: u64) -> bool {
+        if seq.is_some() {
+            self.data_packets_queued_total = self.data_packets_queued_total.saturating_add(1);
+        }
         // Track bytes for bitrate calculation (tracked at queue time)
         self.bitrate.update_on_send(data.len() as u64);
         self.batch_sender.queue_packet(data, seq, send_time_ms)
@@ -619,6 +685,7 @@ impl SrtlaConnection {
     /// represents payload this link owes, and a NAK for that sequence stays
     /// attributed to the link that actually carried the stream data.
     pub fn queue_probe_packet(&mut self, data: &[u8], seq: u32, send_time_ms: u64) -> bool {
+        self.data_packets_queued_total = self.data_packets_queued_total.saturating_add(1);
         self.bitrate.update_on_send(data.len() as u64);
         self.record_probe(seq as i32, send_time_ms);
         self.batch_sender.queue_packet(data, None, send_time_ms)
@@ -633,7 +700,7 @@ impl SrtlaConnection {
         use crate::config_snapshot::{PROBE_LOG_MAX_AGE_MS, PROBE_LOG_SOFT_CAP};
         if self.probe_log.len() >= PROBE_LOG_SOFT_CAP {
             let cutoff = send_time_ms.saturating_sub(PROBE_LOG_MAX_AGE_MS);
-            self.probe_log.retain(|_, sent| *sent >= cutoff);
+            self.probe_log.retain(|_, p| p.sent_ms >= cutoff);
             // Still full of live entries: this link is being probed faster than
             // it can answer, so the oldest are the least useful. Start over
             // rather than grow without bound.
@@ -641,7 +708,16 @@ impl SrtlaConnection {
                 self.probe_log.clear();
             }
         }
-        self.probe_log.insert(seq, send_time_ms);
+        self.probe_log
+            .entry(seq)
+            .and_modify(|p| {
+                p.sent_ms = send_time_ms;
+                p.ambiguous = true;
+            })
+            .or_insert(ProbeRecord {
+                sent_ms: send_time_ms,
+                ambiguous: false,
+            });
     }
 
     /// Check if the batch queue needs time-based flushing (15ms interval)
@@ -684,6 +760,9 @@ impl SrtlaConnection {
             if let Some(s) = seq {
                 let seq = *s as i32;
                 self.register_packet(seq, *send_time_ms);
+                // A NAK usually clears the original from the log before SRT
+                // resends it, so the repeat check in `register_packet` cannot
+                // see this copy is a resend. The retransmit flag can.
                 if is_srt_data_retransmit(data) {
                     self.packet_log.insert(seq, None);
                 }
@@ -819,10 +898,12 @@ impl SrtlaConnection {
     ///
     /// The echo is an RTT sample only when the tracker armed a measurement,
     /// but it is delivery proof for `stall_deselect` every time. Arming waits
-    /// for 3 s without any RTT sample. Probe ACKs prove delivery only, so a
-    /// held-out link gets RTT from keepalive echoes. Delivery proof must stay
-    /// independent of RTT arming to remain fresh throughout the rejoin dwell.
-    /// Pairs with the earned-ACK site (see `ack_nak.rs`).
+    /// for 3 s without any RTT sample, which a stall-latched link fed only by
+    /// sparse probe ACKs rarely reaches; tying proof to it would leave the
+    /// latch's rejoin dwell, which needs fresh proof throughout, unable to
+    /// complete. Pairs with the earned-ACK site (see `ack_nak.rs`); together
+    /// they let a recovered link un-gate itself without the scheduler probing
+    /// blindly.
     pub fn handle_keepalive_echo(&mut self, data: &[u8], now_ms: u64) {
         if self
             .rtt
@@ -831,7 +912,7 @@ impl SrtlaConnection {
         {
             self.record_rtt_probe();
         }
-        if rtt::keepalive_echo_rtt_ms(data, now_ms).is_some() {
+        if rtt::keepalive_echo_proves_delivery(data, now_ms) {
             self.last_ack_or_rtt_sample_ms = now_ms;
         }
     }
@@ -1013,11 +1094,13 @@ impl SrtlaConnection {
         // period (see `STALL_REJOIN_PROOF_FLOOR_MS`).
         let proof_window_ms = stale_ms.max(crate::config_snapshot::STALL_REJOIN_PROOF_FLOOR_MS);
         // Recent *and* fast enough to matter: see `delivery_proof_is_timely`.
-        // Both conditions restart the dwell, so a link only rejoins on a run of
-        // proof that a packet of real payload could have ridden.
+        // Timeliness is judged on the recent RTT floor (`rejoin_rtt_ms`), not
+        // the smoothed RTT. Both conditions restart the dwell, so a link only
+        // rejoins on a run of proof that a packet of real payload could have
+        // ridden.
         let proof_fresh = self.last_ack_or_rtt_sample_ms != 0
             && now_ms.saturating_sub(self.last_ack_or_rtt_sample_ms) < proof_window_ms
-            && delivery_proof_is_timely(self.get_smooth_rtt_ms(), self.delay_budget_ms);
+            && delivery_proof_is_timely(self.rejoin_rtt_ms(), self.delay_budget_ms);
         if !proof_fresh {
             self.stall_recovery_since_ms = 0;
             return;
@@ -1195,6 +1278,25 @@ impl SrtlaConnection {
         false
     }
 
+    /// The round trip the rejoin timeliness check judges a latched link by:
+    /// the lower of the smoothed RTT and the 3 s windowed minimum. Receivers
+    /// that batch SRTLA ACKs (BELABOX acknowledges every 10 packets per
+    /// connection) hold the ACK for a packet sent before an outage, or for a
+    /// latched link's sparse probes, until the batch fills. That sample comes
+    /// back as long as the outage or the batch and inflates the smoothed RTT
+    /// for seconds. The sample that completes each batch is answered at once,
+    /// so the floor stays at the path RTT, while a genuinely late link has no
+    /// fast samples and its floor stays high.
+    #[inline]
+    pub fn rejoin_rtt_ms(&self) -> f64 {
+        let smooth = self.get_smooth_rtt_ms();
+        if self.rtt.kalman_rtt.is_initialized() && self.rtt.rtt_min_fast_ms > 0.0 {
+            smooth.min(self.rtt.rtt_min_fast_ms)
+        } else {
+            smooth
+        }
+    }
+
     /// RTT-scaled window (ms) of total inbound silence after which a loaded
     /// link is transiently pulled: `max(floor, 2 x smoothed RTT)`, capped at
     /// the effective staleness window (beyond that the latch owns the
@@ -1280,6 +1382,42 @@ impl SrtlaConnection {
         self.silence_pulls
     }
 
+    /// Count the sequence entries of one SRTLA ACK that arrived on this link.
+    /// Ignored before registration completes.
+    #[inline]
+    pub fn note_srtla_ack_arrival(&mut self, entries: usize, now_ms: u64) {
+        if !self.connected || entries == 0 {
+            return;
+        }
+        self.srtla_ack_entries_total = self.srtla_ack_entries_total.saturating_add(entries as u64);
+        self.last_srtla_ack_ms = now_ms;
+    }
+
+    /// SRT DATA datagrams queued on this link over this connection's life.
+    #[inline(always)]
+    pub fn data_packets_queued_total(&self) -> u64 {
+        self.data_packets_queued_total
+    }
+
+    /// SRTLA ACK sequence entries that arrived on this link while registered.
+    #[inline(always)]
+    pub fn srtla_ack_entries_total(&self) -> u64 {
+        self.srtla_ack_entries_total
+    }
+
+    /// Milliseconds since an SRTLA ACK last arrived on this link in the
+    /// current epoch, `None` before the first.
+    #[inline]
+    pub fn last_srtla_ack_age_ms(&self, now_ms: u64) -> Option<u64> {
+        (self.last_srtla_ack_ms != 0).then(|| now_ms.saturating_sub(self.last_srtla_ack_ms))
+    }
+
+    /// The current arrival-report epoch (see [`Self::note_srtla_ack_arrival`]).
+    #[inline(always)]
+    pub fn srtla_ack_epoch(&self) -> u64 {
+        self.srtla_ack_epoch
+    }
+
     /// Whether this link has gone silent past its liveness timeout
     /// (`conn_timeout_ms`, default `CONN_TIMEOUT`; runtime-tunable so the
     /// window can scale with the receiver's latency budget).
@@ -1336,6 +1474,7 @@ impl SrtlaConnection {
         }
         self.packet_log.clear();
         self.probe_log.clear();
+        self.pending_naks.clear();
         self.in_flight_packets = 0;
         self.highest_acked_seq = NO_ACK_YET;
         self.congestion.reset();
@@ -1356,6 +1495,7 @@ impl SrtlaConnection {
         self.in_flight_packets = 0;
         self.packet_log.clear();
         self.probe_log.clear();
+        self.pending_naks.clear();
         self.highest_acked_seq = NO_ACK_YET;
         self.batch_sender.reset();
         self.phase = LinkPhase::Registering;
@@ -1485,6 +1625,10 @@ impl SrtlaConnection {
     pub fn reset_for_reconnect(&mut self, now: u64) {
         self.last_received = None;
         self.reset_core_state();
+        // A new socket starts a new arrival-report epoch: ACK age restarts, and
+        // consumers rebaseline their deltas when the epoch changes.
+        self.srtla_ack_epoch = next_srtla_ack_epoch();
+        self.last_srtla_ack_ms = 0;
 
         // Reset submodule state
         self.congestion.reset();

@@ -5,7 +5,9 @@ mod tests {
     use std::io::Write;
     use std::net::{IpAddr, Ipv4Addr};
 
+    use srtla_core::connection::PENDING_NAK_TIMEOUT_MS;
     use srtla_core::mode::SchedulingMode;
+    use srtla_core::registration::SrtlaRegistrationManager;
     use srtla_core::selection::{calculate_quality_multiplier, select_connection_idx};
     use srtla_core::utils::now_ms;
     use tempfile::NamedTempFile;
@@ -416,21 +418,23 @@ mod tests {
             connections[2].congestion.nak_count,
         ];
 
-        let found_0 = connections[0].handle_nak(100, now_ms());
+        let found_0 = connections[0].handle_nak(100, false, now_ms());
         assert!(found_0);
+        connections[0].expire_pending_naks(now_ms() + PENDING_NAK_TIMEOUT_MS);
         assert_eq!(connections[0].congestion.nak_count, initial_counts[0] + 1);
         assert_eq!(connections[1].congestion.nak_count, initial_counts[1]);
         assert_eq!(connections[2].congestion.nak_count, initial_counts[2]);
 
-        let found_1 = connections[1].handle_nak(200, now_ms());
+        let found_1 = connections[1].handle_nak(200, false, now_ms());
         assert!(found_1);
+        connections[1].expire_pending_naks(now_ms() + PENDING_NAK_TIMEOUT_MS);
         assert_eq!(connections[0].congestion.nak_count, initial_counts[0] + 1);
         assert_eq!(connections[1].congestion.nak_count, initial_counts[1] + 1);
         assert_eq!(connections[2].congestion.nak_count, initial_counts[2]);
 
-        let not_found_0 = connections[0].handle_nak(999, now_ms());
-        let not_found_1 = connections[1].handle_nak(999, now_ms());
-        let not_found_2 = connections[2].handle_nak(999, now_ms());
+        let not_found_0 = connections[0].handle_nak(999, false, now_ms());
+        let not_found_1 = connections[1].handle_nak(999, false, now_ms());
+        let not_found_2 = connections[2].handle_nak(999, false, now_ms());
         assert!(!not_found_0);
         assert!(!not_found_1);
         assert!(!not_found_2);
@@ -507,6 +511,8 @@ mod tests {
             &mut last_selected_idx,
             &mut seq_tracker,
             &binder,
+            &*crate::sender::StubResolver::new(vec![]),
+            &mut SrtlaRegistrationManager::new(),
         ));
 
         // Should have removed some connections
@@ -519,6 +525,48 @@ mod tests {
         // (they were cleaned up by remove_connection)
         assert!(seq_tracker.get(100, now).is_none());
         assert!(seq_tracker.get(200, now).is_none());
+    }
+
+    #[test]
+    fn apply_connection_changes_forgets_removed_handshakes() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut connections = rt.block_on(create_test_connections(3));
+
+        // The reload keeps only 192.168.1.10, so it removes the links awaiting
+        // REG2 (192.168.1.11) and REG3 (192.168.1.12).
+        let new_ips = vec![
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)),
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50)),
+        ];
+
+        let mut last_selected_idx = Some(1);
+        let mut seq_tracker = SequenceTracker::new();
+        let mut reg = SrtlaRegistrationManager::new();
+        let awaiting_reg2 = connections[1].conn_id;
+        let awaiting_reg3 = connections[2].conn_id;
+        reg.set_pending_reg2_conn(Some(awaiting_reg2));
+        reg.arm_reg3_gate(awaiting_reg3);
+
+        let binder: std::sync::Arc<dyn crate::net::UplinkBinder> =
+            std::sync::Arc::new(crate::net::SourceIpBinder);
+        // BatchUdpSocket::new registers with the Tokio reactor, so build the map
+        // inside the runtime context.
+        let mut conn_io = rt.block_on(async { create_test_conn_io_map(&connections) });
+        rt.block_on(apply_connection_changes(
+            &mut connections,
+            &mut conn_io,
+            &crate::sender::specs_from_ips(&new_ips, &[]),
+            "127.0.0.1",
+            8080,
+            &mut last_selected_idx,
+            &mut seq_tracker,
+            &binder,
+            &*crate::sender::StubResolver::new(vec![]),
+            &mut reg,
+        ));
+
+        assert_eq!(reg.pending_reg2_conn(), None);
+        assert!(!reg.is_awaiting_reg3(awaiting_reg3));
     }
 
     /// Recovery is not just a connection-local reset: the shell's
@@ -553,7 +601,7 @@ mod tests {
         // The consequence that matters: a late NAK for a sequence the recovered
         // link carried no longer attributes to it.
         assert_eq!(
-            attribute_nak(&mut connections, &seq_tracker, 100, now),
+            attribute_nak(&mut connections, &seq_tracker, 100, false, now),
             None,
             "a NAK arriving after recovery must not penalize the recovered link"
         );
@@ -597,8 +645,17 @@ mod tests {
         let binder: std::sync::Arc<dyn crate::net::UplinkBinder> =
             std::sync::Arc::new(crate::net::SourceIpBinder);
         let mut conn_io = ConnIoMap::new();
-        let connections =
-            create_connections_from_ips(&ips, &[], "127.0.0.1", 9999, &binder, &mut conn_io).await;
+        let answers = ["127.0.0.1:9999".parse().unwrap()];
+        let connections = create_connections_from_ips(
+            &ips,
+            &[],
+            &answers,
+            "127.0.0.1",
+            9999,
+            &binder,
+            &mut conn_io,
+        )
+        .await;
 
         // Connections may be empty due to connection failures, which is OK for testing
         assert!(connections.len() <= ips.len());

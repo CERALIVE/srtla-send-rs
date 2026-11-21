@@ -21,8 +21,8 @@
 //!
 //! JSON-RPC error codes follow the spec:
 //! `-32700` parse error, `-32600` invalid request, `-32601` method not found,
-//! `-32602` invalid params, `-32603` internal error. Anything above `-32000`
-//! is reserved for future app-specific errors.
+//! `-32602` invalid params, `-32603` internal error. App-specific errors use
+//! the server range from `-32000`: `-32000` subscription limit reached.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -60,6 +60,8 @@ const INVALID_REQUEST: i32 = -32600;
 const METHOD_NOT_FOUND: i32 = -32601;
 const INVALID_PARAMS: i32 = -32602;
 const INTERNAL_ERROR: i32 = -32603;
+#[cfg(unix)]
+const SUBSCRIPTION_LIMIT: i32 = -32000;
 
 #[derive(Debug, Deserialize)]
 struct Request {
@@ -139,8 +141,10 @@ pub struct SubscriptionContext<'a> {
     /// Push channel for *this* connection. Used by the hub to fan out
     /// published events onto the socket.
     pub push_tx: mpsc::Sender<String>,
-    /// Subscription ids owned by this connection, for cleanup on drop.
-    pub owned_ids: &'a mut Vec<String>,
+    /// `(subscription id, topic)` pairs owned by this connection. Used for
+    /// cleanup on drop, for one subscription per topic, and so a connection
+    /// can only unsubscribe its own ids.
+    pub owned_ids: &'a mut Vec<(String, String)>,
 }
 
 /// Sync dispatch — used by the stdin/readline loops. Subscriptions are
@@ -228,8 +232,15 @@ async fn handle_subscribe(
             format!("unknown topic: {topic}"),
         ));
     }
-    let id = ctx.hub.subscribe(topic, ctx.push_tx.clone()).await;
-    ctx.owned_ids.push(id.clone());
+    if let Some((id, _)) = ctx.owned_ids.iter().find(|(_, t)| t == topic) {
+        return Ok(serde_json::json!({ "subscription_id": id }));
+    }
+    let id = ctx
+        .hub
+        .subscribe(topic, ctx.push_tx.clone())
+        .await
+        .ok_or_else(|| ErrorObject::new(SUBSCRIPTION_LIMIT, "subscription limit reached"))?;
+    ctx.owned_ids.push((id.clone(), topic.to_string()));
     Ok(serde_json::json!({ "subscription_id": id }))
 }
 
@@ -244,8 +255,13 @@ async fn handle_unsubscribe(
         .ok_or_else(|| {
             ErrorObject::new(INVALID_PARAMS, "expected params.subscription_id: string")
         })?;
+    // Ids are sequential and easy to guess, so a connection may only remove
+    // the subscriptions it created.
+    let Some(pos) = ctx.owned_ids.iter().position(|(x, _)| x == id) else {
+        return Ok(serde_json::json!({ "removed": false }));
+    };
     let removed = ctx.hub.unsubscribe(id).await;
-    ctx.owned_ids.retain(|x| x != id);
+    ctx.owned_ids.remove(pos);
     Ok(serde_json::json!({ "removed": removed }))
 }
 
@@ -352,9 +368,15 @@ fn handle_method(
 
         "get_status" => {
             let snap = config.snapshot();
-            let (windows_received, malformed) = critical_window
-                .map(|w| (w.windows_received(), w.malformed_datagrams()))
-                .unwrap_or((0, 0));
+            let (windows_received, malformed, clamped) = critical_window
+                .map(|w| {
+                    (
+                        w.windows_received(),
+                        w.malformed_datagrams(),
+                        w.clamped_windows(),
+                    )
+                })
+                .unwrap_or((0, 0, 0));
             Ok(json!({
                 "mode": snap.mode.to_string(),
                 "quality_enabled": snap.quality_enabled,
@@ -364,6 +386,7 @@ fn handle_method(
                 "conn_timeout_ms": snap.conn_timeout_ms,
                 "critical_windows_received": windows_received,
                 "critical_malformed_datagrams": malformed,
+                "critical_clamped_windows": clamped,
             }))
         }
 
@@ -398,14 +421,10 @@ fn handle_method(
             Ok(doc)
         }
 
-        // Reserved for the future streaming API. A subscription-capable
-        // control plane will replace these returning METHOD_NOT_FOUND with
-        // a persistent-connection impl. Reserving the names now so clients
-        // written against the current protocol don't collide with built-in
-        // methods when the streaming upgrade lands.
+        // Subscriptions need a persistent connection, so only the socket serves them (see dispatch_async).
         "subscribe" | "unsubscribe" => Err(ErrorObject::new(
             METHOD_NOT_FOUND,
-            format!("{method} is reserved for a future streaming protocol, not yet implemented"),
+            format!("{method} is only available on the Unix control socket (--control-socket)"),
         )),
 
         other => Err(ErrorObject::new(
@@ -625,5 +644,93 @@ mod tests {
             v["result"]["bind_map_status"].get("reason").is_none(),
             "a non-degraded status must not carry a reason"
         );
+    }
+
+    #[cfg(unix)]
+    async fn call(ctx: &mut SubscriptionContext<'_>, req: &str) -> Value {
+        let config = DynamicConfig::new();
+        let resp = dispatch_async(&config, None, None, Some(ctx), req)
+            .await
+            .unwrap();
+        serde_json::from_str(&resp.to_json()).unwrap()
+    }
+
+    #[cfg(unix)]
+    const SUBSCRIBE_STATS: &str =
+        r#"{"jsonrpc":"2.0","id":1,"method":"subscribe","params":{"topic":"stats"}}"#;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn subscribe_twice_to_one_topic_returns_the_same_id() {
+        let hub = SubscriptionHub::new();
+        let (tx, _rx) = tokio::sync::mpsc::channel::<String>(8);
+        let mut owned: Vec<(String, String)> = Vec::new();
+        let mut ctx = SubscriptionContext {
+            hub: &hub,
+            push_tx: tx.clone(),
+            owned_ids: &mut owned,
+        };
+
+        let first = call(&mut ctx, SUBSCRIBE_STATS).await;
+        let second = call(&mut ctx, SUBSCRIBE_STATS).await;
+        assert!(first["result"]["subscription_id"].is_string());
+        assert_eq!(
+            first["result"]["subscription_id"],
+            second["result"]["subscription_id"]
+        );
+        assert_eq!(hub.len().await, 1);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn unsubscribe_ignores_ids_this_connection_does_not_own() {
+        let hub = SubscriptionHub::new();
+        let (tx, _rx) = tokio::sync::mpsc::channel::<String>(8);
+
+        let mut owned_a: Vec<(String, String)> = Vec::new();
+        let mut ctx_a = SubscriptionContext {
+            hub: &hub,
+            push_tx: tx.clone(),
+            owned_ids: &mut owned_a,
+        };
+        let sub = call(&mut ctx_a, SUBSCRIBE_STATS).await;
+        let id = sub["result"]["subscription_id"].as_str().unwrap();
+
+        let mut owned_b: Vec<(String, String)> = Vec::new();
+        let mut ctx_b = SubscriptionContext {
+            hub: &hub,
+            push_tx: tx.clone(),
+            owned_ids: &mut owned_b,
+        };
+        let req = json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "unsubscribe",
+            "params": { "subscription_id": id },
+        })
+        .to_string();
+        let resp = call(&mut ctx_b, &req).await;
+        assert_eq!(resp["result"], json!({ "removed": false }));
+        assert_eq!(hub.len().await, 1);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn subscribe_past_the_limit_is_refused() {
+        let hub = SubscriptionHub::new();
+        let (tx, _rx) = tokio::sync::mpsc::channel::<String>(8);
+        for _ in 0..crate::subscriptions::MAX_SUBSCRIPTIONS {
+            hub.subscribe("stats", tx.clone()).await.unwrap();
+        }
+
+        let mut owned: Vec<(String, String)> = Vec::new();
+        let mut ctx = SubscriptionContext {
+            hub: &hub,
+            push_tx: tx.clone(),
+            owned_ids: &mut owned,
+        };
+        let resp = call(&mut ctx, SUBSCRIBE_STATS).await;
+        assert_eq!(resp["error"]["code"], -32000);
+        assert!(owned.is_empty());
     }
 }
