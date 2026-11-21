@@ -989,6 +989,35 @@ mod tests {
         assert_eq!(resolver.calls(), 0, "the bond has an IPv4 address already");
     }
 
+    /// A reload that adds a mapped source to an IPv6-only bond looks up the
+    /// family new to the bond once, and takes the A record even when the answer
+    /// lists the AAAA record first.
+    #[tokio::test]
+    async fn reload_looks_up_ipv4_for_a_mapped_source_new_to_an_ipv6_bond() {
+        let (mut connections, mut conn_io) = pinned_bond().await;
+        connections.truncate(1);
+        let v6_remote: SocketAddr = "[::1]:7001".parse().unwrap();
+        connections[0].local_ip = "::1".parse().unwrap();
+        connections[0].label = format!("{RELOAD_HOST}:{RELOAD_PORT} via ::1");
+        let id = connections[0].conn_id;
+        conn_io.retain(|k, _| *k == id);
+        conn_io.get_mut(&id).unwrap().remote = v6_remote;
+        let added: IpAddr = "::ffff:127.0.0.1".parse().unwrap();
+        let resolver = super::super::rehome::StubResolver::new(vec![Some(vec![
+            "[::1]:9999".parse().unwrap(),
+            "127.0.0.1:9999".parse().unwrap(),
+        ])]);
+        let kept = connections[0].local_ip;
+
+        reload(&mut connections, &mut conn_io, &[kept, added], &*resolver).await;
+
+        assert_eq!(resolver.calls(), 1, "IPv4 is new to the bond");
+        assert_eq!(
+            remote_via(&connections, &conn_io, added),
+            Some("127.0.0.1:9999".parse().unwrap())
+        );
+    }
+
     /// The failure family matching prevents: an IPv4 socket cannot send to an
     /// IPv6 receiver address at all.
     #[cfg(target_os = "linux")]
