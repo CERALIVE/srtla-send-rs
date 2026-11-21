@@ -1,7 +1,8 @@
 # Upstream sync, 2026-11 (8db546c): triage ledger
 
 Record of the second November 2026 merge of `irlserver/srtla_send` into the CERALIVE
-fork. The living contract is [`AGENTS.md`](../../AGENTS.md) and the docs it routes to;
+fork, taken in two steps: `8db546c` first, then `b1cf1f2` on top (see "Second range"
+below). The living contract is [`AGENTS.md`](../../AGENTS.md) and the docs it routes to;
 this note records what crossed the boundary, why, and what is still open. The previous
 sync is [`upstream-sync-2026-11.md`](upstream-sync-2026-11.md).
 
@@ -13,6 +14,8 @@ sync is [`upstream-sync-2026-11.md`](upstream-sync-2026-11.md).
 | New last-merged upstream SHA | `8db546cb06f2d28a336e0a422f706ce79f515c95` |
 | Commits in `9e63d8f..8db546c` | 81 (`git rev-list --count`), of which 2 are merges (`--merges --count`) |
 | Fork merge commit | `3f887da` `chore: merge upstream irlserver/srtla_send 8db546c`, parents `4edec0d` (fork `main`) and `8db546c` |
+| Second range | `8db546c..b1cf1f2`, 6 commits, of which 2 are merges |
+| Second fork merge commit | `bfb0bbb` `chore: merge upstream irlserver/srtla_send b1cf1f2`, parents `84aa819` (this sync's branch) and `b1cf1f2` |
 
 ## Verdicts
 
@@ -207,8 +210,9 @@ Further checks on the merge plus the compatibility fix below:
 
 Upstream commits `4ba1d31` and `87c0304` carry co-author trailers that upstream added.
 The merge keeps them verbatim, as the previous sync did for its range, because
-rewriting them would change upstream SHAs and break the merge base. Every commit the
-fork authors carries none.
+rewriting them would change upstream SHAs and break the merge base. This was decided
+for this sync before it was opened. Every commit the fork authors carries none, and
+the second range adds no trailers.
 
 ## Compatibility fix on top of the merge
 
@@ -220,8 +224,27 @@ against a dual-stack one. The follow-up commit canonicalises the source for the 
 family, the answer match and the bind address in both the source-IP and the device
 binder. Separate tests check: picking the IPv4 answer from an AAAA-first list and a
 rebuild; a pinned reload that adds the mapped source with no lookup; the bound family and
-delivery to an IPv4-only receiver; the device binder on `lo` where the kernel allows it. The source-IP part is proposed
-upstream; the device binder is the fork's.
+delivery to an IPv4-only receiver; the device binder on `lo` where the kernel allows it.
+Upstream has since merged the source-IP part (`722fe46`, `f263036`, in the second
+range below); the device binder is the fork's.
+
+## Second range: `8db546c..b1cf1f2`
+
+Oldest first (`git log --reverse --topo-order 8db546c..b1cf1f2`).
+
+| SHA | Subject | Author | Verdict | Evidence |
+|---|---|---|---|---|
+| `722fe46` | fix(srtla_send): treat an ipv4-mapped source as ipv4 | Paul Golmann | ALREADY-CONVERGENT | The source-IP half of the fork's compatibility fix `c4e7eec`, proposed upstream from it. The merge leaves the fork's `src/net/socket.rs` as it was and adds only a test to `src/sender/connections.rs`; the fork's device binder keeps its own canonicalisation. |
+| `f263036` | test(srtla_send): cover ipv4-mapped sources on the wire and on reload | Paul Golmann | ADOPT | `reload_looks_up_ipv4_for_a_mapped_source_new_to_an_ipv6_bond` added beside the fork's tests. The fork's label assertion, its device-binder test and its longer doc comment on `reload_pin_dials_a_mapped_ipv4_source_at_the_bond_address` kept. |
+| `783aab4` | Merge pull request #31 from openstreambox/osb/pr/mapped-ipv4-sources-irlserver | Thomas Lekanger | MERGE | `git show --cc` adds no content of its own. |
+| `c831bf7` | fix(srtla_send): ignore datagrams queued by an uplink's previous socket | Paul Golmann | ADOPT | Adopted as merged. |
+| `a7c3f17` | feat(srtla_send): report per link the SRTLA ACK entries that arrived on it | Paul Golmann | ADOPT-WITH-FORK-FIX | The fork's `LinkStats` `Default` gains the four fields, and `link_arrival_tests` passes the fork's identities argument to `SharedStats::update`. The `AGENTS.md` edit rejected; the fields are recorded in the parity contract, the README telemetry paragraph and an `AGENTS.md` rule. |
+| `b1cf1f2` | Merge pull request #30 from openstreambox/osb/pr/link-arrival-reports-irlserver | Thomas Lekanger | MERGE | `git show --cc` adds no content of its own. |
+
+Conflicts: `AGENTS.md` kept the fork file byte for byte (upstream's only change is the
+mapped-source sentence, which the fork's rules and parity contract already state).
+`src/sender/connections.rs` took both sides' tests as above. Everything else merged
+cleanly.
 
 ## Follow-ups
 
