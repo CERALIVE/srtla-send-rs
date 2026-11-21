@@ -206,6 +206,24 @@ Further checks on the merge plus the compatibility fix below:
   part of this repository's gate. `cargo audit` was not run.
 - Not run: the release and platform build matrix.
 
+### Gate on the second step
+
+On the branch with `b1cf1f2` merged and the docs for it, on the pinned toolchain:
+`cargo fmt --all -- --check` and `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+pass, and `cargo test --workspace --all-features` and `--features test-internals` pass
+895 tests each (the two `device_binding` flush tests left out as above). The Loom lane
+passes, as do the workflow, cache, authority, release-version, Debian-ordering and
+doc-reference scripts.
+
+The privileged topology against `srtla_rec` `877dc16`, with `NETNS_REQUIRED=1`:
+`netns_arrival_reports` 1, `netns_basic` 2, `netns_failure` 2, `netns_impairment` 3,
+`netns_scenario` 2, `netns_stall_gate` 1, `netns_twin` 8 and `netns_wire_loss` 4, 23
+passed and none failed.
+
+Miri ran again because `c831bf7` adds the socket generation to `src/net/batch_recv.rs`:
+the lane's five filters and the three pointer tests from `201e948` pass. `Cargo.lock` and
+`deny.toml` are unchanged by this step.
+
 ## Upstream co-author trailers
 
 Upstream commits `4ba1d31` and `87c0304` carry co-author trailers that upstream added.
