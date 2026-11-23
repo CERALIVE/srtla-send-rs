@@ -1,10 +1,18 @@
 # Upstream sync, 2026-11 (8db546c): triage ledger
 
 Record of the second November 2026 merge of `irlserver/srtla_send` into the CERALIVE
-fork, taken in two steps: `8db546c` first, then `b1cf1f2` on top (see "Second range"
-below). The living contract is [`AGENTS.md`](../../AGENTS.md) and the docs it routes to;
+fork, taken in three steps: `8db546c`, `b1cf1f2` and `8677bb49` (see "Second range"
+and "Silent-link follow-up"). The living contract is [`AGENTS.md`](../../AGENTS.md) and the docs it routes to;
 this note records what crossed the boundary, why, and what is still open. The previous
 sync is [`upstream-sync-2026-11.md`](upstream-sync-2026-11.md).
+
+## Silent-link follow-up
+
+The range `b1cf1f2..8677bb49` brings in [irlserver #32](https://github.com/irlserver/srtla_send/pull/32),
+including the production-path simulation. The single conflict was in the sender module's imports.
+The resolution keeps the fork's `flush_all_batches` re-export and exposes upstream's
+link selection and feedback dispatch to the tests. The upstream merge and its four
+commits are retained in order.
 
 ## Range
 
