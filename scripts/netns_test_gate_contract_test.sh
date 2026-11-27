@@ -19,7 +19,7 @@ check_calls() {
     diff <(echo "${expected}") <(echo "${actual}") >&2 || true
     exit 1
   }
-  if grep -v -- ' --test-threads=1' "${STUB}/calls" >&2; then
+  if grep -v -E -- '(^| )--test-threads=1( |$)' "${STUB}/calls" >&2; then
     echo "netns-test-gate-contract: the calls above do not run one test at a time" >&2
     exit 1
   fi
