@@ -168,6 +168,29 @@ fn the_bound_port_is_really_taken_once_the_listener_is_logged() {
 }
 
 #[test]
+fn an_explicit_listen_port_is_the_port_the_sender_binds() {
+    // Held for the whole test, so no other socket can take it in between and
+    // the sender can only fail to bind if it really asks for this port.
+    let held = std::net::UdpSocket::bind(("::", 0)).expect("hold a port");
+    let port = held.local_addr().unwrap().port().to_string();
+    let dir = tempfile::tempdir().unwrap();
+    let ips = dir.path().join("ips.txt");
+    std::fs::write(&ips, "127.0.0.1\n").expect("write ips file");
+    let proc = SenderProc::spawn(&[&port, "127.0.0.1", "9999", ips.to_str().unwrap()]);
+
+    assert!(
+        proc.wait_for_log("bind local SRT UDP listener", START_TIMEOUT),
+        "the sender must try, and fail, to bind the held port {port}; logs:\n{}",
+        proc.logs()
+    );
+    assert!(
+        !proc.logs().contains(LISTENING_LOG),
+        "the sender bound some other port instead of {port}; logs:\n{}",
+        proc.logs()
+    );
+}
+
+#[test]
 fn listener_bind_precedes_every_uplink_of_a_multi_link_bond() {
     let dir = tempfile::tempdir().unwrap();
     // One workable uplink plus four that cannot bind: the sequential connect

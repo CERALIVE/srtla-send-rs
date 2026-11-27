@@ -11,6 +11,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[path = "support/signal_handler.rs"]
+mod signal_handler;
+
 const BIN: &str = env!("CARGO_BIN_EXE_srtla_send");
 const START_TIMEOUT: Duration = Duration::from_secs(5);
 /// Poll well past `PROMPT_EXIT` so a slow exit is reported as too slow rather
@@ -74,35 +77,8 @@ impl SenderProc {
         false
     }
 
-    /// Block until the sender has installed its handler for `signum`.
-    ///
-    /// The handlers are registered after the "listening for SRT" line is
-    /// logged, so signalling straight off that line can still hit the default
-    /// action and kill the process. `SigCgt` in `/proc/<pid>/status` is the
-    /// kernel's own record of caught signals, so it closes that window
-    /// without a guessed sleep.
-    #[cfg(target_os = "linux")]
     fn wait_for_handler(&self, signum: u32, timeout: Duration) -> bool {
-        let path = format!("/proc/{}/status", self.child.id());
-        let deadline = Instant::now() + timeout;
-        while Instant::now() < deadline {
-            let caught = std::fs::read_to_string(&path).ok().and_then(|status| {
-                let mask = status.lines().find_map(|l| l.strip_prefix("SigCgt:"))?;
-                u64::from_str_radix(mask.trim(), 16).ok()
-            });
-            if caught.is_some_and(|mask| mask & (1 << (signum - 1)) != 0) {
-                return true;
-            }
-            thread::sleep(Duration::from_millis(20));
-        }
-        false
-    }
-
-    /// No portable way to observe the handler off Linux; give startup a moment.
-    #[cfg(not(target_os = "linux"))]
-    fn wait_for_handler(&self, _signum: u32, _timeout: Duration) -> bool {
-        thread::sleep(Duration::from_millis(500));
-        true
+        signal_handler::installed(self.child.id(), signum, timeout)
     }
 
     fn signal(&self, sig: &str) {

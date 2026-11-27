@@ -172,10 +172,10 @@ pub async fn run_sender_with_config(
         .await
         .context("bind local SRT UDP listener")?;
     // The bound address: asked for port 0, the OS picks a free port at bind time.
-    info!(
-        "listening for SRT on {}",
-        local_listener.local_addr().unwrap_or(listen)
-    );
+    let bound = local_listener
+        .local_addr()
+        .context("read the local SRT listener address")?;
+    info!("listening for SRT on {bound}");
     if listen_addr.is_unspecified() {
         info!(
             "the SRT listener accepts any interface; only the client pin guards it (use \

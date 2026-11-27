@@ -126,7 +126,7 @@ srtla_send [OPTIONS] SRT_LISTEN_PORT SRTLA_HOST SRTLA_PORT BIND_IPS_FILE
 
 ### Required Arguments
 
-- `SRT_LISTEN_PORT`: UDP port on which to receive SRT packets locally
+- `SRT_LISTEN_PORT`: UDP port on which to receive SRT packets locally (`0` asks the OS for a free port)
 - `SRTLA_HOST`: hostname or IP of the SRTLA receiver (e.g., srtla_rec)
 - `SRTLA_PORT`: UDP port of the SRTLA receiver
 - `BIND_IPS_FILE`: path to a file with newline-separated local source IPs (uplinks). Each line is `<ip>[ <weight>]`: the optional
@@ -238,7 +238,7 @@ The control dialect is upstream's JSON-RPC 2.0 exactly as documented in [docs/CO
 
 ### Startup and shutdown behavior
 
-- The local `SRT_LISTEN_PORT` listener is bound before the IP list is read and before any uplink is dialed, so an encoder that connects immediately after spawn never hits a closed port.
+- The local `SRT_LISTEN_PORT` listener is bound before the IP list is read and before any uplink is dialed, so an encoder that connects immediately after spawn never hits a closed port. The `listening for SRT on <address>` log names the address actually bound, including the port the OS picked for `0`.
 - A missing, empty, or all-invalid `BIND_IPS_FILE` at startup is not fatal: the sender starts with no uplinks and waits for a `SIGHUP`.
 - A `SIGHUP` reload that resolves to zero valid source IPs is refused with a specific log line and the existing links keep running.
 - `SIGTERM`/`SIGINT` exit `0` promptly and remove the stats file.

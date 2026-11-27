@@ -270,7 +270,7 @@ fn bond_bytes_sent_total_is_monotonic_across_a_sighup_link_removal() {
     std::fs::write(&ips, "127.0.0.1\n127.0.0.2\n").expect("write ips file");
 
     let encoder = UdpSocket::bind("127.0.0.1:0").expect("bind injector");
-    let mut child = Command::new(BIN)
+    let child = Command::new(BIN)
         .args([
             "0",
             "127.0.0.1",
@@ -287,8 +287,9 @@ fn bond_bytes_sent_total_is_monotonic_across_a_sighup_link_removal() {
         .stderr(Stdio::null())
         .spawn()
         .expect("spawn srtla_send");
-    let srt_port = listening_port(&mut child);
-    let sender = Sender { child };
+    // Owned by the kill-and-reap guard before the first step that can panic.
+    let mut sender = Sender { child };
+    let srt_port = listening_port(&mut sender.child);
 
     // Given: BOTH uplinks have finished REG1/REG2/REG3 and are schedulable.
     let ready = wait_for(READY_TIMEOUT, || {
