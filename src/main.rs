@@ -239,13 +239,29 @@ fn warn_if_not_loopback(what: &str, addr: std::net::SocketAddr) {
     }
 }
 
+/// How long exit waits for blocking-pool work still running. A bind-map reload
+/// stuck on slow storage must not hold a clean exit past the device's 10 s stop
+/// window, and nothing else on the pool has anything left to flush.
+#[cfg(not(loom))]
+const BLOCKING_SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(1);
+
 // One thread on purpose. The packet loop holds every piece of bonding state
 // and the uplink readers only hand it datagrams, so worker threads add a
 // cross-thread wake per received packet and no parallelism. On loopback that
 // hop cost close to half the process CPU.
 #[cfg(not(loom))]
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("build the tokio runtime")?;
+    let outcome = runtime.block_on(run());
+    runtime.shutdown_timeout(BLOCKING_SHUTDOWN_GRACE);
+    outcome
+}
+
+#[cfg(not(loom))]
+async fn run() -> Result<()> {
     let matches = Cli::command().get_matches();
     let mut args = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
 

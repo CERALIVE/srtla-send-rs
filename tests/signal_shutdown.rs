@@ -17,11 +17,10 @@ const START_TIMEOUT: Duration = Duration::from_secs(5);
 /// than as "never exited".
 const EXIT_TIMEOUT: Duration = Duration::from_secs(10);
 const PROMPT_EXIT: Duration = Duration::from_secs(2);
-
-fn free_udp_port() -> u16 {
-    let sock = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind ephemeral udp");
-    sock.local_addr().unwrap().port()
-}
+/// Local SRT listen port. 0 lets the OS pick a free one at bind time: probing for
+/// a free port and handing it over left a window in which another socket, or a
+/// parallel test, could take it first.
+const ANY_PORT: &str = "0";
 
 struct SenderProc {
     child: Child,
@@ -140,8 +139,7 @@ fn assert_signal_exits_cleanly(sig: &str, signum: u32) {
     let dir = tempfile::tempdir().unwrap();
     let ips = dir.path().join("ips.txt");
     std::fs::write(&ips, "127.0.0.1\n").expect("write ips file");
-    let port = free_udp_port().to_string();
-    let mut proc = SenderProc::spawn(&[port.as_str(), "127.0.0.1", "9999", ips.to_str().unwrap()]);
+    let mut proc = SenderProc::spawn(&[ANY_PORT, "127.0.0.1", "9999", ips.to_str().unwrap()]);
 
     assert!(
         proc.wait_for_log("listening for SRT", START_TIMEOUT),
@@ -179,4 +177,81 @@ fn sigterm_exits_cleanly_and_promptly() {
 #[test]
 fn sigint_exits_cleanly_and_promptly() {
     assert_signal_exits_cleanly("INT", 2);
+}
+
+/// A `SIGHUP` with `--bind-map` reads the IP file on the blocking pool. Here
+/// that read never finishes: the IP file is swapped for a FIFO whose write end
+/// is held open without data. `SIGTERM` must still exit 0 promptly rather than
+/// wait for the read.
+#[cfg(target_os = "linux")]
+#[test]
+fn sigterm_exits_cleanly_while_a_bind_map_reload_is_stuck() {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    let dir = tempfile::tempdir().unwrap();
+    let ips = dir.path().join("ips.txt");
+    std::fs::write(&ips, "127.0.0.1\n").expect("write ips file");
+    let sidecar = dir.path().join("bind-map.json");
+    let mut proc = SenderProc::spawn(&[
+        ANY_PORT,
+        "127.0.0.1",
+        "9999",
+        ips.to_str().unwrap(),
+        "--bind-map",
+        sidecar.to_str().unwrap(),
+    ]);
+    assert!(
+        proc.wait_for_log("listening for SRT", START_TIMEOUT),
+        "sender never started; logs:\n{}",
+        proc.logs()
+    );
+    assert!(
+        proc.wait_for_handler(1, START_TIMEOUT) && proc.wait_for_handler(15, START_TIMEOUT),
+        "sender never installed its SIGHUP/SIGTERM handlers; logs:\n{}",
+        proc.logs()
+    );
+
+    std::fs::remove_file(&ips).unwrap();
+    let fifo = CString::new(ips.as_os_str().as_bytes()).unwrap();
+    // SAFETY: a valid NUL-terminated path and a plain permission mode.
+    assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+    proc.signal("HUP");
+
+    // A non-blocking open of the write end succeeds only once the reload has
+    // opened the FIFO for reading; keeping it open leaves that read waiting.
+    let deadline = Instant::now() + START_TIMEOUT;
+    let write_end = loop {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&ips)
+        {
+            Ok(end) => break end,
+            Err(_) if Instant::now() < deadline => thread::sleep(Duration::from_millis(20)),
+            Err(e) => panic!(
+                "the reload never opened the IP file ({e}); logs:\n{}",
+                proc.logs()
+            ),
+        }
+    };
+
+    let t0 = Instant::now();
+    proc.signal("TERM");
+    let code = proc.wait_exit(EXIT_TIMEOUT);
+    let elapsed = t0.elapsed();
+    drop(write_end);
+
+    assert_eq!(
+        code,
+        Some(0),
+        "SIGTERM must exit 0 while the reload is stuck; logs:\n{}",
+        proc.logs()
+    );
+    assert!(
+        elapsed < PROMPT_EXIT,
+        "SIGTERM must exit promptly (< {PROMPT_EXIT:?}) while the reload is stuck; took \
+         {elapsed:?}"
+    );
 }
