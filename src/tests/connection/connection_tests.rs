@@ -1373,6 +1373,17 @@ mod tests {
             "DATA must be forwarded verbatim, never padded to 32B"
         );
         assert_eq!(&buf[..1316], &payload, "DATA payload must be unchanged");
+
+        // Shorter than the 32-byte control floor, so padding it would show.
+        let short = [0x11u8; 20];
+        connections[0].queue_data_packet(&short, None, now_ms());
+        flush_all_batches(&mut connections, &mut conn_io, &mut seq_tracker).await;
+        let (n, _) = tokio::time::timeout(Duration::from_secs(2), receiver.recv_from(&mut buf))
+            .await
+            .expect("short data packet not received")
+            .unwrap();
+        assert_eq!(n, 20, "a short DATA datagram must not be padded to 32B");
+        assert_eq!(&buf[..20], &short, "short DATA bytes must be unchanged");
     }
 
     /// Link 0 loses the original, the retransmit rides link 1 (the best-path
