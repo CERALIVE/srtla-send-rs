@@ -10,6 +10,7 @@ cargo build --release
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo check && cargo check --release
+cargo check --workspace --lib --bins && cargo check --workspace --all-targets
 cargo test --lib
 timeout --foreground --kill-after=10s 600s cargo test --workspace --all-features --verbose
 timeout --foreground --kill-after=10s 600s cargo test --workspace --features test-internals
@@ -17,6 +18,10 @@ cargo audit && cargo deny check advisories sources
 ```
 
 `test-internals` exposes internal fields for assertions; `--all-features` enables it.
+Every test build turns `srtla-core`'s copy on through `srtla_send`'s dev-dependency, so
+`cargo check --workspace --lib --bins` is the only build of the crates with it off, and
+`cargo check --workspace --all-targets` compiles the integration tests without
+`srtla_send`'s own `test-internals`.
 Most tests run in-process over loopback UDP. The `tests/netns_*.rs` targets are
 privileged supplements (Linux network namespaces, passwordless `sudo`, `srtla_rec`,
 `srt-live-transmit`) that self-skip when their dependencies are absent, so an ordinary
@@ -63,16 +68,19 @@ last-frame replay on this base; do not document one. Command contract:
 RUSTFLAGS="--cfg loom" cargo test --test subscription_loom
 ```
 
-**Miri lane (BLOCKING, not part of the default gate).** Five single-filter runs over the
+**Miri lane (BLOCKING, not part of the default gate).** Eight single-filter runs over the
 pure pointer logic in `src/net/batch_recv.rs` (`test_recv_buffer_creation`,
 `test_buffer_size`, `iter_clamps_oversized_msg_len_to_mtu`, `sockaddr_storage_roundtrip`,
-`recv_retry_action_classifies_errors`), each as
+`recv_retry_action_classifies_errors`, and upstream `201e948`'s
+`pointers_follow_the_buffer_after_a_move_out_of_the_box`,
+`pointers_follow_both_buffers_after_a_swap`, `forged_packet_reads_correctly_after_a_move`),
+each as
 `cargo miri test --lib --no-default-features --features test-internals <filter>`.
 `--no-default-features` no longer changes the build (mimalloc, which Miri cannot run, was
 dropped and the crate has no default features); the contract test pins the command. Miri
 cannot execute `recvmmsg`/`sendmmsg`; the send-side header construction has no Miri
 coverage on this base (it is built inline in `try_send_batch`). Both workflows must
-carry exactly these five filters; `scripts/release_workflow_contract_test.py` checks.
+carry exactly these eight filters; `scripts/release_workflow_contract_test.py` checks.
 
 Typed workflow contracts run under `uv`: `scripts/release_workflow_contract_test.py`,
 `scripts/rust_cache_contract_test.py`, `scripts/workflow_authority_contract_test.py`,
