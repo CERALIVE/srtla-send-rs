@@ -82,7 +82,7 @@ Eight Miri filters, cross-channel/OS lanes, privileged netns prerequisites, stal
 - Keep bytes_sent_total process-monotonic in bytes; never reset on replacement or reload, never treat missing as zero.
 - Arrival-report totals belong to one connection object and are compared only within one srtla_ack_epoch; never present them as goodput.
 - Capability probe keys are frozen; nonzero exit, malformed output or timeout means no support, regardless of error wording.
-- --bind-map stays optional; IP-list bytes stay unchanged; degraded reload retains the last valid mapped pool.
+- --bind-map stays optional; IP-list bytes stay unchanged; degraded reload retains the last valid mapped pool; an overlapping reload never applies an older or conflicting read over a newer one.
 - Stable identity is link_id, not IP or (ip, iface); mapped sockets bind both interface and source IP.
 - Never install policy routes or silently source-filter upstream's unconnected uplink sockets.
 - Each uplink dials the receiver answer in its own family (an IPv4-mapped source is IPv4, in both binders); reloads pin to the bond's address per family; the listener is pinned to one encoder source (released only by an induction after 1 s of silence); the control socket is owner-only. Details: parity contract.

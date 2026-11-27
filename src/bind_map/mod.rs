@@ -25,7 +25,9 @@ mod status;
 
 use std::path::Path;
 
-pub use coherence::{IfaceOracle, StaticIfaces, SystemIfaces, ValidateCtx, validate_pair};
+pub use coherence::{
+    IfaceOracle, StaticIfaces, SystemIfaces, ValidateCtx, check_generation, validate_pair,
+};
 pub use error::BindMapError;
 pub use parser::{
     BIND_MAP_SCHEMA_VERSION, BindMapDoc, BindMapRow, IfaceName, IpsFile, LinkId, MappedPool,

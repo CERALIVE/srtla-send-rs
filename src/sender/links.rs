@@ -19,7 +19,7 @@ use tracing::{info, warn};
 use super::connections::{specs_from_effective_links, specs_from_ips};
 use crate::bind_map::{
     BindMapDisposition, BindMapError, BindMapPaths, BindMapReport, BindMapStatus, MappedPool,
-    PairRead, ResolvePhase, SystemIfaces, ValidateCtx, read_pair, resolve,
+    PairRead, ResolvePhase, SystemIfaces, ValidateCtx, check_generation, read_pair, resolve,
 };
 use crate::net::UplinkSpec;
 use crate::sender::read_weighted_ip_list;
@@ -74,11 +74,36 @@ pub async fn read_bind_map(
     .unwrap_or_else(|e| std::panic::resume_unwind(e.into_panic()))
 }
 
+/// One `SIGHUP` reload read for a spawned task, numbered in the order the reads
+/// were started.
+///
+/// It carries no prior mapping: the generation rule is checked when the read
+/// is adopted, against the mapping applied by then (ADR-003 §4.3).
+pub struct ReloadRead {
+    order: u64,
+    ips_file: String,
+    sidecar: String,
+}
+
+impl ReloadRead {
+    /// Run the read, answering with its order number.
+    pub async fn run(self) -> (u64, Result<PairRead, BindMapError>) {
+        (
+            self.order,
+            read_bind_map(self.ips_file, self.sidecar, None).await,
+        )
+    }
+}
+
 pub struct LinkSource {
     ips_file: String,
     sidecar: Option<String>,
     last_valid: Option<MappedPool>,
     report: BindMapReport,
+    /// Reload reads can finish out of order, so each is numbered and an older
+    /// one is never adopted after a newer one.
+    reads_started: u64,
+    newest_adopted: u64,
 }
 
 impl LinkSource {
@@ -91,6 +116,8 @@ impl LinkSource {
             // A legacy run never resolves, so the default is what it reports for
             // its whole lifetime: absent, running legacy, nothing excluded.
             report: BindMapReport::default(),
+            reads_started: 0,
+            newest_adopted: 0,
         }
     }
 
@@ -115,11 +142,38 @@ impl LinkSource {
         }
     }
 
-    /// The arguments a spawned reload read needs.
+    /// The arguments a pair read needs.
     #[must_use]
     pub fn read_args(&self) -> Option<(String, String, Option<MappedPool>)> {
         let sidecar = self.sidecar.clone()?;
         Some((self.ips_file.clone(), sidecar, self.last_valid.clone()))
+    }
+
+    /// Start a `SIGHUP` reload read, numbered after every read started before it.
+    #[must_use]
+    pub fn begin_reload(&mut self) -> Option<ReloadRead> {
+        let sidecar = self.sidecar.clone()?;
+        self.reads_started += 1;
+        Some(ReloadRead {
+            order: self.reads_started,
+            ips_file: self.ips_file.clone(),
+            sidecar,
+        })
+    }
+
+    /// Adopt a finished reload read, or `None` when a newer one was already
+    /// adopted: applying it then would put an older uplink set back. A newer
+    /// read counts even when it failed (ADR-003 §4.3).
+    pub fn adopt_reload(
+        &mut self,
+        order: u64,
+        read: Result<PairRead, BindMapError>,
+    ) -> Option<SmallVec<UplinkSpec, 4>> {
+        if order <= self.newest_adopted {
+            return None;
+        }
+        self.newest_adopted = order;
+        Some(self.adopt(read))
     }
 
     /// The uplink set to start with.
@@ -150,11 +204,16 @@ impl LinkSource {
                 return SmallVec::new();
             }
         };
+        // Judged against the mapping applied now, not the one current when the
+        // read started: overlapping reads can be adopted in between.
+        let map = pair
+            .map
+            .and_then(|pool| check_generation(&pool, self.last_valid.as_ref()).map(|()| pool));
         let phase = match self.last_valid.as_ref() {
             Some(last_valid) => ResolvePhase::Reload { last_valid },
             None => ResolvePhase::Startup,
         };
-        let resolution = resolve(pair.map, &pair.ips, phase);
+        let resolution = resolve(map, &pair.ips, phase);
         self.report = BindMapReport::from(&resolution);
         log_outcome(resolution.status, resolution.disposition);
         for group in &resolution.excluded {

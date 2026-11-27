@@ -5,6 +5,9 @@ pub mod bind_map_generation_tests;
 pub mod bind_map_parse_tests;
 
 #[cfg(test)]
+pub mod bind_map_reload_order_tests;
+
+#[cfg(test)]
 pub mod bind_map_report_tests;
 
 #[cfg(test)]
