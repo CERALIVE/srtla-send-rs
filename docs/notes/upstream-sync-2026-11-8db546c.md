@@ -14,16 +14,28 @@ The resolution keeps the fork's `flush_all_batches` re-export and exposes upstre
 link selection and feedback dispatch to the tests. The upstream merge and its four
 commits are retained in order.
 
+Oldest first (`git log --reverse --topo-order b1cf1f2..8677bb49`).
+
+| SHA | Subject | Author | Verdict | Evidence |
+|---|---|---|---|---|
+| `eda0481` | refactor(srtla_send): split ack dispatch and link choice from socket i/o | Paul Golmann | ADOPT | No behaviour change. `apply_link_feedback` and `choose_link` are re-exported to the tests beside the fork's `flush_all_batches`. |
+| `9a1d14d` | fix(srtla-core): hold out a link whose path dies while it stays associated | Paul Golmann | ADOPT | Merged cleanly. A link handed 50 payload packets since its last delivery proof is a stall candidate whatever its backlog, once that proof is at least 1.5 s old, and every SRTLA ACK on a registered link is delivery proof (no RTT sample). No CLI flag added: only the `--no-stall-deselect`, `--stall-min-in-flight` and `--stall-ack-stale-ms` help text changes. |
+| `c3bbfc2` | test(srtla_send): pin that an ack on another link never proves a gated probe | Paul Golmann | ADOPT | Adopted as merged. |
+| `9a65c49` | test(srtla_send): simulate a dying path on the production send path | Paul Golmann | ADOPT | Adopted as merged. |
+| `8677bb4` | Merge pull request #32 from openstreambox/osb/pr/unproven-sends-irlserver-r3 | Thomas Lekanger | MERGE | `git show --cc` adds no content of its own. |
+
 ## Range
 
 | Item | Value |
 |---|---|
 | Previous last-merged upstream SHA | `9e63d8fab313d876917102b0ae26823a45016d9e` |
-| New last-merged upstream SHA | `8db546cb06f2d28a336e0a422f706ce79f515c95` |
+| New last-merged upstream SHA | `8677bb49f6af925cb14a3059af5af9f7dc0eb664`, after three steps (`8db546cb06f2d28a336e0a422f706ce79f515c95`, then `b1cf1f2`, then `8677bb49`) |
 | Commits in `9e63d8f..8db546c` | 81 (`git rev-list --count`), of which 2 are merges (`--merges --count`) |
 | Fork merge commit | `3f887da` `chore: merge upstream irlserver/srtla_send 8db546c`, parents `4edec0d` (fork `main`) and `8db546c` |
 | Second range | `8db546c..b1cf1f2`, 6 commits, of which 2 are merges |
 | Second fork merge commit | `bfb0bbb` `chore: merge upstream irlserver/srtla_send b1cf1f2`, parents `84aa819` (this sync's branch) and `b1cf1f2` |
+| Third range | `b1cf1f2..8677bb49`, 5 commits, of which 1 is a merge |
+| Third fork merge commit | `2158643` `chore: merge upstream irlserver/srtla_send 8677bb49`, parents `a152c42` (this sync's branch) and `8677bb4` |
 
 ## Verdicts
 
@@ -274,13 +286,20 @@ cleanly.
 
 ## Follow-ups
 
-- Upstream `201e948` adds three pure pointer tests in `src/net/batch_recv.rs`
+- Add upstream `201e948`'s three pure pointer tests in `src/net/batch_recv.rs`
   (`pointers_follow_the_buffer_after_a_move_out_of_the_box`,
-  `pointers_follow_both_buffers_after_a_swap`, `forged_packet_reads_correctly_after_a_move`);
-  the fork Miri lane still runs the original five.
+  `pointers_follow_both_buffers_after_a_swap`, `forged_packet_reads_correctly_after_a_move`)
+  to the Miri lane and its contract test; the lane still runs the original five.
 - Upstream's CI netns lane against `srtla_rec` (`52ac081`, `9411b7c`) is not adopted;
-  the fork has no privileged CI lane.
-- Add upstream `201e948`'s three pointer tests to the Miri lane and its contract test.
+  the fork has no privileged CI lane, so the stall-gate, wire-loss, twin and
+  arrival-report fixtures only run by hand.
+- Upstream `8dbdb3a` adds two build checks the fork CI lacks. The fork's `cargo check`
+  covers only the root package. `cargo check --workspace --lib --bins --locked` also
+  builds `network-sim` and every member with `srtla-core`'s `test-internals` off, which
+  every test build turns on through the dev-dependency, so a `pub(crate)` visibility
+  break stays invisible to `cargo test`. `cargo check --workspace --all-targets --locked`
+  proves the integration tests build without the root crate's `test-internals`
+  feature, which the fork only ever builds them with.
 - Run `cargo audit` and the release/platform matrix in CI.
 - A re-home whose answer lacks a family drops that family's uplinks from the bond
   (upstream `46d3c99` and `5a9ae03`); they return on the next IP-list reload.
