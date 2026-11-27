@@ -1,8 +1,10 @@
 mod client_dedup;
+mod client_pin;
 mod connections;
 mod egress_tick;
 mod housekeeping;
 mod links;
+mod no_link_log;
 mod packet_handler;
 mod rehome;
 mod reload;
@@ -13,41 +15,43 @@ mod uplink;
 mod uplink_recv;
 
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv6Addr, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 pub(crate) use client_dedup::ClientDedup;
+use client_pin::ClientPin;
 // Re-export connection management functions for tests
-#[allow(unused_imports)]
 pub use connections::{
     PendingConnectionChanges, apply_connection_changes, create_connections_from_ips,
     create_connections_from_links, recover_connection, specs_from_effective_links, specs_from_ips,
 };
 // Re-export public items used by tests
-#[allow(unused_imports)]
 pub use housekeeping::GLOBAL_TIMEOUT_MS;
 use housekeeping::handle_housekeeping;
 // ADR-003: where the uplink set comes from (legacy ips file, or the bind-map
 // pair read).
 #[allow(unused_imports)]
 pub use links::{LinkSource, SenderPaths, read_bind_map};
-// Re-exported for the NAK-attribution conformance tests so they drive the real
-// production path rather than a mirrored copy.
-#[allow(unused_imports)]
-pub(crate) use packet_handler::{attribute_nak, process_connection_events};
-use packet_handler::{drain_packet_queue, handle_srt_packet};
+use no_link_log::NoLinkLog;
 // Re-exported so the ported DATA-padding test drives the same production flush
 // path the send loop uses, not a mirrored copy.
-#[allow(unused_imports)]
-pub(crate) use packet_handler::{flush_all_batches, handle_uplink_packet};
+pub(crate) use packet_handler::flush_all_batches;
+// Re-exported so the ACK/NAK forward dedup tests drive the real receive path.
+pub(crate) use packet_handler::handle_uplink_packet;
+// Re-exported for the NAK-attribution conformance tests so they drive the real
+// production path rather than a mirrored copy.
+#[cfg(test)]
+pub(crate) use packet_handler::{
+    apply_link_feedback, attribute_nak, choose_link, note_srt_session_start,
+    process_connection_events,
+};
+use packet_handler::{drain_packet_queue, handle_srt_packet};
 // Scripted resolver seam for tests that drive the re-home trigger policy.
 #[cfg(any(test, feature = "test-internals"))]
 pub use rehome::StubResolver;
-#[allow(unused_imports)]
 pub use rehome::{REHOME_MIN_INTERVAL_MS, ReceiverResolver, RehomeGate};
-#[allow(unused_imports)]
 pub use sequence::{SEQ_TRACKING_SIZE, SEQUENCE_TRACKING_MAX_AGE_MS, SequenceTracker};
 use smallvec::SmallVec;
 use srtla_core::registration::SrtlaRegistrationManager;
@@ -66,10 +70,11 @@ pub use uplink::ConnIoMap;
 pub(crate) use uplink::UplinkPacket;
 use uplink::{ConnectionId, ReaderHandle, create_uplink_channel, sync_readers};
 // Re-exported so the handshake-sniffing tests drive the real receive path.
-#[allow(unused_imports)]
+#[cfg(test)]
 pub(crate) use uplink_recv::process_uplink_packet;
 
 use crate::config::DynamicConfig;
+use crate::net::resolve_remote_all;
 use crate::stats::SharedStats;
 
 pub const HOUSEKEEPING_INTERVAL_MS: u64 = 1000;
@@ -125,6 +130,7 @@ impl Drop for ShutdownHooks {
 #[allow(clippy::too_many_arguments)]
 pub async fn run_sender_with_config(
     local_srt_port: u16,
+    listen_addr: IpAddr,
     receiver_host: &str,
     receiver_port: u16,
     ips_file: &str,
@@ -148,19 +154,25 @@ pub async fn run_sender_with_config(
     // dialing any uplink. An encoder is typically pointed at this port the
     // moment the process is spawned, with no readiness handshake, so every
     // await before the bind is a window where that connect finds a closed port.
-    // Uplink setup is the worst offender: it resolves the receiver and dials
-    // each bonded link sequentially, so with a hostname receiver the window is
-    // one uncached DNS lookup per modem and grows with the size of the bond —
-    // exactly the multi-link case this sender exists for. Binding a UDP port
-    // needs nothing from the uplinks, so it belongs up here.
+    // Uplink setup is the worst offender: it resolves the receiver hostname once
+    // and then dials each bonded link, so with a hostname receiver the window
+    // spans an uncached DNS lookup. Binding a UDP port needs nothing from the
+    // uplinks, so it belongs up here.
     //
     // It also removes a rare startup failure: an uplink's ephemeral source port
     // landing on `local_srt_port` used to make this wildcard bind fail with
     // AddrInUse.
-    let local_listener = UdpSocket::bind(SocketAddr::from((Ipv6Addr::UNSPECIFIED, local_srt_port)))
+    let listen = SocketAddr::new(listen_addr, local_srt_port);
+    let local_listener = UdpSocket::bind(listen)
         .await
         .context("bind local SRT UDP listener")?;
-    info!("listening for SRT on [::]:{}", local_srt_port);
+    info!("listening for SRT on {listen}");
+    if listen_addr.is_unspecified() {
+        info!(
+            "the SRT listener accepts any interface; only the client pin guards it (use \
+             --listen-addr 127.0.0.1 for an encoder on this device)"
+        );
+    }
 
     // Where the uplink set comes from. Without `--bind-map` this reads the ips
     // file exactly as it always has and every spec is unmapped, so the bind-map
@@ -194,9 +206,33 @@ pub async fn run_sender_with_config(
     // Shell-owned I/O half of every connection, keyed by conn_id (never by
     // index — so no lockstep with the connections vec through add/remove).
     let mut conn_io: ConnIoMap = std::collections::HashMap::new();
-    let mut connections =
-        create_connections_from_links(&links, receiver_host, receiver_port, &binder, &mut conn_io)
-            .await;
+    // One answer for the whole bond, so every uplink in a family dials the same
+    // receiver instance. A failed lookup is not fatal, for the same reason an
+    // empty ips file is not: no uplink is dialed, and the next SIGHUP reload
+    // looks the receiver up again.
+    let answers = if links.is_empty() {
+        SmallVec::new()
+    } else {
+        match resolve_remote_all(receiver_host, receiver_port).await {
+            Ok(answers) => answers,
+            Err(e) => {
+                warn!(
+                    "could not resolve receiver {receiver_host} at startup ({e:#}); no uplink \
+                     dialed, waiting for SIGHUP reload"
+                );
+                SmallVec::new()
+            }
+        }
+    };
+    let mut connections = create_connections_from_links(
+        &links,
+        &answers,
+        receiver_host,
+        receiver_port,
+        &binder,
+        &mut conn_io,
+    )
+    .await;
 
     let mut reg = SrtlaRegistrationManager::new();
 
@@ -205,10 +241,8 @@ pub async fn run_sender_with_config(
     // reload populates the pool (see the queued-changes block in the main loop).
     if !connections.is_empty() {
         let probes = reg.start_probing(&mut connections, srtla_core::utils::now_ms());
-        for (idx, pkt) in probes {
-            if let Some(conn) = connections.get(idx)
-                && let Some(io) = conn_io.get(&conn.conn_id)
-            {
+        for (conn_id, pkt) in probes {
+            if let Some(io) = conn_io.get(&conn_id) {
                 let _ = io.send_control_padded(&pkt).await;
             }
         }
@@ -252,7 +286,9 @@ pub async fn run_sender_with_config(
     batch_flush_timer.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
 
     let mut status_elapsed_ms: u64 = 0;
-    let mut last_client_addr: Option<SocketAddr> = None;
+    let mut client_pin = ClientPin::new();
+    let mut last_session_isn: Option<u32> = None;
+    let mut no_link_log = NoLinkLog::default();
     // Zero-allocation ring buffer for sequence tracking
     let mut seq_tracker = SequenceTracker::new();
     let mut client_dedup = ClientDedup::new();
@@ -262,6 +298,7 @@ pub async fn run_sender_with_config(
     // past the all-failed window, and only then to follow the receiver hostname
     // to a genuinely new address. `--no-rehome` turns it off entirely.
     let mut rehome = RehomeGate::new(config.rehome_on_failure());
+    let receiver_resolver = rehome::DnsResolver;
     let mut pending_changes: Option<PendingConnectionChanges> = None;
     // Weak-link classifier. Its per-link `weak` verdict is consumed by
     // Enhanced selection as an admission gate.
@@ -324,7 +361,9 @@ pub async fn run_sender_with_config(
                             &mut conn_io,
                             &mut last_selected_idx,
                             &mut seq_tracker,
-                            &mut last_client_addr,
+                            &mut client_pin,
+                            &mut no_link_log,
+                            &mut last_session_isn,
                             reg.has_connected,
                             &config_snap,
                             &critical_window,
@@ -337,7 +376,7 @@ pub async fn run_sender_with_config(
                             &mut reg,
                             &instant_tx,
                             &mut client_dedup,
-                            last_client_addr,
+                            client_pin.addr(),
                             &local_listener,
                             &seq_tracker,
                             &config_snap,
@@ -355,7 +394,7 @@ pub async fn run_sender_with_config(
                                 &mut reg,
                                 &instant_tx,
                                 &mut client_dedup,
-                                last_client_addr,
+                                client_pin.addr(),
                                 &local_listener,
                                 &seq_tracker,
                                 &config_snap,
@@ -368,7 +407,7 @@ pub async fn run_sender_with_config(
                                 &mut reg,
                                 &instant_tx,
                                 &mut client_dedup,
-                                last_client_addr,
+                                client_pin.addr(),
                                 &local_listener,
                                 &seq_tracker,
                                 &config_snap,
@@ -454,6 +493,8 @@ pub async fn run_sender_with_config(
                                 &mut last_selected_idx,
                                 &mut seq_tracker,
                                 &binder,
+                                &receiver_resolver,
+                                &mut reg,
                             ).await;
                             info!("connection changes applied successfully");
                             sync_readers(&connections, &conn_io, &mut reader_handles, &packet_tx);
@@ -467,10 +508,8 @@ pub async fn run_sender_with_config(
                                     &mut connections,
                                     srtla_core::utils::now_ms(),
                                 );
-                                for (idx, pkt) in probes {
-                                    if let Some(conn) = connections.get(idx)
-                                        && let Some(io) = conn_io.get(&conn.conn_id)
-                                    {
+                                for (conn_id, pkt) in probes {
+                                    if let Some(io) = conn_io.get(&conn_id) {
                                         let _ = io.send_control_padded(&pkt).await;
                                     }
                                 }
@@ -492,7 +531,7 @@ pub async fn run_sender_with_config(
                             &mut reg,
                             &instant_tx,
                             &mut client_dedup,
-                            last_client_addr,
+                            client_pin.addr(),
                             &local_listener,
                             &seq_tracker,
                             &config_snap,
@@ -503,6 +542,10 @@ pub async fn run_sender_with_config(
                     $($sighup_branch)*
                     _ = batch_flush_timer.tick() => {
                         flush_all_batches(&mut connections, &mut conn_io, &mut seq_tracker).await;
+                        let now = srtla_core::utils::now_ms();
+                        for c in connections.iter_mut() {
+                            c.expire_pending_naks(now);
+                        }
                     }
                 }
             }
@@ -560,7 +603,7 @@ pub async fn run_sender_with_config(
                 &mut reg,
                 &instant_tx,
                 &mut client_dedup,
-                last_client_addr,
+                client_pin.addr(),
                 &local_listener,
                 &seq_tracker,
                 &config_snap,

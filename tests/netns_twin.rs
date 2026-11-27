@@ -60,8 +60,13 @@ fn skip_without_twin_deps() -> bool {
 
 /// Start a bonded twin pair, capped so the bond has to use both links.
 fn started(test_name: &str, mapping: Mapping) -> TwinStack {
-    common::build_srtla_send();
-    let stack = TwinStack::start(test_name, &["twin-a", "twin-b"], mapping).expect("start stack");
+    let stack = TwinStack::start(
+        std::path::Path::new(env!("CARGO_BIN_EXE_srtla_send")),
+        test_name,
+        &["twin-a", "twin-b"],
+        mapping,
+    )
+    .expect("start stack");
     stack
         .shape_all(LINK_RATE_KBIT, LINK_DELAY_MS)
         .expect("cap the twins");

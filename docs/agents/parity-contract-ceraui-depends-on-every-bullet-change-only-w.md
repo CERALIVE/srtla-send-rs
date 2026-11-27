@@ -97,6 +97,31 @@
   re-handshake) and rebuilds the pool in file order. A reload resolving to zero valid
   source IPs is refused with a specific log and the stream keeps running on the
   existing links (`src/sender/reload.rs`).
+- **Receiver address per family (upstream `5a9ae03`, `208fb98`, `46d3c99`).** The
+  receiver name is looked up once for the bond, and each uplink dials the first answer in
+  its own address family; an uplink whose family the answers lack is not dialed. A reload
+  pins new uplinks to the bond's current address in their family and looks up only a
+  family the bond has no address in. A re-home whose answer lacks a family drops that
+  family's uplinks until the next reload, and an answer no uplink can reach is refused.
+  A failed lookup at startup dials nothing and waits for `SIGHUP` (fork behaviour, no
+  crash loop). An IPv4-mapped source (`::ffff:a.b.c.d`) counts as IPv4: it gets an IPv4
+  socket bound to the plain address by both the source-IP and the device binder, and
+  keeps its written form as identity and label (`src/net/socket.rs`,
+  `src/sender/connections.rs`). A host callback binder still receives the written
+  address and must normalise it itself if it binds an address.
+- **The local listener is pinned to one encoder source (upstream `c1327dc`).** The pin
+  is the full source address and port. Datagrams from any other source are dropped,
+  including the same encoder after a port change mid-stream; another source takes the
+  pin over only with an SRT caller induction after the pinned source has been silent for
+  at least 1000 ms (`src/sender/client_pin.rs`). A new session resets the sender's ACK
+  state (upstream `fdded82`). CeraUI's encoder sends from one socket. `--listen-addr`
+  (upstream) defaults to `::`, the fork's previous bind; CeraUI does not pass it.
+- **The control socket is chmodded to 0600 right after bind** and never replaces a path
+  that is not a socket (upstream `5ab397a`); a consumer connects as the sender's user,
+  and the socket belongs in a private directory (`docs/CONTROL_PROTOCOL.md`). CeraUI
+  spawns the sender and connects as the same user. Request lines are capped at 64 KiB,
+  subscriptions at 64, and a connection can only unsubscribe its own ids (upstream
+  `4734f01`, `aab1f0c`, `915b309`).
 - **IPs-file lines may carry an optional upstream weight, `<ip> <weight>`** (integer
   1..10, used in classic mode only). CeraUI's bare-IP lines read as weight 1. One shared
   parser (`parse_ip_line`, `src/sender/reload.rs`) serves startup, `SIGHUP`, `--dry-run`
@@ -107,6 +132,15 @@
   it. `src/toml_config.rs`, `tests/cli_surface.rs`.
 - **`get_stats` and `stats` links gain upstream's additive `weight` field**
   (`src/stats.rs`). The ADR-001 `--stats-file` document does not carry it.
+- **`get_stats` and `stats` links carry per-link arrival reports**
+  (`data_packets_queued_total`, `srtla_ack_entries_total`, `last_srtla_ack_age_ms`,
+  `srtla_ack_epoch`; `src/stats.rs`, "Arrival reports per link" in
+  `docs/CONTROL_PROTOCOL.md`). Unlike `bytes_sent_total` the totals belong to one
+  connection object: a link a reload removes and adds again starts at 0 under a new
+  epoch, and a socket replacement keeps the totals but starts a new epoch and clears the
+  age. Consumers key deltas by `link_id` and compare only equal epochs. They are
+  receiver arrival reports, not goodput. The `--stats-file` document does not carry
+  them. `src/tests/link_arrival_tests.rs`, `tests/netns_arrival_reports.rs`.
 - **Empty start is not fatal.** A missing, empty, or all-invalid `BIND_IPS_FILE` at
   startup binds the local listener, starts with an empty uplink pool, and waits for a
   `SIGHUP`. It must never crash-loop the device. `tests/signal_parity.rs`.

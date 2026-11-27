@@ -94,6 +94,13 @@ struct Cli {
     #[arg(long = "control-socket")]
     control_socket: Option<String>,
 
+    /// Address the local SRT listener binds. The default `::` accepts the
+    /// encoder on any interface (an encoder on another LAN machine needs
+    /// this). Use `127.0.0.1` when the encoder runs on this device, so hosts
+    /// on the modem networks cannot reach the port.
+    #[arg(long = "listen-addr", default_value = "::")]
+    listen_addr: std::net::IpAddr,
+
     /// Path to a TOML config file, read once at startup. Keys match the long
     /// flag names with underscores (`conn_timeout_ms`); a flag given on the
     /// command line wins over the file
@@ -137,21 +144,24 @@ struct Cli {
     no_quality: bool,
 
     /// Disable the stalled-link deselect guard (on by default). The guard skips
-    /// a link whose in-flight backlog is high while its last delivery proof has
-    /// gone stale, provided a healthier link can carry the traffic. While
+    /// a link whose in-flight backlog is high, or that was handed 50 payload
+    /// packets since its last delivery proof, while that proof has gone stale,
+    /// provided a healthier link can carry the traffic. While
     /// gated the link carries keepalives plus a sparse duplicate-packet probe
     /// trickle; it rejoins after delivery proof has been sustained for the
     /// rejoin dwell (quick to drop, conservative to rejoin).
     #[arg(long = "no-stall-deselect")]
     no_stall_deselect: bool,
     /// In-flight packet backlog at or above which a link becomes a stall
-    /// candidate for `--no-stall-deselect`.
+    /// candidate for `--no-stall-deselect`. A link handed 50 payload packets
+    /// since its last delivery proof is a candidate whatever its backlog.
     #[arg(long = "stall-min-in-flight", default_value_t = config::STALL_MIN_IN_FLIGHT_PACKETS)]
     stall_min_in_flight: i32,
     /// Ceiling (ms) on the delivery-proof staleness window after which a
     /// stall-candidate link is deselected. The effective window is
     /// RTT-adaptive (4x smoothed RTT, floored at 1000 ms) and this value caps
-    /// it; links without an RTT baseline use the ceiling directly.
+    /// it; links without an RTT baseline use the ceiling directly. The
+    /// 50-packet condition waits for the larger of that window and 1500 ms.
     #[arg(long = "stall-ack-stale-ms", default_value_t = config::STALL_ACK_STALE_MS)]
     stall_ack_stale_ms: u64,
     /// Per-link liveness timeout (ms): silence past this tears the link down
@@ -215,6 +225,7 @@ impl Cli {
             stall_min_in_flight,
             stall_ack_stale_ms,
             conn_timeout_ms,
+            listen_addr,
         );
     }
 }
@@ -401,6 +412,7 @@ async fn main() -> Result<()> {
 
     let outcome = sender::run_sender_with_config(
         local_srt_port,
+        args.listen_addr,
         receiver_host,
         receiver_port,
         ips_file,
@@ -539,6 +551,8 @@ fn classify_unusable_ips_file(ips_file: &str) -> anyhow::Error {
 
 #[cfg(all(test, not(loom)))]
 mod tests {
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
     use super::*;
 
     fn parse_with_file(flags: &[&str], file: &str) -> Cli {
@@ -589,5 +603,26 @@ mod tests {
         assert_eq!(cli.mode, SchedulingMode::Enhanced);
         assert_eq!(cli.stall_ack_stale_ms, 2000);
         assert_eq!(cli.conn_timeout_ms, config::CONN_TIMEOUT_MS);
+    }
+
+    #[test]
+    fn listen_addr_defaults_to_unspecified_v6() {
+        let cli = parse_with_file(&[], "");
+        assert_eq!(cli.listen_addr, IpAddr::V6(Ipv6Addr::UNSPECIFIED));
+    }
+
+    #[test]
+    fn listen_addr_comes_from_the_file() {
+        let cli = parse_with_file(&[], r#"listen_addr = "127.0.0.1""#);
+        assert_eq!(cli.listen_addr, IpAddr::V4(Ipv4Addr::LOCALHOST));
+    }
+
+    #[test]
+    fn listen_addr_typed_flag_wins_over_the_file() {
+        let cli = parse_with_file(
+            &["--listen-addr", "10.0.0.5"],
+            r#"listen_addr = "127.0.0.1""#,
+        );
+        assert_eq!(cli.listen_addr, IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5)));
     }
 }

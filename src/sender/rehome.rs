@@ -39,11 +39,11 @@
 //!
 //! Re-home rebuilds whatever uplinks the bond currently has, so it always runs
 //! against the local-IP set that the last accepted reload installed. In the
-//! other direction, a reload that lands *after* a re-home dials any newly added
-//! uplink through [`crate::net::resolve_remote`], which picks the first answer —
-//! the same deterministic pick this module makes — so the added link joins the
-//! bond at the address the bond just moved to. Neither order can leave uplinks
-//! split across two receivers.
+//! other direction, a reload dials each added uplink at the address the bond
+//! already uses in that uplink's family, with no lookup. Only a family the bond
+//! has no address in takes a fresh lookup, once per reload. A reload therefore
+//! never splits the bond, and a reload after a re-home joins the address the
+//! bond moved to. Neither order can leave uplinks split across two receivers.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -58,10 +58,12 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::Duration;
 use tracing::{debug, warn};
 
-use super::connections::{rebuild_uplink_socket, receiver_moved, recover_connection};
+use super::connections::{
+    pinned_remotes, rebuild_uplink_socket, receiver_moved, recover_connection,
+};
 use super::sequence::SequenceTracker;
 use super::uplink::{ConnIoMap, ConnectionId, ReaderHandle, UplinkPacket, restart_reader_for};
-use crate::net::resolve_remote_all;
+use crate::net::{resolve_remote_all, select_remote_for_source};
 
 /// At most one re-home *attempt* per minute, process-wide. The limit covers the
 /// DNS probe as well as the migration: housekeeping runs every second, and a
@@ -69,10 +71,11 @@ use crate::net::resolve_remote_all;
 /// the outage lasts.
 pub const REHOME_MIN_INTERVAL_MS: u64 = 60_000;
 
-/// Ceiling on the re-home lookup. Housekeeping is the main event loop's tick, so
-/// a resolver that hangs must not hang the sender with it. The bond is already
-/// dead here, which is why blocking the tick at all is acceptable — but only
-/// briefly.
+/// Ceiling on a receiver lookup made from housekeeping. Housekeeping is the main
+/// event loop's tick, so a resolver that hangs must not hang the sender with it.
+/// Blocking the tick briefly is acceptable for both callers. Re-home only looks
+/// up a bond that is already dead. A reload only reaches DNS when it adds an
+/// uplink in an address family the bond has no receiver address for.
 const RESOLVE_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Addresses a receiver hostname currently answers with.
@@ -99,16 +102,16 @@ impl ReceiverResolver for DnsResolver {
             match tokio::time::timeout(RESOLVE_TIMEOUT, resolve_remote_all(&host, port)).await {
                 Ok(Ok(addrs)) if !addrs.is_empty() => Some(addrs),
                 Ok(Ok(_)) => {
-                    debug!("re-home lookup of {host} returned no addresses; staying put");
+                    debug!("receiver lookup of {host} returned no addresses; staying put");
                     None
                 }
                 Ok(Err(e)) => {
-                    debug!("re-home lookup of {host} failed ({e}); staying put");
+                    debug!("receiver lookup of {host} failed ({e}); staying put");
                     None
                 }
                 Err(_) => {
                     warn!(
-                        "re-home lookup of {host} timed out after {:?}; staying put",
+                        "receiver lookup of {host} timed out after {:?}; staying put",
                         RESOLVE_TIMEOUT
                     );
                     None
@@ -229,7 +232,7 @@ impl ReceiverResolver for StubResolver {
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn try_rehome(
     gate: &mut RehomeGate,
-    connections: &mut [SrtlaConnection],
+    connections: &mut SmallVec<SrtlaConnection, 4>,
     conn_io: &mut ConnIoMap,
     reg: &mut SrtlaRegistrationManager,
     seq_tracker: &mut SequenceTracker,
@@ -239,17 +242,10 @@ pub(super) async fn try_rehome(
     dead_for_ms: u64,
     now: u64,
 ) -> bool {
-    // Every address the bond is currently pinned to, deduplicated. Uplinks
-    // resolve the hostname independently when they are first dialed, so in
-    // principle they can sit on different answers.
-    let mut current: ResolvedAddrs = SmallVec::new();
-    for conn in connections.iter() {
-        if let Some(io) = conn_io.get(&conn.conn_id)
-            && !current.contains(&io.remote)
-        {
-            current.push(io.remote);
-        }
-    }
+    // Every address the bond is currently pinned to. Startup dials every uplink
+    // from one answer and a reload reuses the bond's address per family, so
+    // this normally holds at most one address per family.
+    let current: ResolvedAddrs = pinned_remotes(connections, conn_io);
     let Some(&pinned) = current.first() else {
         return false;
     };
@@ -274,13 +270,26 @@ pub(super) async fn try_rehome(
         return false;
     }
 
-    // Deterministic pick, matching `resolve_remote`: the first answer.
-    let new_remote = fresh[0];
+    let answers: SmallVec<String, 4> = fresh.iter().map(ToString::to_string).collect();
+    // An answer that no uplink can reach is not somewhere to move. Migrating
+    // would drop every link and leave nothing for a later re-home to repoint.
+    if !connections
+        .iter()
+        .any(|conn| select_remote_for_source(&fresh, conn.local_ip).is_ok())
+    {
+        warn!(
+            "{receiver_host} now resolves to [{}], but no uplink has an address in those \
+             families; not re-homing",
+            answers.join(", ")
+        );
+        return false;
+    }
     warn!(
         "re-homing the whole bond: {receiver_host} no longer resolves to {pinned} and every \
-         uplink has been down for {dead_for_ms}ms; moving {} uplink(s) from {pinned} to \
-         {new_remote} and re-registering from scratch",
-        connections.len()
+         uplink has been down for {dead_for_ms}ms; moving {} uplink(s) to [{}] and re-registering \
+         from scratch",
+        connections.len(),
+        answers.join(", ")
     );
 
     rehome_bond(
@@ -290,7 +299,7 @@ pub(super) async fn try_rehome(
         seq_tracker,
         reader_handles,
         packet_tx,
-        new_remote,
+        &fresh,
         now,
     )
     .await;
@@ -298,7 +307,13 @@ pub(super) async fn try_rehome(
     true
 }
 
-/// Repoint every uplink at `new_remote` and restart registration.
+/// Repoint every uplink at the first `new_remotes` answer in its own address
+/// family and restart registration.
+///
+/// An uplink whose family the answer no longer offers is dropped from the bond:
+/// it has nothing it could send to, and keeping it would leave a socketless
+/// participant in the positional probe and REG1 state below. A later IP-list
+/// reload that names it dials it fresh.
 ///
 /// All-or-nothing in the sense that matters: the remote swap happens for the
 /// whole bond in one pass, before any socket is rebuilt, so an uplink whose
@@ -308,21 +323,36 @@ pub(super) async fn try_rehome(
 /// another.
 #[allow(clippy::too_many_arguments)]
 async fn rehome_bond(
-    connections: &mut [SrtlaConnection],
+    connections: &mut SmallVec<SrtlaConnection, 4>,
     conn_io: &mut ConnIoMap,
     reg: &mut SrtlaRegistrationManager,
     seq_tracker: &mut SequenceTracker,
     reader_handles: &mut HashMap<ConnectionId, ReaderHandle>,
     packet_tx: &UnboundedSender<UplinkPacket>,
-    new_remote: SocketAddr,
+    new_remotes: &[SocketAddr],
     now: u64,
 ) {
-    // Pass 1 — the atomic part. Nothing here can fail.
-    for conn in connections.iter() {
-        if let Some(io) = conn_io.get_mut(&conn.conn_id) {
-            io.remote = new_remote;
-        }
-    }
+    // Pass 1 — the atomic part, all from one DNS answer before any socket is
+    // rebuilt. Nothing here can fail.
+    connections.retain(
+        |conn| match select_remote_for_source(new_remotes, conn.local_ip) {
+            Ok(remote) => {
+                if let Some(io) = conn_io.get_mut(&conn.conn_id) {
+                    io.remote = remote;
+                }
+                true
+            }
+            Err(e) => {
+                warn!("{}: {e}; dropping it from the re-homed bond", conn.label);
+                conn_io.remove(&conn.conn_id);
+                if let Some(reader) = reader_handles.remove(&conn.conn_id) {
+                    reader.handle.abort();
+                }
+                seq_tracker.remove_connection(conn.conn_id);
+                false
+            }
+        },
+    );
 
     // Pass 2 — rebuild each socket against the new remote, reset the link's
     // protocol state, drop its sequence-tracker ownership and respawn its
@@ -334,7 +364,7 @@ async fn rehome_bond(
                 Err(e) => {
                     warn!(
                         "{}: failed to rebuild socket for re-home ({e}); leaving it to the \
-                         reconnect path, which will now dial {new_remote}",
+                         reconnect path, which will dial the re-homed address",
                         conn.label
                     );
                     recover_connection(conn, seq_tracker);
@@ -357,10 +387,8 @@ async fn rehome_bond(
     // Re-probing then picks the REG1 target by RTT just like a fresh start.
     reg.reset_for_rehome();
     let probes = reg.start_probing(connections, now);
-    for (idx, pkt) in probes {
-        if let Some(conn) = connections.get(idx)
-            && let Some(io) = conn_io.get(&conn.conn_id)
-        {
+    for (conn_id, pkt) in probes {
+        if let Some(io) = conn_io.get(&conn_id) {
             let _ = io.send_control_padded(&pkt).await;
         }
     }
@@ -381,7 +409,7 @@ mod tests {
     }
 
     struct Bond {
-        connections: Vec<SrtlaConnection>,
+        connections: SmallVec<SrtlaConnection, 4>,
         conn_io: ConnIoMap,
         reg: SrtlaRegistrationManager,
         seq_tracker: SequenceTracker,
@@ -392,7 +420,7 @@ mod tests {
         /// Two uplinks on 127.0.0.1 (so a socket rebuild really binds), both
         /// pinned to `remote`.
         async fn new(remote: SocketAddr) -> Self {
-            let connections = vec![
+            let connections = smallvec::smallvec![
                 create_test_connection().await,
                 create_test_connection().await,
             ];
@@ -541,8 +569,8 @@ mod tests {
         let client_half: Vec<u8> = bond.reg.srtla_id()[..srtla_protocol::SRTLA_ID_LEN / 2].to_vec();
         bond.reg.srtla_id[srtla_protocol::SRTLA_ID_LEN / 2..].fill(0xab);
         bond.reg.arm_reg3_gate(0);
-        bond.reg.set_reg1_target_idx(Some(1));
-        bond.reg.set_pending_reg2_idx(Some(1));
+        bond.reg.set_reg1_target_conn(Some(1));
+        bond.reg.set_pending_reg2_conn(Some(1));
         bond.reg.set_broadcast_reg2_pending(true);
         bond.reg.update_active_connections(&bond.connections);
         assert!(bond.reg.active_connections() > 0);
@@ -564,7 +592,7 @@ mod tests {
              REG1 looks exactly like a fresh sender's"
         );
 
-        assert_eq!(bond.reg.pending_reg2_idx(), None);
+        assert_eq!(bond.reg.pending_reg2_conn(), None);
         assert!(!bond.reg.broadcast_reg2_pending());
         assert!(!bond.reg.is_awaiting_reg3(0), "REG3 grants must be revoked");
         assert_eq!(bond.reg.active_connections(), 0);
@@ -606,5 +634,74 @@ mod tests {
             bond.connections.len(),
             "every re-homed uplink gets a fresh reader"
         );
+    }
+
+    fn v6(port: u16) -> SocketAddr {
+        SocketAddr::new(IpAddr::V6(std::net::Ipv6Addr::LOCALHOST), port)
+    }
+
+    #[tokio::test]
+    async fn re_home_picks_the_answer_in_each_uplinks_family() {
+        let mut bond = Bond::new(addr(1)).await;
+        let resolver = StubResolver::new(vec![Some(vec![v6(6000), addr(2)])]);
+        let mut gate = RehomeGate::with_resolver(true, resolver);
+
+        assert!(run_try_rehome(&mut bond, &mut gate, now_ms()).await);
+        assert_eq!(
+            bond.remotes(),
+            vec![addr(2)],
+            "IPv4 uplinks skip the IPv6 answer listed first"
+        );
+    }
+
+    #[tokio::test]
+    async fn re_home_drops_uplinks_whose_family_the_answer_lacks() {
+        use crate::net::{SourceIpBinder, UplinkBinder};
+        use crate::sender::connections::create_connections_from_ips;
+
+        let mut bond = Bond::new(addr(1)).await;
+        let binder: Arc<dyn UplinkBinder> = Arc::new(SourceIpBinder);
+        let added = create_connections_from_ips(
+            &[IpAddr::V6(std::net::Ipv6Addr::LOCALHOST)],
+            &[],
+            &["[::1]:5000".parse().unwrap()],
+            "::1",
+            5000,
+            &binder,
+            &mut bond.conn_io,
+        )
+        .await;
+        assert_eq!(added.len(), 1);
+        let v6_id = added[0].conn_id;
+        bond.connections.extend(added);
+
+        let resolver = StubResolver::new(vec![Some(vec![addr(2)])]);
+        let mut gate = RehomeGate::with_resolver(true, resolver);
+        assert!(run_try_rehome(&mut bond, &mut gate, now_ms()).await);
+
+        assert_eq!(bond.connections.len(), 2);
+        assert!(bond.connections.iter().all(|c| c.conn_id != v6_id));
+        assert!(!bond.conn_io.contains_key(&v6_id));
+        assert!(!bond.reader_handles.contains_key(&v6_id));
+        assert_eq!(bond.remotes(), vec![addr(2)]);
+        for (idx, conn) in bond.connections.iter().enumerate() {
+            assert!(
+                bond.conn_io.contains_key(&conn.conn_id),
+                "probe slot {idx} must have a socket to answer on"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn an_answer_no_uplink_can_reach_is_not_a_move() {
+        let old = addr(1);
+        let mut bond = Bond::new(old).await;
+        let resolver = StubResolver::new(vec![Some(vec![v6(6000)])]);
+        let mut gate = RehomeGate::with_resolver(true, resolver);
+
+        assert!(!run_try_rehome(&mut bond, &mut gate, now_ms()).await);
+        assert_eq!(bond.connections.len(), 2, "the bond must stay whole");
+        assert_eq!(bond.remotes(), vec![old], "the bond must stay put");
+        assert_eq!(gate.rehome_count(), 0);
     }
 }

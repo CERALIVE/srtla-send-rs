@@ -5,6 +5,7 @@
 //! shape a duplicate-IP bond cannot use. Everything below the process
 //! management — `NamespaceProcess`, the registration readiness gate — is shared.
 
+use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
@@ -12,7 +13,9 @@ use anyhow::{Context, Result, bail};
 
 use super::publish::{BindMapPublisher, TwinRow};
 use super::topology::{RECEIVER_IP, TWIN_IP, TwinTopology};
-use crate::harness::{NamespaceProcess, find_srtla_send_binary, wait_for_registered_uplinks};
+use crate::harness::{
+    NamespaceProcess, TS_PACKET_BYTES, spawn_udp_stream, wait_for_registered_uplinks,
+};
 use crate::wait_for_udp_listener;
 
 const SRT_SERVER_PORT: u16 = 4001;
@@ -39,8 +42,14 @@ pub struct TwinStack {
 
 impl TwinStack {
     /// Start the stack with one twin per `link_ids` entry, the Nth identity
-    /// pinned to the Nth interface.
-    pub fn start(test_name: &str, link_ids: &[&str], mapping: Mapping) -> Result<Self> {
+    /// pinned to the Nth interface. `srtla_send_bin` is the sender under test,
+    /// the binary cargo built for this test run (`CARGO_BIN_EXE_srtla_send`).
+    pub fn start(
+        srtla_send_bin: &Path,
+        test_name: &str,
+        link_ids: &[&str],
+        mapping: Mapping,
+    ) -> Result<Self> {
         let topo = TwinTopology::new(test_name, link_ids.len())?;
         let publisher = BindMapPublisher::new()?;
         let rows: Vec<TwinRow> = link_ids
@@ -69,10 +78,9 @@ impl TwinStack {
         if mapping == Mapping::BindMap {
             args.extend_from_slice(&["--bind-map", sidecar.as_str()]);
         }
-        let binary = find_srtla_send_binary()?;
         let srtla_send = NamespaceProcess::spawn_with_env(
             &topo.sender_ns,
-            &binary.to_string_lossy(),
+            &srtla_send_bin.to_string_lossy(),
             &args,
             &[("RUST_LOG", "debug")],
         )
@@ -185,17 +193,20 @@ impl TwinStack {
             .collect()
     }
 
-    /// Start a steady local SRT producer that outlives the call.
+    /// Start a steady local SRT producer that outlives the call. It sends SRT
+    /// DATA from `ENCODER_SOURCE_PORT`, like every other netns injector, so
+    /// the sender's client pin treats repeated calls as one encoder.
     pub fn start_traffic(&mut self, packets_per_sec: u32, seconds: u64) -> Result<()> {
-        let script = format!(
-            "import socket,time\ns=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)\nd=b'\\x00'*\
-             188\nend=time.time()+{seconds}\nwhile time.time()<end:\n    \
-             s.sendto(d,('127.0.0.1',{SRTLA_SEND_SRT_PORT}))\n    \
-             time.sleep(1/{packets_per_sec})\n"
-        );
         self.traffic = Some(
-            NamespaceProcess::spawn(&self.topo.sender_ns, "python3", &["-c", &script])
-                .context("start the local SRT producer")?,
+            spawn_udp_stream(
+                &self.topo.sender_ns,
+                "127.0.0.1",
+                SRTLA_SEND_SRT_PORT,
+                packets_per_sec,
+                TS_PACKET_BYTES,
+                Duration::from_secs(seconds),
+            )
+            .context("start the local SRT producer")?,
         );
         Ok(())
     }

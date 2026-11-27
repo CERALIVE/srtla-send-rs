@@ -7,8 +7,9 @@ upstream remote is **transient**: added for a merge, removed before any push or 
 
 - **Fork base:** upstream `df0b3938791ff24eced4aed8b29e3d49d0efb639` (v4.0.1). It stays
   an ancestor of `main` forever.
-- **Last-merged upstream SHA:** `9e63d8fab313d876917102b0ae26823a45016d9e` (2026-11 sync,
-  ledger `docs/notes/upstream-sync-2026-11.md`). The next sync's merge base is computed
+- **Last-merged upstream SHA:** `8677bb49f6af925cb14a3059af5af9f7dc0eb664` (second 2026-11
+  sync, through `8db546c` and `b1cf1f2`, ledger `docs/notes/upstream-sync-2026-11-8db546c.md`; the previous sync, to
+  `9e63d8f`, is `docs/notes/upstream-sync-2026-11.md`). The next sync's merge base is computed
   from it.
   The 2026-09 hard-fork closure ledger (bases across all four repos, ports/drops, A/B
   verdicts, erasure receipts, rollback) is `docs/notes/upstream-hardfork-2026-09.md`.

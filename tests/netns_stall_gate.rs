@@ -11,9 +11,9 @@
 
 mod common;
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use network_sim::{ImpairmentConfig, SrtlaTestStack};
+use network_sim::ImpairmentConfig;
 
 /// Lowered staleness ceiling. The latch must engage and the blackhole must
 /// end well inside CONN_TIMEOUT (5 s): a timed-out link resets its latch, and
@@ -29,12 +29,19 @@ fn test_stall_gate_latches_and_rejoins_after_dwell() {
     if common::skip_without_impairment_deps() {
         return;
     }
-    common::build_srtla_send();
 
-    let mut stack = SrtlaTestStack::start_with_log_filter(
+    // At these rates over two near-zero-RTT veths a link's backlog can peak
+    // below the default stall minimum of 32, so the default would make the
+    // silence pull depend on timing.
+    let mut stack = common::start_stack_with_log_filter(
         "stall",
         2,
-        &["--stall-ack-stale-ms", STALE_CEILING_MS],
+        &[
+            "--stall-ack-stale-ms",
+            STALE_CEILING_MS,
+            "--stall-min-in-flight",
+            "8",
+        ],
         "info,srtla_core::connection=debug,srtla_core::connection::batch_send=info,\
          srtla_core::connection::congestion=info",
     )
@@ -42,13 +49,26 @@ fn test_stall_gate_latches_and_rejoins_after_dwell() {
     common::wait_until_ready(&stack);
 
     // Continuous load throughout: selection (which drives the latch) runs per
-    // routed packet, and the black-holed link must accumulate the >=32
-    // in-flight backlog the stall signal requires.
-    let next_seq = common::inject_stream(&stack, 0, PACKETS_PER_SECOND, Duration::from_secs(2))
+    // routed packet, and the black-holed link must accumulate the in-flight
+    // backlog the stall signal requires. The stall logic is meant for Live
+    // links, and the RTT probes that end Warming need traffic, so the load
+    // keeps running until both links have left Warming.
+    common::inject_stream(&stack, PACKETS_PER_SECOND, Duration::from_secs(2))
         .expect("warmup stream");
+    let live_deadline = Instant::now() + Duration::from_secs(10);
+    while stack.wait_for_live_links(Duration::ZERO).is_err() {
+        assert!(
+            Instant::now() < live_deadline,
+            "links never left the Warming phase"
+        );
+        common::inject_stream(&stack, PACKETS_PER_SECOND, Duration::from_millis(500))
+            .expect("warming stream");
+    }
 
+    // Black out both directions, as a real outage does. Shaping only the
+    // sender's egress would still deliver the receiver's SRT ACKs on link 0.
     stack
-        .impair_link(
+        .impair_link_both_ways(
             0,
             ImpairmentConfig {
                 loss_percent: Some(100.0),
@@ -59,22 +79,23 @@ fn test_stall_gate_latches_and_rejoins_after_dwell() {
 
     // Latch expected after ~1.5 s of proof staleness; 3 s of load leaves
     // margin while keeping the blackhole shorter than CONN_TIMEOUT.
-    let next_seq =
-        common::inject_stream(&stack, next_seq, PACKETS_PER_SECOND, Duration::from_secs(3))
-            .expect("stream during blackhole");
+    common::inject_stream(&stack, PACKETS_PER_SECOND, Duration::from_secs(3))
+        .expect("stream during blackhole");
 
+    // A default config clears the shaping on both ends.
     stack
-        .impair_link(0, ImpairmentConfig::default())
+        .impair_link_both_ways(0, ImpairmentConfig::default())
         .expect("restore link 0");
 
     // Rejoin dwell is 2x the effective staleness window (at most 3 s). Keep the
     // stream up so duplicate probes earn the gated link continuous ACK proof.
-    common::inject_stream(&stack, next_seq, PACKETS_PER_SECOND, Duration::from_secs(8))
+    common::inject_stream(&stack, PACKETS_PER_SECOND, Duration::from_secs(8))
         .expect("stream through recovery");
 
     let output = stack.stop();
     common::dump_output(&output);
 
+    // Tracing logs go to stdout; panic messages go to stderr.
     let stdout: String = output.srtla_send_stdout.join("\n");
     let stderr: String = output.srtla_send_stderr.join("\n");
     assert!(

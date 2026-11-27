@@ -6,6 +6,7 @@ mod tests {
     use std::time::Duration;
 
     use socket2::{Domain, Protocol, Socket, Type};
+    use srtla_core::connection::{PENDING_NAK_TIMEOUT_MS, SrtlaConnection};
     use srtla_core::utils::now_ms;
     use srtla_protocol::*;
     use tokio::net::UdpSocket;
@@ -31,6 +32,13 @@ mod tests {
             remote,
             std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
         )
+    }
+
+    /// An enhanced mode NAK for a first send that no SRTLA ACK settles, charged
+    /// the way the event loop charges it once the pending NAK times out.
+    fn nak_lost(conn: &mut SrtlaConnection, seq: i32, now: u64) {
+        conn.handle_nak(seq, false, now);
+        conn.expire_pending_naks(now + PENDING_NAK_TIMEOUT_MS);
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -119,7 +127,7 @@ mod tests {
         conn.register_packet(103, current_time);
 
         // Test single NAK
-        conn.handle_nak(100, now_ms());
+        nak_lost(&mut conn, 100, now_ms());
         assert_eq!(conn.congestion.nak_count, 1);
         assert!(conn.window < initial_window);
         assert_eq!(conn.congestion.nak_burst_count, 0);
@@ -130,15 +138,15 @@ mod tests {
 
         // Simulate NAK burst (multiple NAKs within 1 second)
         conn.congestion.last_nak_time_ms = current_time;
-        conn.handle_nak(101, now_ms());
+        nak_lost(&mut conn, 101, now_ms());
         assert_eq!(conn.congestion.nak_burst_count, 2);
 
-        conn.handle_nak(102, now_ms());
+        nak_lost(&mut conn, 102, now_ms());
         assert_eq!(conn.congestion.nak_burst_count, 3);
 
         // Test fast recovery mode activation
         conn.window = 1500; // Low enough to trigger fast recovery
-        conn.handle_nak(103, now_ms());
+        nak_lost(&mut conn, 103, now_ms());
         assert!(conn.congestion.fast_recovery_mode);
     }
 
@@ -154,7 +162,7 @@ mod tests {
         conn.register_packet(100, current_time);
 
         // Now handle a NAK for that same packet
-        conn.handle_nak(100, now_ms());
+        nak_lost(&mut conn, 100, now_ms());
 
         assert!(conn.window < initial_window, "Window should shrink on NAK");
         assert_eq!(
@@ -174,21 +182,19 @@ mod tests {
             conn.register_packet(i, current_time);
         }
 
-        conn.handle_nak(100, now_ms());
+        nak_lost(&mut conn, 100, current_time);
         assert_eq!(conn.congestion.nak_burst_count, 0);
         assert_eq!(conn.congestion.nak_count, 1);
 
-        std::thread::sleep(std::time::Duration::from_millis(500));
-        conn.handle_nak(101, now_ms());
+        nak_lost(&mut conn, 101, current_time + 500);
         assert_eq!(conn.congestion.nak_burst_count, 2);
         assert_eq!(conn.congestion.nak_count, 2);
 
-        conn.handle_nak(102, now_ms());
+        nak_lost(&mut conn, 102, current_time + 500);
         assert_eq!(conn.congestion.nak_burst_count, 3);
         assert_eq!(conn.congestion.nak_count, 3);
 
-        std::thread::sleep(std::time::Duration::from_millis(1100));
-        conn.handle_nak(103, now_ms());
+        nak_lost(&mut conn, 103, current_time + 1_600);
         assert_eq!(conn.congestion.nak_burst_count, 0);
         assert_eq!(conn.congestion.nak_count, 4);
     }
@@ -203,16 +209,15 @@ mod tests {
             conn.register_packet(i, current_time);
         }
 
-        conn.handle_nak(100, now_ms());
-        conn.handle_nak(101, now_ms());
-        conn.handle_nak(102, now_ms());
+        nak_lost(&mut conn, 100, current_time);
+        nak_lost(&mut conn, 101, current_time);
+        nak_lost(&mut conn, 102, current_time);
         assert_eq!(conn.congestion.nak_burst_count, 3);
 
-        conn.perform_window_recovery(now_ms());
+        conn.perform_window_recovery(current_time);
         assert_eq!(conn.congestion.nak_burst_count, 3);
 
-        std::thread::sleep(std::time::Duration::from_millis(1100));
-        conn.perform_window_recovery(now_ms());
+        conn.perform_window_recovery(current_time + 1_100);
         assert_eq!(conn.congestion.nak_burst_count, 0);
         assert_eq!(conn.congestion.nak_burst_start_time_ms, 0);
     }
@@ -229,7 +234,7 @@ mod tests {
         let initial_burst_count = conn.congestion.nak_burst_count;
         let initial_window = conn.window;
 
-        let found = conn.handle_nak(999, now_ms());
+        let found = conn.handle_nak(999, false, now_ms());
         assert!(!found);
         assert_eq!(conn.congestion.nak_count, initial_nak_count);
         assert_eq!(conn.congestion.nak_burst_count, initial_burst_count);
@@ -246,15 +251,14 @@ mod tests {
             conn.register_packet(i, current_time);
         }
 
-        conn.handle_nak(100, now_ms());
-        conn.handle_nak(101, now_ms());
+        nak_lost(&mut conn, 100, current_time);
+        nak_lost(&mut conn, 101, current_time);
         assert_eq!(conn.congestion.nak_burst_count, 2);
 
-        conn.handle_nak(102, now_ms());
+        nak_lost(&mut conn, 102, current_time);
         assert_eq!(conn.congestion.nak_burst_count, 3);
 
-        std::thread::sleep(std::time::Duration::from_millis(1100));
-        conn.handle_nak(103, now_ms());
+        nak_lost(&mut conn, 103, current_time + 1_100);
         assert_eq!(conn.congestion.nak_burst_count, 0);
     }
 
@@ -268,9 +272,9 @@ mod tests {
             conn.register_packet(i, current_time);
         }
 
-        conn.handle_nak(100, now_ms());
-        conn.handle_nak(101, now_ms());
-        conn.handle_nak(102, now_ms());
+        nak_lost(&mut conn, 100, now_ms());
+        nak_lost(&mut conn, 101, now_ms());
+        nak_lost(&mut conn, 102, now_ms());
         assert_eq!(conn.congestion.nak_burst_count, 3);
         assert!(conn.congestion.nak_burst_start_time_ms > 0);
 
@@ -410,7 +414,7 @@ mod tests {
         // delivers the unique twin almost immediately, so the receiver's
         // cumulative ACK sweeps past that sequence first. While probes lived in
         // the shared packet log, the sweep deleted the entry and the probe's
-        // own ACK then matched nothing: no delivery proof, on
+        // own ACK then matched nothing: no delivery proof, no RTT sample, on
         // exactly the links whose recovery the probes exist to measure.
         let rt = tokio::runtime::Runtime::new().unwrap();
         let mut conn = rt.block_on(create_test_connection());
@@ -436,8 +440,9 @@ mod tests {
             "a delivered probe is delivery proof — what the rejoin dwell counts"
         );
         assert!(
-            !conn.rtt.kalman_rtt.is_initialized(),
-            "a duplicate probe ACK proves delivery but cannot identify a copy for RTT"
+            (conn.get_smooth_rtt_ms() - 1000.0).abs() < 1.0,
+            "and it must measure the link's real round trip, got {}",
+            conn.get_smooth_rtt_ms()
         );
     }
 
@@ -652,6 +657,27 @@ mod tests {
     }
 
     #[test]
+    fn test_same_millisecond_keepalive_echo_is_delivery_proof() {
+        // On a sub-millisecond path (LAN, veth) the echo returns inside the
+        // tick it was sent in: a 0 ms round trip. Not an RTT sample, but still
+        // proof, or a latched link there can never hold proof between its
+        // sparse probe ACKs and never finishes its rejoin dwell.
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut conn = rt.block_on(create_test_connection());
+        let now = now_ms();
+
+        let echo = conn.keepalive_packet(now);
+        conn.handle_keepalive_echo(&echo, now);
+        assert_eq!(conn.last_ack_or_rtt_sample_ms, now);
+
+        // An echo stamped in the future is garbage, not proof.
+        conn.last_ack_or_rtt_sample_ms = 0;
+        let future = conn.keepalive_packet(now + 5_000);
+        conn.handle_keepalive_echo(&future, now);
+        assert_eq!(conn.last_ack_or_rtt_sample_ms, 0);
+    }
+
+    #[test]
     fn test_rtt_measurement_needs() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let mut conn = rt.block_on(create_test_connection());
@@ -676,7 +702,7 @@ mod tests {
 
         // Simulate some NAKs to reduce window
         for _ in 0..5 {
-            conn.handle_nak(100, now_ms());
+            conn.handle_nak(100, false, now_ms());
         }
         let reduced_window = conn.window;
 
@@ -818,7 +844,7 @@ mod tests {
         assert_eq!(conn.time_since_last_nak_ms(current_time), None);
 
         conn.register_packet(100, current_time);
-        conn.handle_nak(100, now_ms());
+        nak_lost(&mut conn, 100, now_ms());
         assert_eq!(conn.congestion.nak_count, 1);
         assert_eq!(conn.congestion.nak_burst_count, 0);
         assert!(conn.time_since_last_nak_ms(now_ms()).is_some());
@@ -838,7 +864,7 @@ mod tests {
         // Register packet first, then reduce window to trigger fast recovery
         conn.register_packet(100, current_time);
         conn.window = 1500;
-        conn.handle_nak(100, now_ms());
+        nak_lost(&mut conn, 100, now_ms());
 
         assert!(conn.congestion.fast_recovery_mode);
 
@@ -881,7 +907,7 @@ mod tests {
 
         // Reduce window through NAKs
         conn.register_packet(100, current_time);
-        conn.handle_nak(100, now_ms());
+        nak_lost(&mut conn, 100, now_ms());
         let reduced_window = conn.window;
 
         // Test 1: Recent NAKs (<5 seconds) - should recover at 25% rate (minimal)
@@ -953,7 +979,7 @@ mod tests {
         // Reduce window and trigger fast recovery mode
         conn.register_packet(100, current_time);
         conn.window = 1500;
-        conn.handle_nak(100, now_ms());
+        nak_lost(&mut conn, 100, now_ms());
         assert!(conn.congestion.fast_recovery_mode);
 
         let reduced_window = conn.window;
@@ -997,7 +1023,7 @@ mod tests {
 
         // Reduce window
         conn.register_packet(100, current_time);
-        conn.handle_nak(100, now_ms());
+        nak_lost(&mut conn, 100, now_ms());
         let reduced_window = conn.window;
 
         // Test normal mode timing constraint (2000ms min wait + 1000ms increment wait)
@@ -1136,7 +1162,10 @@ mod tests {
         let before: Vec<i32> = connections.iter().map(|c| c.congestion.nak_count).collect();
         let before_inflight = connections[1].in_flight_packets;
 
-        let counted = attribute_nak(&mut connections, &seq_tracker, seq, now);
+        let counted = attribute_nak(&mut connections, &seq_tracker, seq, false, now);
+        for c in connections.iter_mut() {
+            c.expire_pending_naks(now + PENDING_NAK_TIMEOUT_MS);
+        }
 
         assert_eq!(
             counted,
@@ -1180,7 +1209,10 @@ mod tests {
         connections[2].register_packet(known as i32, now);
         let before2 = connections[2].congestion.nak_count;
 
-        let counted = attribute_nak(&mut connections, &seq_tracker, known, now);
+        let counted = attribute_nak(&mut connections, &seq_tracker, known, false, now);
+        for c in connections.iter_mut() {
+            c.expire_pending_naks(now + PENDING_NAK_TIMEOUT_MS);
+        }
         assert_eq!(
             counted,
             Some(2),
@@ -1192,7 +1224,10 @@ mod tests {
 
         // (b) truly unknown: not tracked and in no packet_log → no-op.
         let counts_before: Vec<i32> = connections.iter().map(|c| c.congestion.nak_count).collect();
-        let counted_unknown = attribute_nak(&mut connections, &seq_tracker, 999_999, now);
+        let counted_unknown = attribute_nak(&mut connections, &seq_tracker, 999_999, false, now);
+        for c in connections.iter_mut() {
+            c.expire_pending_naks(now + PENDING_NAK_TIMEOUT_MS);
+        }
         assert_eq!(
             counted_unknown, None,
             "a sequence no uplink holds is attributable to none"
@@ -1223,8 +1258,9 @@ mod tests {
         assert_eq!(connections[0].in_flight_packets, 1);
 
         // First sighting inside the window: counted once on the sending uplink.
-        let first = attribute_nak(&mut connections, &seq_tracker, seq, base);
+        let first = attribute_nak(&mut connections, &seq_tracker, seq, false, base);
         assert_eq!(first, Some(0));
+        connections[0].expire_pending_naks(base + PENDING_NAK_TIMEOUT_MS);
         assert_eq!(
             connections[0].congestion.nak_count, 1,
             "first NAK is counted"
@@ -1248,7 +1284,10 @@ mod tests {
         // Duplicate NAK inside the window: routed to the same uplink, whose
         // packet_log no longer holds the sequence → not re-counted, and the
         // short-circuit keeps the other uplink clean.
-        let dup = attribute_nak(&mut connections, &seq_tracker, seq, within);
+        let dup = attribute_nak(&mut connections, &seq_tracker, seq, false, within);
+        for c in connections.iter_mut() {
+            c.expire_pending_naks(within + PENDING_NAK_TIMEOUT_MS);
+        }
         assert_eq!(
             dup, None,
             "the duplicate NAK is a no-op (single accounting)"
@@ -1333,6 +1372,68 @@ mod tests {
         assert_eq!(&buf[..1316], &payload, "DATA payload must be unchanged");
     }
 
+    /// Link 0 loses the original, the retransmit rides link 1 (the best-path
+    /// override sends R-flagged packets to the best link), and libsrt repeats
+    /// the loss report while the retransmit is still in flight. The repeated
+    /// NAK resolves to link 1 through the tracker and clears its resend entry,
+    /// but link 1 lost nothing, so its window and NAK count stay as they were.
+    #[tokio::test]
+    async fn repeated_nak_after_retransmit_link_switch_is_not_charged_to_the_retransmit_link() {
+        let mut connections = create_test_connections(2).await;
+        let base = now_ms();
+        let seq: u32 = 900;
+        let mut seq_tracker = SequenceTracker::new();
+
+        // The original goes out on link 0, which drops it.
+        connections[0].register_packet(seq as i32, base);
+        seq_tracker.insert(seq, connections[0].conn_id, base);
+
+        let first = attribute_nak(&mut connections, &seq_tracker, seq, false, base + 30);
+        assert_eq!(
+            first,
+            Some(0),
+            "the first loss report charges the link that lost the original"
+        );
+        let link0_naks = connections[0].congestion.nak_count;
+        let link1_naks = connections[1].congestion.nak_count;
+        let link1_window = connections[1].window;
+        let link1_in_flight = connections[1].in_flight_packets;
+
+        // The retransmit goes out on link 1. `forward_via_connection` moves the
+        // tracker entry when it queues the packet, and the batch flush then
+        // logs the R-flagged copy in link 1's packet log as a resend.
+        let mut r_flagged = [0u8; 20];
+        r_flagged[..4].copy_from_slice(&seq.to_be_bytes());
+        r_flagged[4] = 0x04;
+        connections[1].queue_data_packet(&r_flagged, Some(seq), base + 40);
+        assert_eq!(connections[1].take_batch(base + 40).len(), 1);
+        seq_tracker.insert(seq, connections[1].conn_id, base + 40);
+        assert_eq!(connections[1].in_flight_packets, link1_in_flight + 1);
+
+        let repeated = attribute_nak(&mut connections, &seq_tracker, seq, false, base + 60);
+        assert_eq!(
+            repeated,
+            Some(1),
+            "the repeated loss report resolves to the link that carries the retransmit"
+        );
+        assert_eq!(
+            connections[1].congestion.nak_count, link1_naks,
+            "link 1 is not charged a NAK for a loss on link 0"
+        );
+        assert_eq!(
+            connections[1].window, link1_window,
+            "link 1's window is untouched by the repeated report"
+        );
+        assert_eq!(
+            connections[1].in_flight_packets, link1_in_flight,
+            "the repeated report still clears the resend entry"
+        );
+        assert_eq!(
+            connections[0].congestion.nak_count, link0_naks,
+            "link 0 is not charged for the repeated report"
+        );
+    }
+
     #[tokio::test]
     async fn srt_ack_field_is_the_first_sequence_still_owed() {
         // Issue #25: an SRT ACK carries last-received + 1. That packet is
@@ -1347,7 +1448,10 @@ mod tests {
         let now = now_ms();
         let conn_id = conns[0].conn_id;
         let mut seq_tracker = SequenceTracker::new();
-        for (seq, sent) in [(100u32, now - 70), (101, now - 2)] {
+        // The handler reads the real clock, so a sample only grows with the
+        // time between that read and this one. Sending 100 long before 101
+        // lets a lower bound alone tell the two samples apart.
+        for (seq, sent) in [(100u32, now - 500), (101, now - 2)] {
             conns[0].register_packet(seq as i32, sent);
             seq_tracker.insert(seq, conn_id, sent);
         }
@@ -1373,8 +1477,67 @@ mod tests {
         assert_eq!(conns[0].in_flight_packets, 1, "101 is still owed");
         let rtt = conns[0].get_smooth_rtt_ms();
         assert!(
-            (69.0..=80.0).contains(&rtt),
+            rtt >= 500.0,
             "the sample must come from 100, the last acknowledged packet, got {rtt}"
         );
+    }
+
+    /// Process one SRT ACK copy for seq 100 (sent 200 ms ago on link 0)
+    /// arriving on `arrival` across two links.
+    async fn srt_ack_copy_for_link_0_arrives_on(
+        arrival: usize,
+    ) -> smallvec::SmallVec<srtla_core::connection::SrtlaConnection, 4> {
+        use srtla_core::connection::SrtlaIncoming;
+
+        use crate::sender::process_connection_events;
+
+        // Bind before reading the clock so the only work between the test's
+        // clock read and the handler's is the bookkeeping below.
+        let listener = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let mut conns = create_test_connections(2).await;
+        let now = now_ms();
+        let mut seq_tracker = SequenceTracker::new();
+        conns[0].register_packet(100, now - 200);
+        seq_tracker.insert(100, conns[0].conn_id, now - 200);
+
+        let incoming = SrtlaIncoming {
+            ack_numbers: smallvec::smallvec![101],
+            read_any: true,
+            ..Default::default()
+        };
+        process_connection_events(
+            arrival,
+            &mut conns,
+            None,
+            &listener,
+            &seq_tracker,
+            false,
+            incoming,
+        )
+        .await
+        .unwrap();
+        conns
+    }
+
+    #[tokio::test]
+    async fn srt_ack_copy_on_another_link_takes_no_sample_for_the_owner() {
+        // The receiver sends every SRT ACK down every uplink. A copy that
+        // arrives on link 1 first times link 1's downlink, so link 0 must not
+        // record it as its own round trip.
+        let conns = srt_ack_copy_for_link_0_arrives_on(1).await;
+
+        assert_eq!(conns[0].in_flight_packets, 0, "every link still prunes");
+        assert_eq!(conns[0].get_smooth_rtt_ms(), 0.0);
+        assert_eq!(conns[1].get_smooth_rtt_ms(), 0.0);
+    }
+
+    #[tokio::test]
+    async fn srt_ack_copy_on_the_owning_link_takes_the_sample() {
+        let conns = srt_ack_copy_for_link_0_arrives_on(0).await;
+
+        assert_eq!(conns[0].in_flight_packets, 0);
+        let rtt = conns[0].get_smooth_rtt_ms();
+        // Sent 200 ms before the clock read: a hard floor. The cap only rejects a foreign sample.
+        assert!((200.0..1_000.0).contains(&rtt), "got {rtt}");
     }
 }
