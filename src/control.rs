@@ -24,6 +24,8 @@
 //! `-32602` invalid params, `-32603` internal error. App-specific errors use
 //! the server range from `-32000`: `-32000` subscription limit reached.
 
+use std::io::{BufRead, BufReader};
+
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use srtla_core::mode::SchedulingMode;
@@ -32,7 +34,7 @@ use srtla_core::priority::CriticalWindow;
 use tokio::sync::mpsc;
 
 use crate::capabilities;
-use crate::config::DynamicConfig;
+use crate::config::{AppliedChange, ConfigChange, DynamicConfig};
 use crate::stats::SharedStats;
 #[cfg(unix)]
 use crate::subscriptions::SubscriptionHub;
@@ -145,6 +147,27 @@ pub struct SubscriptionContext<'a> {
     /// cleanup on drop, for one subscription per topic, and so a connection
     /// can only unsubscribe its own ids.
     pub owned_ids: &'a mut Vec<(String, String)>,
+}
+
+/// Spawn the stdin command reader in a std::thread. Stdin on Linux
+/// doesn't have a clean async story — easier to stay blocking here.
+/// The Unix control socket, which actually needs subscriptions, lives
+/// in an async tokio task launched by main instead.
+pub fn spawn_stdin_listener(
+    config: DynamicConfig,
+    stats: SharedStats,
+    critical_window: CriticalWindow,
+) {
+    std::thread::spawn(move || {
+        let reader = BufReader::new(std::io::stdin());
+        for line in reader.lines().map_while(Result::ok) {
+            if let Some(resp) = dispatch(&config, Some(&stats), Some(&critical_window), line.trim())
+            {
+                // Responses on stdin just go to stdout so scripts can pipe.
+                println!("{}", resp.to_json());
+            }
+        }
+    });
 }
 
 /// Sync dispatch — used by the stdin/readline loops. Subscriptions are
@@ -333,8 +356,10 @@ fn handle_method(
                 .and_then(Value::as_str)
                 .ok_or_else(|| ErrorObject::new(INVALID_PARAMS, "expected params.mode: string"))?;
             let mode = parse_mode(mode_str)?;
-            config.set_mode(mode);
-            Ok(json!({ "mode": mode.to_string() }))
+            let AppliedChange::Mode(applied) = config.apply_change(ConfigChange::Mode(mode)) else {
+                unreachable!()
+            };
+            Ok(json!({ "mode": applied.to_string() }))
         }
 
         "set_quality" => {
@@ -342,8 +367,12 @@ fn handle_method(
                 .get("enabled")
                 .and_then(Value::as_bool)
                 .ok_or_else(|| ErrorObject::new(INVALID_PARAMS, "expected params.enabled: bool"))?;
-            config.set_quality_enabled(enabled);
-            Ok(json!({ "enabled": enabled }))
+            let AppliedChange::QualityEnabled(applied) =
+                config.apply_change(ConfigChange::QualityEnabled(enabled))
+            else {
+                unreachable!()
+            };
+            Ok(json!({ "enabled": applied }))
         }
 
         "set_stall_deselect" => {
@@ -351,8 +380,12 @@ fn handle_method(
                 .get("enabled")
                 .and_then(Value::as_bool)
                 .ok_or_else(|| ErrorObject::new(INVALID_PARAMS, "expected params.enabled: bool"))?;
-            config.set_stall_deselect(enabled);
-            Ok(json!({ "enabled": enabled }))
+            let AppliedChange::StallDeselect(applied) =
+                config.apply_change(ConfigChange::StallDeselect(enabled))
+            else {
+                unreachable!()
+            };
+            Ok(json!({ "enabled": applied }))
         }
 
         "set_conn_timeout" => {
@@ -362,7 +395,11 @@ fn handle_method(
                 .ok_or_else(|| ErrorObject::new(INVALID_PARAMS, "expected params.ms: u64"))?;
             // The applied value is echoed back because it is clamped: a
             // latency-aware client should trust the response, not its input.
-            let applied = config.set_conn_timeout_ms(ms);
+            let AppliedChange::ConnTimeoutMs(applied) =
+                config.apply_change(ConfigChange::ConnTimeoutMs(ms))
+            else {
+                unreachable!()
+            };
             Ok(json!({ "ms": applied }))
         }
 
@@ -393,10 +430,9 @@ fn handle_method(
         "get_stats" => {
             let stats = stats
                 .ok_or_else(|| ErrorObject::new(INTERNAL_ERROR, "stats provider not registered"))?;
-            let json_str = stats.to_json();
-            serde_json::from_str(&json_str).map_err(|e| ErrorObject {
+            serde_json::to_value(stats.get()).map_err(|e| ErrorObject {
                 code: INTERNAL_ERROR,
-                message: "failed to re-parse stats JSON".into(),
+                message: "failed to serialize stats".into(),
                 data: Some(Value::String(e.to_string())),
             })
         }

@@ -35,10 +35,12 @@
 
 use std::sync::Arc;
 #[cfg(unix)]
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[cfg(loom)]
 use loom_sync::{Mutex, mpsc};
+use serde::Serialize;
 use serde_json::Value;
 #[cfg(not(loom))]
 use tokio::sync::{Mutex, mpsc};
@@ -66,12 +68,20 @@ pub struct SubscriptionHub {
     /// since there is no way to subscribe.
     #[cfg(unix)]
     next_id: Arc<AtomicU64>,
+    subscriber_count: Arc<AtomicUsize>,
     entries: Arc<Mutex<Vec<Entry>>>,
 }
 
 impl SubscriptionHub {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Lock-free check for whether any client is subscribed to any topic.
+    /// Callers can skip building serialization payloads when this returns false.
+    #[inline]
+    pub fn has_subscribers(&self) -> bool {
+        self.subscriber_count.load(Ordering::Relaxed) > 0
     }
 
     /// Register a subscription. Returns the subscription id the client
@@ -90,6 +100,8 @@ impl SubscriptionHub {
             topic: topic.to_string(),
             sender: push_tx,
         });
+        self.subscriber_count
+            .store(entries.len(), Ordering::Relaxed);
         Some(id)
     }
 
@@ -99,6 +111,8 @@ impl SubscriptionHub {
         let mut entries = self.entries.lock().await;
         let before = entries.len();
         entries.retain(|e| e.id != id);
+        self.subscriber_count
+            .store(entries.len(), Ordering::Relaxed);
         before != entries.len()
     }
 
@@ -107,6 +121,15 @@ impl SubscriptionHub {
     /// blocks the producer. Closed channels are cleaned up lazily next
     /// time we iterate.
     pub async fn publish(&self, topic: &str, data: Value) {
+        self.publish_serialize(topic, &data).await;
+    }
+
+    /// Serialize `data` directly to JSON (skipping an intermediate `Value` DOM)
+    /// and fan out to every subscription of `topic`.
+    pub async fn publish_serialize<T: Serialize>(&self, topic: &str, data: &T) {
+        if !self.has_subscribers() {
+            return;
+        }
         let mut to_prune = Vec::new();
         {
             let entries = self.entries.lock().await;
@@ -115,7 +138,7 @@ impl SubscriptionHub {
             }
             // The payload is the same for every subscriber, so it is
             // serialized once and only the subscription id differs per line.
-            let Ok(data_json) = serde_json::to_string(&data) else {
+            let Ok(data_json) = serde_json::to_string(data) else {
                 return;
             };
             let Ok(method_json) = serde_json::to_string(&format!("{topic}.update")) else {
@@ -145,6 +168,8 @@ impl SubscriptionHub {
         if !to_prune.is_empty() {
             let mut entries = self.entries.lock().await;
             entries.retain(|e| !to_prune.contains(&e.id));
+            self.subscriber_count
+                .store(entries.len(), Ordering::Relaxed);
         }
     }
 

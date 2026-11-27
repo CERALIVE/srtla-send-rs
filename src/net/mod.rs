@@ -20,7 +20,7 @@ mod spec;
 
 #[cfg(target_vendor = "apple")]
 pub use apple::AppleInterfaceBinder;
-pub use batch_recv::{BatchUdpSocket, RecvMmsgBuffer};
+pub use batch_recv::{BatchUdpSocket, RecvMmsgBuffer, recv_udp_batch};
 pub use egress::{
     EgressFault, EgressLifecycle, EgressPoll, IfaceResolver, LinkState, SystemIfaceResolver,
 };
@@ -32,9 +32,11 @@ pub use route::{RouteHealth, RouteTransition, classify_route_transition, observe
 pub use socket::CallbackBinder;
 #[cfg(target_os = "linux")]
 pub use socket::DeviceBinder;
+#[cfg(any(test, feature = "test-internals"))]
+pub use socket::StubResolver;
 pub use socket::{
-    SourceIpBinder, UplinkBinder, create_uplink_socket, resolve_remote_all,
-    select_remote_for_source,
+    DnsResolver, ReceiverResolver, ResolvedAddrs, SourceIpBinder, UplinkBinder,
+    create_uplink_socket, resolve_remote_all, select_remote_for_source,
 };
 pub use spec::{SocketKey, UplinkSpec};
 use srtla_core::connection::BATCH_SEND_SIZE;
