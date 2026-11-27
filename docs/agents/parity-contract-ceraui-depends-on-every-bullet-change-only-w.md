@@ -140,7 +140,7 @@
   epoch, and a socket replacement keeps the totals but starts a new epoch and clears the
   age. Consumers key deltas by `link_id` and compare only equal epochs. They are
   receiver arrival reports, not goodput. The `--stats-file` document does not carry
-  them. `src/tests/link_arrival_tests.rs`, `tests/netns_arrival_reports.rs`.
+  them. `src/tests/connection/link_arrival_tests.rs`, `tests/netns_arrival_reports.rs`.
 - **Empty start is not fatal.** A missing, empty, or all-invalid `BIND_IPS_FILE` at
   startup binds the local listener, starts with an empty uplink pool, and waits for a
   `SIGHUP`. It must never crash-loop the device. `tests/signal_parity.rs`.

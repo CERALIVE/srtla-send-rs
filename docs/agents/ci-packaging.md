@@ -28,6 +28,6 @@ aarch64 cross-build: linker `CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch
 apt `gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross binutils-aarch64-linux-gnu pkg-config`,
 `PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig`.
 
-`mimalloc` is the global allocator behind a default-on feature; `--no-default-features`
-is the system-allocator build for Miri and profiling. `docs/notes/mimalloc-decision.md`.
+The binary uses the system allocator; mimalloc was dropped with upstream `adc1f4a`, and the
+crate has no default features. `docs/notes/mimalloc-decision.md`.
 

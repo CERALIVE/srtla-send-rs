@@ -66,7 +66,8 @@ pure pointer logic in `src/net/batch_recv.rs` (`test_recv_buffer_creation`,
 `test_buffer_size`, `iter_clamps_oversized_msg_len_to_mtu`, `sockaddr_storage_roundtrip`,
 `recv_retry_action_classifies_errors`), each as
 `cargo miri test --lib --no-default-features --features test-internals <filter>`.
-`--no-default-features` drops the mimalloc global allocator, which Miri cannot run. Miri
+`--no-default-features` no longer changes the build (mimalloc, which Miri cannot run, was
+dropped and the crate has no default features); the contract test pins the command. Miri
 cannot execute `recvmmsg`/`sendmmsg`; the send-side header construction has no Miri
 coverage on this base (it is built inline in `try_send_batch`). Both workflows must
 carry exactly these five filters; `scripts/release_workflow_contract_test.py` checks.
