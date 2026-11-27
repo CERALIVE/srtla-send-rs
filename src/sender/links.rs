@@ -189,14 +189,19 @@ fn log_outcome(status: BindMapStatus, disposition: BindMapDisposition) {
 
 #[cfg(all(test, unix))]
 mod tests {
+    use std::fs::OpenOptions;
     use std::os::unix::ffi::OsStrExt as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
     use std::sync::mpsc;
     use std::time::Duration;
 
     use super::read_bind_map;
 
-    /// The IP file is a FIFO, so opening it blocks until a writer appears. The
-    /// sender's one runtime thread has to keep running while that read waits.
+    const BOUND: Duration = Duration::from_secs(5);
+
+    /// The IP file is a FIFO. The read opens it and then waits for data that only
+    /// comes when the writer closes its end, and the sender's one runtime thread
+    /// has to keep running while that read waits.
     #[test]
     fn a_pending_pair_read_leaves_the_runtime_thread_free() {
         let dir = tempfile::tempdir().unwrap();
@@ -205,40 +210,53 @@ mod tests {
         // SAFETY: a valid NUL-terminated path and a plain permission mode.
         assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
 
-        let (loop_ran_tx, loop_ran_rx) = mpsc::channel::<()>();
+        let (read_opened_tx, read_opened_rx) = tokio::sync::oneshot::channel::<()>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
         let writer_path = ips.clone();
-        // Bounded, so a read that holds the runtime thread fails the assertion
-        // below instead of hanging the test.
+        // A blocking open of the write end returns only once the read has opened
+        // the FIFO, so it marks the read as started. Holding the write end keeps
+        // the read waiting until the test releases it or the bound runs out.
         let writer = std::thread::spawn(move || {
-            let _ = loop_ran_rx.recv_timeout(Duration::from_secs(5));
-            drop(
-                std::fs::OpenOptions::new()
-                    .write(true)
-                    .open(&writer_path)
-                    .unwrap(),
-            );
+            let write_end = OpenOptions::new().write(true).open(&writer_path).unwrap();
+            let _ = read_opened_tx.send(());
+            let _ = release_rx.recv_timeout(BOUND);
+            drop(write_end);
         });
 
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap();
-        let read_was_pending = runtime.block_on(async {
+        let (read_started, read_was_pending) = runtime.block_on(async {
             let read = tokio::spawn(read_bind_map(
                 ips.display().to_string(),
                 dir.path().join("bind-map.json").display().to_string(),
                 None,
             ));
-            tokio::task::yield_now().await;
-            let pending = !read.is_finished();
-            let _ = loop_ran_tx.send(());
-            let _ = read.await;
-            pending
+            let started = tokio::time::timeout(BOUND, read_opened_rx).await.is_ok();
+            let pending = started && !read.is_finished();
+            let _ = release_tx.send(());
+            let _ = tokio::time::timeout(BOUND, read).await;
+            (started, pending)
         });
+        runtime.shutdown_timeout(Duration::from_secs(1));
+        // Satisfies the writer's open if the read never got that far.
+        drop(
+            OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(&ips)
+                .unwrap(),
+        );
         writer.join().unwrap();
+
+        assert!(
+            read_started,
+            "the bind-map pair read never opened the IP file"
+        );
         assert!(
             read_was_pending,
-            "the bind-map pair read held the runtime thread until the FIFO opened"
+            "the bind-map pair read held the runtime thread while it waited"
         );
     }
 }
