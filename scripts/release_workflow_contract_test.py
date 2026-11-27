@@ -109,30 +109,23 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
         # pub(crate) side and the integration tests without the root feature.
         for path in (CI, RELEASE):
             gate = load_workflow(path).job("test")
-            for targets in (("--lib", "--bins"), ("--all-targets",)):
-                with self.subTest(workflow=path.name, targets=targets):
+            for expected in (
+                ("check", "--workspace", "--lib", "--bins"),
+                ("check", "--workspace", "--all-targets"),
+            ):
+                with self.subTest(workflow=path.name, command=expected):
                     checks = tuple(
                         command
                         for command in gate.commands("cargo")
-                        if command.has_arguments("check", "--workspace", *targets)
+                        if command.has_arguments(*expected)
                     )
                     self.assertEqual(len(checks), 1)
-                    other_targets = {
-                        "--all-targets", "--tests", "--test", "--benches",
-                        "--bench", "--examples", "--example",
-                    } - set(targets)
-                    self.assertFalse(
-                        other_targets & set(checks[0].arguments),
-                        f"cargo check --workspace {' '.join(targets)} must select no other targets",
-                    )
-                    self.assertFalse(
-                        any(
-                            argument == "--all-features"
-                            or argument.startswith(("--features", "-F"))
-                            or "test-internals" in argument
-                            for argument in checks[0].arguments
-                        ),
-                        f"cargo check --workspace {' '.join(targets)} must use default features",
+                    # An exact match: any other target or feature selector would
+                    # change which side of the visibility swap is compiled.
+                    self.assertEqual(
+                        sorted(checks[0].arguments),
+                        sorted(expected),
+                        f"{path.name} must run exactly `cargo {' '.join(expected)}`",
                     )
 
     def test_ci_and_release_keep_exact_loom_command_contract(self) -> None:
