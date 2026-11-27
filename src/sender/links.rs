@@ -240,15 +240,16 @@ mod tests {
             (started, pending)
         });
         runtime.shutdown_timeout(Duration::from_secs(1));
-        // Satisfies the writer's open if the read never got that far.
-        drop(
-            OpenOptions::new()
-                .read(true)
-                .custom_flags(libc::O_NONBLOCK)
-                .open(&ips)
-                .unwrap(),
-        );
+        // Satisfies the writer's open if the read never got that far. Held until
+        // the writer is joined, so a writer that reaches its open late still
+        // finds a reader instead of blocking forever.
+        let fallback_reader = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&ips)
+            .unwrap();
         writer.join().unwrap();
+        drop(fallback_reader);
 
         assert!(
             read_started,
