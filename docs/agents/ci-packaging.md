@@ -22,8 +22,9 @@ binary at `/usr/bin/srtla_send`, `Architecture` `arm64`/`amd64`, filename
 **`srtla_<ver>_<arch>.deb`** (it re-runs the image pipeline's `*${ARCH}*.deb` fetch glob
 as a self-test), `Conflicts`/`Replaces` on the retired transitional package name. The
 version comes from `Cargo.toml` (**`4.2.0`**), follows upstream's semver line (not
-CalVer), and a tag build must be `v<version>`; the script rejects a mismatch. It sets
-`umask 022`, so package modes are the same under any caller umask;
+CalVer), and a tag build must be `v<version>`; the script rejects a mismatch. It normalizes
+the staged package tree to `u=rwX,go=rX`, so the modes inside the package are the same
+under any caller umask while the output keeps the caller's;
 `scripts/release_version_contract_test.sh` builds under `0077` and checks them.
 
 aarch64 cross-build: linker `CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc`,

@@ -36,9 +36,6 @@
 # CI runner it builds the .deb and asserts its metadata + contents.
 
 set -euo pipefail
-# Package modes must not follow the caller's umask: under 0077 the staged dirs
-# would be 0700, which dpkg-deb refuses for DEBIAN/ and would ship for ./usr.
-umask 022
 
 die() { printf 'build-deb: ERROR: %s\n' "$*" >&2; exit 1; }
 info() { printf 'build-deb: %s\n' "$*" >&2; }
@@ -107,6 +104,11 @@ Description: SRTLA bonding sender (Rust) — CERALIVE fork of irlserver/srtla_se
  the srtla_send binary. This is CERALIVE's device-side streaming sender; it
  replaces the retired transitional srtla-send-rs package (see Conflicts).
 EOF
+
+# Package modes must not follow the caller's umask: under 0077 the staged dirs
+# would be 0700, which dpkg-deb refuses for DEBIAN/ and would ship for ./usr.
+# Only the staged tree is normalized; the output keeps the caller's umask.
+chmod -R u=rwX,go=rX "${PKGROOT}"
 
 info "control file:"
 sed 's/^/  | /' "${PKGROOT}/DEBIAN/control" >&2
