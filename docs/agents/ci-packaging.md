@@ -22,7 +22,13 @@ binary at `/usr/bin/srtla_send`, `Architecture` `arm64`/`amd64`, filename
 **`srtla_<ver>_<arch>.deb`** (it re-runs the image pipeline's `*${ARCH}*.deb` fetch glob
 as a self-test), `Conflicts`/`Replaces` on the retired transitional package name. The
 version comes from `Cargo.toml` (**`4.2.0`**), follows upstream's semver line (not
-CalVer), and a tag build must be `v<version>`; the script rejects a mismatch.
+CalVer), and a tag build must be `v<version>`; the script rejects a mismatch. It normalizes
+the staged package tree to `u=rwX,go=rX`, so the modes inside the package are the same
+under any caller umask that leaves the owner's own permissions (`022`, `027`, `077`), while
+the output keeps the caller's; `scripts/release_version_contract_test.sh` builds under
+`0077` and checks both. A umask that removes the owner's permissions (such as `0177`)
+cannot stage the package at all: `mktemp -d` then creates a directory the script cannot
+enter.
 
 aarch64 cross-build: linker `CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc`,
 apt `gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross binutils-aarch64-linux-gnu pkg-config`,
