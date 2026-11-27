@@ -126,7 +126,7 @@ srtla_send [OPTIONS] SRT_LISTEN_PORT SRTLA_HOST SRTLA_PORT BIND_IPS_FILE
 
 ### Required Arguments
 
-- `SRT_LISTEN_PORT`: UDP port on which to receive SRT packets locally
+- `SRT_LISTEN_PORT`: UDP port on which to receive SRT packets locally (`0` asks the OS for a free port)
 - `SRTLA_HOST`: hostname or IP of the SRTLA receiver (e.g., srtla_rec)
 - `SRTLA_PORT`: UDP port of the SRTLA receiver
 - `BIND_IPS_FILE`: path to a file with newline-separated local source IPs (uplinks). Each line is `<ip>[ <weight>]`: the optional
@@ -240,7 +240,7 @@ The control dialect is upstream's JSON-RPC 2.0 exactly as documented in [docs/CO
 
 ### Startup and shutdown behavior
 
-- The local `SRT_LISTEN_PORT` listener is bound before the IP list is read and before any uplink is dialed, so an encoder that connects immediately after spawn never hits a closed port.
+- The local `SRT_LISTEN_PORT` listener is bound before the IP list is read and before any uplink is dialed, so an encoder that connects immediately after spawn never hits a closed port. The `listening for SRT on <address>` log names the address actually bound, including the port the OS picked for `0`.
 - A missing, empty, or all-invalid `BIND_IPS_FILE` at startup is not fatal: the sender starts with no uplinks and waits for a `SIGHUP`.
 - A `SIGHUP` reload that resolves to zero valid source IPs is refused with a specific log line and the existing links keep running.
 - `SIGTERM`/`SIGINT` exit `0` promptly and remove the stats file.
@@ -253,9 +253,9 @@ Two workflows, both on the pinned nightly:
 - `ci.yml` (push and PR): formatting, clippy with warnings as errors, the bounded test suite, `cargo audit` and `cargo deny`, upstream's stable/beta/Windows/macOS lanes, a blocking **Loom** lane over the subscription hub (`RUSTFLAGS="--cfg loom" cargo test --test subscription_loom`, 2 tests), a blocking **Miri** lane over the five pure pointer-logic tests in `src/net/batch_recv.rs`, and a `.deb` build matrix for `arm64` and `amd64` so a packaging break is caught before any tag.
 - `release.yml` (tag `v*`): the same gate, then both `.deb`s built inside `debian:bookworm-slim` with a **`GLIBC_2.36`** ceiling check on each binary (Debian 12 is the device image), attached to the GitHub release with their `.sha256` files.
 
-The package is **`srtla`**, the binary installs at `/usr/bin/srtla_send`, and the artifact is named `srtla_<version>_<arch>.deb` (`srtla_4.2.0_arm64.deb`, `srtla_4.2.0_amd64.deb`). `ci/build-deb.sh` is the single source of truth for that metadata and re-runs the device image builder's fetch glob against the real filename as a self-test. A release tag must be `v<version>` with the version taken from `Cargo.toml`.
+The package is **`srtla`**, the binary installs at `/usr/bin/srtla_send`, and the artifact is named `srtla_<version>_<arch>.deb` (`srtla_4.2.0_arm64.deb`, `srtla_4.2.0_amd64.deb`). `ci/build-deb.sh` is the single source of truth for that metadata and re-runs the device image builder's fetch glob against the real filename as a self-test. A release tag must be `v<version>` with the version taken from `Cargo.toml`. File modes inside the package do not depend on the caller's umask, as long as it leaves the owner's own permissions (as `022` and `077` do).
 
-Privileged network-namespace tests (`tests/netns_*.rs`, including the duplicate-IP twin-modem scenarios in `tests/netns_twin.rs`) self-skip on ordinary runners and are run locally through `scripts/netns_test_gate.sh`.
+Privileged network-namespace tests (`tests/netns_*.rs`, including the duplicate-IP twin-modem scenarios in `tests/netns_twin.rs`) self-skip on ordinary runners and are run locally through `scripts/netns_test_gate.sh`, which runs every `tests/netns_*.rs` target, one test at a time.
 The stall-gate fixture lowers `--stall-min-in-flight` to 8 and waits for both links to leave Warming, so the silence pull no longer depends on the dead link reaching the default 32-packet backlog.
 ACKs for retransmitted sequences retain delivery/accounting effects but do not sample RTT, because a sequence ACK cannot identify which copy arrived; a probe samples RTT only when its link has sent that sequence once.
 The wire-loss fixture holds the real SRT caller at 4 Mbps below either 6 Mbps path; each link must clear both its original absolute floor and a share of the bond.

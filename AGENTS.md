@@ -48,6 +48,7 @@ uv run scripts/rust_cache_contract_test.py
 uv run scripts/workflow_authority_contract_test.py
 bash scripts/release_version_contract_test.sh
 bash scripts/deb_version_ordering_test.sh
+bash scripts/netns_test_gate_contract_test.sh
 bash scripts/check-doc-refs.sh
 ```
 
@@ -84,11 +85,11 @@ Five Miri filters, cross-channel/OS lanes, privileged netns prerequisites, stall
 - Stable identity is link_id, not IP or (ip, iface); mapped sockets bind both interface and source IP.
 - Never install policy routes or silently source-filter upstream's unconnected uplink sockets.
 - Each uplink dials the receiver answer in its own family (an IPv4-mapped source is IPv4, in both binders); reloads pin to the bond's address per family; the listener is pinned to one encoder source (released only by an induction after 1 s of silence); the control socket is owner-only. Details: parity contract.
-- Bind the local listener before reading the IP list or dialing uplinks; empty startup waits for SIGHUP, never crash-loops.
+- Bind the local listener before reading the IP list or dialing uplinks, and log the address it bound; empty startup waits for SIGHUP, never crash-loops.
 - Refuse zero-valid-IP reload while keeping live links; clean SIGTERM/SIGINT exits 0 within the device's 10 s window.
 - Control frames are padded to at least 32 bytes; DATA is never padded.
 - Only classic/enhanced scheduling; never restore retired experimental modes or selectors.
 - Keep CONN_TIMEOUT = 5 s; CeraUI supplies --conn-timeout-ms 15000. Never bake 15 s into the binary.
 - No bindings directory, npm package or binding tag namespace here; the TypeScript helper lives and is tested in CeraUI.
-- Package is srtla, artifact srtla_<ver>_<arch>.deb; tags match Cargo.toml; release builds stay Bookworm with GLIBC_2.36 ceiling.
+- Package is srtla, artifact srtla_<ver>_<arch>.deb; tags match Cargo.toml; release builds stay Bookworm with GLIBC_2.36 ceiling; package modes never follow the caller's umask.
 - Keep telemetry-legacy-producer.json frozen; fixtures, wire and device parity changes require a deliberate versioned decision.

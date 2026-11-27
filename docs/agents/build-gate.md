@@ -22,7 +22,9 @@ privileged supplements (Linux network namespaces, passwordless `sudo`, `srtla_re
 `srt-live-transmit`) that self-skip when their dependencies are absent, so an ordinary
 CI run does not prove the privileged topology. Run them only through
 `scripts/netns_test_gate.sh` (90 s per target; `netns_twin` gets 420 s via
-`NETNS_TWIN_TEST_TIMEOUT_SECONDS` because it waits out real sender timers).
+`NETNS_TWIN_TEST_TIMEOUT_SECONDS` because it waits out real sender timers). It runs every
+`tests/netns_*.rs` target, one test at a time: the harness names veth pairs after the
+process id, so two tests of one target would collide on `ip link add`.
 
 `netns_stall_gate` injects SRT DATA at 2000 packets/s through the shared harness
 injector, which sends from one encoder source port with clock-based sequence numbers,
@@ -75,6 +77,7 @@ carry exactly these five filters; `scripts/release_workflow_contract_test.py` ch
 Typed workflow contracts run under `uv`: `scripts/release_workflow_contract_test.py`,
 `scripts/rust_cache_contract_test.py`, `scripts/workflow_authority_contract_test.py`,
 plus `scripts/release_version_contract_test.sh`, `scripts/deb_version_ordering_test.sh`,
+`scripts/netns_test_gate_contract_test.sh` (the netns gate against a stub `cargo`),
 and `scripts/check-doc-refs.sh` (every `docs/` path named in this file and `README.md`
 must resolve).
 

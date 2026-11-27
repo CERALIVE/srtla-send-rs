@@ -15,6 +15,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[path = "support/signal_handler.rs"]
+mod signal_handler;
+
 const BIN: &str = env!("CARGO_BIN_EXE_srtla_send");
 const START_TIMEOUT: Duration = Duration::from_secs(5);
 const LOG_TIMEOUT: Duration = Duration::from_secs(5);
@@ -26,10 +29,10 @@ const PROMPT_EXIT: Duration = Duration::from_secs(2);
 
 const EMPTY_START_LOG: &str = "no valid source IPs at startup";
 
-fn free_udp_port() -> u16 {
-    let sock = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind ephemeral udp");
-    sock.local_addr().unwrap().port()
-}
+/// Local SRT listen port. 0 lets the OS pick a free one at bind time: probing for
+/// a free port and handing it over left a window in which another socket could
+/// take it first.
+const ANY_PORT: &str = "0";
 
 struct SenderProc {
     child: Child,
@@ -91,6 +94,17 @@ impl SenderProc {
         assert!(status.success(), "kill -{sig} failed");
     }
 
+    /// Every signal these tests send has a handler before the first is sent.
+    fn assert_signal_handlers(&self) {
+        for (name, signum) in [("HUP", 1), ("INT", 2), ("TERM", 15)] {
+            assert!(
+                signal_handler::installed(self.child.id(), signum, START_TIMEOUT),
+                "the sender never installed a SIG{name} handler; logs:\n{}",
+                self.logs()
+            );
+        }
+    }
+
     fn is_alive(&mut self) -> bool {
         matches!(self.child.try_wait(), Ok(None))
     }
@@ -120,9 +134,8 @@ impl Drop for SenderProc {
 fn spawn(dir: &std::path::Path, ips_contents: &str) -> (SenderProc, std::path::PathBuf) {
     let ips = dir.join("ips.txt");
     std::fs::write(&ips, ips_contents).expect("write ips file");
-    let port = free_udp_port().to_string();
     let proc = SenderProc::spawn(&[
-        port.as_str(),
+        ANY_PORT,
         "127.0.0.1",
         "9999",
         ips.to_str().unwrap(),
@@ -147,6 +160,7 @@ fn empty_ip_file_at_startup_not_fatal() {
         "the listener must be bound even with no uplinks; logs:\n{}",
         proc.logs()
     );
+    proc.assert_signal_handlers();
     thread::sleep(Duration::from_secs(1));
     assert!(
         proc.is_alive(),
@@ -167,9 +181,8 @@ fn empty_ip_file_at_startup_not_fatal() {
 fn missing_ips_file_at_startup_starts_empty_and_reloads_on_sighup() {
     let dir = tempfile::tempdir().unwrap();
     let ips = dir.path().join("ips.txt"); // intentionally not created
-    let port = free_udp_port().to_string();
     let mut proc = SenderProc::spawn(&[
-        port.as_str(),
+        ANY_PORT,
         "127.0.0.1",
         "9999",
         ips.to_str().unwrap(),
@@ -186,6 +199,7 @@ fn missing_ips_file_at_startup_starts_empty_and_reloads_on_sighup() {
         "the sender must bind the listener even with no uplinks; logs:\n{}",
         proc.logs()
     );
+    proc.assert_signal_handlers();
     thread::sleep(Duration::from_secs(1));
     assert!(
         proc.is_alive(),
@@ -221,6 +235,7 @@ fn sigterm_exits_cleanly_and_promptly() {
         "sender never started; logs:\n{}",
         proc.logs()
     );
+    proc.assert_signal_handlers();
 
     let t0 = Instant::now();
     proc.signal("TERM");
@@ -244,6 +259,7 @@ fn sigint_exits_cleanly_and_promptly() {
         "sender never started; logs:\n{}",
         proc.logs()
     );
+    proc.assert_signal_handlers();
 
     let t0 = Instant::now();
     proc.signal("INT");
