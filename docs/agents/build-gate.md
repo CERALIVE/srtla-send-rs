@@ -18,8 +18,10 @@ cargo audit && cargo deny check advisories sources
 ```
 
 `test-internals` exposes internal fields for assertions; `--all-features` enables it.
-Every test build turns it on through `srtla_send`'s dev-dependency, so the two
-`cargo check --workspace` runs are the only builds of the crates without it.
+Every test build turns `srtla-core`'s copy on through `srtla_send`'s dev-dependency, so
+`cargo check --workspace --lib --bins` is the only build of the crates with it off, and
+`cargo check --workspace --all-targets` compiles the integration tests without
+`srtla_send`'s own `test-internals`.
 Most tests run in-process over loopback UDP. The `tests/netns_*.rs` targets are
 privileged supplements (Linux network namespaces, passwordless `sudo`, `srtla_rec`,
 `srt-live-transmit`) that self-skip when their dependencies are absent, so an ordinary

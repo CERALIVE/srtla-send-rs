@@ -105,16 +105,27 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
 
     def test_ci_and_release_check_every_crate_without_test_internals(self) -> None:
         # Every test build turns srtla-core's test-internals on through the
-        # dev-dependency, so only these checks compile the pub(crate) side.
+        # dev-dependency, so only these default-feature checks compile the
+        # pub(crate) side and the integration tests without the root feature.
         for path in (CI, RELEASE):
-            with self.subTest(workflow=path.name):
-                gate = load_workflow(path).job("test")
-                self.assertTrue(
-                    gate.has_command("cargo", "check", "--workspace", "--lib", "--bins")
-                )
-                self.assertTrue(
-                    gate.has_command("cargo", "check", "--workspace", "--all-targets")
-                )
+            gate = load_workflow(path).job("test")
+            for targets in (("--lib", "--bins"), ("--all-targets",)):
+                with self.subTest(workflow=path.name, targets=targets):
+                    checks = tuple(
+                        command
+                        for command in gate.commands("cargo")
+                        if command.has_arguments("check", "--workspace", *targets)
+                    )
+                    self.assertEqual(len(checks), 1)
+                    self.assertFalse(
+                        any(
+                            argument == "--all-features"
+                            or argument.startswith("--features")
+                            or "test-internals" in argument
+                            for argument in checks[0].arguments
+                        ),
+                        f"cargo check --workspace {' '.join(targets)} must use default features",
+                    )
 
     def test_ci_and_release_keep_exact_loom_command_contract(self) -> None:
         for path in (CI, RELEASE):
