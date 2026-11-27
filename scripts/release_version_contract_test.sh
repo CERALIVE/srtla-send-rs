@@ -73,6 +73,12 @@ if command -v dpkg-deb >/dev/null; then
     echo "${STRICT_MODES}" >&2
     exit 1
   }
+  # Only the package is normalized: the output directory keeps the caller's umask.
+  STRICT_OUT_MODE="$(stat -c %a "${TMPDIR}/strict")"
+  [[ "${STRICT_OUT_MODE}" == 700 ]] || {
+    echo "release-version-contract: the output directory is ${STRICT_OUT_MODE} under umask 0077, expected 700" >&2
+    exit 1
+  }
 fi
 
 if GITHUB_REF_TYPE=tag GITHUB_REF_NAME="${EXPECTED_TAG}-mismatch" \
