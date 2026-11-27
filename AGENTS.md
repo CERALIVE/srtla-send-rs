@@ -48,6 +48,7 @@ uv run scripts/rust_cache_contract_test.py
 uv run scripts/workflow_authority_contract_test.py
 bash scripts/release_version_contract_test.sh
 bash scripts/deb_version_ordering_test.sh
+bash scripts/netns_test_gate_contract_test.sh
 bash scripts/check-doc-refs.sh
 ```
 

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
 TIMEOUT_SECONDS="${NETNS_TEST_TIMEOUT_SECONDS:-90}"
 # The twin scenarios wait out real sender timers the other targets never touch —
 # the 15s ACK liveness timeout and the 30s status-log interval — so they cannot
@@ -13,15 +15,11 @@ for BUDGET in "${TIMEOUT_SECONDS}" "${TWIN_TIMEOUT_SECONDS}"; do
   }
 done
 
-ALL_TARGETS=(
-  netns_basic
-  netns_failure
-  netns_impairment
-  netns_scenario
-  netns_stall_gate
-  netns_twin
-  netns_wire_loss
-)
+# Every tests/netns_*.rs target, so a new one cannot be left out of the gate.
+ALL_TARGETS=()
+for FILE in tests/netns_*.rs; do
+  ALL_TARGETS+=("$(basename "${FILE}" .rs)")
+done
 
 ONLY=""
 while [[ $# -gt 0 ]]; do
@@ -64,8 +62,10 @@ budget_for() {
 for TARGET in "${TARGETS[@]}"; do
   BUDGET="$(budget_for "${TARGET}")"
   set +e
+  # One test at a time, as upstream CI runs them: the harness names veth pairs
+  # after the process id, so two tests of one target collide on `ip link add`.
   timeout --foreground --kill-after=10s "${BUDGET}s" \
-    cargo test --all-features --test "${TARGET}" -- --nocapture
+    cargo test --all-features --test "${TARGET}" -- --nocapture --test-threads=1
   STATUS=$?
   set -e
   if [[ "${STATUS}" -eq 124 ]]; then
