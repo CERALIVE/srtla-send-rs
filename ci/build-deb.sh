@@ -36,6 +36,9 @@
 # CI runner it builds the .deb and asserts its metadata + contents.
 
 set -euo pipefail
+# Package modes must not follow the caller's umask: under 0077 the staged dirs
+# would be 0700, which dpkg-deb refuses for DEBIAN/ and would ship for ./usr.
+umask 022
 
 die() { printf 'build-deb: ERROR: %s\n' "$*" >&2; exit 1; }
 info() { printf 'build-deb: %s\n' "$*" >&2; }
