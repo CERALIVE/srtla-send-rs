@@ -289,6 +289,22 @@ an unbounded wait would hold the stream hostage to a writer bug.
 
 ---
 
+### 4.3 Overlapping reloads
+
+Added 2026-11-27. Each `SIGHUP` reads the pair on its own task, so two reads can overlap
+and finish in either order.
+
+- Reads are numbered in the order they start. A read that finishes after a newer read
+  was adopted is dropped: it changes neither the pool nor the report.
+- A newer read counts even when it fails. It is adopted as a failure (the running links
+  stay, §6), and an older usable read that finishes after it is still dropped, because
+  it describes files the writer has since replaced.
+- A read checks `generation` (§3) against the mapping applied when it started. When it is
+  adopted, the generation rule is checked again against the mapping applied by then, so
+  two overlapping reads that each validated against the same older mapping cannot apply
+  two different row sets under one generation: the second is `stale-generation`, and the
+  first stays in force (§6.2).
+
 ## 5. Atomic publication and the honest window
 
 ### 5.1 Writer rules

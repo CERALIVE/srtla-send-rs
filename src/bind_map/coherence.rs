@@ -203,7 +203,7 @@ fn check_uniqueness(rows: &[BindMapRow]) -> Result<(), BindMapError> {
 ///
 /// A generation that *decreased* is not checked here at all: that is
 /// indistinguishable from a legitimate writer restart (ADR-003 §3).
-fn check_generation(
+pub fn check_generation(
     candidate: &MappedPool,
     prior: Option<&MappedPool>,
 ) -> Result<(), BindMapError> {

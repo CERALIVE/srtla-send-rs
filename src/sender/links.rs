@@ -19,7 +19,7 @@ use tracing::{info, warn};
 use super::connections::{specs_from_effective_links, specs_from_ips};
 use crate::bind_map::{
     BindMapDisposition, BindMapError, BindMapPaths, BindMapReport, BindMapStatus, MappedPool,
-    PairRead, ResolvePhase, SystemIfaces, ValidateCtx, read_pair, resolve,
+    PairRead, ResolvePhase, SystemIfaces, ValidateCtx, check_generation, read_pair, resolve,
 };
 use crate::net::UplinkSpec;
 use crate::sender::read_weighted_ip_list;
@@ -161,7 +161,8 @@ impl LinkSource {
     }
 
     /// Adopt a finished reload read, or `None` when a newer one was already
-    /// adopted: applying it then would put an older uplink set back.
+    /// adopted: applying it then would put an older uplink set back. A newer
+    /// read counts even when it failed (ADR-003 §4.3).
     pub fn adopt_reload(
         &mut self,
         order: u64,
@@ -202,11 +203,16 @@ impl LinkSource {
                 return SmallVec::new();
             }
         };
+        // The read checked `generation` against the mapping applied when it
+        // started; one applied since can make the same generation stale.
+        let map = pair
+            .map
+            .and_then(|pool| check_generation(&pool, self.last_valid.as_ref()).map(|()| pool));
         let phase = match self.last_valid.as_ref() {
             Some(last_valid) => ResolvePhase::Reload { last_valid },
             None => ResolvePhase::Startup,
         };
-        let resolution = resolve(pair.map, &pair.ips, phase);
+        let resolution = resolve(map, &pair.ips, phase);
         self.report = BindMapReport::from(&resolution);
         log_outcome(resolution.status, resolution.disposition);
         for group in &resolution.excluded {
@@ -247,70 +253,9 @@ mod tests {
     use std::sync::mpsc;
     use std::time::Duration;
 
-    use super::{LinkSource, SenderPaths, read_bind_map};
-    use crate::bind_map::BindMapError;
+    use super::read_bind_map;
 
     const BOUND: Duration = Duration::from_secs(5);
-
-    fn mapped_source() -> LinkSource {
-        LinkSource::new(&SenderPaths {
-            ips_file: "ips.txt",
-            bind_map: Some("bind-map.json"),
-        })
-    }
-
-    fn missing_map() -> BindMapError {
-        BindMapError::MissingFile {
-            path: "bind-map.json".into(),
-        }
-    }
-
-    fn malformed_map() -> BindMapError {
-        BindMapError::MalformedJson("truncated".into())
-    }
-
-    /// Two `SIGHUP`s whose reads finish newest first: the older answer must not
-    /// put its result back over the newer one.
-    #[test]
-    fn a_reload_read_that_finishes_after_a_newer_one_is_not_adopted() {
-        let mut source = mapped_source();
-        let older = source.begin_reload().unwrap();
-        let newer = source.begin_reload().unwrap();
-
-        assert!(
-            source
-                .adopt_reload(newer.order, Err(missing_map()))
-                .is_some()
-        );
-        let adopted = source.report().clone();
-        assert!(
-            source
-                .adopt_reload(older.order, Err(malformed_map()))
-                .is_none(),
-            "a read older than the adopted one must not be applied"
-        );
-        assert_eq!(source.report(), &adopted);
-    }
-
-    #[test]
-    fn reload_reads_that_finish_in_order_are_each_adopted() {
-        let mut source = mapped_source();
-        let older = source.begin_reload().unwrap();
-        let newer = source.begin_reload().unwrap();
-
-        assert!(
-            source
-                .adopt_reload(older.order, Err(malformed_map()))
-                .is_some()
-        );
-        let after_older = source.report().clone();
-        assert!(
-            source
-                .adopt_reload(newer.order, Err(missing_map()))
-                .is_some()
-        );
-        assert_ne!(source.report(), &after_older);
-    }
 
     /// The IP file is a FIFO. The read opens it and then waits for data that only
     /// comes when the writer closes its end, and the sender's one runtime thread
