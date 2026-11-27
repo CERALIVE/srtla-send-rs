@@ -95,7 +95,8 @@
   for up to 2 s. The read runs on the blocking pool: the runtime has one thread, and a
   synchronous file read held up by slow storage would stall it. Overlapping reads can
   finish out of order, so each is numbered and one that finishes after a newer read was
-  adopted is dropped, and the generation rule is checked again at adoption: an older or
+  adopted is dropped, and the generation rule is checked at adoption against the mapping
+  applied by then: an older or
   conflicting uplink set never replaces a newer one (ADR-003 §4.3). Without `--bind-map`, SIGHUP is upstream's reload plus the guard below.
 - **IP-list reload (`SIGHUP`)** keeps surviving uplinks' sockets and registrations (no
   re-handshake) and rebuilds the pool in file order. A reload resolving to zero valid

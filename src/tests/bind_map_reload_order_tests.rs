@@ -170,6 +170,33 @@ async fn a_failed_newer_read_still_supersedes_an_older_one() {
             .is_empty()
     );
     assert!(source.adopt_reload(older_order, older_read).is_none());
-    pair.publish(1, "start");
+    // Generation 1 with other rows is stale only if "start" is still the
+    // applied mapping, so this proves it stayed in force.
+    pair.publish(1, "other");
     assert_eq!(reload_now(&mut source).await, [id("start")]);
+}
+
+/// Both reads started against generation 1. The first applies generation 2;
+/// the second sees a restarted writer's generation 1 with other rows, which is
+/// stale against "start" but a valid change against what is applied by then.
+#[tokio::test]
+async fn a_writer_restart_during_an_overlap_is_judged_against_the_applied_mapping() {
+    let pair = Pair::new();
+    pair.publish(1, "start");
+    let mut source = pair.started_source().await;
+    let first = source.begin_reload().unwrap();
+    let second = source.begin_reload().unwrap();
+    pair.publish(2, "first");
+    let (first_order, first_read) = first.run().await;
+    pair.publish(1, "restarted");
+    let (second_order, second_read) = second.run().await;
+
+    let applied = source.adopt_reload(first_order, first_read).unwrap();
+    assert_eq!(link_ids(&applied), [id("first")]);
+    let restarted = source.adopt_reload(second_order, second_read).unwrap();
+    assert_eq!(link_ids(&restarted), [id("restarted")]);
+    assert_eq!(
+        source.report().disposition.state,
+        BindMapDisposition::Mapped.as_str()
+    );
 }

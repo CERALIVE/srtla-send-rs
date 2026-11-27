@@ -221,7 +221,7 @@ If the OS cannot create the telemetry writer thread, startup exits non-zero with
 
 With a mapping in place, a link's socket is bound to its interface with `SO_BINDTODEVICE` **and** to its source address, so egress leaves the named interface and the wire source is deterministic. `link_id` is the stable identity across reloads, reconnects, and interface changes. The interface is re-resolved by name every housekeeping tick (a replugged modem gets a fresh socket; a vanished one waits for a reload), and each interface's default route is observed read-only and reported on its own axis in the status log. The sidecar must name the exact IP-list bytes it describes; a mismatch is retried briefly and then fails open in a duplicate-safe way (at startup, one representative of a same-IP collision group is kept and the rest reported excluded; on a reload, the last valid mapped pool is retained). Full contract: [ADR-003](docs/adr/ADR-003-bind-map-contract.md).
 
-Each `SIGHUP` reads the pair on its own task, so two reloads can overlap. A read that finishes after a newer one was applied is dropped, and the generation rule is checked again against the mapping in force when a read is applied, so an older or conflicting mapping never replaces a newer one ([ADR-003 §4.3](docs/adr/ADR-003-bind-map-contract.md#43-overlapping-reloads)).
+Each `SIGHUP` reads the pair on its own task, so two reloads can overlap. A read that finishes after a newer one was applied is dropped, and the generation rule is checked against the mapping in force when a read is applied, not the one in force when it started, so an older or conflicting mapping never replaces a newer one ([ADR-003 §4.3](docs/adr/ADR-003-bind-map-contract.md#43-overlapping-reloads)).
 
 ### Capability probe
 

@@ -76,11 +76,13 @@ pub async fn read_bind_map(
 
 /// One `SIGHUP` reload read for a spawned task, numbered in the order the reads
 /// were started.
+///
+/// It carries no prior mapping: the generation rule is checked when the read
+/// is adopted, against the mapping applied by then (ADR-003 §4.3).
 pub struct ReloadRead {
     order: u64,
     ips_file: String,
     sidecar: String,
-    prior: Option<MappedPool>,
 }
 
 impl ReloadRead {
@@ -88,7 +90,7 @@ impl ReloadRead {
     pub async fn run(self) -> (u64, Result<PairRead, BindMapError>) {
         (
             self.order,
-            read_bind_map(self.ips_file, self.sidecar, self.prior).await,
+            read_bind_map(self.ips_file, self.sidecar, None).await,
         )
     }
 }
@@ -150,13 +152,12 @@ impl LinkSource {
     /// Start a `SIGHUP` reload read, numbered after every read started before it.
     #[must_use]
     pub fn begin_reload(&mut self) -> Option<ReloadRead> {
-        let (ips_file, sidecar, prior) = self.read_args()?;
+        let sidecar = self.sidecar.clone()?;
         self.reads_started += 1;
         Some(ReloadRead {
             order: self.reads_started,
-            ips_file,
+            ips_file: self.ips_file.clone(),
             sidecar,
-            prior,
         })
     }
 
@@ -203,8 +204,8 @@ impl LinkSource {
                 return SmallVec::new();
             }
         };
-        // The read checked `generation` against the mapping applied when it
-        // started; one applied since can make the same generation stale.
+        // Judged against the mapping applied now, not the one current when the
+        // read started: overlapping reads can be adopted in between.
         let map = pair
             .map
             .and_then(|pool| check_generation(&pool, self.last_valid.as_ref()).map(|()| pool));
