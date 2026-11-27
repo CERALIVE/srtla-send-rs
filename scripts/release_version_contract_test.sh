@@ -59,6 +59,28 @@ for ARCH in arm64 amd64; do
   fi
 done
 
+# The caller's umask must not reach the package (hosts often run with 0077).
+STRICT_DEB="${TMPDIR}/strict/srtla_${MANIFEST_VERSION}_amd64.deb"
+STRICT_OUTPUT="$( (umask 0077; "${REPO_ROOT}/ci/build-deb.sh" amd64 "${TMPDIR}/srtla_send" "${TMPDIR}/strict") 2>&1)" || {
+  echo "release-version-contract: build failed under umask 0077:" >&2
+  echo "${STRICT_OUTPUT}" >&2
+  exit 1
+}
+if command -v dpkg-deb >/dev/null; then
+  STRICT_MODES="$(dpkg-deb --contents "${STRICT_DEB}" | awk '{print $1, $NF}')"
+  [[ "${STRICT_MODES}" == $'drwxr-xr-x ./\ndrwxr-xr-x ./usr/\ndrwxr-xr-x ./usr/bin/\n-rwxr-xr-x ./usr/bin/srtla_send' ]] || {
+    echo "release-version-contract: modes under umask 0077 differ:" >&2
+    echo "${STRICT_MODES}" >&2
+    exit 1
+  }
+  # Only the package is normalized: the output directory keeps the caller's umask.
+  STRICT_OUT_MODE="$(stat -c %a "${TMPDIR}/strict")"
+  [[ "${STRICT_OUT_MODE}" == 700 ]] || {
+    echo "release-version-contract: the output directory is ${STRICT_OUT_MODE} under umask 0077, expected 700" >&2
+    exit 1
+  }
+fi
+
 if GITHUB_REF_TYPE=tag GITHUB_REF_NAME="${EXPECTED_TAG}-mismatch" \
   "${REPO_ROOT}/ci/build-deb.sh" amd64 "${TMPDIR}/srtla_send" "${TMPDIR}/mismatch" \
   >/dev/null 2>&1; then

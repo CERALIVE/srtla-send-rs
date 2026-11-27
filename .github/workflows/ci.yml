@@ -102,6 +102,9 @@ jobs:
       - name: Verify Debian version ordering contract
         run: bash scripts/deb_version_ordering_test.sh
 
+      - name: Verify netns gate target contract
+        run: bash scripts/netns_test_gate_contract_test.sh
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 

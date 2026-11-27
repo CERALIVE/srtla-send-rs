@@ -105,6 +105,11 @@ Description: SRTLA bonding sender (Rust) — CERALIVE fork of irlserver/srtla_se
  replaces the retired transitional srtla-send-rs package (see Conflicts).
 EOF
 
+# Package modes must not follow the caller's umask: under 0077 the staged dirs
+# would be 0700, which dpkg-deb refuses for DEBIAN/ and would ship for ./usr.
+# Only the staged tree is normalized; the output keeps the caller's umask.
+chmod -R u=rwX,go=rX "${PKGROOT}"
+
 info "control file:"
 sed 's/^/  | /' "${PKGROOT}/DEBIAN/control" >&2
 
