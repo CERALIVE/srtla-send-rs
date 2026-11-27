@@ -80,7 +80,9 @@
 //! All numbers here are starting points; soak data may suggest
 //! retuning.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+
+use rustc_hash::FxHashMap;
 
 use crate::connection::SrtlaConnection;
 
@@ -325,7 +327,7 @@ pub struct LinkCongestionState {
     /// Wall-clock of the last RTT update.
     last_rtt_update_ms: u64,
     /// Sliding-window loss samples.
-    loss_samples: Vec<LossSample>,
+    loss_samples: VecDeque<LossSample>,
     /// Aggregated within the window.
     window_lost: u32,
     window_sent: u32,
@@ -381,7 +383,7 @@ impl Default for LinkCongestionState {
             rtt_min_ms: f64::INFINITY,
             rtt_min_stamp_ms: 0,
             last_rtt_update_ms: 0,
-            loss_samples: Vec::new(),
+            loss_samples: VecDeque::new(),
             window_lost: 0,
             window_sent: 0,
             fast_recovery_ticks: 0,
@@ -494,7 +496,7 @@ impl LinkCongestionState {
     /// [`observe_traffic`] which threads cumulative counters; this
     /// method is exposed for unit tests.
     pub fn record_loss(&mut self, sent: u32, lost: u32, now_ms: u64) {
-        self.loss_samples.push(LossSample {
+        self.loss_samples.push_back(LossSample {
             ts_ms: now_ms,
             sent,
             lost,
@@ -506,11 +508,11 @@ impl LinkCongestionState {
 
     fn evict_expired(&mut self, now_ms: u64) {
         let cutoff = now_ms.saturating_sub(LOSS_WINDOW_MS);
-        while let Some(front) = self.loss_samples.first() {
+        while let Some(front) = self.loss_samples.front() {
             if front.ts_ms < cutoff {
                 self.window_sent = self.window_sent.saturating_sub(front.sent);
                 self.window_lost = self.window_lost.saturating_sub(front.lost);
-                self.loss_samples.remove(0);
+                self.loss_samples.pop_front();
             } else {
                 break;
             }
@@ -865,7 +867,7 @@ pub struct LinkCcSnapshot {
 /// snapshots for the stats exporter.
 #[derive(Default)]
 pub struct LinkCcController {
-    per_conn: HashMap<u64, LinkCongestionState>,
+    per_conn: FxHashMap<u64, LinkCongestionState>,
 }
 
 impl LinkCcController {
@@ -884,21 +886,17 @@ impl LinkCcController {
         let mut alive: HashMap<u64, LinkCcSnapshot> = HashMap::with_capacity(connections.len());
         for conn in connections {
             let entry = self.per_conn.entry(conn.conn_id).or_default();
-            let rtt_ms = conn.get_smooth_rtt_ms();
-            if rtt_ms > 0.0 {
-                entry.record_rtt(rtt_ms, now_ms);
+            let t = conn.telemetry(now_ms);
+            if t.rtt_ms > 0.0 {
+                entry.record_rtt(t.rtt_ms, now_ms);
             }
             // Loss path: cumulative bytes-sent and NAK count from the
             // connection — `observe_traffic` computes per-tick deltas
             // and forwards to `record_loss`. Before this wiring landed,
             // the loss window stayed empty and CcState::BackingOff was
             // unreachable in production.
-            entry.observe_traffic(
-                conn.bitrate.bytes_sent_total,
-                conn.total_nak_count(),
-                now_ms,
-            );
-            let observed_bps = conn.bitrate.current_bitrate_bps.max(0.0) as u64;
+            entry.observe_traffic(t.bytes_sent_total, t.nak_count, now_ms);
+            let observed_bps = t.bitrate_bps.max(0.0) as u64;
             entry.tick(observed_bps, now_ms);
             alive.insert(conn.conn_id, entry.snapshot());
         }

@@ -92,7 +92,8 @@
   `src/net/route.rs`, `src/sender/egress_tick.rs`.
 - **A `SIGHUP` with `--bind-map` runs the sidecar read off the forwarding loop**
   (`src/sender/links.rs`), because a retried mismatch could otherwise stall forwarding
-  for up to 2 s. Without `--bind-map`, SIGHUP is upstream's reload plus the guard below.
+  for up to 2 s. The read runs on the blocking pool: the runtime has one thread, and a
+  synchronous file read held up by slow storage would stall it. Without `--bind-map`, SIGHUP is upstream's reload plus the guard below.
 - **IP-list reload (`SIGHUP`)** keeps surviving uplinks' sockets and registrations (no
   re-handshake) and rebuilds the pool in file order. A reload resolving to zero valid
   source IPs is refused with a specific log and the stream keeps running on the
@@ -140,7 +141,7 @@
   epoch, and a socket replacement keeps the totals but starts a new epoch and clears the
   age. Consumers key deltas by `link_id` and compare only equal epochs. They are
   receiver arrival reports, not goodput. The `--stats-file` document does not carry
-  them. `src/tests/link_arrival_tests.rs`, `tests/netns_arrival_reports.rs`.
+  them. `src/tests/connection/link_arrival_tests.rs`, `tests/netns_arrival_reports.rs`.
 - **Empty start is not fatal.** A missing, empty, or all-invalid `BIND_IPS_FILE` at
   startup binds the local listener, starts with an empty uplink pool, and waits for a
   `SIGHUP`. It must never crash-loop the device. `tests/signal_parity.rs`.
@@ -149,7 +150,9 @@
   immediately after spawn with no readiness handshake. Never move the bind below uplink
   setup. `tests/startup_bind_ordering.rs`.
 - **Clean shutdown (`SIGTERM`/`SIGINT`)** exits `0` well inside CeraUI's 10 s SIGKILL
-  window and unlinks the stats file. `tests/signal_parity.rs`.
+  window and unlinks the stats file. Blocking work still running at exit, such as a
+  bind-map reload stuck on slow storage, gets 1 s and no more (`src/main.rs`).
+  `tests/signal_parity.rs`, `tests/signal_shutdown.rs`.
 - **NAT-keepalive control padding.** Every control-plane send (keepalive, REG1/REG2)
   is zero-padded to at least `MIN_CONTROL_PKT_LEN = 32` bytes
   (`crates/srtla-protocol/src/constants.rs`, applied in `src/sender/uplink.rs`), parity

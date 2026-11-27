@@ -24,6 +24,7 @@ use super::client_dedup::ClientDedup;
 /// shell now so the connection type owns no receive-side socket. It still takes
 /// the downstream client socket (`local_listener`) and the instant-forward
 /// channel by reference — both are shell-owned, not connection state.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub async fn process_uplink_packet(
     conn: &mut SrtlaConnection,
@@ -34,12 +35,35 @@ pub async fn process_uplink_packet(
     client_dedup: &mut ClientDedup,
     data: &[u8],
 ) -> Result<SrtlaIncoming> {
+    process_uplink_packet_at(
+        conn,
+        reg,
+        local_listener,
+        instant_forwarder,
+        client_addr,
+        client_dedup,
+        data,
+        srtla_core::utils::now_ms(),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn process_uplink_packet_at(
+    conn: &mut SrtlaConnection,
+    reg: &mut SrtlaRegistrationManager,
+    local_listener: &UdpSocket,
+    instant_forwarder: &tokio::sync::mpsc::UnboundedSender<(SocketAddr, SmallVec<u8, 64>)>,
+    client_addr: Option<SocketAddr>,
+    client_dedup: &mut ClientDedup,
+    data: &[u8],
+    now: u64,
+) -> Result<SrtlaIncoming> {
     let mut incoming = SrtlaIncoming {
         read_any: true,
         ..Default::default()
     };
-    let now = srtla_core::utils::now_ms();
-    let pt = get_packet_type(data);
+    let pt = ControlPacket::packet_type(data);
     if let Some(pt) = pt {
         if let Some(event) = reg.process_registration_packet(conn.conn_id, data, now) {
             match event {
@@ -48,42 +72,24 @@ pub async fn process_uplink_packet(
                     // the shell: build the packet here (advancing reg state)
                     // and stash it as an effect so this stays free of uplink I/O.
                     if let Some(pkt) = reg.reg1_if_ngp_immediate(conn.conn_id, now) {
-                        incoming.reg1_send = Some(pkt);
+                        incoming.reg1_send = Some(Box::new(pkt));
                     }
                 }
                 RegistrationEvent::Reg3 => {
-                    // Clear any phantom in-flight packets and NAK state
-                    // accumulated during pre-registration data forwarding
-                    conn.clear_pre_registration_state(now);
-                    conn.connected = true;
-                    conn.last_received = Some(now);
-                    if conn.reconnection.connection_established_ms == 0 {
-                        conn.reconnection.connection_established_ms = now;
-                    }
-                    conn.mark_reconnect_success();
+                    conn.on_registered(now);
                 }
                 RegistrationEvent::RegErr => {
-                    conn.connected = false;
-                    conn.last_received = None;
+                    conn.on_registration_error();
                 }
                 RegistrationEvent::Reg2 => {}
             }
             return Ok(incoming);
         }
 
-        // Liveness only counts for a link that is registered, or has never been
-        // (initial registration keeps its own grace/timeout handling). A link
-        // that WAS established and is in recovery (`connected == false` until
-        // REG3) must stay timed out so housekeeping rebuilds its socket and
-        // re-sends REG2: letting the receiver's ACKs/NAKs and keepalive replies
-        // refresh it here parks it in limbo — alive to the timeout check,
-        // excluded from scheduling, never re-registered.
-        if conn.connected || conn.reconnection.connection_established_ms == 0 {
-            conn.last_received = Some(now);
-        }
+        conn.note_packet_received(now);
 
         if pt == SRT_TYPE_ACK {
-            if let Some(ack) = parse_srt_ack(data) {
+            if let Some(ack) = ControlPacket::parse_srt_ack(data) {
                 incoming.ack_numbers.push(ack);
             }
             // The ACK goes to the client here only, never through
@@ -103,16 +109,14 @@ pub async fn process_uplink_packet(
                 }
             }
         } else if pt == SRT_TYPE_NAK {
-            let nak_list = parse_srt_nak(data);
+            let nak_list = ControlPacket::parse_srt_nak(data);
             if !nak_list.is_empty() {
                 debug!(
                     "📦 NAK received from {}: {} sequences",
                     conn.label,
                     nak_list.len()
                 );
-                for seq in nak_list {
-                    incoming.nak_numbers.push(seq);
-                }
+                incoming.nak_numbers = nak_list;
             }
             if client_addr.is_some() && client_dedup.should_forward_nak(data, now) {
                 incoming
@@ -120,16 +124,14 @@ pub async fn process_uplink_packet(
                     .push(SmallVec::from_slice_copy(data));
             }
         } else if pt == SRTLA_TYPE_ACK {
-            let ack_list = parse_srtla_ack(data);
+            let ack_list = SrtlaAck::parse(data);
             if !ack_list.is_empty() {
                 debug!(
                     "🎯 SRTLA ACK received from {}: {} sequences",
                     conn.label,
                     ack_list.len()
                 );
-                for seq in ack_list {
-                    incoming.srtla_ack_numbers.push(seq);
-                }
+                incoming.srtla_ack_numbers = ack_list;
             }
         } else if pt == SRT_TYPE_HANDSHAKE {
             // The far end declares its TSBPD receive delay in the clear here,
@@ -138,7 +140,7 @@ pub async fn process_uplink_packet(
             // response is worth reading — an HSREQ crossing the other way is
             // the local caller's *proposal*, whereas the responder has already
             // resolved both sides to max(own, proposed) by the time it answers.
-            if let Some(hs) = parse_srt_handshake_latency(data)
+            if let Some(hs) = ControlPacket::parse_handshake_latency(data)
                 && hs.is_response
                 && let Some(rcv_ms) = hs.rcv_ms
             {

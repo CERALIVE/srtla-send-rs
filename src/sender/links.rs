@@ -46,23 +46,32 @@ pub type PairReadResult = Result<PairRead, BindMapError>;
 /// task: the read is bounded but not instant (a hash mismatch is retried for up
 /// to 2 s), and stalling the packet-forwarding loop for that long would be a
 /// worse regression than a slightly later reload.
+///
+/// The file reads themselves are synchronous and the sender runs on one runtime
+/// thread, so the pair is read on the blocking pool: a read held up by slow
+/// storage would otherwise stop forwarding with it. The retry sleep still runs
+/// on the runtime's timer, which the thread running the runtime keeps driving.
 pub async fn read_bind_map(
     ips_file: String,
     sidecar: String,
     prior: Option<MappedPool>,
 ) -> Result<PairRead, BindMapError> {
-    let oracle = SystemIfaces;
-    read_pair(
-        BindMapPaths {
-            ips_file: std::path::Path::new(&ips_file),
-            sidecar: std::path::Path::new(&sidecar),
-        },
-        ValidateCtx {
-            ifaces: &oracle,
-            prior: prior.as_ref(),
-        },
-    )
+    let runtime = tokio::runtime::Handle::current();
+    tokio::task::spawn_blocking(move || {
+        let oracle = SystemIfaces;
+        runtime.block_on(read_pair(
+            BindMapPaths {
+                ips_file: std::path::Path::new(&ips_file),
+                sidecar: std::path::Path::new(&sidecar),
+            },
+            ValidateCtx {
+                ifaces: &oracle,
+                prior: prior.as_ref(),
+            },
+        ))
+    })
     .await
+    .unwrap_or_else(|e| std::panic::resume_unwind(e.into_panic()))
 }
 
 pub struct LinkSource {
@@ -175,5 +184,80 @@ fn log_outcome(status: BindMapStatus, disposition: BindMapDisposition) {
         BindMapStatus::Degraded(reason) => {
             warn!("bind-map degraded: {reason} ({disposition})");
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::fs::OpenOptions;
+    use std::os::unix::ffi::OsStrExt as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use super::read_bind_map;
+
+    const BOUND: Duration = Duration::from_secs(5);
+
+    /// The IP file is a FIFO. The read opens it and then waits for data that only
+    /// comes when the writer closes its end, and the sender's one runtime thread
+    /// has to keep running while that read waits.
+    #[test]
+    fn a_pending_pair_read_leaves_the_runtime_thread_free() {
+        let dir = tempfile::tempdir().unwrap();
+        let ips = dir.path().join("ips.txt");
+        let fifo = std::ffi::CString::new(ips.as_os_str().as_bytes()).unwrap();
+        // SAFETY: a valid NUL-terminated path and a plain permission mode.
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+
+        let (read_opened_tx, read_opened_rx) = tokio::sync::oneshot::channel::<()>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let writer_path = ips.clone();
+        // A blocking open of the write end returns only once the read has opened
+        // the FIFO, so it marks the read as started. Holding the write end keeps
+        // the read waiting until the test releases it or the bound runs out.
+        let writer = std::thread::spawn(move || {
+            let write_end = OpenOptions::new().write(true).open(&writer_path).unwrap();
+            let _ = read_opened_tx.send(());
+            let _ = release_rx.recv_timeout(BOUND);
+            drop(write_end);
+        });
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (read_started, read_was_pending) = runtime.block_on(async {
+            let read = tokio::spawn(read_bind_map(
+                ips.display().to_string(),
+                dir.path().join("bind-map.json").display().to_string(),
+                None,
+            ));
+            let started = tokio::time::timeout(BOUND, read_opened_rx).await.is_ok();
+            let pending = started && !read.is_finished();
+            let _ = release_tx.send(());
+            let _ = tokio::time::timeout(BOUND, read).await;
+            (started, pending)
+        });
+        runtime.shutdown_timeout(Duration::from_secs(1));
+        // Satisfies the writer's open if the read never got that far. Held until
+        // the writer is joined, so a writer that reaches its open late still
+        // finds a reader instead of blocking forever.
+        let fallback_reader = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&ips)
+            .unwrap();
+        writer.join().unwrap();
+        drop(fallback_reader);
+
+        assert!(
+            read_started,
+            "the bind-map pair read never opened the IP file"
+        );
+        assert!(
+            read_was_pending,
+            "the bind-map pair read held the runtime thread while it waited"
+        );
     }
 }

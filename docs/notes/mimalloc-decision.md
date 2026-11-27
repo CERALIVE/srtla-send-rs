@@ -1,47 +1,26 @@
 # mimalloc allocator — decision note
 
-## Decision
+## Decision (2026-11-27)
 
-**Keep `mimalloc` as the global allocator, default-on.**
-
-The `mimalloc` Cargo feature is in `default`, so the shipped `.deb` links
-mimalloc exactly as the previous unconditional `#[global_allocator]` did — the
-device binary's allocator is unchanged by this gating. The only new capability is
-an opt-*out* for development, CI, and profiling.
-
-`mimalloc` is built `default-features = false` with `secure` + `v3` (unchanged
-from the prior unconditional dependency).
-
-## How to disable (system allocator)
-
-The default feature set is `["mimalloc"]`, so `--no-default-features` is the
-exact "off" build:
-
-```bash
-cargo build --release --no-default-features   # system allocator, no mimalloc linked
-```
-
-Verify which allocator a binary links:
-
-```bash
-nm -C target/release/srtla_send | rg 'mi_malloc|mi_heap'   # matches => mimalloc; no match => system
-```
-
-## Benchmark
-
-Measuring the two allocators is one build flag apart — `cargo build --release`
-builds with mimalloc, `cargo build --release --no-default-features` with the system
-allocator. An SRT-sized packet-churn criterion benchmark accompanied the original
-gating on the legacy branch (`benches/alloc.rs`, labeling each run
-`allocator=mimalloc` or `allocator=system`); it is not carried on this branch.
+**The binary uses the system allocator.** Upstream `adc1f4a` (irlserver #34) removed
+the `mimalloc` feature and dependency while cutting hot-path allocations, and the
+owner chose to follow upstream in the `1481507` sync rather than carry a fork-only
+allocator ([`upstream-sync-2026-11-1481507.md`](upstream-sync-2026-11-1481507.md)).
+The crate has no default features any more, so `--no-default-features` builds the
+same binary; the Miri lane keeps the flag only because its contract test pins the
+command.
 
 ## Caveat — unmeasured on the device target
 
-Any such benchmark runs on the build host, **not** on the constrained 4 GB SBC class
-the device image targets. The original strata-port evaluation flagged mimalloc as
-an "unmeasured allocator swap on a 4 GB SBC". A host bench validates that keeping
-mimalloc is reasonable on a developer machine; it does **not** by itself prove a win
-on the constrained ARM target. The default-on gating is the conservative choice: it
-preserves the historically shipped behavior while making an A/B comparison on real
-device hardware a one-flag build away. Revisit the default if and when on-device
-profiling provides evidence either direction.
+Neither allocator has been measured on the 4 GB RK3588 SBC class the device image
+targets. The previous default kept mimalloc only because it was the shipped status
+quo; this change carries the same evidence gap in the other direction. Revisit with
+on-device profiling.
+
+## History
+
+From the 2026-07 gating until the `1481507` sync, mimalloc (`default-features =
+false`, `secure` + `v3`) was the global allocator behind a default-on `mimalloc`
+feature, and `--no-default-features` was the system-allocator build for Miri and
+profiling. Its benchmark (`benches/alloc.rs` on the legacy branch) ran on the build
+host only.

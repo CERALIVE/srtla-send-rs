@@ -185,8 +185,8 @@ jobs:
   # packaging/CI layer.
   #
   # Each filter is its own invocation (miri takes a single substring filter per
-  # run). --no-default-features drops the mimalloc #[global_allocator] (C FFI
-  # miri cannot run); the system allocator miri provides is used instead. --lib
+  # run). --no-default-features is a no-op since mimalloc (C FFI miri cannot
+  # run) was dropped; the contract test pins the command as written. --lib
   # scopes to the unit-test binary where all five pure tests live.
   miri:
     name: Miri (batch I/O pure pointer logic)
