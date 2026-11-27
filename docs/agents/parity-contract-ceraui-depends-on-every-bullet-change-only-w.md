@@ -92,7 +92,8 @@
   `src/net/route.rs`, `src/sender/egress_tick.rs`.
 - **A `SIGHUP` with `--bind-map` runs the sidecar read off the forwarding loop**
   (`src/sender/links.rs`), because a retried mismatch could otherwise stall forwarding
-  for up to 2 s. Without `--bind-map`, SIGHUP is upstream's reload plus the guard below.
+  for up to 2 s. The read runs on the blocking pool: the runtime has one thread, and a
+  synchronous file read held up by slow storage would stall it. Without `--bind-map`, SIGHUP is upstream's reload plus the guard below.
 - **IP-list reload (`SIGHUP`)** keeps surviving uplinks' sockets and registrations (no
   re-handshake) and rebuilds the pool in file order. A reload resolving to zero valid
   source IPs is refused with a specific log and the stream keeps running on the
