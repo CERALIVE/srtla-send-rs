@@ -74,11 +74,34 @@ pub async fn read_bind_map(
     .unwrap_or_else(|e| std::panic::resume_unwind(e.into_panic()))
 }
 
+/// One `SIGHUP` reload read for a spawned task, numbered in the order the reads
+/// were started.
+pub struct ReloadRead {
+    order: u64,
+    ips_file: String,
+    sidecar: String,
+    prior: Option<MappedPool>,
+}
+
+impl ReloadRead {
+    /// Run the read, answering with its order number.
+    pub async fn run(self) -> (u64, Result<PairRead, BindMapError>) {
+        (
+            self.order,
+            read_bind_map(self.ips_file, self.sidecar, self.prior).await,
+        )
+    }
+}
+
 pub struct LinkSource {
     ips_file: String,
     sidecar: Option<String>,
     last_valid: Option<MappedPool>,
     report: BindMapReport,
+    /// Reload reads can finish out of order, so each is numbered and an older
+    /// one is never adopted after a newer one.
+    reads_started: u64,
+    newest_adopted: u64,
 }
 
 impl LinkSource {
@@ -91,6 +114,8 @@ impl LinkSource {
             // A legacy run never resolves, so the default is what it reports for
             // its whole lifetime: absent, running legacy, nothing excluded.
             report: BindMapReport::default(),
+            reads_started: 0,
+            newest_adopted: 0,
         }
     }
 
@@ -115,11 +140,38 @@ impl LinkSource {
         }
     }
 
-    /// The arguments a spawned reload read needs.
+    /// The arguments a pair read needs.
     #[must_use]
     pub fn read_args(&self) -> Option<(String, String, Option<MappedPool>)> {
         let sidecar = self.sidecar.clone()?;
         Some((self.ips_file.clone(), sidecar, self.last_valid.clone()))
+    }
+
+    /// Start a `SIGHUP` reload read, numbered after every read started before it.
+    #[must_use]
+    pub fn begin_reload(&mut self) -> Option<ReloadRead> {
+        let (ips_file, sidecar, prior) = self.read_args()?;
+        self.reads_started += 1;
+        Some(ReloadRead {
+            order: self.reads_started,
+            ips_file,
+            sidecar,
+            prior,
+        })
+    }
+
+    /// Adopt a finished reload read, or `None` when a newer one was already
+    /// adopted: applying it then would put an older uplink set back.
+    pub fn adopt_reload(
+        &mut self,
+        order: u64,
+        read: Result<PairRead, BindMapError>,
+    ) -> Option<SmallVec<UplinkSpec, 4>> {
+        if order <= self.newest_adopted {
+            return None;
+        }
+        self.newest_adopted = order;
+        Some(self.adopt(read))
     }
 
     /// The uplink set to start with.
@@ -195,9 +247,70 @@ mod tests {
     use std::sync::mpsc;
     use std::time::Duration;
 
-    use super::read_bind_map;
+    use super::{LinkSource, SenderPaths, read_bind_map};
+    use crate::bind_map::BindMapError;
 
     const BOUND: Duration = Duration::from_secs(5);
+
+    fn mapped_source() -> LinkSource {
+        LinkSource::new(&SenderPaths {
+            ips_file: "ips.txt",
+            bind_map: Some("bind-map.json"),
+        })
+    }
+
+    fn missing_map() -> BindMapError {
+        BindMapError::MissingFile {
+            path: "bind-map.json".into(),
+        }
+    }
+
+    fn malformed_map() -> BindMapError {
+        BindMapError::MalformedJson("truncated".into())
+    }
+
+    /// Two `SIGHUP`s whose reads finish newest first: the older answer must not
+    /// put its result back over the newer one.
+    #[test]
+    fn a_reload_read_that_finishes_after_a_newer_one_is_not_adopted() {
+        let mut source = mapped_source();
+        let older = source.begin_reload().unwrap();
+        let newer = source.begin_reload().unwrap();
+
+        assert!(
+            source
+                .adopt_reload(newer.order, Err(missing_map()))
+                .is_some()
+        );
+        let adopted = source.report().clone();
+        assert!(
+            source
+                .adopt_reload(older.order, Err(malformed_map()))
+                .is_none(),
+            "a read older than the adopted one must not be applied"
+        );
+        assert_eq!(source.report(), &adopted);
+    }
+
+    #[test]
+    fn reload_reads_that_finish_in_order_are_each_adopted() {
+        let mut source = mapped_source();
+        let older = source.begin_reload().unwrap();
+        let newer = source.begin_reload().unwrap();
+
+        assert!(
+            source
+                .adopt_reload(older.order, Err(malformed_map()))
+                .is_some()
+        );
+        let after_older = source.report().clone();
+        assert!(
+            source
+                .adopt_reload(newer.order, Err(missing_map()))
+                .is_some()
+        );
+        assert_ne!(source.report(), &after_older);
+    }
 
     /// The IP file is a FIFO. The read opens it and then waits for data that only
     /// comes when the writer closes its end, and the sender's one runtime thread

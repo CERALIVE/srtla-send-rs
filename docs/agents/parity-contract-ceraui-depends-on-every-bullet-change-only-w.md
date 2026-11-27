@@ -93,7 +93,9 @@
 - **A `SIGHUP` with `--bind-map` runs the sidecar read off the forwarding loop**
   (`src/sender/links.rs`), because a retried mismatch could otherwise stall forwarding
   for up to 2 s. The read runs on the blocking pool: the runtime has one thread, and a
-  synchronous file read held up by slow storage would stall it. Without `--bind-map`, SIGHUP is upstream's reload plus the guard below.
+  synchronous file read held up by slow storage would stall it. Overlapping reads can
+  finish out of order, so each is numbered and one that finishes after a newer read was
+  adopted is dropped: an older uplink set never replaces a newer one. Without `--bind-map`, SIGHUP is upstream's reload plus the guard below.
 - **IP-list reload (`SIGHUP`)** keeps surviving uplinks' sockets and registrations (no
   re-handshake) and rebuilds the pool in file order. A reload resolving to zero valid
   source IPs is refused with a specific log and the stream keeps running on the
