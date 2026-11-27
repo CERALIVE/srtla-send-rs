@@ -117,10 +117,18 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
                         if command.has_arguments("check", "--workspace", *targets)
                     )
                     self.assertEqual(len(checks), 1)
+                    other_targets = {
+                        "--all-targets", "--tests", "--test", "--benches",
+                        "--bench", "--examples", "--example",
+                    } - set(targets)
+                    self.assertFalse(
+                        other_targets & set(checks[0].arguments),
+                        f"cargo check --workspace {' '.join(targets)} must select no other targets",
+                    )
                     self.assertFalse(
                         any(
                             argument == "--all-features"
-                            or argument.startswith("--features")
+                            or argument.startswith(("--features", "-F"))
                             or "test-internals" in argument
                             for argument in checks[0].arguments
                         ),
