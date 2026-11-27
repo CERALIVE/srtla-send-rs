@@ -38,6 +38,7 @@ cargo build --release
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo check && cargo check --release
+cargo check --workspace --lib --bins && cargo check --workspace --all-targets
 cargo test --lib
 timeout --foreground --kill-after=10s 600s cargo test --workspace --all-features --verbose
 timeout --foreground --kill-after=10s 600s cargo test --workspace --features test-internals
@@ -51,7 +52,7 @@ bash scripts/deb_version_ordering_test.sh
 bash scripts/check-doc-refs.sh
 ```
 
-Five Miri filters, cross-channel/OS lanes, privileged netns prerequisites, stall-latch fixtures and RTT sample eligibility: [full gate contract](docs/agents/build-gate.md).
+Eight Miri filters, cross-channel/OS lanes, privileged netns prerequisites, stall-latch fixtures and RTT sample eligibility: [full gate contract](docs/agents/build-gate.md).
 
 ## WHERE TO LOOK
 

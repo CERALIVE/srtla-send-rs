@@ -28,6 +28,9 @@ MIRI_FILTERS: Final = (
     "iter_clamps_oversized_msg_len_to_mtu",
     "sockaddr_storage_roundtrip",
     "recv_retry_action_classifies_errors",
+    "pointers_follow_the_buffer_after_a_move_out_of_the_box",
+    "pointers_follow_both_buffers_after_a_swap",
+    "forged_packet_reads_correctly_after_a_move",
 )
 
 
@@ -99,6 +102,19 @@ class ReleaseWorkflowContractTests(unittest.TestCase):
             transitive_needs(workflow, "release"),
             frozenset(("test", "loom", "miri", "build-deb")),
         )
+
+    def test_ci_and_release_check_every_crate_without_test_internals(self) -> None:
+        # Every test build turns srtla-core's test-internals on through the
+        # dev-dependency, so only these checks compile the pub(crate) side.
+        for path in (CI, RELEASE):
+            with self.subTest(workflow=path.name):
+                gate = load_workflow(path).job("test")
+                self.assertTrue(
+                    gate.has_command("cargo", "check", "--workspace", "--lib", "--bins")
+                )
+                self.assertTrue(
+                    gate.has_command("cargo", "check", "--workspace", "--all-targets")
+                )
 
     def test_ci_and_release_keep_exact_loom_command_contract(self) -> None:
         for path in (CI, RELEASE):

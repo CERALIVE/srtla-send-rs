@@ -248,7 +248,7 @@ The control dialect is upstream's JSON-RPC 2.0 exactly as documented in [docs/CO
 
 Two workflows, both on the pinned nightly:
 
-- `ci.yml` (push and PR): formatting, clippy with warnings as errors, the bounded test suite, `cargo audit` and `cargo deny`, upstream's stable/beta/Windows/macOS lanes, a blocking **Loom** lane over the subscription hub (`RUSTFLAGS="--cfg loom" cargo test --test subscription_loom`, 2 tests), a blocking **Miri** lane over the five pure pointer-logic tests in `src/net/batch_recv.rs`, and a `.deb` build matrix for `arm64` and `amd64` so a packaging break is caught before any tag.
+- `ci.yml` (push and PR): formatting, clippy with warnings as errors, the bounded test suite, `cargo audit` and `cargo deny`, upstream's stable/beta/Windows/macOS lanes, a blocking **Loom** lane over the subscription hub (`RUSTFLAGS="--cfg loom" cargo test --test subscription_loom`, 2 tests), a blocking **Miri** lane over the eight pure pointer-logic tests in `src/net/batch_recv.rs`, and a `.deb` build matrix for `arm64` and `amd64` so a packaging break is caught before any tag.
 - `release.yml` (tag `v*`): the same gate, then both `.deb`s built inside `debian:bookworm-slim` with a **`GLIBC_2.36`** ceiling check on each binary (Debian 12 is the device image), attached to the GitHub release with their `.sha256` files.
 
 The package is **`srtla`**, the binary installs at `/usr/bin/srtla_send`, and the artifact is named `srtla_<version>_<arch>.deb` (`srtla_4.2.0_arm64.deb`, `srtla_4.2.0_amd64.deb`). `ci/build-deb.sh` is the single source of truth for that metadata and re-runs the device image builder's fetch glob against the real filename as a self-test. A release tag must be `v<version>` with the version taken from `Cargo.toml`.

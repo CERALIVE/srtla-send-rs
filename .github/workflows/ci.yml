@@ -115,6 +115,18 @@ jobs:
       - name: Check compilation without test features
         run: cargo check --release
 
+      # Every test build turns srtla-core's test-internals on through
+      # srtla_send's dev-dependency, so no test run compiles the pub(crate) side
+      # of its visibility swaps. Library and binary targets skip dev-dependencies,
+      # so this builds every workspace crate with test-internals off.
+      - name: Check libraries and binaries without test-internals
+        run: cargo check --workspace --lib --bins
+
+      # The integration tests link srtla_send without its own test-internals
+      # feature unless they ask for it; this proves they do not lean on it.
+      - name: Check all targets with default features
+        run: cargo check --workspace --all-targets
+
       # test-internals is the crate's only meaningful test feature, so
       # --all-features compiles every test target. Privileged netns scenarios
       # still self-skip when dependencies are absent; the timeout keeps
@@ -174,7 +186,11 @@ jobs:
   # (iter_clamps_oversized_msg_len_to_mtu), the sockaddr_storage→SocketAddr cast
   # plus big-endian field decode (sockaddr_storage_roundtrip), and the errno
   # classification that decides whether a failed batch receive is retried or
-  # tears the link down (recv_retry_action_classifies_errors).
+  # tears the link down (recv_retry_action_classifies_errors), and that init()
+  # re-targets those self-pointers after the buffer leaves its Box or is swapped
+  # (pointers_follow_the_buffer_after_a_move_out_of_the_box,
+  # pointers_follow_both_buffers_after_a_swap) and a packet still decodes after
+  # such a move (forged_packet_reads_correctly_after_a_move).
   #
   # HARD LIMIT: miri CANNOT execute the real recvmmsg/sendmmsg syscall or FFI,
   # so neither live-syscall path is covered here — only the Rust-side pointer
@@ -187,7 +203,7 @@ jobs:
   # Each filter is its own invocation (miri takes a single substring filter per
   # run). --no-default-features is a no-op since mimalloc (C FFI miri cannot
   # run) was dropped; the contract test pins the command as written. --lib
-  # scopes to the unit-test binary where all five pure tests live.
+  # scopes to the unit-test binary where all eight pure tests live.
   miri:
     name: Miri (batch I/O pure pointer logic)
     runs-on: ubuntu-latest
@@ -230,6 +246,15 @@ jobs:
 
       - name: Miri — batch receive errno classification
         run: cargo miri test --lib --no-default-features --features test-internals recv_retry_action_classifies_errors
+
+      - name: Miri — recv buffer pointers after a move out of the box
+        run: cargo miri test --lib --no-default-features --features test-internals pointers_follow_the_buffer_after_a_move_out_of_the_box
+
+      - name: Miri — recv buffer pointers after a swap
+        run: cargo miri test --lib --no-default-features --features test-internals pointers_follow_both_buffers_after_a_swap
+
+      - name: Miri — forged packet decode after a move
+        run: cargo miri test --lib --no-default-features --features test-internals forged_packet_reads_correctly_after_a_move
 
   # Cross-build both device-relevant targets and package the pipeline-compatible
   # .deb on every push/PR, so a packaging break (name, binary path, Conflicts,

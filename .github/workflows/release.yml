@@ -56,6 +56,12 @@ jobs:
       - name: Check compilation without test features
         run: cargo check --release
 
+      - name: Check libraries and binaries without test-internals
+        run: cargo check --workspace --lib --bins
+
+      - name: Check all targets with default features
+        run: cargo check --workspace --all-targets
+
       - name: Run library tests
         run: cargo test --lib
 
@@ -144,6 +150,15 @@ jobs:
 
       - name: Miri — batch receive errno classification
         run: cargo miri test --lib --no-default-features --features test-internals recv_retry_action_classifies_errors
+
+      - name: Miri — recv buffer pointers after a move out of the box
+        run: cargo miri test --lib --no-default-features --features test-internals pointers_follow_the_buffer_after_a_move_out_of_the_box
+
+      - name: Miri — recv buffer pointers after a swap
+        run: cargo miri test --lib --no-default-features --features test-internals pointers_follow_both_buffers_after_a_swap
+
+      - name: Miri — forged packet decode after a move
+        run: cargo miri test --lib --no-default-features --features test-internals forged_packet_reads_correctly_after_a_move
 
   build-deb:
     name: Build .deb (${{ matrix.arch }})
