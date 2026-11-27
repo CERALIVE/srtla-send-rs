@@ -26,10 +26,10 @@ const PROMPT_EXIT: Duration = Duration::from_secs(2);
 
 const EMPTY_START_LOG: &str = "no valid source IPs at startup";
 
-fn free_udp_port() -> u16 {
-    let sock = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind ephemeral udp");
-    sock.local_addr().unwrap().port()
-}
+/// Local SRT listen port. 0 lets the OS pick a free one at bind time: probing for
+/// a free port and handing it over left a window in which another socket could
+/// take it first.
+const ANY_PORT: &str = "0";
 
 struct SenderProc {
     child: Child,
@@ -120,9 +120,8 @@ impl Drop for SenderProc {
 fn spawn(dir: &std::path::Path, ips_contents: &str) -> (SenderProc, std::path::PathBuf) {
     let ips = dir.join("ips.txt");
     std::fs::write(&ips, ips_contents).expect("write ips file");
-    let port = free_udp_port().to_string();
     let proc = SenderProc::spawn(&[
-        port.as_str(),
+        ANY_PORT,
         "127.0.0.1",
         "9999",
         ips.to_str().unwrap(),
@@ -167,9 +166,8 @@ fn empty_ip_file_at_startup_not_fatal() {
 fn missing_ips_file_at_startup_starts_empty_and_reloads_on_sighup() {
     let dir = tempfile::tempdir().unwrap();
     let ips = dir.path().join("ips.txt"); // intentionally not created
-    let port = free_udp_port().to_string();
     let mut proc = SenderProc::spawn(&[
-        port.as_str(),
+        ANY_PORT,
         "127.0.0.1",
         "9999",
         ips.to_str().unwrap(),

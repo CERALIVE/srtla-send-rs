@@ -16,10 +16,11 @@
 //! binaries. It therefore runs in the ordinary gate, unlike `tests/netns_*`.
 #![cfg(all(unix, target_os = "linux"))]
 
+use std::io::{BufRead, BufReader};
 use std::net::{SocketAddr, UdpSocket};
 use std::process::{Child, Command, Stdio};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -159,11 +160,29 @@ impl Sender {
     }
 }
 
-fn free_udp_port() -> u16 {
-    UdpSocket::bind("127.0.0.1:0")
-        .expect("bind ephemeral udp")
-        .local_addr()
-        .unwrap()
+/// The port the sender reports binding in its listener log. It is started on
+/// port 0, so the OS picks a free port at bind time and no other socket can take
+/// it first. The reader thread keeps draining stdout afterwards.
+fn listening_port(child: &mut Child) -> u16 {
+    let stdout = child.stdout.take().expect("capture stdout");
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if let Some(rest) = line.split("listening for SRT on ").nth(1) {
+                let _ = tx.send(
+                    rest.split_whitespace()
+                        .next()
+                        .unwrap_or_default()
+                        .to_owned(),
+                );
+            }
+        }
+    });
+    let addr = rx
+        .recv_timeout(READY_TIMEOUT)
+        .expect("the sender never logged its SRT listener");
+    addr.parse::<SocketAddr>()
+        .unwrap_or_else(|e| panic!("listener address {addr:?}: {e}"))
         .port()
 }
 
@@ -250,11 +269,10 @@ fn bond_bytes_sent_total_is_monotonic_across_a_sighup_link_removal() {
     let stats = dir.path().join("stats.json");
     std::fs::write(&ips, "127.0.0.1\n127.0.0.2\n").expect("write ips file");
 
-    let srt_port = free_udp_port();
     let encoder = UdpSocket::bind("127.0.0.1:0").expect("bind injector");
-    let child = Command::new(BIN)
+    let mut child = Command::new(BIN)
         .args([
-            &srt_port.to_string(),
+            "0",
             "127.0.0.1",
             &receiver.port.to_string(),
             ips.to_str().unwrap(),
@@ -265,10 +283,11 @@ fn bond_bytes_sent_total_is_monotonic_across_a_sighup_link_removal() {
         ])
         .env("RUST_LOG", "info")
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .expect("spawn srtla_send");
+    let srt_port = listening_port(&mut child);
     let sender = Sender { child };
 
     // Given: BOTH uplinks have finished REG1/REG2/REG3 and are schedulable.

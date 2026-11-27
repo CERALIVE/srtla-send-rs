@@ -31,11 +31,21 @@ const FAILED_UPLINK_LOG: &str = "failed to add uplink";
 /// without needing any host network setup.
 const UNCONFIGURED_SOURCE_IPS: [&str; 4] = ["192.0.2.11", "192.0.2.12", "192.0.2.13", "192.0.2.14"];
 
-/// Grab an ephemeral UDP port for the local SRT listener, then release it so the
-/// spawned binary can bind it (a small TOCTOU race is acceptable for a test).
-fn free_udp_port() -> u16 {
-    let sock = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind ephemeral udp");
-    sock.local_addr().unwrap().port()
+/// Local SRT listen port. 0 lets the OS pick a free one at bind time: probing for
+/// a free port and handing it over left a window in which another socket could
+/// take it first.
+const ANY_PORT: &str = "0";
+
+/// The port the sender reports binding in its listener log.
+fn listening_port(logs: &str) -> u16 {
+    let addr = logs
+        .lines()
+        .find_map(|line| line.split("listening for SRT on ").nth(1))
+        .and_then(|rest| rest.split_whitespace().next())
+        .unwrap_or_else(|| panic!("no listener address in the sender log; logs:\n{logs}"));
+    addr.parse::<std::net::SocketAddr>()
+        .unwrap_or_else(|e| panic!("listener address {addr:?}: {e}"))
+        .port()
 }
 
 struct SenderProc {
@@ -103,15 +113,10 @@ impl Drop for SenderProc {
 /// Spawn the sender against a throwaway ips file. Positional arguments only —
 /// note `-v` on this CLI is `--version`, not a verbosity flag, so log level is
 /// set through `RUST_LOG` in [`SenderProc::spawn`] instead.
-fn spawn_with_ips(dir: &std::path::Path, contents: &str, port: u16) -> SenderProc {
+fn spawn_with_ips(dir: &std::path::Path, contents: &str) -> SenderProc {
     let ips = dir.join("ips.txt");
     std::fs::write(&ips, contents).expect("write ips file");
-    SenderProc::spawn(&[
-        &port.to_string(),
-        "127.0.0.1",
-        "9999",
-        ips.to_str().unwrap(),
-    ])
+    SenderProc::spawn(&[ANY_PORT, "127.0.0.1", "9999", ips.to_str().unwrap()])
 }
 
 /// Byte offset of `needle` in `logs`, or a failure naming what was missing.
@@ -123,8 +128,7 @@ fn log_position(logs: &str, needle: &str) -> usize {
 #[test]
 fn local_srt_listener_is_bound_before_the_first_uplink_connect() {
     let dir = tempfile::tempdir().unwrap();
-    let port = free_udp_port();
-    let proc = spawn_with_ips(dir.path(), "127.0.0.1\n", port);
+    let proc = spawn_with_ips(dir.path(), "127.0.0.1\n");
 
     assert!(
         proc.wait_for_log(ADDED_UPLINK_LOG, START_TIMEOUT),
@@ -143,8 +147,7 @@ fn local_srt_listener_is_bound_before_the_first_uplink_connect() {
 #[test]
 fn the_bound_port_is_really_taken_once_the_listener_is_logged() {
     let dir = tempfile::tempdir().unwrap();
-    let port = free_udp_port();
-    let proc = spawn_with_ips(dir.path(), "127.0.0.1\n", port);
+    let proc = spawn_with_ips(dir.path(), "127.0.0.1\n");
 
     assert!(
         proc.wait_for_log(LISTENING_LOG, START_TIMEOUT),
@@ -154,6 +157,7 @@ fn the_bound_port_is_really_taken_once_the_listener_is_logged() {
 
     // The listen log is emitted after the bind resolves, so the same address the
     // sender binds must now be unavailable to anyone else.
+    let port = listening_port(&proc.logs());
     let err = std::net::UdpSocket::bind(("::", port))
         .expect_err("the sender must already hold the local SRT port when it logs the listener");
     assert_eq!(
@@ -166,7 +170,6 @@ fn the_bound_port_is_really_taken_once_the_listener_is_logged() {
 #[test]
 fn listener_bind_precedes_every_uplink_of_a_multi_link_bond() {
     let dir = tempfile::tempdir().unwrap();
-    let port = free_udp_port();
     // One workable uplink plus four that cannot bind: the sequential connect
     // loop walks all five, which is the multi-modem shape that widens the race.
     let mut ips = String::from("127.0.0.1\n");
@@ -174,7 +177,7 @@ fn listener_bind_precedes_every_uplink_of_a_multi_link_bond() {
         ips.push_str(ip);
         ips.push('\n');
     }
-    let proc = spawn_with_ips(dir.path(), &ips, port);
+    let proc = spawn_with_ips(dir.path(), &ips);
 
     let last_ip = UNCONFIGURED_SOURCE_IPS[UNCONFIGURED_SOURCE_IPS.len() - 1];
     assert!(
