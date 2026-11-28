@@ -29,7 +29,10 @@ CI run does not prove the privileged topology. Run them only through
 `scripts/netns_test_gate.sh` (90 s per target; `netns_twin` gets 420 s via
 `NETNS_TWIN_TEST_TIMEOUT_SECONDS` because it waits out real sender timers). It runs every
 `tests/netns_*.rs` target, one test at a time: the harness names veth pairs after the
-process id, so two tests of one target would collide on `ip link add`.
+process id, so two tests of one target would collide on `ip link add`. If a target
+exceeds its budget, `timeout --foreground` stops only `cargo`, so the gate then kills the
+test process it left running and removes, with `sudo -n`, only the namespaces that process
+created (their names carry its pid); another checkout's run is never touched.
 
 `netns_stall_gate` injects SRT DATA at 2000 packets/s through the shared harness
 injector, which sends from one encoder source port with clock-based sequence numbers,
