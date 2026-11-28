@@ -17,13 +17,13 @@ pub struct Namespace {
 /// failed run it removes exactly the namespaces that run created.
 const NETNS_RECORD_ENV: &str = "NETNS_GATE_RECORD";
 
-/// Append one namespace name, as one line, to the gate's record file.
-fn record_namespace(record: &Path, name: &str) -> Result<()> {
+/// Append `<state> <name>` as one line to the gate's record file.
+fn record_namespace(record: &Path, state: &str, name: &str) -> Result<()> {
     std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(record)
-        .and_then(|mut file| file.write_all(format!("{name}\n").as_bytes()))
+        .and_then(|mut file| file.write_all(format!("{state} {name}\n").as_bytes()))
         .with_context(|| format!("record netns '{name}' in '{}'", record.display()))
 }
 
@@ -32,22 +32,30 @@ impl Namespace {
         // Clean up stale namespace with same name (idempotent)
         let _ = sudo(&["ip", "netns", "del", name]);
 
-        // Recorded before it exists, so a run killed between the two steps
-        // cannot leave a namespace the gate does not know about.
-        if let Some(record) = std::env::var_os(NETNS_RECORD_ENV) {
-            record_namespace(Path::new(&record), name)?;
+        // `pending` before the add, so the gate still hears of a namespace
+        // whose creation a killed run never saw finish.
+        let record = std::env::var_os(NETNS_RECORD_ENV);
+        if let Some(record) = &record {
+            record_namespace(Path::new(record), "pending", name)?;
         }
         sudo_checked(&["ip", "netns", "add", name])
             .with_context(|| format!("create netns '{name}'"))?;
+        // Owned from here: Drop deletes it, also if the record below fails.
+        let ns = Self {
+            name: name.to_string(),
+        };
+        // `created` only after this add succeeded, so a name another run
+        // already holds is never this run's to delete.
+        if let Some(record) = &record {
+            record_namespace(Path::new(record), "created", name)?;
+        }
 
         debug!(ns = name, "created network namespace");
 
         // Loopback — best-effort, failure is non-fatal
         let _ = sudo(&["ip", "netns", "exec", name, "ip", "link", "set", "lo", "up"]);
 
-        Ok(Self {
-            name: name.to_string(),
-        })
+        Ok(ns)
     }
 
     /// Run a command inside this namespace, returning raw output.
@@ -161,15 +169,85 @@ mod tests {
     use crate::test_util::{check_privileges, unique_ns_name};
 
     #[test]
-    fn record_namespace_appends_one_line_per_name() {
+    fn record_namespace_appends_one_line_per_entry() {
         let dir = tempfile::tempdir().unwrap();
         let record = dir.path().join("record");
-        record_namespace(&record, "basic_s_1_0").unwrap();
-        record_namespace(&record, "basic_r_1_1").unwrap();
+        record_namespace(&record, "pending", "basic_s_1_0").unwrap();
+        record_namespace(&record, "created", "basic_s_1_0").unwrap();
         assert_eq!(
             std::fs::read_to_string(&record).unwrap(),
-            "basic_s_1_0\nbasic_r_1_1\n"
+            "pending basic_s_1_0\ncreated basic_s_1_0\n"
         );
+    }
+
+    /// The real constructor, run in a child copy of this test binary with a
+    /// stub `sudo` first on its PATH: `pending` must be on record when
+    /// `ip netns add` runs, and only a successful add may become `created`.
+    #[cfg(unix)]
+    #[test]
+    fn record_brackets_ip_netns_add() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let (record, calls) = (dir.path().join("record"), dir.path().join("calls"));
+        let sudo = dir.path().join("sudo");
+        std::fs::write(
+            &sudo,
+            format!(
+                "#!/bin/sh\nprintf '%s | %s\\n' \"$*\" \"$(tr '\\n' ',' < '{}' 2>/dev/null)\" >> \
+                 '{}'\n[ \"$*\" != 'ip netns add taken' ]\n",
+                record.display(),
+                calls.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&sudo, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = format!(
+            "{}:{}",
+            dir.path().display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        let status = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "topology::tests::record_brackets_ip_netns_add_child",
+                "--ignored",
+            ])
+            .env("PATH", path)
+            .env(NETNS_RECORD_ENV, &record)
+            .env("NETNS_RECORD_TEST_CHILD", "1")
+            .status()
+            .unwrap();
+        assert!(status.success(), "the child constructor run failed");
+
+        let calls = std::fs::read_to_string(&calls).unwrap();
+        assert!(
+            calls
+                .lines()
+                .any(|line| line == "ip netns add mine | pending mine,"),
+            "`pending` must be on record, and `created` not yet, when the add runs; \
+             calls:\n{calls}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&record).unwrap(),
+            "pending mine\ncreated mine\npending taken\n"
+        );
+    }
+
+    /// The child half of `record_brackets_ip_netns_add`; it does nothing
+    /// unless that test started it.
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "run only by record_brackets_ip_netns_add, with a stub sudo"]
+    fn record_brackets_ip_netns_add_child() {
+        if std::env::var_os("NETNS_RECORD_TEST_CHILD").is_none() {
+            return;
+        }
+        let mine = Namespace::new("mine").expect("the stub add of 'mine' succeeds");
+        assert!(
+            Namespace::new("taken").is_err(),
+            "the stub add of 'taken' fails"
+        );
+        drop(mine);
     }
 
     #[test]

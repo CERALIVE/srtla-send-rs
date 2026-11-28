@@ -63,42 +63,83 @@ warn() {
   echo "netns-test-gate: $*" >&2
 }
 
-# Each run gets its own record file. Every process of the run inherits
-# NETNS_GATE_RECORD naming it, and Namespace::new
-# (crates/network-sim/src/topology.rs) appends each namespace's name to it
-# before creating the namespace. Cleanup goes by those two alone, so it never
-# touches another run's processes or namespaces.
+# Each target runs in its own systemd user scope, so after a failure one write
+# to that scope's cgroup.kill stops every process of the run, root or not and
+# in whatever namespace, with no process id read first and signalled later.
+systemd-run --user --scope --quiet --collect -- true >/dev/null 2>&1 || {
+  echo "netns-test-gate: needs a systemd user session (systemd-run --user --scope)" >&2
+  exit 2
+}
+# The contract test points this at a fake tree.
+CGROUP_ROOT="${NETNS_GATE_CGROUP_ROOT:-/sys/fs/cgroup}"
+
+# Each run also gets its own record file, named by NETNS_GATE_RECORD:
+# Namespace::new (crates/network-sim/src/topology.rs) writes `pending <name>`
+# to it before `ip netns add` and `created <name>` once that add has succeeded.
 RUN_DIR="$(mktemp -d)"
 trap 'rm -rf "${RUN_DIR}"' EXIT
+
+# cgroup.kill only sends the signals; wait, within a bound, until they landed.
+wait_until_empty() {
+  local _
+  for _ in $(seq 1 100); do
+    # A scope with nothing left in it is collected, files and all.
+    [[ -e "$1/cgroup.events" ]] || return 0
+    grep -qx 'populated 0' "$1/cgroup.events" && return 0
+    sleep 0.1
+  done
+  return 1
+}
 
 # `timeout --foreground` stops only cargo, so a failed run can leave its test
 # process running, and the namespaces it made under sudo with whatever runs in
 # them. A step that fails is reported, and the remaining steps still run.
 clean_up_run() {
-  local record="$1" listed out ns
-  local -a pids recorded
-  mapfile -t pids < <(grep -lsxzF -- "NETNS_GATE_RECORD=${record}" /proc/[0-9]*/environ | cut -d/ -f3)
-  if [[ "${#pids[@]}" -gt 0 ]]; then
-    warn "killing this run's leftover processes: ${pids[*]}"
-    kill -KILL "${pids[@]}" || warn "some of them had exited already"
+  local record="$1" scope="$2.scope" cg listed out ns
+  local -a created unconfirmed
+  if ! cg="$(systemctl --user show --property=ControlGroup --value "${scope}")"; then
+    warn "could not look up ${scope}; check it with: systemctl --user status ${scope}"
+  elif [[ -n "${cg}" && "${cg}" != */"${scope}" ]]; then
+    # Writing any other cgroup's kill file, the root's above all, would stop
+    # processes that are not this run's.
+    warn "${scope} reports cgroup '${cg}'; not killing it"
+  elif [[ -n "${cg}" ]]; then
+    if ! echo 1 > "${CGROUP_ROOT}${cg}/cgroup.kill"; then
+      warn "could not kill ${scope}; run: systemctl --user kill --signal=KILL ${scope}"
+    elif wait_until_empty "${CGROUP_ROOT}${cg}"; then
+      warn "killed every process left in ${scope}"
+    else
+      warn "${scope} still has processes: $(tr '\n' ' ' < "${CGROUP_ROOT}${cg}/cgroup.procs")"
+    fi
   fi
   [[ -s "${record}" ]] || return 0
-  mapfile -t recorded < <(sort -u "${record}")
-  if ! listed="$(ip netns list)"; then
-    warn "could not list namespaces; check these by hand: ${recorded[*]}"
+  mapfile -t created < <(awk '$1 == "created" {print $2}' "${record}" | sort -u)
+  # Pending but never created: the add failed (another run may hold that name)
+  # or was cut short, so whose namespace it is cannot be told.
+  mapfile -t unconfirmed < <(awk '$1 == "pending" {print $2}' "${record}" | sort -u \
+    | comm -23 - <(printf '%s\n' "${created[@]}"))
+  for ns in "${unconfirmed[@]}"; do
+    warn "this run never saw ${ns} created; if it is this run's, run: sudo ip netns delete ${ns}"
+  done
+  [[ "${#created[@]}" -gt 0 ]] || return 0
+  # /run/netns can be root-only, and then a plain `ip netns list` prints nothing.
+  if ! listed="$(sudo -n ip netns list)"; then
+    warn "could not list namespaces; check these by hand: ${created[*]}"
     return
   fi
   listed="$(awk '{print $1}' <<<"${listed}")"
-  for ns in "${recorded[@]}"; do
-    # Recorded but never created: the run died between the two steps.
+  for ns in "${created[@]}"; do
+    # Already deleted by the run itself.
     grep -qxF -- "${ns}" <<<"${listed}" || continue
-    if out="$(sudo -n ip netns pids "${ns}")"; then
-      mapfile -t pids < <(printf '%s' "${out}")
-      if [[ "${#pids[@]}" -gt 0 ]] && ! sudo -n kill -KILL "${pids[@]}"; then
-        warn "could not kill every process in ${ns}: ${pids[*]}"
-      fi
-    else
-      warn "could not list the processes in ${ns}"
+    # Deleting a name with processes still inside would hide them, so a
+    # namespace is removed only once nothing runs in it.
+    if ! out="$(sudo -n ip netns pids "${ns}")"; then
+      warn "could not list the processes in ${ns}; left it, check: sudo ip netns pids ${ns}"
+      continue
+    fi
+    if [[ -n "${out}" ]]; then
+      warn "${ns} still runs processes: $(tr '\n' ' ' <<<"${out}"); left it, check: sudo ip netns pids ${ns}"
+      continue
     fi
     if sudo -n ip netns delete "${ns}"; then
       warn "removed namespace ${ns} left by this run"
@@ -111,12 +152,14 @@ clean_up_run() {
 for TARGET in "${TARGETS[@]}"; do
   BUDGET="$(budget_for "${TARGET}")"
   RECORD="${RUN_DIR}/${TARGET}"
+  SCOPE="netns-gate-${TARGET}-$(cat /proc/sys/kernel/random/uuid)"
   # No errexit until this target passes: after a failure, every cleanup step
   # must run and the gate must still exit with the target's own status.
   set +e
   # One test at a time, as upstream CI runs them: the harness names veth pairs
   # after the process id, so two tests of one target collide on `ip link add`.
-  NETNS_GATE_RECORD="${RECORD}" timeout --foreground --kill-after=10s "${BUDGET}s" \
+  NETNS_GATE_RECORD="${RECORD}" systemd-run --user --scope --quiet --collect --unit="${SCOPE}" -- \
+    timeout --foreground --kill-after=10s "${BUDGET}s" \
     cargo test --all-features --test "${TARGET}" -- --nocapture --test-threads=1
   STATUS=$?
   if [[ "${STATUS}" -ne 0 ]]; then
@@ -125,7 +168,7 @@ for TARGET in "${TARGETS[@]}"; do
       # `--kill-after` ends in 137, but so does a cargo killed from outside.
       137) warn "${TARGET} was killed with SIGKILL (by --kill-after after ${BUDGET}s, or from outside)" ;;
     esac
-    clean_up_run "${RECORD}"
+    clean_up_run "${RECORD}" "${SCOPE}"
     exit "${STATUS}"
   fi
   set -e

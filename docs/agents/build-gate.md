@@ -24,19 +24,25 @@ Every test build turns `srtla-core`'s copy on through `srtla_send`'s dev-depende
 `srtla_send`'s own `test-internals`.
 Most tests run in-process over loopback UDP. The `tests/netns_*.rs` targets are
 privileged supplements (Linux network namespaces, passwordless `sudo`, `srtla_rec`,
-`srt-live-transmit`) that self-skip when their dependencies are absent, so an ordinary
+`srt-live-transmit`; the gate also needs a systemd user session on cgroup v2) that self-skip when their dependencies are absent, so an ordinary
 CI run does not prove the privileged topology. Run them only through
 `scripts/netns_test_gate.sh` (90 s per target; `netns_twin` gets 420 s via
 `NETNS_TWIN_TEST_TIMEOUT_SECONDS` because it waits out real sender timers). It runs every
 `tests/netns_*.rs` target, one test at a time: the harness names veth pairs after the
-process id, so two tests of one target would collide on `ip link add`. When a target
-fails, including when it exceeds its budget (`timeout --foreground` stops only `cargo`),
-the gate removes what that run left: the processes that inherited the run's
-`NETNS_GATE_RECORD` variable, then, with `sudo -n`, each namespace named in the file it
-points to (`Namespace::new` in `crates/network-sim/src/topology.rs` writes the name there
-before creating the namespace) and whatever runs inside it. Nothing another run made is
-touched. A cleanup step that fails is reported, with the command to finish it by hand,
-and the gate still exits with the target's status (124 for a timeout, 137 for SIGKILL).
+process id, so two tests of one target would collide on `ip link add`. Each target runs
+in its own `systemd-run --user --scope`. When a target fails, including when it exceeds
+its budget (`timeout --foreground` stops only `cargo`), the gate writes `1` to that
+scope's `cgroup.kill`, which kills every process left of the run, root ones under `sudo`
+included, with no process id read first and signalled later; it never writes any cgroup
+but the scope's own. It then deletes, with `sudo -n`, each now-empty namespace the run's
+record file (named by `NETNS_GATE_RECORD`) marks `created`. `Namespace::new` in
+`crates/network-sim/src/topology.rs` writes `pending <name>` there before `ip netns add`
+and `created <name>` only once that add has succeeded, so a name another run already holds
+is never deleted; a name left `pending` is only reported. A namespace that still has
+processes, or whose processes cannot be listed, is left in place and reported, since
+deleting its name would hide them. A cleanup step that fails is reported with the command
+to finish it by hand, and the gate still exits with the target's status (124 for a
+timeout, 137 for SIGKILL).
 
 `netns_stall_gate` injects SRT DATA at 2000 packets/s through the shared harness
 injector, which sends from one encoder source port with clock-based sequence numbers,
