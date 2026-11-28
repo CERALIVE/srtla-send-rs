@@ -1,15 +1,22 @@
 #!/usr/bin/env bash
 # Runs scripts/netns_test_gate.sh against stubs, with no sudo needed, and checks that
 # it runs every tests/netns_*.rs target exactly once, one test at a time, and that
-# after a timeout it removes only what the timed-out test process left behind.
+# after a failed run it removes only what that run left behind.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STUB="$(mktemp -d)"
 TSTUB="$(mktemp -d)"
-OTHER_PID=""
-# Stop both fake test processes even when an assertion fails, so a red run leaks nothing.
-trap 'pkill -f -- "${TSTUB}/" 2>/dev/null; rm -rf "${STUB}" "${TSTUB}"; [[ -z "${OTHER_PID}" ]] || kill "${OTHER_PID}" 2>/dev/null || true' EXIT
+# Every fake process below inherits TSTUB, so this stops exactly those, even
+# when an assertion fails.
+stop_fakes() {
+  local -a pids
+  export -n TSTUB
+  mapfile -t pids < <(grep -lsxzF -- "TSTUB=${TSTUB}" /proc/[0-9]*/environ | cut -d/ -f3)
+  [[ "${#pids[@]}" -eq 0 ]] || kill -KILL "${pids[@]}" 2>/dev/null || true
+  rm -rf "${STUB}" "${TSTUB}"
+}
+trap stop_fakes EXIT
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s/calls"\n' "${STUB}" > "${STUB}/cargo"
 chmod +x "${STUB}/cargo"
 
@@ -37,44 +44,114 @@ check_calls <<<"${TARGETS}"
 PATH="${STUB}:${PATH}" bash "${REPO_ROOT}/scripts/netns_test_gate.sh" --only netns_arrival_reports >/dev/null
 check_calls <<<"netns_arrival_reports"
 
-# A timed-out target. The stub cargo starts a fake test process from the fake
-# target directory and then hangs past the 1 s budget, as a hung test would.
-mkdir -p "${TSTUB}/bin" "${TSTUB}/target/debug/deps" "${TSTUB}/other/debug/deps"
-fake_test() {
-  printf '#!/usr/bin/env bash\necho $$ > "%s"\nwhile :; do sleep 1; done\n' "$2" > "$1"
-  chmod +x "$1"
-}
-fake_test "${TSTUB}/target/debug/deps/netns_basic-0123456789abcdef" "${TSTUB}/test.pid"
-fake_test "${TSTUB}/other/debug/deps/netns_basic-0123456789abcdef" "${TSTUB}/other.pid"
-printf '#!/usr/bin/env bash\n"%s/target/debug/deps/netns_basic-0123456789abcdef" &\nwhile :; do sleep 1; done\n' \
-  "${TSTUB}" > "${TSTUB}/bin/cargo"
-# shellcheck disable=SC2016  # the stub's body must expand when the stub runs
-printf '#!/usr/bin/env bash\n[[ "$*" == "netns list" ]] || exit 1\nprintf "basic_s_%%x_0\\nother_s_ffff_0\\n" $(( $(cat "%s/test.pid") %% 65535 ))\n' \
-  "${TSTUB}" > "${TSTUB}/bin/ip"
-printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s/sudo"\n' "${TSTUB}" > "${TSTUB}/bin/sudo"
-chmod +x "${TSTUB}/bin/cargo" "${TSTUB}/bin/ip" "${TSTUB}/bin/sudo"
-# Another checkout's test process of the same target, which must survive.
-"${TSTUB}/other/debug/deps/netns_basic-0123456789abcdef" &
-OTHER_PID=$!
+# A failed run, with no clock involved. The stub `timeout` does what
+# `timeout --foreground` does when the budget runs out: once the fake test has
+# made its namespaces, it kills only cargo and exits with FAKE_STATUS. Stub `ip`
+# and `sudo` keep the namespace list in a file and log every privileged call.
+export TSTUB
+mkdir "${TSTUB}/bin"
+cat > "${TSTUB}/bin/timeout" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${TSTUB}/timeout.calls"
+exec 3<>"${TSTUB}/ready"
+while [[ "$1" == -* ]]; do shift; done
+shift
+"$@" 3<&- &
+read -r -t 30 _ <&3 || exit 99
+kill -KILL "$!"
+exit "${FAKE_STATUS}"
+EOF
+cat > "${TSTUB}/bin/cargo" <<'EOF'
+#!/usr/bin/env bash
+"${TSTUB}/netns_basic-0123456789abcdef" &
+wait
+EOF
+# What a hung test leaves: two namespaces it made, a third name it recorded but
+# never made (the run died between the two steps), a process inside one of them
+# that lacks the run's variable, as everything started under sudo does, and itself.
+cat > "${TSTUB}/netns_basic-0123456789abcdef" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' basic_r_1_1 basic_s_1_0 basic_g_1_2 >> "${NETNS_GATE_RECORD}"
+printf '%s\n' basic_r_1_1 basic_s_1_0 >> "${TSTUB}/netns"
+env -u NETNS_GATE_RECORD sleep infinity &
+echo "$!" > "${TSTUB}/pids.basic_s_1_0"
+echo ready > "${TSTUB}/ready"
+exec sleep infinity
+EOF
+cat > "${TSTUB}/bin/ip" <<'EOF'
+#!/usr/bin/env bash
+[[ "$*" == "netns list" ]] || exit 1
+sed 's/$/ (id: 0)/' "${TSTUB}/netns"
+EOF
+cat > "${TSTUB}/bin/sudo" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${TSTUB}/sudo.calls"
+[[ "$1" == -n ]] || exit 1
+shift
+case "$1 $2 $3" in
+  "ip netns pids")
+    [[ "$4" != "${FAKE_PIDS_FAIL}" ]] || exit 1
+    cat "${TSTUB}/pids.$4" 2>/dev/null || true
+    ;;
+  "ip netns delete")
+    grep -vxF -- "$4" "${TSTUB}/netns" > "${TSTUB}/netns.next" || true
+    mv "${TSTUB}/netns.next" "${TSTUB}/netns"
+    ;;
+  kill\ -KILL\ *) "$@" ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod +x "${TSTUB}/bin/"* "${TSTUB}/netns_basic-0123456789abcdef"
 
-set +e
-PATH="${TSTUB}/bin:${PATH}" CARGO_TARGET_DIR="${TSTUB}/target" NETNS_TEST_TIMEOUT_SECONDS=1 \
-  bash "${REPO_ROOT}/scripts/netns_test_gate.sh" --only netns_basic >/dev/null 2>&1
-STATUS=$?
-set -e
 fail() {
-  echo "netns-test-gate-contract: after a timeout, $*" >&2
+  echo "netns-test-gate-contract: after a failed run, $*" >&2
+  [[ ! -s "${TSTUB}/gate.err" ]] || sed 's/^/  gate: /' "${TSTUB}/gate.err" >&2
   exit 1
 }
-[[ "${STATUS}" -eq 124 ]] || fail "the gate exited ${STATUS}, expected 124"
-TEST_PID="$(cat "${TSTUB}/test.pid")"
-TAG="$(printf '_%x_' $((TEST_PID % 65535)))"
-if kill -0 "${TEST_PID}" 2>/dev/null && [[ "$(ps -o stat= -p "${TEST_PID}")" != Z* ]]; then
-  fail "the timed-out test process ${TEST_PID} is still running"
-fi
-grep -qx -- "-n ip netns delete basic_s${TAG}0" "${TSTUB}/sudo" \
-  || fail "the gate did not remove basic_s${TAG}0 with sudo -n"
-! grep -q -- "other_s_ffff_0" "${TSTUB}/sudo" || fail "the gate touched another process's namespace"
-kill -0 "${OTHER_PID}" 2>/dev/null || fail "the gate killed another checkout's test process"
+
+# Another run of the same target, started from the same path, which must
+# survive: only its NETNS_GATE_RECORD differs.
+NETNS_GATE_RECORD="${TSTUB}/other-run" \
+  bash -c 'exec -a "$0" sleep infinity' "${TSTUB}/netns_basic-0123456789abcdef" &
+OTHER_PID=$!
+
+# $1: the status the stub timeout reports (124 for a timeout, 137 for SIGKILL).
+check_failed_run() {
+  local reader status resident
+  # Another run's namespace, named like this run's.
+  printf 'basic_s_1_3\n' > "${TSTUB}/netns"
+  rm -f "${TSTUB}/"{sudo.calls,timeout.calls,ready,alive} "${TSTUB}/pids."*
+  mkfifo "${TSTUB}/ready" "${TSTUB}/alive"
+  # Reaches EOF once every process holding the gate's fd 9, so every process
+  # of the run, has exited.
+  timeout 30 cat "${TSTUB}/alive" >/dev/null &
+  reader=$!
+  set +e
+  # The process lookup in basic_r_1_1 fails; cleanup must go on past it.
+  PATH="${TSTUB}/bin:${PATH}" FAKE_STATUS="$1" FAKE_PIDS_FAIL=basic_r_1_1 \
+    bash "${REPO_ROOT}/scripts/netns_test_gate.sh" --only netns_basic \
+    9>"${TSTUB}/alive" >/dev/null 2>"${TSTUB}/gate.err"
+  status=$?
+  set -e
+  [[ "${status}" -eq "$1" ]] || fail "the gate exited ${status}, expected $1"
+  wait "${reader}" || fail "a process of the failed run is still running"
+  [[ "$(cat "${TSTUB}/netns")" == basic_s_1_3 ]] \
+    || fail "the namespaces left are: $(tr '\n' ' ' < "${TSTUB}/netns")"
+  resident="$(cat "${TSTUB}/pids.basic_s_1_0")"
+  grep -qx -- "-n kill -KILL ${resident}" "${TSTUB}/sudo.calls" \
+    || fail "the gate did not kill ${resident}, the process inside basic_s_1_0, with sudo -n"
+  ! grep -E -- 'basic_s_1_3|basic_g_1_2' "${TSTUB}/sudo.calls" >&2 \
+    || fail "the gate ran the calls above on a namespace this run did not make"
+  grep -qx -- "--foreground --kill-after=10s 90s cargo test --all-features --test netns_basic -- --nocapture --test-threads=1" \
+    "${TSTUB}/timeout.calls" || fail "the gate did not run cargo under timeout --foreground with its budget"
+}
+check_failed_run 124
+check_failed_run 137
+
+kill -TERM "${OTHER_PID}"
+OTHER_STATUS=0
+wait "${OTHER_PID}" || OTHER_STATUS=$?
+[[ "${OTHER_STATUS}" -eq 143 ]] \
+  || fail "another run's process of the same target did not survive (status ${OTHER_STATUS})"
 
 echo "netns-test-gate-contract: OK targets=$(grep -c . <<<"${TARGETS}") timeout-cleanup=scoped"

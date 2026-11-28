@@ -29,10 +29,14 @@ CI run does not prove the privileged topology. Run them only through
 `scripts/netns_test_gate.sh` (90 s per target; `netns_twin` gets 420 s via
 `NETNS_TWIN_TEST_TIMEOUT_SECONDS` because it waits out real sender timers). It runs every
 `tests/netns_*.rs` target, one test at a time: the harness names veth pairs after the
-process id, so two tests of one target would collide on `ip link add`. If a target
-exceeds its budget, `timeout --foreground` stops only `cargo`, so the gate then kills the
-test process it left running and removes, with `sudo -n`, only the namespaces that process
-created (their names carry its pid); another checkout's run is never touched.
+process id, so two tests of one target would collide on `ip link add`. When a target
+fails, including when it exceeds its budget (`timeout --foreground` stops only `cargo`),
+the gate removes what that run left: the processes that inherited the run's
+`NETNS_GATE_RECORD` variable, then, with `sudo -n`, each namespace named in the file it
+points to (`Namespace::new` in `crates/network-sim/src/topology.rs` writes the name there
+before creating the namespace) and whatever runs inside it. Nothing another run made is
+touched. A cleanup step that fails is reported, with the command to finish it by hand,
+and the gate still exits with the target's status (124 for a timeout, 137 for SIGKILL).
 
 `netns_stall_gate` injects SRT DATA at 2000 packets/s through the shared harness
 injector, which sends from one encoder source port with clock-based sequence numbers,
@@ -88,7 +92,8 @@ carry exactly these eight filters; `scripts/release_workflow_contract_test.py` c
 Typed workflow contracts run under `uv`: `scripts/release_workflow_contract_test.py`,
 `scripts/rust_cache_contract_test.py`, `scripts/workflow_authority_contract_test.py`,
 plus `scripts/release_version_contract_test.sh`, `scripts/deb_version_ordering_test.sh`,
-`scripts/netns_test_gate_contract_test.sh` (the netns gate against a stub `cargo`),
+`scripts/netns_test_gate_contract_test.sh` (the netns gate against stub `cargo`,
+`timeout`, `ip` and `sudo`),
 and `scripts/check-doc-refs.sh` (every `docs/` path named in this file and `README.md`
 must resolve).
 

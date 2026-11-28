@@ -93,5 +93,5 @@ Eight Miri filters, cross-channel/OS lanes, privileged netns prerequisites, stal
 - Keep CONN_TIMEOUT = 5 s; CeraUI supplies --conn-timeout-ms 15000. Never bake 15 s into the binary.
 - No bindings directory, npm package or binding tag namespace here; the TypeScript helper lives and is tested in CeraUI.
 - Package is srtla, artifact srtla_<ver>_<arch>.deb; tags match Cargo.toml; release builds stay Bookworm with GLIBC_2.36 ceiling; package modes never follow the caller's umask.
-- The netns gate's timeout cleanup removes only the timed-out run's own test process and namespaces.
+- The netns gate's cleanup after a failed run removes only that run's own processes and recorded namespaces.
 - Keep telemetry-legacy-producer.json frozen; fixtures, wire and device parity changes require a deliberate versioned decision.

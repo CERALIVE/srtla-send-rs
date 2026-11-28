@@ -1,3 +1,5 @@
+use std::io::Write as _;
+use std::path::Path;
 use std::process::{Command, Output};
 
 use anyhow::{Context, Result, bail};
@@ -11,11 +13,30 @@ pub struct Namespace {
     pub name: String,
 }
 
+/// Names the file `scripts/netns_test_gate.sh` gives each run, so that after a
+/// failed run it removes exactly the namespaces that run created.
+const NETNS_RECORD_ENV: &str = "NETNS_GATE_RECORD";
+
+/// Append one namespace name, as one line, to the gate's record file.
+fn record_namespace(record: &Path, name: &str) -> Result<()> {
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(record)
+        .and_then(|mut file| file.write_all(format!("{name}\n").as_bytes()))
+        .with_context(|| format!("record netns '{name}' in '{}'", record.display()))
+}
+
 impl Namespace {
     pub fn new(name: &str) -> Result<Self> {
         // Clean up stale namespace with same name (idempotent)
         let _ = sudo(&["ip", "netns", "del", name]);
 
+        // Recorded before it exists, so a run killed between the two steps
+        // cannot leave a namespace the gate does not know about.
+        if let Some(record) = std::env::var_os(NETNS_RECORD_ENV) {
+            record_namespace(Path::new(&record), name)?;
+        }
         sudo_checked(&["ip", "netns", "add", name])
             .with_context(|| format!("create netns '{name}'"))?;
 
@@ -138,6 +159,18 @@ fn sudo_checked(args: &[&str]) -> Result<Output> {
 mod tests {
     use super::*;
     use crate::test_util::{check_privileges, unique_ns_name};
+
+    #[test]
+    fn record_namespace_appends_one_line_per_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let record = dir.path().join("record");
+        record_namespace(&record, "basic_s_1_0").unwrap();
+        record_namespace(&record, "basic_r_1_1").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&record).unwrap(),
+            "basic_s_1_0\nbasic_r_1_1\n"
+        );
+    }
 
     #[test]
     fn test_namespace_has_loopback() {

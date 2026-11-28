@@ -59,43 +59,76 @@ budget_for() {
   esac
 }
 
-# `timeout --foreground` stops only cargo, so a timed-out target leaves its test
-# process and everything it started under sudo running. Remove exactly what that
-# process created: it runs from this checkout's target directory, and the harness
-# names every namespace after its pid (`_<pid % 0xffff in hex>_<n>`,
-# crates/network-sim/src/test_util.rs), so no other checkout's run is touched.
-clean_up_after_timeout() {
-  local target_dir="${CARGO_TARGET_DIR:-${PWD}/target}" pid tag ns
-  for pid in $(pgrep -u "$(id -u)" -f -- "${target_dir}/debug/deps/$1-[0-9a-f]+( |$)" || true); do
-    kill -KILL "${pid}" 2>/dev/null || true
-    tag="$(printf '_%x_' $((pid % 65535)))"
-    for ns in $(ip netns list | awk '{print $1}' | grep -E -- "${tag}[0-9]+$" || true); do
-      sudo -n ip netns pids "${ns}" | xargs -r sudo -n kill -KILL
-      if sudo -n ip netns delete "${ns}"; then
-        echo "netns-test-gate: removed namespace ${ns} left by $1 (pid ${pid})" >&2
-      else
-        echo "netns-test-gate: could not remove namespace ${ns}; run: sudo ip netns delete ${ns}" >&2
+warn() {
+  echo "netns-test-gate: $*" >&2
+}
+
+# Each run gets its own record file. Every process of the run inherits
+# NETNS_GATE_RECORD naming it, and Namespace::new
+# (crates/network-sim/src/topology.rs) appends each namespace's name to it
+# before creating the namespace. Cleanup goes by those two alone, so it never
+# touches another run's processes or namespaces.
+RUN_DIR="$(mktemp -d)"
+trap 'rm -rf "${RUN_DIR}"' EXIT
+
+# `timeout --foreground` stops only cargo, so a failed run can leave its test
+# process running, and the namespaces it made under sudo with whatever runs in
+# them. A step that fails is reported, and the remaining steps still run.
+clean_up_run() {
+  local record="$1" listed out ns
+  local -a pids recorded
+  mapfile -t pids < <(grep -lsxzF -- "NETNS_GATE_RECORD=${record}" /proc/[0-9]*/environ | cut -d/ -f3)
+  if [[ "${#pids[@]}" -gt 0 ]]; then
+    warn "killing this run's leftover processes: ${pids[*]}"
+    kill -KILL "${pids[@]}" || warn "some of them had exited already"
+  fi
+  [[ -s "${record}" ]] || return 0
+  mapfile -t recorded < <(sort -u "${record}")
+  if ! listed="$(ip netns list)"; then
+    warn "could not list namespaces; check these by hand: ${recorded[*]}"
+    return
+  fi
+  listed="$(awk '{print $1}' <<<"${listed}")"
+  for ns in "${recorded[@]}"; do
+    # Recorded but never created: the run died between the two steps.
+    grep -qxF -- "${ns}" <<<"${listed}" || continue
+    if out="$(sudo -n ip netns pids "${ns}")"; then
+      mapfile -t pids < <(printf '%s' "${out}")
+      if [[ "${#pids[@]}" -gt 0 ]] && ! sudo -n kill -KILL "${pids[@]}"; then
+        warn "could not kill every process in ${ns}: ${pids[*]}"
       fi
-    done
+    else
+      warn "could not list the processes in ${ns}"
+    fi
+    if sudo -n ip netns delete "${ns}"; then
+      warn "removed namespace ${ns} left by this run"
+    else
+      warn "could not remove namespace ${ns}; run: sudo ip netns delete ${ns}"
+    fi
   done
 }
 
 for TARGET in "${TARGETS[@]}"; do
   BUDGET="$(budget_for "${TARGET}")"
+  RECORD="${RUN_DIR}/${TARGET}"
+  # No errexit until this target passes: after a failure, every cleanup step
+  # must run and the gate must still exit with the target's own status.
   set +e
   # One test at a time, as upstream CI runs them: the harness names veth pairs
   # after the process id, so two tests of one target collide on `ip link add`.
-  timeout --foreground --kill-after=10s "${BUDGET}s" \
+  NETNS_GATE_RECORD="${RECORD}" timeout --foreground --kill-after=10s "${BUDGET}s" \
     cargo test --all-features --test "${TARGET}" -- --nocapture --test-threads=1
   STATUS=$?
-  set -e
-  # 137: the target ignored SIGTERM and `--kill-after` had to send SIGKILL.
-  if [[ "${STATUS}" -eq 124 || "${STATUS}" -eq 137 ]]; then
-    echo "netns-test-gate: ${TARGET} exceeded ${BUDGET}s" >&2
-    clean_up_after_timeout "${TARGET}"
-    exit 124
+  if [[ "${STATUS}" -ne 0 ]]; then
+    case "${STATUS}" in
+      124) warn "${TARGET} exceeded ${BUDGET}s" ;;
+      # `--kill-after` ends in 137, but so does a cargo killed from outside.
+      137) warn "${TARGET} was killed with SIGKILL (by --kill-after after ${BUDGET}s, or from outside)" ;;
+    esac
+    clean_up_run "${RECORD}"
+    exit "${STATUS}"
   fi
-  [[ "${STATUS}" -eq 0 ]] || exit "${STATUS}"
+  set -e
 done
 
 echo "netns-test-gate: OK timeout=${TIMEOUT_SECONDS}s twin-timeout=${TWIN_TIMEOUT_SECONDS}s targets=${#TARGETS[@]}"
