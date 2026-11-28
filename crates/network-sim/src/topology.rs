@@ -15,7 +15,7 @@ pub struct Namespace {
 
 /// Names the file `scripts/netns_test_gate.sh` gives each run, so that after a
 /// failed run it removes exactly the namespaces that run created.
-const NETNS_RECORD_ENV: &str = "NETNS_GATE_RECORD";
+pub(crate) const NETNS_RECORD_ENV: &str = "NETNS_GATE_RECORD";
 
 /// Append `<state> <entry>` as one line to the gate's record file.
 fn record_namespace(record: &Path, state: &str, entry: &str) -> Result<()> {
@@ -262,6 +262,11 @@ mod tests {
             "the stub add of 'taken' fails"
         );
         drop(mine);
+        let name = unique_ns_name("t");
+        assert!(
+            name.starts_with("t-"),
+            "under the gate a name uses `-`: {name}"
+        );
     }
 
     #[test]

@@ -40,8 +40,11 @@ cgroup but the scope's own. Only once the scope is empty does it delete, with `s
 the namespaces the run's record file (named by `NETNS_GATE_RECORD`) marks `created`.
 Under the gate `Namespace::new` in `crates/network-sim/src/topology.rs` does not delete a
 same-name namespace first; it writes `pending <name>` before `ip netns add` and
-`created <name> <inode>` only once that add has succeeded. So a name another run holds is
-never deleted, a name left `pending` is only reported, and a namespace whose inode in
+`created <name> <inode>` only once that add has succeeded, and `unique_ns_name`
+(`crates/network-sim/src/test_util.rs`) ends each name in `-<pid>-<n>` rather than
+`_<pid>_<n>`, a form no run outside the gate makes. With one gate per host, no other run
+can take a name this run made, so deleting it by name cannot hit another run's
+namespace. So a name another run holds is never deleted, a name left `pending` is only reported, and a namespace whose inode in
 `/run/netns` no longer matches, because another took the name, is left alone. A namespace
 that still has processes, or whose processes cannot be listed, is left in place and
 reported, since deleting its name would hide them. A cleanup step that fails is reported
