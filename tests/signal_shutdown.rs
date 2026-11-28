@@ -168,9 +168,11 @@ fn sigterm_exits_cleanly_while_a_bind_map_reload_is_stuck() {
         "--bind-map",
         sidecar.to_str().unwrap(),
     ]);
+    // Startup has read the IP file once an uplink is added, so the FIFO swapped
+    // in below can only be opened by the reload.
     assert!(
-        proc.wait_for_log("listening for SRT", START_TIMEOUT),
-        "sender never started; logs:\n{}",
+        proc.wait_for_log("added uplink", START_TIMEOUT),
+        "sender never finished startup; logs:\n{}",
         proc.logs()
     );
 
@@ -240,7 +242,10 @@ fn start_with_startup_held_open(ips: &std::path::Path) -> (SenderProc, std::fs::
             .open(ips)
         {
             Ok(end) => break end,
-            Err(_) if Instant::now() < deadline => thread::sleep(Duration::from_millis(20)),
+            // ENXIO is the one expected answer: no reader has opened it yet.
+            Err(e) if e.raw_os_error() == Some(libc::ENXIO) && Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(20))
+            }
             Err(e) => panic!(
                 "the startup read never opened the IP file ({e}); logs:\n{}",
                 proc.logs()
@@ -250,29 +255,54 @@ fn start_with_startup_held_open(ips: &std::path::Path) -> (SenderProc, std::fs::
     (proc, write_end)
 }
 
-/// Hand the blocked startup read its IP list. A sender that died from the
-/// signal has no reader left, so the write fails and is ignored here.
-fn release_startup(mut write_end: std::fs::File) {
+/// Hand the blocked startup read `contents` and close the FIFO. A sender that
+/// died from the signal has no reader left; that broken pipe is the only write
+/// error expected here.
+fn release_startup(mut write_end: std::fs::File, contents: &[u8]) {
     use std::io::Write as _;
-    let _ = write_end.write_all(b"127.0.0.1\n");
+    if let Err(e) = write_end.write_all(contents) {
+        assert_eq!(
+            e.kind(),
+            std::io::ErrorKind::BrokenPipe,
+            "write the IP file: {e}"
+        );
+    }
 }
 
-/// A `SIGTERM` that lands during startup must not kill the sender with the
-/// default action: it waits for the main loop, which then exits 0.
-#[test]
-fn sigterm_during_startup_exits_cleanly_once_startup_finishes() {
+/// A `SIGTERM` or `SIGINT` while startup is stalled must neither kill the
+/// sender with the default action nor wait for startup: it exits 0 promptly,
+/// and the startup read is never released.
+fn assert_shutdown_during_a_stalled_startup(sig: &str) {
     let dir = tempfile::tempdir().unwrap();
     let (mut proc, write_end) = start_with_startup_held_open(&dir.path().join("ips.txt"));
 
-    proc.signal("TERM");
-    release_startup(write_end);
+    let t0 = Instant::now();
+    proc.signal(sig);
+    let code = proc.wait_exit(EXIT_TIMEOUT);
+    let elapsed = t0.elapsed();
+    drop(write_end);
 
     assert_eq!(
-        proc.wait_exit(EXIT_TIMEOUT),
+        code,
         Some(0),
-        "SIGTERM during startup must exit 0 once startup finishes; logs:\n{}",
+        "SIG{sig} during a stalled startup must exit 0; logs:\n{}",
         proc.logs()
     );
+    assert!(
+        elapsed < PROMPT_EXIT,
+        "SIG{sig} during a stalled startup must exit promptly (< {PROMPT_EXIT:?}); took \
+         {elapsed:?}"
+    );
+}
+
+#[test]
+fn sigterm_during_a_stalled_startup_exits_promptly() {
+    assert_shutdown_during_a_stalled_startup("TERM");
+}
+
+#[test]
+fn sigint_during_a_stalled_startup_exits_promptly() {
+    assert_shutdown_during_a_stalled_startup("INT");
 }
 
 /// A `SIGHUP` that lands during startup (CeraUI signals as soon as a link
@@ -289,11 +319,17 @@ fn sighup_during_startup_becomes_a_reload() {
     let replacement = dir.path().join("ips.next");
     std::fs::write(&replacement, "127.0.0.1\n").expect("write replacement ips file");
     std::fs::rename(&replacement, &ips).expect("replace the FIFO");
-    release_startup(write_end);
+    // Startup reads an empty list, so any uplink can only come from the reload.
+    release_startup(write_end, b"");
 
     assert!(
-        proc.wait_for_log("received SIGHUP", START_TIMEOUT),
-        "SIGHUP during startup must be handled as a reload; logs:\n{}",
+        proc.wait_for_log("added uplink", START_TIMEOUT),
+        "SIGHUP during startup must reload the IP list once startup finishes; logs:\n{}",
+        proc.logs()
+    );
+    assert!(
+        proc.logs().contains("no valid source IPs at startup"),
+        "startup must have read the empty list; logs:\n{}",
         proc.logs()
     );
     proc.signal("TERM");

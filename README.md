@@ -241,7 +241,7 @@ The control dialect is upstream's JSON-RPC 2.0 exactly as documented in [docs/CO
 ### Startup and shutdown behavior
 
 - The local `SRT_LISTEN_PORT` listener is bound before the IP list is read and before any uplink is dialed, so an encoder that connects immediately after spawn never hits a closed port. The `listening for SRT on <address>` log names the address actually bound, including the port the OS picked for `0`.
-- The `SIGHUP`, `SIGTERM` and `SIGINT` handlers are installed before that bind, so a signal that arrives during startup is handled once startup finishes instead of killing the process.
+- The `SIGHUP`, `SIGTERM` and `SIGINT` handlers are installed just before that bind, ahead of the IP-list read, the receiver lookup and the uplink dials. A `SIGTERM` or `SIGINT` during those steps ends startup and exits `0` at once; a `SIGHUP` becomes a reload once startup finishes.
 - A missing, empty, or all-invalid `BIND_IPS_FILE` at startup is not fatal: the sender starts with no uplinks and waits for a `SIGHUP`.
 - A `SIGHUP` reload that resolves to zero valid source IPs is refused with a specific log line and the existing links keep running.
 - `SIGTERM`/`SIGINT` exit `0` promptly and remove the stats file.

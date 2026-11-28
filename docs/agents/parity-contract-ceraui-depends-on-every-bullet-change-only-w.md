@@ -153,9 +153,11 @@
   IP list is read and before any uplink is dialed, because CeraUI dials that port
   immediately after spawn with no readiness handshake. Never move the bind below uplink
   setup. `tests/startup_bind_ordering.rs`. The `SIGHUP`, `SIGTERM` and `SIGINT` handlers
-  are installed before that bind, so a signal during startup is handled once the main
-  loop runs instead of killing the process; once "listening for SRT" is logged, signals
-  are safe to send. `tests/signal_shutdown.rs`.
+  are installed before that bind, ahead of the IP-list read, the receiver lookup and the
+  uplink dials. A `SIGTERM`/`SIGINT` during those steps ends startup and exits `0` at once
+  (the IP-list read runs on the blocking pool so it cannot hold the signal off); a
+  `SIGHUP` becomes a reload once the main loop runs. Once "listening for SRT" is logged,
+  signals are safe to send. `tests/signal_shutdown.rs`.
 - **Clean shutdown (`SIGTERM`/`SIGINT`)** exits `0` well inside CeraUI's 10 s SIGKILL
   window and unlinks the stats file. Blocking work still running at exit, such as a
   bind-map reload stuck on slow storage, gets 1 s and no more (`src/main.rs`).
