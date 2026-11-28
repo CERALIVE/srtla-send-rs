@@ -17,24 +17,28 @@ pub struct Namespace {
 /// failed run it removes exactly the namespaces that run created.
 const NETNS_RECORD_ENV: &str = "NETNS_GATE_RECORD";
 
-/// Append `<state> <name>` as one line to the gate's record file.
-fn record_namespace(record: &Path, state: &str, name: &str) -> Result<()> {
+/// Append `<state> <entry>` as one line to the gate's record file.
+fn record_namespace(record: &Path, state: &str, entry: &str) -> Result<()> {
     std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(record)
-        .and_then(|mut file| file.write_all(format!("{state} {name}\n").as_bytes()))
-        .with_context(|| format!("record netns '{name}' in '{}'", record.display()))
+        .and_then(|mut file| file.write_all(format!("{state} {entry}\n").as_bytes()))
+        .with_context(|| format!("record netns '{entry}' in '{}'", record.display()))
 }
 
 impl Namespace {
     pub fn new(name: &str) -> Result<Self> {
-        // Clean up stale namespace with same name (idempotent)
-        let _ = sudo(&["ip", "netns", "del", name]);
+        let record = std::env::var_os(NETNS_RECORD_ENV);
+        // Clean up stale namespace with same name (idempotent). Not under the
+        // gate: there the name may be another run's, and the gate removes this
+        // run's own leftovers itself.
+        if record.is_none() {
+            let _ = sudo(&["ip", "netns", "del", name]);
+        }
 
         // `pending` before the add, so the gate still hears of a namespace
         // whose creation a killed run never saw finish.
-        let record = std::env::var_os(NETNS_RECORD_ENV);
         if let Some(record) = &record {
             record_namespace(Path::new(record), "pending", name)?;
         }
@@ -45,9 +49,14 @@ impl Namespace {
             name: name.to_string(),
         };
         // `created` only after this add succeeded, so a name another run
-        // already holds is never this run's to delete.
+        // already holds is never this run's to delete. The inode tells this
+        // namespace apart from a later one that reuses the name.
         if let Some(record) = &record {
-            record_namespace(Path::new(record), "created", name)?;
+            let path = format!("/run/netns/{name}");
+            let stat = sudo_checked(&["stat", "-c", "%i", &path])
+                .with_context(|| format!("identify netns '{name}'"))?;
+            let inode = String::from_utf8_lossy(&stat.stdout).trim().to_owned();
+            record_namespace(Path::new(record), "created", &format!("{name} {inode}"))?;
         }
 
         debug!(ns = name, "created network namespace");
@@ -173,16 +182,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let record = dir.path().join("record");
         record_namespace(&record, "pending", "basic_s_1_0").unwrap();
-        record_namespace(&record, "created", "basic_s_1_0").unwrap();
+        record_namespace(&record, "created", "basic_s_1_0 4026532861").unwrap();
         assert_eq!(
             std::fs::read_to_string(&record).unwrap(),
-            "pending basic_s_1_0\ncreated basic_s_1_0\n"
+            "pending basic_s_1_0\ncreated basic_s_1_0 4026532861\n"
         );
     }
 
     /// The real constructor, run in a child copy of this test binary with a
-    /// stub `sudo` first on its PATH: `pending` must be on record when
-    /// `ip netns add` runs, and only a successful add may become `created`.
+    /// stub `sudo` as the only command on its PATH: under the gate it never
+    /// deletes a name before creating it, `pending` is on record when
+    /// `ip netns add` runs, and only a successful add becomes `created`, with
+    /// the inode the stub reports.
     #[cfg(unix)]
     #[test]
     fn record_brackets_ip_netns_add() {
@@ -190,29 +201,28 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (record, calls) = (dir.path().join("record"), dir.path().join("calls"));
         let sudo = dir.path().join("sudo");
+        // Shell builtins only, so it needs no PATH: if it cannot run, no real
+        // sudo can be found in its place.
         std::fs::write(
             &sudo,
             format!(
-                "#!/bin/sh\nprintf '%s | %s\\n' \"$*\" \"$(tr '\\n' ',' < '{}' 2>/dev/null)\" >> \
-                 '{}'\n[ \"$*\" != 'ip netns add taken' ]\n",
-                record.display(),
-                calls.display()
+                "#!/bin/sh\nrec=\nif [ -f '{record}' ]; then\nwhile IFS= read -r line; do \
+                 rec=\"$rec$line,\"; done < '{record}'\nfi\nprintf '%s | %s\\n' \"$*\" \"$rec\" \
+                 >> '{calls}'\ncase \"$*\" in\n'ip netns add taken') exit 1 ;;\n'stat -c %i \
+                 /run/netns/mine') echo 4242 ;;\nesac\n",
+                record = record.display(),
+                calls = calls.display()
             ),
         )
         .unwrap();
         std::fs::set_permissions(&sudo, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let path = format!(
-            "{}:{}",
-            dir.path().display(),
-            std::env::var("PATH").unwrap_or_default()
-        );
         let status = Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
                 "topology::tests::record_brackets_ip_netns_add_child",
                 "--ignored",
             ])
-            .env("PATH", path)
+            .env("PATH", dir.path())
             .env(NETNS_RECORD_ENV, &record)
             .env("NETNS_RECORD_TEST_CHILD", "1")
             .status()
@@ -227,9 +237,13 @@ mod tests {
             "`pending` must be on record, and `created` not yet, when the add runs; \
              calls:\n{calls}"
         );
+        assert!(
+            !calls.contains("ip netns del taken"),
+            "under the gate a name that may be another run's is never deleted; calls:\n{calls}"
+        );
         assert_eq!(
             std::fs::read_to_string(&record).unwrap(),
-            "pending mine\ncreated mine\npending taken\n"
+            "pending mine\ncreated mine 4242\npending taken\n"
         );
     }
 
