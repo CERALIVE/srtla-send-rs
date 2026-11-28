@@ -11,9 +11,6 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-#[path = "support/signal_handler.rs"]
-mod signal_handler;
-
 const BIN: &str = env!("CARGO_BIN_EXE_srtla_send");
 const START_TIMEOUT: Duration = Duration::from_secs(5);
 /// Poll well past `PROMPT_EXIT` so a slow exit is reported as too slow rather
@@ -66,6 +63,8 @@ impl SenderProc {
         self.logs.lock().unwrap().clone()
     }
 
+    /// The sender installs its signal handlers before it logs the listener, so
+    /// once "listening for SRT" appears a signal is safe to send.
     fn wait_for_log(&self, needle: &str, timeout: Duration) -> bool {
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
@@ -75,10 +74,6 @@ impl SenderProc {
             thread::sleep(Duration::from_millis(50));
         }
         false
-    }
-
-    fn wait_for_handler(&self, signum: u32, timeout: Duration) -> bool {
-        signal_handler::installed(self.child.id(), signum, timeout)
     }
 
     fn signal(&self, sig: &str) {
@@ -111,7 +106,26 @@ impl Drop for SenderProc {
     }
 }
 
-fn assert_signal_exits_cleanly(sig: &str, signum: u32) {
+/// Startup catches `SIGTERM`/`SIGINT` too, but only the main loop logs a
+/// `SIGHUP`. Once it has, a shutdown signal can reach only the main loop.
+fn wait_for_main_loop(proc: &SenderProc) {
+    proc.signal("HUP");
+    assert!(
+        proc.wait_for_log("received SIGHUP", START_TIMEOUT),
+        "the main loop never ran; logs:\n{}",
+        proc.logs()
+    );
+}
+
+fn assert_main_loop_shut_down(proc: &SenderProc, sig: &str) {
+    assert!(
+        proc.wait_for_log(&format!("received SIG{sig} - shutting down"), START_TIMEOUT),
+        "SIG{sig} must be handled by the main loop; logs:\n{}",
+        proc.logs()
+    );
+}
+
+fn assert_signal_exits_cleanly(sig: &str) {
     let dir = tempfile::tempdir().unwrap();
     let ips = dir.path().join("ips.txt");
     std::fs::write(&ips, "127.0.0.1\n").expect("write ips file");
@@ -122,11 +136,7 @@ fn assert_signal_exits_cleanly(sig: &str, signum: u32) {
         "sender never started; logs:\n{}",
         proc.logs()
     );
-    assert!(
-        proc.wait_for_handler(signum, START_TIMEOUT),
-        "sender never installed a SIG{sig} handler; logs:\n{}",
-        proc.logs()
-    );
+    wait_for_main_loop(&proc);
 
     let t0 = Instant::now();
     proc.signal(sig);
@@ -143,16 +153,17 @@ fn assert_signal_exits_cleanly(sig: &str, signum: u32) {
         elapsed < PROMPT_EXIT,
         "SIG{sig} must exit promptly (< {PROMPT_EXIT:?}); took {elapsed:?}"
     );
+    assert_main_loop_shut_down(&proc, sig);
 }
 
 #[test]
 fn sigterm_exits_cleanly_and_promptly() {
-    assert_signal_exits_cleanly("TERM", 15);
+    assert_signal_exits_cleanly("TERM");
 }
 
 #[test]
 fn sigint_exits_cleanly_and_promptly() {
-    assert_signal_exits_cleanly("INT", 2);
+    assert_signal_exits_cleanly("INT");
 }
 
 /// A `SIGHUP` with `--bind-map` reads the IP file on the blocking pool. Here
@@ -178,14 +189,11 @@ fn sigterm_exits_cleanly_while_a_bind_map_reload_is_stuck() {
         "--bind-map",
         sidecar.to_str().unwrap(),
     ]);
+    // Startup has read the IP file once an uplink is added, so the FIFO swapped
+    // in below can only be opened by the reload.
     assert!(
-        proc.wait_for_log("listening for SRT", START_TIMEOUT),
-        "sender never started; logs:\n{}",
-        proc.logs()
-    );
-    assert!(
-        proc.wait_for_handler(1, START_TIMEOUT) && proc.wait_for_handler(15, START_TIMEOUT),
-        "sender never installed its SIGHUP/SIGTERM handlers; logs:\n{}",
+        proc.wait_for_log("added uplink", START_TIMEOUT),
+        "sender never finished startup; logs:\n{}",
         proc.logs()
     );
 
@@ -229,5 +237,127 @@ fn sigterm_exits_cleanly_while_a_bind_map_reload_is_stuck() {
         elapsed < PROMPT_EXIT,
         "SIGTERM must exit promptly (< {PROMPT_EXIT:?}) while the reload is stuck; took \
          {elapsed:?}"
+    );
+}
+
+/// Start the sender on an IP file that is a FIFO, so its startup read blocks
+/// after the listener is bound and before the main loop runs. Returns once that
+/// read has opened the FIFO, with the write end that releases it.
+fn start_with_startup_held_open(ips: &std::path::Path) -> (SenderProc, std::fs::File) {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    let fifo = CString::new(ips.as_os_str().as_bytes()).unwrap();
+    // SAFETY: a valid NUL-terminated path and a plain permission mode.
+    assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+    let proc = SenderProc::spawn(&[ANY_PORT, "127.0.0.1", "9999", ips.to_str().unwrap()]);
+
+    // A non-blocking open of the write end succeeds only once the startup read
+    // has opened the FIFO; until the test writes it, that read stays blocked.
+    let deadline = Instant::now() + START_TIMEOUT;
+    let write_end = loop {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(ips)
+        {
+            Ok(end) => break end,
+            // ENXIO is the one expected answer: no reader has opened it yet.
+            Err(e) if e.raw_os_error() == Some(libc::ENXIO) && Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(20))
+            }
+            Err(e) => panic!(
+                "the startup read never opened the IP file ({e}); logs:\n{}",
+                proc.logs()
+            ),
+        }
+    };
+    (proc, write_end)
+}
+
+/// Hand the blocked startup read `contents` and close the FIFO. A sender that
+/// died from the signal has no reader left; that broken pipe is the only write
+/// error expected here.
+fn release_startup(mut write_end: std::fs::File, contents: &[u8]) {
+    use std::io::Write as _;
+    if let Err(e) = write_end.write_all(contents) {
+        assert_eq!(
+            e.kind(),
+            std::io::ErrorKind::BrokenPipe,
+            "write the IP file: {e}"
+        );
+    }
+}
+
+/// A `SIGTERM` or `SIGINT` while startup is stalled must neither kill the
+/// sender with the default action nor wait for startup: it exits 0 promptly,
+/// and the startup read is never released.
+fn assert_shutdown_during_a_stalled_startup(sig: &str) {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut proc, write_end) = start_with_startup_held_open(&dir.path().join("ips.txt"));
+
+    let t0 = Instant::now();
+    proc.signal(sig);
+    let code = proc.wait_exit(EXIT_TIMEOUT);
+    let elapsed = t0.elapsed();
+    drop(write_end);
+
+    assert_eq!(
+        code,
+        Some(0),
+        "SIG{sig} during a stalled startup must exit 0; logs:\n{}",
+        proc.logs()
+    );
+    assert!(
+        elapsed < PROMPT_EXIT,
+        "SIG{sig} during a stalled startup must exit promptly (< {PROMPT_EXIT:?}); took \
+         {elapsed:?}"
+    );
+}
+
+#[test]
+fn sigterm_during_a_stalled_startup_exits_promptly() {
+    assert_shutdown_during_a_stalled_startup("TERM");
+}
+
+#[test]
+fn sigint_during_a_stalled_startup_exits_promptly() {
+    assert_shutdown_during_a_stalled_startup("INT");
+}
+
+/// A `SIGHUP` that lands during startup (CeraUI signals as soon as a link
+/// appears) must become a reload once the main loop runs, not kill the sender.
+#[test]
+fn sighup_during_startup_becomes_a_reload() {
+    let dir = tempfile::tempdir().unwrap();
+    let ips = dir.path().join("ips.txt");
+    let (mut proc, write_end) = start_with_startup_held_open(&ips);
+
+    proc.signal("HUP");
+    // The startup read already holds the FIFO open, so swapping the path for a
+    // regular file leaves that read alone and gives the reload something to read.
+    let replacement = dir.path().join("ips.next");
+    std::fs::write(&replacement, "127.0.0.1\n").expect("write replacement ips file");
+    std::fs::rename(&replacement, &ips).expect("replace the FIFO");
+    // Startup reads an empty list, so any uplink can only come from the reload.
+    release_startup(write_end, b"");
+
+    assert!(
+        proc.wait_for_log("added uplink", START_TIMEOUT),
+        "SIGHUP during startup must reload the IP list once startup finishes; logs:\n{}",
+        proc.logs()
+    );
+    assert!(
+        proc.logs().contains("no valid source IPs at startup"),
+        "startup must have read the empty list; logs:\n{}",
+        proc.logs()
+    );
+    proc.signal("TERM");
+    assert_eq!(
+        proc.wait_exit(EXIT_TIMEOUT),
+        Some(0),
+        "SIGTERM after the reload must exit 0; logs:\n{}",
+        proc.logs()
     );
 }

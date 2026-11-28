@@ -152,7 +152,15 @@
 - **Startup bind ordering.** The local `SRT_LISTEN_PORT` listener is bound before the
   IP list is read and before any uplink is dialed, because CeraUI dials that port
   immediately after spawn with no readiness handshake. Never move the bind below uplink
-  setup. `tests/startup_bind_ordering.rs`.
+  setup. `tests/startup_bind_ordering.rs`. The `SIGHUP`, `SIGTERM` and `SIGINT` handlers
+  are installed before that bind, ahead of the IP-list read, the receiver lookup and the
+  uplink dials. A `SIGTERM`/`SIGINT` during those steps exits `0` without waiting for the
+  IP-list read (on the blocking pool) or the receiver lookup to finish; at exit such a
+  blocked read or lookup gets `BLOCKING_SHUTDOWN_GRACE` (1 s, `src/main.rs`). The uplinks'
+  local socket setup does not yield and does not wait on the network, so a signal during
+  the dials waits for that loop to finish. A
+  `SIGHUP` becomes a reload once the main loop runs. Once "listening for SRT" is logged,
+  signals are safe to send. `tests/signal_shutdown.rs`.
 - **Clean shutdown (`SIGTERM`/`SIGINT`)** exits `0` well inside CeraUI's 10 s SIGKILL
   window and unlinks the stats file. Blocking work still running at exit, such as a
   bind-map reload stuck on slow storage, gets 1 s and no more (`src/main.rs`).
