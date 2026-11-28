@@ -24,12 +24,33 @@ Every test build turns `srtla-core`'s copy on through `srtla_send`'s dev-depende
 `srtla_send`'s own `test-internals`.
 Most tests run in-process over loopback UDP. The `tests/netns_*.rs` targets are
 privileged supplements (Linux network namespaces, passwordless `sudo`, `srtla_rec`,
-`srt-live-transmit`) that self-skip when their dependencies are absent, so an ordinary
+`srt-live-transmit`; the gate also needs a systemd user session on cgroup v2) that self-skip when their dependencies are absent, so an ordinary
 CI run does not prove the privileged topology. Run them only through
 `scripts/netns_test_gate.sh` (90 s per target; `netns_twin` gets 420 s via
 `NETNS_TWIN_TEST_TIMEOUT_SECONDS` because it waits out real sender timers). It runs every
 `tests/netns_*.rs` target, one test at a time: the harness names veth pairs after the
-process id, so two tests of one target would collide on `ip link add`.
+process id, so two tests of one target would collide on `ip link add`. Only one gate runs
+at a time on a host (a second exits 2), and before any target it checks that it can start
+a systemd user scope and write that scope's `cgroup.kill` (otherwise it exits 2). Each
+target runs in its own `systemd-run --user --scope`. When a target fails, including when
+it exceeds its budget (`timeout --foreground` stops only `cargo`), the gate writes `1` to
+that scope's `cgroup.kill`, which kills every process left of the run, root ones under
+`sudo` included, with no process id read first and signalled later; it never writes any
+cgroup but the scope's own. Only once the scope is empty does it delete, with `sudo -n`,
+the namespaces the run's record file (named by `NETNS_GATE_RECORD`) marks `created`.
+Under the gate `Namespace::new` in `crates/network-sim/src/topology.rs` does not delete a
+same-name namespace first; it writes `pending <name>` before `ip netns add` and
+`created <name> <inode>` only once that add has succeeded, and `unique_ns_name`
+(`crates/network-sim/src/test_util.rs`) ends each name in `-<pid>-<n>` rather than
+`_<pid>_<n>`, a form no older or ungated harness run makes. Gates that share the lock file
+run one at a time, so no other harness run can take a name this run made, and deleting
+it by name cannot hit another harness run's namespace (a namespace someone names by hand
+in this form is not covered). So a name another run holds is never deleted, a name left `pending` is only reported, and a namespace whose inode in
+`/run/netns` no longer matches, because another took the name, is left alone. A namespace
+that still has processes, or whose processes cannot be listed, is left in place and
+reported, since deleting its name would hide them. A cleanup step that fails is reported
+with the command to finish it by hand, and the gate still exits with the target's status
+(124 for a timeout, 137 for SIGKILL).
 
 `netns_stall_gate` injects SRT DATA at 2000 packets/s through the shared harness
 injector, which sends from one encoder source port with clock-based sequence numbers,
@@ -85,7 +106,8 @@ carry exactly these eight filters; `scripts/release_workflow_contract_test.py` c
 Typed workflow contracts run under `uv`: `scripts/release_workflow_contract_test.py`,
 `scripts/rust_cache_contract_test.py`, `scripts/workflow_authority_contract_test.py`,
 plus `scripts/release_version_contract_test.sh`, `scripts/deb_version_ordering_test.sh`,
-`scripts/netns_test_gate_contract_test.sh` (the netns gate against a stub `cargo`),
+`scripts/netns_test_gate_contract_test.sh` (the netns gate against stub `cargo`,
+`timeout`, `ip` and `sudo`),
 and `scripts/check-doc-refs.sh` (every `docs/` path named in this file and `README.md`
 must resolve).
 
