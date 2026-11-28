@@ -152,7 +152,7 @@ clean_up_run() {
   listed="$(awk '{print $1}' <<<"${listed}")"
   # Under the gate unique_ns_name (crates/network-sim/src/test_util.rs) ends a
   # name in `-<pid>-<n>`, which no run outside the gate makes, and this gate
-  # holds the lock: no other run can take one of these names between the
+  # holds the lock: no other harness run can take one of these names between the
   # checks below and the delete by name.
   for entry in "${created[@]}"; do
     ns="${entry%% *}"

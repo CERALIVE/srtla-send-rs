@@ -27,7 +27,7 @@ pub fn check_privileges() -> bool {
 /// Under `scripts/netns_test_gate.sh` the suffix is `-{pid:x}-{seq}`. A name
 /// always ends in its separator and the counter's digits, so no run outside the
 /// gate can make a name a gated run made, and the gate runs one at a time: its
-/// cleanup can delete such a name without hitting another run's namespace.
+/// cleanup can delete such a name without hitting another harness run's namespace.
 pub fn unique_ns_name(prefix: &str) -> String {
     let seq = NS_COUNTER.fetch_add(1, Ordering::Relaxed);
     let gated = std::env::var_os(crate::topology::NETNS_RECORD_ENV).is_some();

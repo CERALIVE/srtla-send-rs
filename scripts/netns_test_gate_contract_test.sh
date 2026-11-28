@@ -168,20 +168,20 @@ wait
 EOF
 # What a hung test leaves: five namespaces it made, a name whose creation it
 # never saw finish, a name whose add failed because another run holds exactly
-# that name, a process of its own inside basic_s_1_0, and itself. basic_t_1_4
+# that name, a process of its own inside basic_s-1-0, and itself. basic_t_1_4
 # also holds a process that is not part of this run, and basic_q_1_5 has since
 # been deleted and taken again by another namespace (another inode).
 cat > "${TSTUB}/netns_basic-0123456789abcdef" <<'EOF'
 #!/usr/bin/env bash
-printf '%s\n' 'pending basic_r_1_1' 'created basic_r_1_1 101' 'pending basic_s_1_0' \
-  'created basic_s_1_0 100' 'pending basic_t_1_4' 'created basic_t_1_4 104' \
-  'pending basic_q_1_5' 'created basic_q_1_5 105' 'pending basic_e_1_6' \
-  'created basic_e_1_6 106' 'pending basic_g_1_2' 'pending basic_s_1_3' >> "${NETNS_GATE_RECORD}"
-printf '%s\n' 'basic_r_1_1 101' 'basic_s_1_0 100' 'basic_t_1_4 104' 'basic_q_1_5 999' \
-  'basic_e_1_6 106' >> "${TSTUB}/netns"
+printf '%s\n' 'pending basic_r_1_1' 'created basic_r_1_1 101' 'pending basic_s-1-0' \
+  'created basic_s-1-0 100' 'pending basic_t_1_4' 'created basic_t_1_4 104' \
+  'pending basic_q_1_5' 'created basic_q_1_5 105' 'pending basic_e-1-6' \
+  'created basic_e-1-6 106' 'pending basic_g_1_2' 'pending basic_s_1_3' >> "${NETNS_GATE_RECORD}"
+printf '%s\n' 'basic_r_1_1 101' 'basic_s-1-0 100' 'basic_t_1_4 104' 'basic_q_1_5 999' \
+  'basic_e-1-6 106' >> "${TSTUB}/netns"
 sleep infinity &
 printf '%s\n' "$$" "$!" >> "${FAKE_SCOPE}/cgroup.procs"
-echo "$!" > "${TSTUB}/pids.basic_s_1_0"
+echo "$!" > "${TSTUB}/pids.basic_s-1-0"
 echo "${OTHER_PID}" > "${TSTUB}/pids.basic_t_1_4"
 echo ready > "${TSTUB}/ready"
 exec sleep infinity
