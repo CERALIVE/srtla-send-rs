@@ -106,6 +106,25 @@ impl Drop for SenderProc {
     }
 }
 
+/// Startup catches `SIGTERM`/`SIGINT` too, but only the main loop logs a
+/// `SIGHUP`. Once it has, a shutdown signal can reach only the main loop.
+fn wait_for_main_loop(proc: &SenderProc) {
+    proc.signal("HUP");
+    assert!(
+        proc.wait_for_log("received SIGHUP", START_TIMEOUT),
+        "the main loop never ran; logs:\n{}",
+        proc.logs()
+    );
+}
+
+fn assert_main_loop_shut_down(proc: &SenderProc, sig: &str) {
+    assert!(
+        proc.wait_for_log(&format!("received SIG{sig} - shutting down"), START_TIMEOUT),
+        "SIG{sig} must be handled by the main loop; logs:\n{}",
+        proc.logs()
+    );
+}
+
 fn assert_signal_exits_cleanly(sig: &str) {
     let dir = tempfile::tempdir().unwrap();
     let ips = dir.path().join("ips.txt");
@@ -117,6 +136,7 @@ fn assert_signal_exits_cleanly(sig: &str) {
         "sender never started; logs:\n{}",
         proc.logs()
     );
+    wait_for_main_loop(&proc);
 
     let t0 = Instant::now();
     proc.signal(sig);
@@ -133,6 +153,7 @@ fn assert_signal_exits_cleanly(sig: &str) {
         elapsed < PROMPT_EXIT,
         "SIG{sig} must exit promptly (< {PROMPT_EXIT:?}); took {elapsed:?}"
     );
+    assert_main_loop_shut_down(&proc, sig);
 }
 
 #[test]

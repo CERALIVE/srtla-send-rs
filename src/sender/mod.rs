@@ -171,7 +171,7 @@ pub async fn run_sender_with_config(
     let mut sigint = signal(SignalKind::interrupt())?;
     // A slow startup step (the IP-list read, the receiver lookup, the uplink
     // dials) must not hold SIGTERM/SIGINT past CeraUI's 10 s window: each step
-    // is raced against them, and a shutdown signal ends startup at once.
+    // is raced against them, so shutdown waits for none of them to finish.
     #[cfg(unix)]
     macro_rules! unless_shutdown {
         ($step:expr) => {

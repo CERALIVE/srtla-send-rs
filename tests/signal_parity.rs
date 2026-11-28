@@ -211,6 +211,25 @@ fn missing_ips_file_at_startup_starts_empty_and_reloads_on_sighup() {
     );
 }
 
+/// Startup catches `SIGTERM`/`SIGINT` too, but only the main loop logs a
+/// `SIGHUP`. Once it has, a shutdown signal can reach only the main loop.
+fn wait_for_main_loop(proc: &SenderProc) {
+    proc.signal("HUP");
+    assert!(
+        proc.wait_for_log("received SIGHUP", START_TIMEOUT),
+        "the main loop never ran; logs:\n{}",
+        proc.logs()
+    );
+}
+
+fn assert_main_loop_shut_down(proc: &SenderProc, sig: &str) {
+    assert!(
+        proc.wait_for_log(&format!("received SIG{sig} - shutting down"), START_TIMEOUT),
+        "SIG{sig} must be handled by the main loop; logs:\n{}",
+        proc.logs()
+    );
+}
+
 #[test]
 fn sigterm_exits_cleanly_and_promptly() {
     let dir = tempfile::tempdir().unwrap();
@@ -221,6 +240,7 @@ fn sigterm_exits_cleanly_and_promptly() {
         "sender never started; logs:\n{}",
         proc.logs()
     );
+    wait_for_main_loop(&proc);
 
     let t0 = Instant::now();
     proc.signal("TERM");
@@ -232,6 +252,7 @@ fn sigterm_exits_cleanly_and_promptly() {
         elapsed < PROMPT_EXIT,
         "SIGTERM must exit promptly (< {PROMPT_EXIT:?}); took {elapsed:?}"
     );
+    assert_main_loop_shut_down(&proc, "TERM");
 }
 
 #[test]
@@ -244,6 +265,7 @@ fn sigint_exits_cleanly_and_promptly() {
         "sender never started; logs:\n{}",
         proc.logs()
     );
+    wait_for_main_loop(&proc);
 
     let t0 = Instant::now();
     proc.signal("INT");
@@ -255,4 +277,5 @@ fn sigint_exits_cleanly_and_promptly() {
         elapsed < PROMPT_EXIT,
         "SIGINT must exit promptly (< {PROMPT_EXIT:?}); took {elapsed:?}"
     );
+    assert_main_loop_shut_down(&proc, "INT");
 }
