@@ -155,6 +155,21 @@ pub async fn run_sender_with_config(
         ips_file,
         config.mode()
     );
+    // Install the signal handlers before anything that can take time. Until a
+    // handler exists the default action applies, so a SIGHUP or SIGTERM from the
+    // supervisor during startup (the IP-list read, the receiver lookup, the
+    // uplink dials) would kill the process; registered here, it waits for the
+    // main loop instead. SIGTERM/SIGINT drive a graceful `Ok(())` return so the
+    // process exits 0 well inside CeraUI's 10s SIGKILL window and any registered
+    // shutdown hooks (the `--stats-file` unlink, a later port) run instead of
+    // being skipped by an abrupt default-action kill.
+    #[cfg(unix)]
+    let mut sighup = signal(SignalKind::hangup())?;
+    #[cfg(unix)]
+    let mut sigterm = signal(SignalKind::terminate())?;
+    #[cfg(unix)]
+    let mut sigint = signal(SignalKind::interrupt())?;
+
     // Bind the local SRT listener FIRST, ahead of reading the ips file and
     // dialing any uplink. An encoder is typically pointed at this port the
     // moment the process is spawned, with no readiness handshake, so every
@@ -314,17 +329,6 @@ pub async fn run_sender_with_config(
     // multiplier and in-flight cap; `loss_degraded` feeds the loss gate.
     let mut link_cc_controller = srtla_core::selection::link_cc::LinkCcController::new();
 
-    // Prepare SIGHUP stream (Unix only) or a never-completing future (non-Unix)
-    #[cfg(unix)]
-    let mut sighup = signal(SignalKind::hangup())?;
-    // SIGTERM/SIGINT drive a graceful `Ok(())` return so the process exits 0
-    // well inside CeraUI's 10s SIGKILL window and any registered shutdown hooks
-    // (the `--stats-file` unlink, a later port) run instead of being skipped by
-    // an abrupt default-action kill.
-    #[cfg(unix)]
-    let mut sigterm = signal(SignalKind::terminate())?;
-    #[cfg(unix)]
-    let mut sigint = signal(SignalKind::interrupt())?;
     // Answers from the off-loop ADR-003 pair read a SIGHUP spawns.
     #[cfg(unix)]
     let (bind_map_tx, mut bind_map_rx) =
