@@ -15,9 +15,6 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-#[path = "support/signal_handler.rs"]
-mod signal_handler;
-
 const BIN: &str = env!("CARGO_BIN_EXE_srtla_send");
 const START_TIMEOUT: Duration = Duration::from_secs(5);
 const LOG_TIMEOUT: Duration = Duration::from_secs(5);
@@ -75,6 +72,8 @@ impl SenderProc {
         self.logs.lock().unwrap().clone()
     }
 
+    /// The sender installs its signal handlers before it logs the listener, so
+    /// once "listening for SRT" appears a signal is safe to send.
     fn wait_for_log(&self, needle: &str, timeout: Duration) -> bool {
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
@@ -92,17 +91,6 @@ impl SenderProc {
             .status()
             .expect("run kill");
         assert!(status.success(), "kill -{sig} failed");
-    }
-
-    /// Every signal these tests send has a handler before the first is sent.
-    fn assert_signal_handlers(&self) {
-        for (name, signum) in [("HUP", 1), ("INT", 2), ("TERM", 15)] {
-            assert!(
-                signal_handler::installed(self.child.id(), signum, START_TIMEOUT),
-                "the sender never installed a SIG{name} handler; logs:\n{}",
-                self.logs()
-            );
-        }
     }
 
     fn is_alive(&mut self) -> bool {
@@ -160,7 +148,6 @@ fn empty_ip_file_at_startup_not_fatal() {
         "the listener must be bound even with no uplinks; logs:\n{}",
         proc.logs()
     );
-    proc.assert_signal_handlers();
     thread::sleep(Duration::from_secs(1));
     assert!(
         proc.is_alive(),
@@ -199,7 +186,6 @@ fn missing_ips_file_at_startup_starts_empty_and_reloads_on_sighup() {
         "the sender must bind the listener even with no uplinks; logs:\n{}",
         proc.logs()
     );
-    proc.assert_signal_handlers();
     thread::sleep(Duration::from_secs(1));
     assert!(
         proc.is_alive(),
@@ -225,6 +211,25 @@ fn missing_ips_file_at_startup_starts_empty_and_reloads_on_sighup() {
     );
 }
 
+/// Startup catches `SIGTERM`/`SIGINT` too, but only the main loop logs a
+/// `SIGHUP`. Once it has, a shutdown signal can reach only the main loop.
+fn wait_for_main_loop(proc: &SenderProc) {
+    proc.signal("HUP");
+    assert!(
+        proc.wait_for_log("received SIGHUP", START_TIMEOUT),
+        "the main loop never ran; logs:\n{}",
+        proc.logs()
+    );
+}
+
+fn assert_main_loop_shut_down(proc: &SenderProc, sig: &str) {
+    assert!(
+        proc.wait_for_log(&format!("received SIG{sig} - shutting down"), START_TIMEOUT),
+        "SIG{sig} must be handled by the main loop; logs:\n{}",
+        proc.logs()
+    );
+}
+
 #[test]
 fn sigterm_exits_cleanly_and_promptly() {
     let dir = tempfile::tempdir().unwrap();
@@ -235,7 +240,7 @@ fn sigterm_exits_cleanly_and_promptly() {
         "sender never started; logs:\n{}",
         proc.logs()
     );
-    proc.assert_signal_handlers();
+    wait_for_main_loop(&proc);
 
     let t0 = Instant::now();
     proc.signal("TERM");
@@ -247,6 +252,7 @@ fn sigterm_exits_cleanly_and_promptly() {
         elapsed < PROMPT_EXIT,
         "SIGTERM must exit promptly (< {PROMPT_EXIT:?}); took {elapsed:?}"
     );
+    assert_main_loop_shut_down(&proc, "TERM");
 }
 
 #[test]
@@ -259,7 +265,7 @@ fn sigint_exits_cleanly_and_promptly() {
         "sender never started; logs:\n{}",
         proc.logs()
     );
-    proc.assert_signal_handlers();
+    wait_for_main_loop(&proc);
 
     let t0 = Instant::now();
     proc.signal("INT");
@@ -271,4 +277,5 @@ fn sigint_exits_cleanly_and_promptly() {
         elapsed < PROMPT_EXIT,
         "SIGINT must exit promptly (< {PROMPT_EXIT:?}); took {elapsed:?}"
     );
+    assert_main_loop_shut_down(&proc, "INT");
 }

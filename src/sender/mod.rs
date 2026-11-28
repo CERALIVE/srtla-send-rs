@@ -155,6 +155,48 @@ pub async fn run_sender_with_config(
         ips_file,
         config.mode()
     );
+    // Install the signal handlers before anything that can take time. Until a
+    // handler exists the default action applies, so a SIGHUP or SIGTERM from the
+    // supervisor during startup (the IP-list read, the receiver lookup, the
+    // uplink dials) would kill the process; registered here, it waits for the
+    // main loop instead. SIGTERM/SIGINT drive a graceful `Ok(())` return so the
+    // process exits 0 well inside CeraUI's 10s SIGKILL window and any registered
+    // shutdown hooks (the `--stats-file` unlink, a later port) run instead of
+    // being skipped by an abrupt default-action kill.
+    #[cfg(unix)]
+    let mut sighup = signal(SignalKind::hangup())?;
+    #[cfg(unix)]
+    let mut sigterm = signal(SignalKind::terminate())?;
+    #[cfg(unix)]
+    let mut sigint = signal(SignalKind::interrupt())?;
+    // A slow startup step (the IP-list read, the receiver lookup) must not hold
+    // SIGTERM/SIGINT past CeraUI's 10 s window: each step is raced against
+    // them. The uplinks' local socket setup does not yield, so it finishes first.
+    #[cfg(unix)]
+    macro_rules! unless_shutdown {
+        ($step:expr) => {
+            tokio::select! {
+                value = $step => value,
+                _ = sigterm.recv() => {
+                    info!("received SIGTERM during startup - shutting down");
+                    on_shutdown.run();
+                    return Ok(());
+                }
+                _ = sigint.recv() => {
+                    info!("received SIGINT during startup - shutting down");
+                    on_shutdown.run();
+                    return Ok(());
+                }
+            }
+        };
+    }
+    #[cfg(not(unix))]
+    macro_rules! unless_shutdown {
+        ($step:expr) => {
+            $step.await
+        };
+    }
+
     // Bind the local SRT listener FIRST, ahead of reading the ips file and
     // dialing any uplink. An encoder is typically pointed at this port the
     // moment the process is spawned, with no readiness handshake, so every
@@ -192,7 +234,7 @@ pub async fn run_sender_with_config(
     // uplinks, start with an EMPTY pool, and wait for a SIGHUP reload. CeraUI
     // writes the IP file and signals the sender only once interfaces appear, so
     // exiting here would crash-loop the device before the first modem is up.
-    let links = match link_source.startup().await {
+    let links = match unless_shutdown!(link_source.startup()) {
         Ok(links) => links,
         Err(e) => {
             warn!("ips file unreadable at startup ({e:#}); starting with an empty uplink pool");
@@ -222,7 +264,7 @@ pub async fn run_sender_with_config(
     let answers = if links.is_empty() {
         SmallVec::new()
     } else {
-        match resolve_remote_all(receiver_host, receiver_port).await {
+        match unless_shutdown!(resolve_remote_all(receiver_host, receiver_port)) {
             Ok(answers) => answers,
             Err(e) => {
                 warn!(
@@ -233,15 +275,14 @@ pub async fn run_sender_with_config(
             }
         }
     };
-    let mut connections = create_connections_from_links(
+    let mut connections = unless_shutdown!(create_connections_from_links(
         &links,
         &answers,
         receiver_host,
         receiver_port,
         &binder,
         &mut conn_io,
-    )
-    .await;
+    ));
 
     let mut reg = SrtlaRegistrationManager::new();
 
@@ -314,17 +355,6 @@ pub async fn run_sender_with_config(
     // multiplier and in-flight cap; `loss_degraded` feeds the loss gate.
     let mut link_cc_controller = srtla_core::selection::link_cc::LinkCcController::new();
 
-    // Prepare SIGHUP stream (Unix only) or a never-completing future (non-Unix)
-    #[cfg(unix)]
-    let mut sighup = signal(SignalKind::hangup())?;
-    // SIGTERM/SIGINT drive a graceful `Ok(())` return so the process exits 0
-    // well inside CeraUI's 10s SIGKILL window and any registered shutdown hooks
-    // (the `--stats-file` unlink, a later port) run instead of being skipped by
-    // an abrupt default-action kill.
-    #[cfg(unix)]
-    let mut sigterm = signal(SignalKind::terminate())?;
-    #[cfg(unix)]
-    let mut sigint = signal(SignalKind::interrupt())?;
     // Answers from the off-loop ADR-003 pair read a SIGHUP spawns.
     #[cfg(unix)]
     let (bind_map_tx, mut bind_map_rx) =
@@ -729,7 +759,13 @@ fn describe_weights(ips: &[IpAddr], weights: &[u8]) -> String {
 /// [`read_ip_list`] plus the normalised operator weight of each IP (same
 /// order). An unweighted file yields all 1s.
 pub async fn read_weighted_ip_list(path: &str) -> Result<(SmallVec<IpAddr, 4>, SmallVec<u8, 4>)> {
-    let text = std::fs::read_to_string(Path::new(path)).context("read IPs file")?;
+    // On the blocking pool: a read held up by slow storage must not stop the one
+    // runtime thread, which also has to see a SIGTERM that arrives meanwhile.
+    let owned = path.to_owned();
+    let text = tokio::task::spawn_blocking(move || std::fs::read_to_string(Path::new(&owned)))
+        .await
+        .unwrap_or_else(|e| std::panic::resume_unwind(e.into_panic()))
+        .context("read IPs file")?;
     // Shares the SIGHUP reload guard's parser so startup and reload agree on what
     // counts as a valid IP. At startup an empty or all-invalid file is tolerated
     // (returns an empty list); the zero-valid-IP refusal only matters on reload,
