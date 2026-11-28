@@ -18,6 +18,12 @@ stop_fakes() {
 }
 trap stop_fakes EXIT
 export NETNS_GATE_LOCK="${STUB}/gate.lock"
+# The gate's preflight probe runs in this shell's own cgroup here, so a fake
+# tree gives that cgroup a cgroup.kill the probe can find.
+PROBE_CG="${STUB}/cgroup$(sed -n 's/^0:://p' /proc/self/cgroup)"
+mkdir -p "${PROBE_CG}"
+: > "${PROBE_CG}/cgroup.kill"
+export NETNS_GATE_CGROUP_ROOT="${STUB}/cgroup"
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s/calls"\n' "${STUB}" > "${STUB}/cargo"
 cat > "${STUB}/systemd-run" <<'EOF'
 #!/usr/bin/env bash
@@ -27,9 +33,9 @@ while [[ "$1" != -- ]]; do
   shift
 done
 shift
-# The gate's preflight scope; FAKE_NO_SCOPES fails it, as on a host without a
-# usable systemd user session.
-[[ -n "${unit}" ]] || { [[ -z "${FAKE_NO_SCOPES:-}" ]]; exit; }
+# The gate's preflight probe runs as it would in a new scope; FAKE_NO_SCOPES
+# fails it instead, as on a host without a usable systemd user session.
+[[ -n "${unit}" || -z "${FAKE_NO_SCOPES:-}" ]] || exit 1
 exec "$@"
 EOF
 chmod +x "${STUB}/cargo" "${STUB}/systemd-run"
@@ -58,18 +64,27 @@ check_calls <<<"${TARGETS}"
 PATH="${STUB}:${PATH}" bash "${REPO_ROOT}/scripts/netns_test_gate.sh" --only netns_arrival_reports >/dev/null
 check_calls <<<"netns_arrival_reports"
 
-# A host where no scope can be killed, and a second gate while one holds the
-# lock: both must refuse with 2 before running any target.
-for CASE in no-scopes locked; do
+# A host where no scope can start, one whose scopes start but have no writable
+# cgroup.kill, and a second gate while one holds the lock: each must refuse
+# with 2 before running any target.
+for CASE in no-scopes unkillable locked; do
   set +e
-  if [[ "${CASE}" == locked ]]; then
-    flock -n "${NETNS_GATE_LOCK}" env PATH="${STUB}:${PATH}" \
-      bash "${REPO_ROOT}/scripts/netns_test_gate.sh" >/dev/null 2>&1
-  else
-    FAKE_NO_SCOPES=1 PATH="${STUB}:${PATH}" bash "${REPO_ROOT}/scripts/netns_test_gate.sh" >/dev/null 2>&1
-  fi
+  case "${CASE}" in
+    locked)
+      flock -n "${NETNS_GATE_LOCK}" env PATH="${STUB}:${PATH}" \
+        bash "${REPO_ROOT}/scripts/netns_test_gate.sh" >/dev/null 2>&1
+      ;;
+    unkillable)
+      rm "${PROBE_CG}/cgroup.kill"
+      PATH="${STUB}:${PATH}" bash "${REPO_ROOT}/scripts/netns_test_gate.sh" >/dev/null 2>&1
+      ;;
+    *)
+      FAKE_NO_SCOPES=1 PATH="${STUB}:${PATH}" bash "${REPO_ROOT}/scripts/netns_test_gate.sh" >/dev/null 2>&1
+      ;;
+  esac
   STATUS=$?
   set -e
+  [[ "${CASE}" != unkillable ]] || : > "${PROBE_CG}/cgroup.kill"
   [[ "${STATUS}" -eq 2 && ! -e "${STUB}/calls" ]] || {
     echo "netns-test-gate-contract: with ${CASE}, the gate exited ${STATUS} and ran: $(cat "${STUB}/calls" 2>/dev/null)" >&2
     exit 1
@@ -259,8 +274,8 @@ check_failed_run 137
 # While the run's processes may still be running, no namespace is removed, not
 # even an empty one of its own: here because the scope cannot be killed, then
 # because systemctl reports the root cgroup, whose cgroup.kill would stop every
-# process on the host. Like any process the run leaves, the fakes hold the gate's
-# lock, so each case ends them before the next gate starts.
+# process on the host. Like any unprivileged process the run leaves, the fakes
+# hold the gate's lock, so each case ends them before the next gate starts.
 : > "${TSTUB}/cgroup/cgroup.kill"
 for CASE in kill-fails root-cgroup; do
   if [[ "${CASE}" == kill-fails ]]; then
@@ -270,7 +285,7 @@ for CASE in kill-fails root-cgroup; do
   fi
   [[ "${STATUS}" -eq 124 ]] || fail "with ${CASE}, the gate exited ${STATUS}, expected 124"
   [[ ! -s "${TSTUB}/cgroup/cgroup.kill" ]] || fail "with ${CASE}, the gate wrote to the root cgroup's cgroup.kill"
-  ! grep -E -- '^-n ip netns delete' "${TSTUB}/sudo.calls" >&2 \
+  ! grep -sE -- '^-n ip netns delete' "${TSTUB}/sudo.calls" >&2 \
     || fail "with ${CASE}, the gate removed the namespaces above while the run may still be running"
   mapfile -t LEFT < <(cat "${TSTUB}"/cgroup/run/*/cgroup.procs)
   kill -KILL "${LEFT[@]}"

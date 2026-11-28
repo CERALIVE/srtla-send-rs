@@ -68,7 +68,8 @@ CGROUP_ROOT="${NETNS_GATE_CGROUP_ROOT:-/sys/fs/cgroup}"
 LOCK_FILE="${NETNS_GATE_LOCK:-/tmp/netns-test-gate.lock}"
 
 # Namespaces are host-wide and the harness's names repeat across runs, so only
-# one gate runs at a time on a host. Whatever the run starts inherits the lock.
+# one gate runs at a time on a host: this shell holds the lock until it exits,
+# its cleanup included. Processes run under sudo do not keep it (sudo closes fd 5).
 exec 5>"${LOCK_FILE}"
 flock -n 5 || {
   echo "netns-test-gate: another netns gate, or a process one left, holds ${LOCK_FILE}" >&2
